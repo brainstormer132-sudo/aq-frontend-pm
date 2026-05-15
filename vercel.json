@@ -1,0 +1,36 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "_comment": "Vercel routing — mirrors aqagency.conf. Backend lives on Render at aq-backend-p5zd.onrender.com.",
+
+  "rewrites": [
+    {
+      "source": "/contracts/api/:path*",
+      "destination": "https://aq-backend-p5zd.onrender.com/api/:path*"
+    },
+    {
+      "source": "/contracts/health",
+      "destination": "https://aq-backend-p5zd.onrender.com/api/health"
+    },
+    {
+      "source": "/portals",
+      "destination": "/portals.html"
+    },
+    {
+      "source": "/hub",
+      "destination": "/hub.html"
+    },
+    {
+      "source": "/contracts",
+      "destination": "/contracts/index.html"
+    }
+  ],
+
+  "headers": [
+    {
+      "source": "/contracts/api/:path*",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}

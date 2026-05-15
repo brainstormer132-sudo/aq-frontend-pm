@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AQ Contract Suite</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="progress-bar" class="progress-bar" aria-hidden="true"></div>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="./assets/logo.png" alt="AQ" />
+          <div>
+            <strong>AQ Suite</strong>
+            <span>Contracts</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Main">
+          <button class="nav-item active" type="button" data-view="dashboard">Operations</button>
+          <button class="nav-item" type="button" data-view="tasks">Tasks</button>
+          <button class="nav-item" type="button" data-view="vendors">Vendors & Clients</button>
+          <button class="nav-item" type="button" data-view="contracts">Contracts</button>
+          <button class="nav-item" type="button" data-view="templates">Templates</button>
+          <button class="nav-item" type="button" data-view="settings">Settings</button>
+        </nav>
+
+        <div class="session-panel">
+          <span id="api-status" class="status-dot">Checking</span>
+          <span id="api-url" class="api-url"></span>
+          <button id="logout-button" class="ghost-button hidden" type="button">Logout</button>
+        </div>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="user-role">Signed out</p>
+            <h1 id="view-title">Tasks</h1>
+            <p id="view-subtitle" class="view-subtitle">Contract workspace</p>
+          </div>
+          <button id="refresh-button" class="icon-button" type="button" title="Refresh">Refresh</button>
+        </header>
+
+        <section id="login-view" class="auth-layout">
+          <div class="auth-shell">
+            <header class="auth-header">
+              <div class="auth-logo">AQ</div>
+              <h1>AQ Creativity</h1>
+              <p class="auth-tagline">Contract Suite</p>
+            </header>
+
+            <div class="auth-grid">
+              <!-- Sign In -->
+              <form id="login-form" class="auth-panel auth-card">
+                <h2>Sign In</h2>
+                <p class="auth-card-sub">Welcome back.</p>
+
+                <label>
+                  Username
+                  <input id="username" name="username" autocomplete="username" required />
+                </label>
+                <label>
+                  Password
+                  <input id="password" name="password" type="password" autocomplete="current-password" required />
+                </label>
+
+                <label class="auth-remember-label">
+                  <input id="remember-me" type="checkbox" checked />
+                  <span>Remember me on this device</span>
+                </label>
+
+                <button class="primary-button" type="submit">Sign In</button>
+              </form>
+
+              <!-- Create Account -->
+              <form id="signup-form" class="auth-panel auth-card">
+                <h2>Create Account</h2>
+                <p class="auth-card-sub">Use the invite code your admin sent you.</p>
+
+                <label>
+                  Username
+                  <input id="signup-username" name="username" autocomplete="username" />
+                </label>
+                <label>
+                  Full name
+                  <input id="signup-full-name" name="full_name" autocomplete="name" />
+                </label>
+                <label>
+                  Email
+                  <input id="signup-email" name="email" type="email" autocomplete="email" />
+                </label>
+                <label>
+                  Password
+                  <input id="signup-password" name="password" type="password" autocomplete="new-password" />
+                </label>
+                <label>
+                  Invite code
+                  <input id="signup-invite-code" name="invite_code" autocomplete="off" />
+                </label>
+
+                <button id="signup-button" class="primary-button" type="submit">Create Account</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section id="dashboard-view" class="dashboard hidden">
+          <div id="view-root"></div>
+        </section>
+
+        <p id="toast" class="toast hidden" role="status"></p>
+      </section>
+    </main>
+
+    <script src="./app.js?v=20260428-1015"></script>
+  </body>
+</html>

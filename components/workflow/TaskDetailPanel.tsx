@@ -1,0 +1,488 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import {
+  useTask, useTaskSubtasks, useTaskComments, useTaskAttachments, useTaskServiceTypes,
+  addComment, deleteComment, addAttachmentLink, deleteAttachment,
+  deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
+  type Profile, type WorkspaceRole,
+} from '@/hooks/use-workflow';
+import { TaskAssignees } from './TaskAssignees';
+import { RequestContractModal } from './RequestContractModal';
+
+/**
+ * Slide-over panel that shows a single task — header, fields, subtasks,
+ * attachments, and a comments thread. Behavior is role-gated:
+ *
+ *   - owner / admin / marketing -> full edit + delete
+ *   - sales (creator) → can edit own draft tasks
+ *   - key_account on the task → can mark complete + see everything
+ *   - member → READ-ONLY everywhere except the comment box (text + file URL)
+ *
+ * Members specifically can:
+ *   - read all task fields
+ *   - post comments (text)
+ *   - attach a file by pasting its URL (mention a teammate by name in text)
+ * Members cannot:
+ *   - edit title / description / status / priority / service types / KA
+ *   - delete the task or anyone else's comments/attachments
+ */
+export function TaskDetailPanel({
+  taskId, currentUserId, role, profiles, onClose, onChanged,
+}: {
+  taskId: string | null;
+  currentUserId: string;
+  role: WorkspaceRole | null;
+  profiles: (Profile & { role: WorkspaceRole })[];
+  onClose: () => void;
+  onChanged?: () => void;
+}) {
+  const { task, refetch: refetchTask, loading } = useTask(taskId);
+  const { subtasks, refetch: refetchSubs } = useTaskSubtasks(taskId);
+  const { comments, refetch: refetchComments } = useTaskComments(taskId);
+  const { attachments, refetch: refetchAtt } = useTaskAttachments(taskId);
+  const { items: taskServiceTypes } = useTaskServiceTypes(taskId);
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [commentText, setCommentText] = useState('');
+  const [attachUrl, setAttachUrl] = useState('');
+  const [attachName, setAttachName] = useState('');
+  const [requestOpen, setRequestOpen] = useState(false);
+
+  const isOpen = Boolean(taskId);
+
+  // Esc key closes.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
+  const isCreator   = task?.creator_id === currentUserId;
+  const isKeyAcct   = task?.key_account_id === currentUserId;
+  const isAssignee  = task?.assignee_id === currentUserId;
+  const isPrivileged = role && ['owner','admin','marketing'].includes(role);
+  const canEdit      = Boolean(isPrivileged || (role === 'sales' && isCreator && task?.stage === 'draft'));
+  const canDelete    = Boolean(isPrivileged || (role === 'sales' && isCreator));
+  const canMarkDone  = Boolean(isKeyAcct || isPrivileged);
+  const canRequestContract = Boolean(
+    role && ['owner','admin','marketing','sales','key_account'].includes(role)
+  );
+  // Everyone with workspace access can comment/attach (RLS will reject
+  // if they're not actually allowed).
+  const canComment = true;
+  const canAttach  = true;
+
+  const profileById = useMemo(() => {
+    const m = new Map(profiles.map((p) => [p.id, p]));
+    return m;
+  }, [profiles]);
+
+  const closer = task?.sales_closer_id ? profileById.get(task.sales_closer_id) : null;
+  const ka     = task?.key_account_id  ? profileById.get(task.key_account_id)  : null;
+
+  const handleAddComment = async () => {
+    if (!task || !commentText.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await addComment(task.id, currentUserId, commentText.trim());
+      setCommentText('');
+      await refetchComments();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const handleAddAttachment = async () => {
+    if (!task) return;
+    if (!attachUrl.trim() || !attachName.trim()) {
+      setError('Both file name and URL are required.');
+      return;
+    }
+    setBusy(true); setError('');
+    try {
+      await addAttachmentLink({
+        task_id: task.id,
+        uploader_id: currentUserId,
+        filename: attachName.trim(),
+        file_url: attachUrl.trim(),
+      });
+      setAttachUrl(''); setAttachName('');
+      await refetchAtt();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const handleDeleteAttachment = async (id: string) => {
+    setBusy(true); setError('');
+    try { await deleteAttachment(id); await refetchAtt(); }
+    catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const handleDeleteComment = async (id: string) => {
+    setBusy(true); setError('');
+    try { await deleteComment(id); await refetchComments(); }
+    catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const handleDeleteTask = async () => {
+    if (!task) return;
+    if (!confirm(`Delete "${task.task_name || task.title}" and all its subtasks?`)) return;
+    setBusy(true); setError('');
+    try {
+      await deleteTaskFn(task.id);
+      onChanged?.();
+      onClose();
+    } catch (e: any) { setError(e?.message ?? String(e)); setBusy(false); }
+  };
+
+  const handleMarkDone = async () => {
+    if (!task) return;
+    setBusy(true); setError('');
+    try {
+      await markTaskCompleted(task.id);
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const handleSubtaskToggle = async (subId: string, currentStatus: string) => {
+    setBusy(true); setError('');
+    try {
+      const next = currentStatus === 'done' ? 'todo' : 'done';
+      await updateTaskFields(subId, {
+        status: next,
+        completed_at: next === 'done' ? (new Date().toISOString() as any) : null as any,
+      } as any);
+      await refetchSubs();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        display: 'flex', justifyContent: 'flex-end',
+      }}
+    >
+      <div
+        onClick={onClose}
+        style={{ flex: 1, background: 'rgba(15, 29, 34, 0.4)' }}
+        aria-hidden="true"
+      />
+      <aside
+        className="animate-slide-in"
+        style={{
+          width: '100%', maxWidth: 760,
+          background: 'var(--aq-bg-elevated)',
+          overflow: 'auto',
+          boxShadow: 'var(--aq-shadow-lg)',
+          display: 'flex', flexDirection: 'column',
+        }}
+        role="dialog"
+        aria-modal="true"
+      >
+        {loading || !task ? (
+          <div style={{ padding: 28, color: 'var(--aq-text-muted)' }}>Loading task…</div>
+        ) : (
+          <>
+            {/* Header */}
+            <header style={{
+              padding: '20px 24px',
+              borderBottom: '1px solid var(--aq-border-light)',
+              display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+              gap: 16,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span className={`aq-badge ${
+                    task.stage === 'completed' ? 'aq-badge-success'
+                    : task.stage === 'pending_marketing' ? 'aq-badge-warning'
+                    : 'aq-badge-info'
+                  }`}>{task.stage.replace('_', ' ')}</span>
+                  {task.priority !== 'none' && (
+                    <span className="aq-badge aq-badge-muted">{task.priority}</span>
+                  )}
+                  {task.parent_task_id && <span className="aq-badge aq-badge-muted">subtask</span>}
+                </div>
+                <h2 style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.25 }}>
+                  {task.task_name || task.title}
+                </h2>
+                {task.brand_name && (
+                  <p style={{ marginTop: 4, fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                    {task.brand_name}
+                    {task.legacy_client_id && ` · client ${task.legacy_client_id}`}
+                  </p>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {!task.parent_task_id && canRequestContract && (
+                  <button className="aq-btn aq-btn-secondary" onClick={() => setRequestOpen(true)}>
+                    Request contract
+                  </button>
+                )}
+                {canMarkDone && task.status !== 'done' && (
+                  <button className="aq-btn aq-btn-primary" disabled={busy} onClick={handleMarkDone}>
+                    Mark complete
+                  </button>
+                )}
+                {canDelete && (
+                  <button className="aq-btn aq-btn-danger" disabled={busy} onClick={handleDeleteTask}>
+                    Delete
+                  </button>
+                )}
+                <button className="aq-btn aq-btn-ghost" onClick={onClose} aria-label="Close">✕</button>
+              </div>
+            </header>
+
+            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+              {error && (
+                <div style={{
+                  background: 'var(--aq-error)', color: '#fff',
+                  padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 13,
+                }}>{error}</div>
+              )}
+
+              {!canEdit && role === 'member' && (
+                <div className="aq-badge aq-badge-info" style={{ alignSelf: 'flex-start' }}>
+                  Read-only — you can comment and attach files
+                </div>
+              )}
+
+              {/* Fields */}
+              <section className="aq-card" style={{ padding: 18 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Details</h3>
+                <FieldRow label="Brand"        value={task.brand_name ?? '—'} />
+                <FieldRow label="Client"       value={task.legacy_client_id ?? '—'} />
+                <FieldRow label="Sales closer" value={closer?.full_name ?? '—'} />
+                <FieldRow label="Key account"  value={ka?.full_name ?? '—'} />
+                <FieldRow label="Budget"       value={task.budget != null ? `SAR ${Number(task.budget).toLocaleString()}` : '—'} />
+                <FieldRow label="Priority"     value={task.priority} />
+                <FieldRow label="Service types" value={
+                  taskServiceTypes.length
+                    ? taskServiceTypes.map((s) => `${s.icon ?? ''} ${s.name}`).join(', ')
+                    : '—'
+                } />
+                <FieldRow label="Created"      value={new Date(task.created_at).toLocaleString()} />
+                {task.completed_at && <FieldRow label="Completed" value={new Date(task.completed_at).toLocaleString()} />}
+                {task.description && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--aq-border-light)' }}>
+                    <div className="aq-label">Description</div>
+                    <p style={{ marginTop: 4, fontSize: 14, color: 'var(--aq-text-secondary)', whiteSpace: 'pre-wrap' }}>
+                      {task.description}
+                    </p>
+                  </div>
+                )}
+              </section>
+
+              {/* Assignees */}
+              <TaskAssignees
+                taskId={task.id}
+                currentUserId={currentUserId}
+                role={role}
+                profiles={profiles}
+                canEdit={Boolean(isPrivileged || isKeyAcct)}
+              />
+
+              {/* Subtasks */}
+              {subtasks.length > 0 && (
+                <section className="aq-card" style={{ padding: 18 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+                    Subtasks ({subtasks.filter((s) => s.status === 'done').length} / {subtasks.length})
+                  </h3>
+                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {subtasks.map((s) => {
+                      const done = s.status === 'done';
+                      const subAssignee = s.assignee_id ? profileById.get(s.assignee_id) : null;
+                      const canToggle = canMarkDone || s.assignee_id === currentUserId;
+                      return (
+                        <li key={s.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 12px', borderRadius: 'var(--aq-radius)',
+                          background: done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={done}
+                            disabled={!canToggle || busy}
+                            onChange={() => handleSubtaskToggle(s.id, s.status)}
+                            style={{ width: 16, height: 16, cursor: canToggle ? 'pointer' : 'not-allowed' }}
+                          />
+                          <span style={{
+                            flex: 1, fontSize: 14,
+                            textDecoration: done ? 'line-through' : 'none',
+                            color: done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
+                          }}>{s.title}</span>
+                          {subAssignee && (
+                            <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{subAssignee.full_name}</span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+
+              {/* Attachments */}
+              <section className="aq-card" style={{ padding: 18 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+                  Attachments ({attachments.length})
+                </h3>
+                {attachments.length === 0 && (
+                  <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                    No files attached yet.
+                  </p>
+                )}
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                  {attachments.map((a) => {
+                    const canRemove = a.uploader_id === currentUserId || isPrivileged;
+                    return (
+                      <li key={a.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 12px', borderRadius: 'var(--aq-radius)',
+                        background: 'var(--aq-bg-sunken)',
+                      }}>
+                        <span aria-hidden style={{ fontSize: 18 }}>📎</span>
+                        <a href={a.file_url} target="_blank" rel="noreferrer" style={{
+                          flex: 1, fontSize: 14, color: 'var(--aq-accent)', textDecoration: 'none',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{a.filename}</a>
+                        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                          {new Date(a.created_at).toLocaleDateString()}
+                        </span>
+                        {canRemove && (
+                          <button
+                            type="button"
+                            className="aq-btn aq-btn-ghost"
+                            disabled={busy}
+                            onClick={() => handleDeleteAttachment(a.id)}
+                            style={{ padding: '4px 8px', fontSize: 12 }}
+                            aria-label="Remove attachment"
+                          >✕</button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {canAttach && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr auto', gap: 8 }}>
+                    <input
+                      className="aq-input"
+                      placeholder="File name"
+                      value={attachName}
+                      onChange={(e) => setAttachName(e.target.value)}
+                    />
+                    <input
+                      className="aq-input"
+                      placeholder="Paste a Drive / Dropbox / direct URL"
+                      value={attachUrl}
+                      onChange={(e) => setAttachUrl(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="aq-btn aq-btn-secondary"
+                      onClick={handleAddAttachment}
+                      disabled={busy || !attachUrl.trim() || !attachName.trim()}
+                    >Attach</button>
+                  </div>
+                )}
+              </section>
+
+              {/* Comments */}
+              <section className="aq-card" style={{ padding: 18 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+                  Comments ({comments.length})
+                </h3>
+                {comments.length === 0 && (
+                  <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                    Be the first to comment. Tip: type @name to mention a teammate (search not yet wired — name as plain text for now).
+                  </p>
+                )}
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+                  {comments.map((c) => {
+                    const author = c.author?.full_name ?? profileById.get(c.author_id)?.full_name ?? 'Someone';
+                    const canRemove = c.author_id === currentUserId || isPrivileged;
+                    return (
+                      <li key={c.id} style={{
+                        padding: '10px 12px', borderRadius: 'var(--aq-radius)',
+                        background: 'var(--aq-bg-sunken)',
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <strong style={{ fontSize: 13 }}>{author}</strong>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                              {new Date(c.created_at).toLocaleString()}
+                            </span>
+                            {canRemove && (
+                              <button
+                                type="button"
+                                className="aq-btn aq-btn-ghost"
+                                onClick={() => handleDeleteComment(c.id)}
+                                disabled={busy}
+                                style={{ padding: '2px 6px', fontSize: 11 }}
+                                aria-label="Delete comment"
+                              >✕</button>
+                            )}
+                          </div>
+                        </div>
+                        <p style={{ marginTop: 4, fontSize: 14, whiteSpace: 'pre-wrap' }}>{c.content}</p>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {canComment && (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <textarea
+                      className="aq-textarea"
+                      style={{ minHeight: 60 }}
+                      value={commentText}
+                      onChange={(e) => setCommentText(e.target.value)}
+                      placeholder="Add a comment… (Cmd/Ctrl+Enter to send)"
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleAddComment();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="aq-btn aq-btn-primary"
+                      onClick={handleAddComment}
+                      disabled={busy || !commentText.trim()}
+                    >Send</button>
+                  </div>
+                )}
+              </section>
+            </div>
+
+            {requestOpen && (
+              <RequestContractModal
+                task={task}
+                currentUserId={currentUserId}
+                onClose={() => setRequestOpen(false)}
+                onCreated={() => { setRequestOpen(false); onChanged?.(); }}
+              />
+            )}
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
+      padding: '6px 0', fontSize: 13,
+    }}>
+      <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>{label}</span>
+      <span style={{ color: 'var(--aq-text)' }}>{value}</span>
+    </div>
+  );
+}

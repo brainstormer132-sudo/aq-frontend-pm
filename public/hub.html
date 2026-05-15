@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AQ Creativity — Hub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg:     #f5f1ea;
+        --card:   #ffffff;
+        --text:   #1f2937;
+        --muted:  #6b7280;
+        --accent: #1f8f4f;
+        --border: #e5e7eb;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .shell { max-width: 480px; width: 100%; text-align: center; }
+
+      .logo {
+        width: 64px; height: 64px;
+        border-radius: 16px;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 700;
+        font-size: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+        letter-spacing: -0.5px;
+      }
+
+      h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+      .tag { color: var(--muted); font-size: 14px; margin-bottom: 36px; }
+
+      .cards { display: flex; flex-direction: column; gap: 12px; }
+
+      a.card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        text-decoration: none;
+        color: var(--text);
+        text-align: left;
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      a.card:hover {
+        transform: translateY(-2px);
+        border-color: var(--accent);
+        box-shadow: 0 8px 24px rgba(31, 143, 79, 0.10);
+      }
+
+      .card-icon {
+        width: 44px; height: 44px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 20px;
+      }
+
+      .card-body { flex: 1; }
+      .card-body h2 { font-size: 16px; font-weight: 600; margin-bottom: 3px; }
+      .card-body p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+      .card-arrow {
+        color: var(--accent);
+        font-size: 18px;
+        flex-shrink: 0;
+        transition: transform 0.15s ease;
+      }
+      a.card:hover .card-arrow { transform: translateX(3px); }
+
+      footer {
+        margin-top: 40px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      @media (max-width: 520px) {
+        .shell { max-width: 100%; }
+        h1 { font-size: 24px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="logo">AQ</div>
+      <h1>AQ Creativity</h1>
+      <p class="tag">Choose your workspace.</p>
+
+      <div class="cards">
+        <a class="card" href="/dashboard/workflow">
+          <div class="card-icon" style="background: #e8f5ed;">
+            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#1f8f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+          </div>
+          <div class="card-body">
+            <h2>Project Management</h2>
+            <p>Tasks, triage, key accounts, and team coordination.</p>
+          </div>
+          <span class="card-arrow">→</span>
+        </a>
+
+        <a class="card" href="/contracts/">
+          <div class="card-icon" style="background: #E6F1FB;">
+            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#185FA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </div>
+          <div class="card-body">
+            <h2>Contracts</h2>
+            <p>Generate vendor and client contracts, manage templates.</p>
+          </div>
+          <span class="card-arrow">→</span>
+        </a>
+      </div>
+
+      <footer>© AQ Creativity</footer>
+    </div>
+  </body>
+</html>

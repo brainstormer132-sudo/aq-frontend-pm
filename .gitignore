@@ -1,0 +1,22 @@
+# Dependencies (Vercel installs these from package.json)
+node_modules/
+npm/
+
+# Next.js build output
+.next/
+.next-old/
+.next-old2/
+*.tsbuildinfo
+
+# Local env (contains secrets — set these in Vercel dashboard instead)
+.env.local
+.env*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log

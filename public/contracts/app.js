@@ -1,0 +1,2561 @@
+// When the contract maker runs behind the merged nginx setup at
+// http://localhost/contracts/, requests should go to /contracts/api so the
+// reverse proxy can forward them to FastAPI. When it runs standalone (e.g. by
+// opening index.html directly during dev), fall back to the FastAPI ports.
+//
+// Detection rule: if the page is being served through HTTP from any host
+// (i.e. window.location.protocol === "http:" or "https:"), prefer the
+// same-origin /contracts/api base. file:// pages keep the direct-port list.
+const PROXIED_API_BASE = "/contracts/api";
+const DIRECT_API_CANDIDATES = [
+  "http://127.0.0.1:8001",
+  "http://127.0.0.1:8000",
+  "http://localhost:8001",
+  "http://localhost:8000",
+];
+
+const isHttpServed = typeof window !== "undefined"
+  && window.location && (window.location.protocol === "http:" || window.location.protocol === "https:");
+
+const API_CANDIDATES = isHttpServed
+  ? [PROXIED_API_BASE, ...DIRECT_API_CANDIDATES]
+  : DIRECT_API_CANDIDATES;
+
+const savedApiBase = localStorage.getItem("aq_api_base") || "";
+let API_BASE = savedApiBase || API_CANDIDATES[0];
+// Old saved values pinned to :8000 should be ignored once we are on the
+// merged origin — they would bypass the reverse proxy.
+if (isHttpServed && savedApiBase && savedApiBase.includes(":8000")) {
+  API_BASE = PROXIED_API_BASE;
+}
+
+const TEMPLATE_OPTIONS = [
+  ["after_pay", "After Pay"],
+  ["pre_pay", "Pre Pay"],
+  ["savola", "Savola"],
+  ["pre_savola", "Pre Savola"],
+  ["crispy", "Crispy"],
+  ["santia", "Santia"],
+  ["free_lancer", "Freelancer"],
+];
+
+const STATUSES = [
+  "NEW",
+  "IN PROGRESS",
+  "SIGNED",
+  "SENT TO VENDOR",
+  "COMPLETED",
+  "DONE",
+  "DELIVERED",
+  "ON HOLD",
+  "CANCELLED",
+  "PAYMENT PENDING",
+  "DRAFT",
+];
+
+const PLATFORM_OPTIONS = [
+  { key: "tiktok", label: "تيك توك" },
+  { key: "instagram", label: "إنستغرام" },
+  { key: "snapchat", label: "سناب شات" },
+  { key: "youtube", label: "يوتيوب" },
+  { key: "kick", label: "كيك" },
+];
+
+// ─── Input sanitisation ─────────────────────────────────────────────────────
+// Strip HTML/script tags from any user-supplied string before sending it
+// to the backend. Prevents stored-XSS if a value is later rendered in
+// another view or exported to a document.
+function safeText(str) {
+  if (typeof str !== "string") return str;
+  return str.replace(/<[^>]*>/g, "").trim();
+}
+
+// ─── Skeleton loading placeholders ──────────────────────────────────────────
+// Show shimmer placeholders while data loads, preventing white-page flash.
+function skeletonCards(count = 3) {
+  return Array.from({ length: count }, () =>
+    `<div class="skeleton skeleton-card"></div>`
+  ).join("");
+}
+function skeletonLines(count = 4) {
+  const widths = ["long", "medium", "short", "long", "medium"];
+  return Array.from({ length: count }, (_, i) =>
+    `<div class="skeleton skeleton-line ${widths[i % widths.length]}"></div>`
+  ).join("");
+}
+function skeletonRows(count = 3) {
+  return Array.from({ length: count }, () =>
+    `<div class="skeleton-row">
+       <div class="skeleton skeleton-card" style="height:80px"></div>
+       <div class="skeleton skeleton-card" style="height:80px"></div>
+       <div class="skeleton skeleton-card" style="height:80px"></div>
+     </div>`
+  ).join("");
+}
+
+// Token may live in localStorage (remember me) or sessionStorage (this tab only).
+// Always check both so a refresh in either mode keeps you signed in.
+function readStoredToken() {
+  try {
+    return (
+      localStorage.getItem("aq_token") ||
+      sessionStorage.getItem("aq_token") ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+function storeToken(token, remember) {
+  try {
+    if (remember) {
+      localStorage.setItem("aq_token", token);
+      sessionStorage.removeItem("aq_token");
+    } else {
+      sessionStorage.setItem("aq_token", token);
+      localStorage.removeItem("aq_token");
+    }
+  } catch {}
+}
+function clearStoredToken() {
+  try { localStorage.removeItem("aq_token"); } catch {}
+  try { sessionStorage.removeItem("aq_token"); } catch {}
+}
+
+const state = {
+  token: readStoredToken(),
+  user: null,
+  view: localStorage.getItem("aq_view") || "dashboard",
+  selectedTaskId: localStorage.getItem("aq_selected_task") || "",
+  tasks: [],
+  subtasks: [],
+  vendors: [],
+  templates: [],
+  contracts: [],
+  settings: [],
+  users: [],
+  audit: [],
+  backups: [],
+  pendingVendors: [],
+  pendingClients: [],
+  expiryAlerts: [],
+  clients: [],
+  clientBrands: [],
+  selectedClientId: localStorage.getItem("aq_selected_client") || "",
+  clientSearch: "",
+  clientMode: false,
+  search: "",
+  taskLimit: Number(localStorage.getItem("aq_task_limit") || 10),
+  vendorSearch: "",
+  selectedVendorId: localStorage.getItem("aq_selected_vendor") || "",
+  selectedVendorLicense: "",
+  // Subtask IDs the user has checked in the Tasks view; cleared whenever
+  // the selected task changes.
+  selectedSubtaskIds: new Set(),
+  selectedBankId: "",
+  pendingRequests: 0,
+};
+
+const els = {
+  apiStatus: document.querySelector("#api-status"),
+  apiUrl: document.querySelector("#api-url"),
+  contentTitle: document.querySelector("#view-title"),
+  contentSubtitle: document.querySelector("#view-subtitle"),
+  dashboard: document.querySelector("#dashboard-view"),
+  loginView: document.querySelector("#login-view"),
+  loginForm: document.querySelector("#login-form"),
+  signupButton: document.querySelector("#signup-button"),
+  logoutButton: document.querySelector("#logout-button"),
+  refreshButton: document.querySelector("#refresh-button"),
+  userRole: document.querySelector("#user-role"),
+  viewRoot: document.querySelector("#view-root"),
+  toast: document.querySelector("#toast"),
+  progressBar: document.querySelector("#progress-bar"),
+};
+
+function authHeaders(json = true) {
+  const result = {};
+  if (json) result["Content-Type"] = "application/json";
+  if (state.token) result.Authorization = `Bearer ${state.token}`;
+  return result;
+}
+
+// ─── Polished progress bar ──────────────────────────────────────────────────
+// Sweeps to 90% fast, then crawls. Snaps to 100% when all requests finish.
+let _progressTimer = null;
+let _progressPct = 0;
+
+function setBusy(isBusy) {
+  state.pendingRequests += isBusy ? 1 : -1;
+  state.pendingRequests = Math.max(0, state.pendingRequests);
+  const bar = els.progressBar;
+  const busy = state.pendingRequests > 0;
+  document.body.classList.toggle("is-busy", busy);
+
+  if (busy && !_progressTimer) {
+    _progressPct = 0;
+    bar?.classList.add("active");
+    bar?.classList.remove("done");
+    // Sweep to 90% rapidly, then crawl
+    _progressTimer = setInterval(() => {
+      if (_progressPct < 70) _progressPct += 8;
+      else if (_progressPct < 90) _progressPct += 2;
+      else if (_progressPct < 95) _progressPct += 0.3;
+      if (bar) bar.style.setProperty("--prog", `${_progressPct}%`);
+    }, 80);
+  }
+  if (!busy && _progressTimer) {
+    clearInterval(_progressTimer);
+    _progressTimer = null;
+    if (bar) {
+      bar.style.setProperty("--prog", "100%");
+      bar.classList.add("done");
+      setTimeout(() => {
+        bar.classList.remove("active", "done");
+        bar.style.setProperty("--prog", "0%");
+        _progressPct = 0;
+      }, 500);
+    }
+  }
+}
+
+function setButtonLoading(button, isLoading) {
+  if (!button) return;
+  if (isLoading) {
+    if (!button.dataset.originalText) button.dataset.originalText = button.textContent.trim();
+    button.classList.add("is-loading");
+    button.disabled = true;
+  } else {
+    button.classList.remove("is-loading");
+    button.disabled = false;
+    if (button.dataset.originalText) {
+      button.textContent = button.dataset.originalText;
+      delete button.dataset.originalText;
+    }
+  }
+}
+
+async function api(path, options = {}) {
+  const useJson = options.body !== undefined && !(options.body instanceof FormData);
+  setBusy(true);
+  const buildInit = () => ({
+    ...options,
+    headers: {
+      ...authHeaders(useJson),
+      ...(options.headers || {}),
+    },
+  });
+  try {
+    let response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, buildInit());
+    } catch (networkError) {
+      // Browser-level fetch failure: server down, CORS, stale cached API base, etc.
+      // Re-probe the candidate list synchronously and retry once if a different
+      // URL turns out to be reachable. This self-heals when localStorage holds
+      // a stale port (e.g. 8001 left over from a previous run).
+      const previous = API_BASE;
+      const recovered = await checkHealth().catch(() => false);
+      if (recovered && API_BASE !== previous) {
+        try {
+          response = await fetch(`${API_BASE}${path}`, buildInit());
+        } catch (retryError) {
+          throw new Error(
+            `Cannot reach backend at ${API_BASE}. Is uvicorn running on port 8000? (${retryError.message})`,
+          );
+        }
+      } else {
+        throw new Error(
+          `Cannot reach backend at ${API_BASE}. Is uvicorn running on port 8000? ` +
+          `(${networkError.message})`,
+        );
+      }
+    }
+
+    if (response.status === 204) return null;
+
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+
+    if (!response.ok) {
+      // Auto-logout on 401 so a stale token doesn't keep producing confusing errors.
+      if (response.status === 401 && state.token) {
+        clearStoredToken();
+        state.token = "";
+        state.user = null;
+        setSignedIn(false);
+        renderUser();
+        throw new Error("Session expired — please log in again.");
+      }
+      const detail = typeof data === "object" ? data.detail || JSON.stringify(data) : data;
+      throw new Error(detail || `Request failed with ${response.status}`);
+    }
+
+    return data;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function setApiBase(url) {
+  API_BASE = url;
+  localStorage.setItem("aq_api_base", url);
+  els.apiUrl.textContent = url;
+}
+
+async function checkHealth() {
+  const candidates = [API_BASE, ...API_CANDIDATES.filter((url) => url !== API_BASE)];
+
+  for (const url of candidates) {
+    try {
+      const response = await fetch(`${url}/api/health`, { cache: "no-store" });
+      if (!response.ok) throw new Error("offline");
+      setApiBase(url);
+      els.apiStatus.textContent = "API online";
+      els.apiStatus.className = "status-dot ok";
+      return true;
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  els.apiStatus.textContent = "API offline";
+  els.apiStatus.className = "status-dot error";
+  els.apiUrl.textContent = "Backend not reachable";
+  return false;
+}
+
+function showToast(message, type = "") {
+  els.toast.textContent = message;
+  els.toast.className = `toast ${type}`.trim();
+  window.clearTimeout(showToast.timer);
+  showToast.timer = window.setTimeout(() => els.toast.classList.add("hidden"), 3600);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function encodeAttr(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function money(value) {
+  const n = Number(String(value ?? "0").replaceAll(",", ""));
+  if (Number.isFinite(n)) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return escapeHtml(value || "0");
+}
+
+function fileSize(kb) {
+  const n = Number(kb);
+  return Number.isFinite(n) ? `${n.toLocaleString(undefined, { maximumFractionDigits: 1 })} KB` : "-";
+}
+
+function dateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function isAdmin() {
+  return state.user?.role === "admin";
+}
+
+function selectedTask() {
+  if (state.selectedTaskId === "__new__") return null;
+  return state.tasks.find((task) => task.id === state.selectedTaskId) || state.tasks[0] || null;
+}
+
+function selectedVendor() {
+  // Returns null when nothing is explicitly selected. Do NOT fall back to
+  // state.vendors[0] — the right-side detail panel must stay blank until the
+  // user clicks a vendor.
+  if (!state.selectedVendorId) return null;
+  return state.vendors.find((vendor) => String(vendor.id) === String(state.selectedVendorId)) || null;
+}
+
+function selectedClient() {
+  if (!state.selectedClientId) return null;
+  return state.clients.find((c) => String(c.id) === String(state.selectedClientId)) || null;
+}
+
+function findVendorByLicense(license) {
+  const value = String(license || "").trim().toLowerCase();
+  if (!value) return null;
+  return state.vendors.find((vendor) => String(vendor.license_number || "").trim().toLowerCase() === value) || null;
+}
+
+function findBank(vendor, bankIdOrIban) {
+  const value = String(bankIdOrIban || "");
+  return (vendor?.bank_accounts || []).find((bank) => String(bank.id) === value || String(bank.iban) === value) || null;
+}
+
+function limitOptions(selected = state.taskLimit) {
+  return [5, 10, 25, 50, 100, 0].map((value) => {
+    const label = value === 0 ? "All" : String(value);
+    return `<option value="${value}" ${Number(selected) === value ? "selected" : ""}>${label}</option>`;
+  }).join("");
+}
+
+function platformLabel(keyOrLabel) {
+  const value = String(keyOrLabel || "").trim().toLowerCase();
+  return PLATFORM_OPTIONS.find((platform) => platform.key === value)?.label || keyOrLabel;
+}
+
+function displayPlatforms(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(platformLabel)
+    .join(", ");
+}
+
+function setSignedIn(isSignedIn) {
+  els.loginView.classList.toggle("hidden", isSignedIn);
+  els.dashboard.classList.toggle("hidden", !isSignedIn);
+  els.logoutButton.classList.toggle("hidden", !isSignedIn);
+  els.refreshButton.disabled = !isSignedIn;
+  // When signed out, hide the dashboard chrome (sidebar + topbar) so the
+  // auth cards have the full viewport — same shape as the PM dashboard's
+  // login page.
+  document.body.classList.toggle("is-auth", !isSignedIn);
+}
+
+function renderUser() {
+  if (!state.user) {
+    els.userRole.textContent = "Signed out";
+    return;
+  }
+  els.userRole.textContent = `${state.user.full_name || state.user.username} / ${state.user.role}`;
+}
+
+function statusClass(status) {
+  const value = String(status || "").toUpperCase();
+  if (["COMPLETED", "DONE", "DELIVERED", "SIGNED"].includes(value)) return "done";
+  if (["ON HOLD", "CANCELLED"].includes(value)) return "hold";
+  if (["PAYMENT PENDING", "SENT TO VENDOR"].includes(value)) return "warn";
+  return "";
+}
+
+function pill(label, cls = "") {
+  return `<span class="status-pill ${cls}">${escapeHtml(label || "")}</span>`;
+}
+
+function cardMetric(label, value, hint = "") {
+  return `
+    <div class="metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
+    </div>
+  `;
+}
+
+function templateOptions(selected = defaultTemplateKey()) {
+  const options = state.templates.length
+    ? state.templates.map((template) => [template.key, template.display_name])
+    : TEMPLATE_OPTIONS;
+  return options.map(([value, label]) => `
+    <option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>
+  `).join("");
+}
+
+function defaultTemplateKey() {
+  return state.templates.find((template) => template.is_default)?.key
+    || state.templates[0]?.key
+    || "after_pay";
+}
+
+function statusOptions(selected = "NEW") {
+  return STATUSES.map((value) => `
+    <option value="${value}" ${value === selected ? "selected" : ""}>${value}</option>
+  `).join("");
+}
+
+function setView(view) {
+  state.view = view;
+  localStorage.setItem("aq_view", view);
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.view === view);
+  });
+  renderCurrentView();
+}
+
+async function refreshAll() {
+  const online = await checkHealth();
+  if (!online) throw new Error("Backend is not reachable");
+
+  // Show skeleton placeholders while bulk-loading data
+  if (els.viewRoot && !state.tasks.length) {
+    els.viewRoot.innerHTML = `<div style="padding:1rem">${skeletonCards(2)}${skeletonLines(4)}</div>`;
+  }
+
+  await Promise.all([
+    loadTasks(),
+    loadVendors({ quiet: true }),
+    loadTemplates({ quiet: true }),
+    loadContracts({ quiet: true }),
+    loadSettings({ quiet: true }),
+    loadClients(),
+  ]);
+
+  if (isAdmin()) {
+    await Promise.all([
+      loadAdminData({ quiet: true }),
+      loadPendingData({ quiet: true }),
+    ]);
+  }
+}
+
+async function loadTasks() {
+  state.tasks = await api("/api/tasks/", { body: undefined });
+  if (!state.selectedTaskId && state.tasks[0]) {
+    state.selectedTaskId = state.tasks[0].id;
+    localStorage.setItem("aq_selected_task", state.selectedTaskId);
+  }
+  return state.tasks;
+}
+
+async function loadSelectedSubtasks() {
+  const task = selectedTask();
+  if (!task) {
+    state.subtasks = [];
+    return [];
+  }
+  state.subtasks = await api(`/api/subtasks/task/${encodeURIComponent(task.id)}`, { body: undefined });
+  return state.subtasks;
+}
+
+async function loadVendors() {
+  state.vendors = await api("/api/vendors/", { body: undefined });
+  return state.vendors;
+}
+
+async function loadTemplates() {
+  state.templates = await api("/api/templates/", { body: undefined });
+  return state.templates;
+}
+
+async function loadContracts() {
+  state.contracts = await api("/api/contracts/archive", { body: undefined });
+  return state.contracts;
+}
+
+async function loadClients() {
+  try {
+    state.clients = await api("/api/vendors/clients", { body: undefined });
+    if (!Array.isArray(state.clients)) state.clients = [];
+  } catch (err) {
+    console.error("loadClients failed:", err);
+    state.clients = [];
+  }
+  return state.clients;
+}
+
+async function loadClientBrands(clientId) {
+  try {
+    state.clientBrands = await api(`/api/brands?client_id=${encodeURIComponent(clientId)}`, { body: undefined });
+  } catch {
+    state.clientBrands = [];
+  }
+  return state.clientBrands;
+}
+
+async function loadSettings() {
+  try {
+    state.settings = await api("/api/settings/", { body: undefined });
+  } catch {
+    state.settings = [];
+  }
+  return state.settings;
+}
+
+async function loadAdminData() {
+  const results = await Promise.allSettled([
+    api("/api/auth/users", { body: undefined }),
+    api("/api/audit/", { body: undefined }),
+    api("/api/settings/backups/list", { body: undefined }),
+  ]);
+  state.users = results[0].status === "fulfilled" ? results[0].value : [];
+  state.audit = results[1].status === "fulfilled" ? results[1].value : [];
+  state.backups = results[2].status === "fulfilled" ? results[2].value : [];
+}
+
+async function loadPendingData() {
+  const results = await Promise.allSettled([
+    api("/api/vendors/pending/vendors", { body: undefined }),
+    api("/api/vendors/pending/clients", { body: undefined }),
+    api("/api/vendors/expiry/alerts", { body: undefined }),
+  ]);
+  state.pendingVendors = results[0].status === "fulfilled" ? results[0].value : [];
+  state.pendingClients = results[1].status === "fulfilled" ? results[1].value : [];
+  state.expiryAlerts = results[2].status === "fulfilled" ? results[2].value : [];
+}
+
+function updateHeader(title, subtitle) {
+  els.contentTitle.textContent = title;
+  els.contentSubtitle.textContent = subtitle;
+}
+
+function renderCurrentView() {
+  if (!state.user) return;
+
+  const renderers = {
+    dashboard: renderDashboard,
+    tasks: renderTasksView,
+    vendors: renderVendorsView,
+    contracts: renderContractsView,
+    templates: renderTemplatesView,
+    settings: renderSettingsView,
+  };
+
+  (renderers[state.view] || renderDashboard)();
+}
+
+function renderDashboard() {
+  updateHeader("Operations", "Contract pipeline, payment progress, and generation readiness");
+  const doneSet = new Set(["COMPLETED", "DONE", "DELIVERED", "SIGNED"]);
+  const totalAmount = state.tasks.reduce((sum, task) => sum + (Number(String(task.amount || "0").replaceAll(",", "")) || 0), 0);
+  const active = state.tasks.filter((task) => !doneSet.has(String(task.status).toUpperCase())).length;
+  const completed = state.tasks.length - active;
+  const missingTemplates = state.templates.filter((template) => !template.file_exists).length;
+
+  els.viewRoot.innerHTML = `
+    <section class="hero-panel">
+      <div>
+        <p class="eyebrow">AQ Creativity Contract Suite</p>
+        <h2>Live contract operations</h2>
+        <p>Tasks, vendors, template health, contract generation, and audit-ready administration in one workspace.</p>
+      </div>
+      <div class="hero-actions">
+        <button class="primary-button" type="button" data-action="go-tasks">New Task</button>
+        <button class="secondary-button" type="button" data-action="go-contracts">Generate</button>
+      </div>
+    </section>
+
+    <section class="stats-row">
+      ${cardMetric("Total Tasks", state.tasks.length)}
+      ${cardMetric("Active", active)}
+      ${cardMetric("Completed", completed)}
+      ${cardMetric("Total Amount", money(totalAmount))}
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>Recent Tasks</h2>
+          <button class="ghost-light" type="button" data-action="go-tasks">Open</button>
+        </div>
+        ${renderTaskTable(state.tasks.slice(0, 8), true)}
+      </div>
+
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>Readiness</h2>
+        </div>
+        <div class="readiness-list">
+          <div><span>Templates</span>${pill(missingTemplates ? `${missingTemplates} missing` : "Ready", missingTemplates ? "warn" : "done")}</div>
+          <div><span>Vendors</span><strong>${state.vendors.length}</strong></div>
+          <div><span>Archive</span><strong>${state.contracts.length}</strong></div>
+          <div><span>User Role</span>${pill(state.user.role, isAdmin() ? "done" : "")}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTaskTable(tasks, compact = false) {
+  const rows = tasks.map((task) => `
+    <tr class="${task.id === state.selectedTaskId ? "selected-row" : ""}" data-task-id="${encodeAttr(task.id)}">
+      <td>${escapeHtml(task.id)}</td>
+      <td>${escapeHtml(task.brand)}</td>
+      <td>${money(task.amount)}</td>
+      <td>${pill(task.status || "NEW", statusClass(task.status))}</td>
+      ${compact ? "" : `<td>${escapeHtml(task.contract_type || "after_pay")}</td>`}
+      <td>${Number(task.subtask_count || 0)} / ${Number(task.paid_count || 0)}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Brand</th>
+            <th>Amount</th>
+            <th>Status</th>
+            ${compact ? "" : "<th>Type</th>"}
+            <th>Subtasks</th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="${compact ? 5 : 6}">No tasks found</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function renderTasksView() {
+  updateHeader("Tasks", "Campaigns, subtasks, payment tracking, and generation prep");
+  // Show skeleton while loading subtasks
+  if (!state.subtasks.length && state.selectedTaskId) {
+    els.viewRoot.innerHTML = `<div style="padding:1rem">${skeletonLines(3)}${skeletonRows(2)}</div>`;
+  }
+  await loadSelectedSubtasks().catch(() => []);
+  const task = selectedTask();
+  const activeTaskTemplate = state.templates.some((template) => template.key === task?.contract_type)
+    ? task.contract_type
+    : defaultTemplateKey();
+  const query = state.search.trim().toLowerCase();
+  const tasks = state.tasks.filter((item) => {
+    return !query
+      || String(item.brand || "").toLowerCase().includes(query)
+      || String(item.id || "").toLowerCase().includes(query);
+  });
+  const visibleTasks = state.taskLimit ? tasks.slice(0, Math.max(5, state.taskLimit)) : tasks;
+
+  els.viewRoot.innerHTML = `
+    <section class="split-workspace">
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>Contract Tasks</h2>
+          <div class="toolbar">
+            <input id="task-search" placeholder="Search brand or ID" value="${encodeAttr(state.search)}" />
+            <label class="compact-label">Show
+              <select id="task-limit">${limitOptions()}</select>
+            </label>
+            <button class="secondary-button" type="button" data-action="duplicate-task" ${task ? "" : "disabled"}>Duplicate</button>
+            <button class="danger-button" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
+          </div>
+        </div>
+        ${renderTaskTable(visibleTasks)}
+        <p class="table-note">Showing ${visibleTasks.length} of ${tasks.length} matching tasks. Minimum page size is 5.</p>
+      </div>
+
+      <form id="task-form" class="side-panel">
+        <h2>${task ? "Edit Selected Task" : "New Task"}</h2>
+        <input type="hidden" id="task-id" value="${encodeAttr(task?.id || "")}" />
+        <label>Brand <input id="task-brand" required value="${encodeAttr(task?.brand || "")}" /></label>
+        <label>Amount <input id="task-amount" inputmode="decimal" readonly value="${encodeAttr(task?.amount || "0.00")}" /></label>
+        <p class="form-hint">Amount is calculated automatically from subtask prices.</p>
+        <label>Contract Type <select id="task-type">${templateOptions(activeTaskTemplate)}</select></label>
+        <label>Status <select id="task-status">${statusOptions(task?.status || "NEW")}</select></label>
+        <label>End Date <input id="task-end-date" type="date" value="${encodeAttr((task?.end_date || "").slice(0, 10))}" /></label>
+        <label>Notes <textarea id="task-notes" rows="4">${escapeHtml(task?.notes || "")}</textarea></label>
+          <button class="primary-button" type="submit">${task ? "Save Task" : "Create Task"}</button>
+        <button class="secondary-button" type="button" data-action="clear-task-form">New Blank Task</button>
+      </form>
+    </section>
+
+    <section class="glass-panel subtask-panel">
+      <div class="panel-header">
+        <h2>${state.clientMode ? "Client Contract" : "Subtasks"} ${task ? `/ ${escapeHtml(task.brand)}` : ""}</h2>
+        <div class="toolbar">
+          ${state.clientMode ? `
+            <button class="primary-button" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract" style="background:#7c3aed;border-color:#7c3aed">Generate Client Contract</button>
+            <button class="secondary-button" type="button" data-action="toggle-client-mode" title="Switch back to vendor subtasks">Vendor Mode</button>
+          ` : `
+            <button class="secondary-button" type="button" data-action="generate-selected" ${task && state.subtasks.length ? "" : "disabled"} title="Generate only the subtasks you ticked">Generate selected</button>
+            <button class="primary-button" type="button" data-action="generate-all" ${task && state.subtasks.length ? "" : "disabled"} title="Generate every subtask under this task">Generate ALL</button>
+            <button class="secondary-button" type="button" data-action="toggle-client-mode" ${task ? "" : "disabled"} title="Switch to client contract mode" style="background:#7c3aed;color:#fff;border-color:#7c3aed">Client Contract</button>
+          `}
+        </div>
+      </div>
+      <div class="subtask-grid">
+        <div>${renderSubtaskTable()}</div>
+        ${state.clientMode ? `
+        <div class="inline-form" style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:10px;padding:1rem">
+          <h3 style="color:#7c3aed">Client Contract Settings</h3>
+          <label>Client
+            <select id="cc-client-select">
+              <option value="">-- select client --</option>
+              ${state.clients.map((c) => `<option value="${encodeAttr(c.id)}">${escapeHtml(c.company_name || c.name || "")}</option>`).join("")}
+            </select>
+          </label>
+          <div id="cc-client-details" style="font-size:0.85em;color:#aaa;line-height:1.7;margin:0.5rem 0"></div>
+          <label>Brand
+            <select id="cc-brand-select"><option value="">-- select client first --</option></select>
+          </label>
+          <label>Total Amount
+            <input id="cc-total-amount" type="text" value="${encodeAttr(task?.amount || "0")}" />
+          </label>
+          <p class="form-hint">Select a client above, then click "Generate Client Contract" in the toolbar. The influencer table is built from the subtasks listed on the left.</p>
+        </div>
+        ` : `
+        <form id="subtask-form" class="inline-form">
+          <h3>Add Vendor Subtask</h3>
+          <label>License Number <input id="sub-license" list="vendor-license-list" placeholder="Type vendor license" /></label>
+          <datalist id="vendor-license-list">
+            ${state.vendors.map((vendor) => `<option value="${encodeAttr(vendor.license_number)}">${escapeHtml(vendor.name)}</option>`).join("")}
+          </datalist>
+          <label>Vendor Name <input id="sub-vendor" readonly required placeholder="Autofills from license" /></label>
+          <label>IBAN
+            <select id="sub-iban" disabled>
+              <option value="">Choose vendor license first</option>
+            </select>
+          </label>
+          <div id="sub-bank-preview" class="bank-preview">
+            <strong>Bank information</strong>
+            <span>Choose a vendor license and IBAN.</span>
+          </div>
+          <div class="field-block">
+            <span class="field-label">Platforms</span>
+            <details class="platform-picker">
+              <summary>Choose platforms</summary>
+              <div class="platform-options">
+                ${PLATFORM_OPTIONS.map((platform) => `
+                  <label class="checkbox-row">
+                    <input type="checkbox" class="platform-checkbox" value="${platform.key}" />
+                    <span>${platform.label}</span>
+                  </label>
+                `).join("")}
+              </div>
+            </details>
+          </div>
+          <div id="platform-handles" class="platform-handles">
+            <p class="form-hint">Select a platform to add its handle.</p>
+          </div>
+          <input id="sub-channel" type="hidden" />
+          <input id="sub-platforms" type="hidden" />
+          <label>Ad Type
+            <select id="sub-ad-type">
+              <option>Store Visit</option>
+              <option>Home Ad</option>
+              <option>Multi Service</option>
+            </select>
+          </label>
+          <label>Qty <input id="sub-qty" value="1" /></label>
+          <label>Price <input id="sub-price" value="0" /></label>
+          <label>Details <textarea id="sub-details" rows="3"></textarea></label>
+          <button class="primary-button" type="submit" ${task ? "" : "disabled"}>Add Subtask</button>
+        </form>
+        `}
+      </div>
+    </section>
+  `;
+}
+
+function renderSubtaskTable() {
+  const selected = state.selectedSubtaskIds || (state.selectedSubtaskIds = new Set());
+  const allChecked = state.subtasks.length > 0
+    && state.subtasks.every((s) => selected.has(String(s.id)));
+
+  const rows = state.subtasks.map((sub) => {
+    const checked = selected.has(String(sub.id)) ? "checked" : "";
+    return `
+      <tr>
+        <td><input type="checkbox" class="subtask-pick" data-id="${sub.id}" ${checked} /></td>
+        <td>${escapeHtml(sub.lic_id || sub.id)}</td>
+        <td>${escapeHtml(sub.vendor)}</td>
+        <td>${escapeHtml(displayPlatforms(sub.platforms))}</td>
+        <td>${escapeHtml(sub.ad_type)} x ${escapeHtml(sub.qty)}</td>
+        <td>${money(sub.price)}</td>
+        <td>${sub.paid_at ? pill("Paid", "done") : pill("Unpaid", "warn")}</td>
+        <td class="actions-cell">
+          <button class="mini-button" type="button" data-action="generate-one" data-id="${sub.id}" title="Generate contract for just this subtask">Generate</button>
+          <button class="mini-button" type="button" data-action="mark-paid" data-id="${sub.id}">${sub.paid_at ? "Unmark" : "Paid"}</button>
+          <button class="mini-button danger-text" type="button" data-action="delete-subtask" data-id="${sub.id}">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="subtask-pick-all" ${allChecked ? "checked" : ""} title="Select all" /></th>
+            <th>LIC</th>
+            <th>Vendor</th>
+            <th>Platforms</th>
+            <th>Ad</th>
+            <th>Price</th>
+            <th>Payment</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="8">No subtasks for this task</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderVendorsView() {
+  updateHeader("Vendors & Clients", "Manage vendors, clients, bank accounts, and onboarding");
+  const vendorQuery = state.vendorSearch.trim().toLowerCase();
+  const filteredVendors = state.vendors.filter((vendor) => {
+    return !vendorQuery
+      || String(vendor.name || "").toLowerCase().includes(vendorQuery)
+      || String(vendor.license_number || "").toLowerCase().includes(vendorQuery)
+      || (vendor.bank_accounts || []).some((bank) => String(bank.iban || "").toLowerCase().includes(vendorQuery));
+  });
+  // Right-side detail panel stays blank until the user explicitly picks a
+  // vendor. If a stale localStorage id no longer matches any vendor (e.g.,
+  // after a DB reset), clear it so the UI doesn't show ghost data.
+  if (state.selectedVendorId
+      && !state.vendors.find((v) => String(v.id) === String(state.selectedVendorId))) {
+    state.selectedVendorId = "";
+    state.selectedBankId = "";
+    localStorage.removeItem("aq_selected_vendor");
+  }
+  const vendor = selectedVendor();
+  const selectedBank = vendor ? (findBank(vendor, state.selectedBankId) || (vendor.bank_accounts || [])[0] || null) : null;
+  if (selectedBank) state.selectedBankId = String(selectedBank.id);
+  else state.selectedBankId = "";
+  // When no vendor is selected, lead the dropdown with a placeholder so the
+  // right-side panel does not show a vendor that the user did not pick.
+  const placeholderOption = `<option value="" ${vendor ? "" : "selected"} disabled>Choose a vendor...</option>`;
+  const vendorOptions = placeholderOption + state.vendors.map((item) => `<option value="${item.id}" ${String(item.id) === String(vendor?.id) ? "selected" : ""}>${escapeHtml(item.name)} / ${escapeHtml(item.license_number)}</option>`).join("");
+  const bankOptions = (vendor?.bank_accounts || []).map((bank) => `
+    <option value="${bank.id}" ${String(bank.id) === String(selectedBank?.id) ? "selected" : ""}>${escapeHtml(bank.iban)} / ${escapeHtml(bank.bank_name)}</option>
+  `).join("");
+  const vendorCards = filteredVendors.map((item) => `
+    <article class="vendor-card ${String(item.id) === String(vendor?.id) ? "selected-card" : ""}" data-vendor-id="${item.id}">
+      <div>
+        <h3>${escapeHtml(item.name)}</h3>
+        <p>${escapeHtml(item.license_number || "No license")}</p>
+      </div>
+      <span>${item.bank_accounts?.length || 0} bank</span>
+      ${(item.bank_accounts || []).slice(0, 3).map((bank) => `
+        <div class="bank-line">
+          <strong>${escapeHtml(bank.bank_name)}</strong>
+          <small>${escapeHtml(bank.iban)}</small>
+        </div>
+      `).join("")}
+    </article>
+  `).join("");
+
+  // ── Client directory data ──
+  const clientQuery = state.clientSearch.trim().toLowerCase();
+  const filteredClients = state.clients.filter((c) => {
+    return !clientQuery
+      || String(c.company_name || c.name || "").toLowerCase().includes(clientQuery)
+      || String(c.cr_number || "").toLowerCase().includes(clientQuery)
+      || String(c.signatory_name || "").toLowerCase().includes(clientQuery);
+  });
+  if (state.selectedClientId
+      && !state.clients.find((c) => String(c.id) === String(state.selectedClientId))) {
+    state.selectedClientId = "";
+    localStorage.removeItem("aq_selected_client");
+  }
+  const client = selectedClient();
+  const clientCards = filteredClients.map((c) => `
+    <article class="vendor-card ${String(c.id) === String(client?.id) ? "selected-card" : ""}" data-client-id="${c.id}">
+      <div>
+        <h3>${escapeHtml(c.company_name || c.name || "")}</h3>
+        <p>${escapeHtml(c.cr_number || "No CR")}</p>
+      </div>
+      <span>${escapeHtml(c.signatory_name || "")}</span>
+      ${c.city ? `<small>${escapeHtml(c.city)}${c.country ? ", " + escapeHtml(c.country) : ""}</small>` : ""}
+    </article>
+  `).join("");
+
+  els.viewRoot.innerHTML = `
+    <section class="stats-row">
+      ${cardMetric("Approved Vendors", state.vendors.length)}
+      ${cardMetric("Approved Clients", state.clients.length)}
+      ${cardMetric("Pending Vendors", state.pendingVendors.length, isAdmin() ? "" : "admin")}
+      ${cardMetric("Pending Clients", state.pendingClients.length, isAdmin() ? "" : "admin")}
+      ${cardMetric("Expiry Alerts", state.expiryAlerts.length, isAdmin() ? "" : "admin")}
+    </section>
+
+    <section class="split-workspace">
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>Vendor Directory</h2>
+          <div class="toolbar">
+            <input id="vendor-search" placeholder="Search vendor, license, IBAN" value="${encodeAttr(state.vendorSearch)}" />
+            <button class="secondary-button" type="button" data-action="load-vendors">Refresh</button>
+          </div>
+        </div>
+        <div class="card-grid">${vendorCards || `<p class="empty-note">No vendors found.</p>`}</div>
+      </div>
+
+      <div class="form-stack">
+        <form id="vendor-edit-form" class="side-panel">
+          <h2>Edit Vendor</h2>
+          <label>Vendor <select id="vendor-edit-select" required>${vendorOptions}</select></label>
+          <label>Name <input id="vendor-edit-name" required value="${encodeAttr(vendor?.name || "")}" /></label>
+          <label>License Number <input id="vendor-edit-license" required value="${encodeAttr(vendor?.license_number || "")}" /></label>
+          <div class="button-row">
+            <button class="primary-button" type="submit" ${vendor ? "" : "disabled"}>Save Vendor</button>
+            <button class="danger-button" type="button" data-action="delete-vendor" ${vendor ? "" : "disabled"}>Delete Vendor</button>
+          </div>
+          <p class="form-hint">Use this screen when vendor master data needs corrections.</p>
+        </form>
+
+        <form id="bank-edit-form" class="side-panel">
+          <h2>Edit Bank Account</h2>
+          <label>IBAN <select id="bank-edit-select" ${selectedBank ? "" : "disabled"}>${bankOptions || `<option value="">No bank accounts</option>`}</select></label>
+          <label>Bank Name <input id="bank-edit-name" required value="${encodeAttr(selectedBank?.bank_name || "")}" /></label>
+          <label>Account Name <input id="bank-edit-account-name" required value="${encodeAttr(selectedBank?.account_name || "")}" /></label>
+          <label>IBAN Value <input id="bank-edit-iban" required value="${encodeAttr(selectedBank?.iban || "")}" /></label>
+          <label>Account Number <input id="bank-edit-account-number" value="${encodeAttr(selectedBank?.account_number || "")}" /></label>
+          <label>SWIFT <input id="bank-edit-swift" value="${encodeAttr(selectedBank?.swift_code || "")}" /></label>
+          <button class="primary-button" type="submit" ${selectedBank ? "" : "disabled"}>Save Bank</button>
+        </form>
+
+        <form id="vendor-form" class="side-panel">
+          <h2>New Vendor</h2>
+          <label>Name <input id="vendor-name" required /></label>
+          <label>License Number <input id="vendor-license" required /></label>
+          <button class="primary-button" type="submit">Create Vendor</button>
+        </form>
+
+        <form id="bank-form" class="side-panel">
+          <h2>Add Bank Account</h2>
+          <label>Vendor <select id="bank-vendor" required>${vendorOptions}</select></label>
+          <label>Bank Name <input id="bank-name" required /></label>
+          <label>Account Name <input id="bank-account-name" required /></label>
+          <label>IBAN <input id="bank-iban" required /></label>
+          <label>Account Number <input id="bank-account-number" /></label>
+          <label>SWIFT <input id="bank-swift" /></label>
+          <button class="primary-button" type="submit" ${state.vendors.length ? "" : "disabled"}>Add Bank</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="split-workspace" style="margin-top:1.5rem">
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>Client Directory</h2>
+          <div class="toolbar">
+            <input id="client-search" placeholder="Search company, CR, signatory" value="${encodeAttr(state.clientSearch)}" />
+            <button class="secondary-button" type="button" data-action="refresh-clients">Refresh</button>
+          </div>
+        </div>
+        <div class="card-grid">${clientCards || `<p class="empty-note">No clients found.</p>`}</div>
+      </div>
+
+      <div class="form-stack">
+        <form id="client-edit-form" class="side-panel">
+          <h2>${client ? "Edit Client" : "Select a Client"}</h2>
+          <label>Company Name <input id="client-edit-company" required value="${encodeAttr(client?.company_name || client?.name || "")}" ${client ? "" : "disabled"} /></label>
+          <label>CR Number <input id="client-edit-cr" value="${encodeAttr(client?.cr_number || "")}" ${client ? "" : "disabled"} /></label>
+          <label>VAT Number <input id="client-edit-vat" value="${encodeAttr(client?.vat_number || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Signatory Name <input id="client-edit-signatory" value="${encodeAttr(client?.signatory_name || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Phone <input id="client-edit-phone" value="${encodeAttr(client?.contact_phone || client?.phone || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Email <input id="client-edit-email" type="email" value="${encodeAttr(client?.contact_email || client?.email || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Company Email <input id="client-edit-company-email" type="email" value="${encodeAttr(client?.company_email || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Street <input id="client-edit-street" value="${encodeAttr(client?.street || "")}" ${client ? "" : "disabled"} /></label>
+          <label>City <input id="client-edit-city" value="${encodeAttr(client?.city || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Postcode <input id="client-edit-postcode" value="${encodeAttr(client?.postcode || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Country <input id="client-edit-country" value="${encodeAttr(client?.country || "")}" ${client ? "" : "disabled"} /></label>
+          <label>National Address <input id="client-edit-national" value="${encodeAttr(client?.national_address || "")}" ${client ? "" : "disabled"} /></label>
+          <div class="button-row">
+            <button class="primary-button" type="submit" ${client ? "" : "disabled"}>Save Client</button>
+            <button class="danger-button" type="button" data-action="delete-client" ${client ? "" : "disabled"}>Delete Client</button>
+          </div>
+        </form>
+
+        <form id="client-form" class="side-panel">
+          <h2>New Client</h2>
+          <label>Company Name <input id="new-client-company" required /></label>
+          <label>CR Number <input id="new-client-cr" /></label>
+          <label>VAT Number <input id="new-client-vat" /></label>
+          <label>Signatory Name <input id="new-client-signatory" /></label>
+          <label>Phone <input id="new-client-phone" /></label>
+          <label>Email <input id="new-client-email" type="email" /></label>
+          <label>Company Email <input id="new-client-company-email" type="email" /></label>
+          <label>Street <input id="new-client-street" /></label>
+          <label>City <input id="new-client-city" /></label>
+          <label>Postcode <input id="new-client-postcode" /></label>
+          <label>Country <input id="new-client-country" /></label>
+          <label>National Address <input id="new-client-national" /></label>
+          <button class="primary-button" type="submit">Create Client</button>
+        </form>
+      </div>
+    </section>
+
+    ${renderPendingPanel()}
+  `;
+}
+
+function renderPendingPanel() {
+  if (!isAdmin()) {
+    return `
+      <section class="glass-panel">
+        <div class="panel-header"><h2>Onboarding Queue</h2></div>
+        <p class="empty-note">Pending vendors, clients, expiry alerts, and approval actions require an admin account.</p>
+      </section>
+    `;
+  }
+
+  const pendingVendorRows = state.pendingVendors.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.full_name)}</td>
+      <td>${escapeHtml(item.license_number)}</td>
+      <td>${escapeHtml(item.iban)}</td>
+      <td>${escapeHtml(item.platforms)}</td>
+      <td>
+        <button class="mini-button" data-action="approve-vendor" data-id="${item.id}">Approve</button>
+        <button class="mini-button danger-text" data-action="reject-vendor" data-id="${item.id}">Reject</button>
+      </td>
+    </tr>
+  `).join("");
+
+  const pendingClientRows = state.pendingClients.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.company_name)}</td>
+      <td>${escapeHtml(item.cr_number)}</td>
+      <td>${escapeHtml(item.signatory_name)}</td>
+      <td>${escapeHtml(item.email || item.company_email)}</td>
+      <td>
+        <button class="mini-button" data-action="approve-client" data-id="${item.id}">Approve</button>
+        <button class="mini-button danger-text" data-action="reject-client" data-id="${item.id}">Reject</button>
+      </td>
+    </tr>
+  `).join("");
+
+  const expiryRows = state.expiryAlerts.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.vendor_name)}</td>
+      <td>${escapeHtml(item.license_number)}</td>
+      <td>${escapeHtml(item.license_expiry)}</td>
+      <td>${pill(`${item.days_until_expiry} days`, item.urgency === "expired" ? "hold" : "warn")}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <section class="glass-panel">
+      <div class="panel-header"><h2>Onboarding Queue</h2></div>
+      <div class="queue-grid">
+        <div>
+          <h3>Pending Vendors</h3>
+          ${simpleTable(["Name", "License", "IBAN", "Platforms", "Actions"], pendingVendorRows)}
+        </div>
+        <div>
+          <h3>Pending Clients</h3>
+          ${simpleTable(["Company", "CR", "Signatory", "Email", "Actions"], pendingClientRows)}
+        </div>
+        <div>
+          <h3>Expiry Monitor</h3>
+          ${simpleTable(["Vendor", "License", "Expiry", "Urgency"], expiryRows)}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function simpleTable(headers, rows) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows || `<tr><td colspan="${headers.length}">No records</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderContractsView() {
+  updateHeader("Contracts", "Generate DOCX/PDF contracts and manage the generated archive");
+
+  // Group contracts by task_id. Layout (c): outer header shows task brand +
+  // a representative license/person; each contract sub-row labelled by
+  // brand and contract_id. Click the header to expand/collapse.
+  const expanded = state.expandedTasks || (state.expandedTasks = new Set());
+  const tasksById = new Map(state.tasks.map((t) => [String(t.id), t]));
+  const grouped = new Map();
+  state.contracts.forEach((c) => {
+    const key = c.task_id || "(no task)";
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(c);
+  });
+
+  const taskCards = Array.from(grouped.entries()).map(([taskId, contracts]) => {
+    const isOpen = expanded.has(String(taskId));
+    const task = tasksById.get(String(taskId));
+    const headerPerson =
+      contracts[0]?.vendor_name
+      || contracts[0]?.client_name
+      || task?.vendor
+      || "(unnamed)";
+    const headerLicense =
+      contracts[0]?.license_number
+      || task?.license_number
+      || "";
+    const headerBrand = task?.brand || contracts[0]?.brand_name || "";
+    const headerLabel = headerLicense
+      ? `${escapeHtml(headerPerson)} — license ${escapeHtml(headerLicense)}`
+      : escapeHtml(headerPerson);
+
+    const adminOnly = isAdmin();
+    const contractRows = isOpen ? contracts.map((c) => {
+      const hasPdf = Boolean(c.pdf_path);
+      const pdfTitle = c.pdf_error ? ` title="PDF unavailable: ${encodeAttr(c.pdf_error)}"` : "";
+      return `
+        <tr class="archive-row">
+          <td style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px">${escapeHtml(c.contract_id)}</td>
+          <td>${escapeHtml(c.brand_name)}</td>
+          <td>${money(c.amount)}</td>
+          <td>${escapeHtml(c.contract_type)}</td>
+          <td>${escapeHtml(c.generated_at)}</td>
+          <td>${hasPdf ? pill("DOCX + PDF", "done") : pill("DOCX only", "warn")}</td>
+          <td class="actions-cell">
+            ${hasPdf
+              ? `<button class="mini-button" data-action="download-pdf" data-id="${encodeAttr(c.contract_id)}">PDF</button>`
+              : `<button class="mini-button" disabled${pdfTitle}>PDF ✗</button>`}
+            <button class="mini-button" data-action="download-docx" data-id="${encodeAttr(c.contract_id)}">DOCX</button>
+            ${adminOnly
+              ? `<button class="mini-button danger" data-action="delete-contract" data-id="${encodeAttr(c.contract_id)}">Delete</button>`
+              : ""}
+          </td>
+        </tr>
+      `;
+    }).join("") : "";
+
+    return `
+      <div class="task-group ${isOpen ? "open" : ""}">
+        <div class="task-group-header" data-action="toggle-task-group" data-task-id="${encodeAttr(taskId)}">
+          <div class="task-group-title">
+            <span class="task-group-caret">${isOpen ? "▾" : "▸"}</span>
+            <strong>${headerLabel}</strong>
+            ${headerBrand ? `<span class="task-group-brand">${escapeHtml(headerBrand)}</span>` : ""}
+          </div>
+          <div class="task-group-meta">
+            <span class="task-group-count">${contracts.length} contract${contracts.length === 1 ? "" : "s"}</span>
+            <button class="mini-button" data-action="download-all-task" data-task-id="${encodeAttr(taskId)}" data-stop="1">Download all</button>
+            ${adminOnly
+              ? `<button class="mini-button danger" data-action="delete-task-contracts" data-task-id="${encodeAttr(taskId)}" data-stop="1">Delete all</button>`
+              : ""}
+          </div>
+        </div>
+        ${isOpen ? simpleTable(
+          ["Contract", "Brand", "Amount", "Type", "Generated", "Status", "Actions"],
+          contractRows,
+        ) : ""}
+      </div>
+    `;
+  }).join("");
+
+  els.viewRoot.innerHTML = `
+    <section class="stats-row">
+      ${cardMetric("Generated", state.contracts.length)}
+      ${cardMetric("Templates", state.templates.length)}
+      ${cardMetric("Tasks", state.tasks.length)}
+    </section>
+
+    <section class="glass-panel">
+      <div class="panel-header">
+        <h2>Archive</h2>
+        <button class="secondary-button" data-action="refresh-contracts" type="button">Refresh</button>
+      </div>
+      ${state.contracts.length === 0
+        ? `<p class="empty-note">No generated contracts yet.</p>`
+        : taskCards}
+    </section>
+  `;
+}
+
+function renderTemplatesView() {
+  updateHeader("Templates", "DOCX template map, file health, and upload management");
+  const uploadKey = state.templates.find((template) => !template.file_exists)?.key || defaultTemplateKey();
+  const templateCards = state.templates.map((template) => {
+    const activeFilename = template.active_filename || (template.file_exists ? template.filename : "");
+    const isLegacyFile = activeFilename && activeFilename !== template.filename;
+    return `
+      <article class="template-item">
+        <div class="template-title">
+          <h3>${escapeHtml(template.display_name)}</h3>
+          <div class="template-badges">
+            ${template.file_exists ? pill("Found", "done") : pill("Missing", "hold")}
+            ${template.is_default ? pill("Default") : ""}
+            ${template.custom ? pill("Custom") : ""}
+          </div>
+        </div>
+        <div class="template-details">
+          <span><strong>Key</strong><code>${escapeHtml(template.key)}</code></span>
+          <span><strong>Mapped file</strong>${escapeHtml(template.filename)}</span>
+          <span><strong>Active file</strong>${escapeHtml(isLegacyFile ? activeFilename : (activeFilename || "No DOCX installed"))}</span>
+          <span><strong>Size</strong>${escapeHtml(fileSize(template.size_kb))}</span>
+          <span><strong>Updated</strong>${escapeHtml(dateTime(template.updated_at))}</span>
+        </div>
+        <div class="template-actions">
+          <button class="secondary-button" data-action="set-default-template" data-key="${encodeAttr(template.key)}" type="button" ${isAdmin() && template.file_exists && !template.is_default ? "" : "disabled"}>Make Default</button>
+          <button class="secondary-button" data-action="select-template-upload" data-key="${encodeAttr(template.key)}" type="button" ${isAdmin() ? "" : "disabled"}>Replace</button>
+          <button class="danger-button" data-action="delete-template" data-key="${encodeAttr(template.key)}" type="button" ${isAdmin() ? "" : "disabled"}>Delete Slot</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  els.viewRoot.innerHTML = `
+    <section class="stats-row">
+      ${cardMetric("Templates", state.templates.length)}
+      ${cardMetric("Found", state.templates.filter((t) => t.file_exists).length)}
+      ${cardMetric("Missing", state.templates.filter((t) => !t.file_exists).length)}
+      ${cardMetric("Default", state.templates.find((t) => t.is_default)?.display_name || "-")}
+    </section>
+
+    <section class="split-workspace template-workspace">
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>Template Health</h2>
+          <button class="secondary-button" data-action="scan-templates" type="button">Scan</button>
+        </div>
+        <div class="template-list">${templateCards || `<p class="empty-note">No templates found.</p>`}</div>
+      </div>
+
+      <div class="form-stack">
+        <form id="template-upload-form" class="side-panel">
+          <h2>Add / Replace</h2>
+          <label>Template Slot <select id="upload-key">${templateOptions(uploadKey)}</select></label>
+          <label>DOCX File <input id="upload-file" type="file" accept=".docx" /></label>
+          <button class="primary-button" type="submit" ${isAdmin() ? "" : "disabled"}>Upload Template</button>
+          <p class="form-hint">${isAdmin() ? "Replaces the file inside an existing slot." : "Template changes require admin access."}</p>
+        </form>
+
+        <form id="template-create-form" class="side-panel">
+          <h2>New Slot</h2>
+          <label>Slot Name <input id="new-template-name" placeholder="Brand Contract" required /></label>
+          <label>Key <input id="new-template-key" placeholder="brand_contract" /></label>
+          <label>DOCX File <input id="new-template-file" type="file" accept=".docx" required /></label>
+          <button class="primary-button" type="submit" ${isAdmin() ? "" : "disabled"}>Create Slot</button>
+          <p class="form-hint">${isAdmin() ? "Creates a new dropdown option for contract generation." : "Creating slots requires admin access."}</p>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderSettingsView() {
+  updateHeader("Settings", "Profile, users, app settings, backups, and audit trail");
+  const settingsRows = state.settings.map((item) => `<tr><td>${escapeHtml(item.key)}</td><td>${escapeHtml(item.value)}</td></tr>`).join("");
+  const userRows = state.users.map((user) => `
+    <tr>
+      <td>${escapeHtml(user.username)}</td>
+      <td>${escapeHtml(user.full_name)}</td>
+      <td>${escapeHtml(user.email)}</td>
+      <td>${pill(user.role, user.role === "admin" ? "done" : "")}</td>
+    </tr>
+  `).join("");
+  const backupRows = state.backups.map((backup) => `
+    <tr><td>${escapeHtml(backup.filename)}</td><td>${escapeHtml(backup.size_kb)} KB</td><td>${escapeHtml(backup.created_at)}</td></tr>
+  `).join("");
+  const auditRows = state.audit.slice(0, 40).map((log) => `
+    <tr>
+      <td>${escapeHtml(log.created_at)}</td>
+      <td>${escapeHtml(log.actor_username)}</td>
+      <td>${escapeHtml(log.action)}</td>
+      <td>${escapeHtml(log.entity_type)} ${escapeHtml(log.entity_id)}</td>
+    </tr>
+  `).join("");
+
+  els.viewRoot.innerHTML = `
+    <section class="split-workspace">
+      <form id="profile-form" class="side-panel">
+        <h2>Profile</h2>
+        <label>Full Name <input id="profile-name" value="${encodeAttr(state.user?.full_name || "")}" /></label>
+        <label>Email <input id="profile-email" type="email" value="${encodeAttr(state.user?.email || "")}" /></label>
+        <label>Profile Color <input id="profile-color" type="color" value="${encodeAttr(state.user?.profile_color || "#22c55e")}" /></label>
+        <label>New Password <input id="profile-password" type="password" placeholder="Leave blank" /></label>
+        <button class="primary-button" type="submit">Save Profile</button>
+      </form>
+
+      <div class="glass-panel">
+        <div class="panel-header">
+          <h2>App Settings</h2>
+          <button class="secondary-button" data-action="create-backup" type="button" ${isAdmin() ? "" : "disabled"}>Create Backup</button>
+        </div>
+        ${simpleTable(["Key", "Value"], settingsRows)}
+      </div>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="glass-panel">
+        <div class="panel-header"><h2>Users</h2></div>
+        ${isAdmin() ? simpleTable(["Username", "Name", "Email", "Role"], userRows) : `<p class="empty-note">User management requires admin access.</p>`}
+      </div>
+      <div class="glass-panel">
+        <div class="panel-header"><h2>Backups</h2></div>
+        ${isAdmin() ? simpleTable(["Filename", "Size", "Created"], backupRows) : `<p class="empty-note">Backup management requires admin access.</p>`}
+      </div>
+    </section>
+
+    <section class="glass-panel">
+      <div class="panel-header"><h2>Audit Log</h2></div>
+      ${isAdmin() ? simpleTable(["Time", "Actor", "Action", "Entity"], auditRows) : `<p class="empty-note">Audit logs require admin access.</p>`}
+    </section>
+  `;
+}
+
+async function login(signup = false) {
+  const online = await checkHealth();
+  if (!online) throw new Error("Backend is not reachable");
+
+  let username, password, body, remember;
+  if (signup) {
+    username = safeText(document.querySelector("#signup-username")?.value
+            || document.querySelector("#username")?.value || "");
+    password = document.querySelector("#signup-password")?.value
+            || document.querySelector("#password")?.value;
+    const fullName = safeText(document.querySelector("#signup-full-name")?.value || "") || username;
+    const email = safeText(document.querySelector("#signup-email")?.value || "");
+    const inviteCode = safeText(document.querySelector("#signup-invite-code")?.value || "");
+    if (!username) throw new Error("Username is required.");
+    if (!password) throw new Error("Password is required.");
+    if (!email) throw new Error("Email is required to create an account.");
+    body = { username, password, email, full_name: fullName, invite_code: inviteCode || null };
+    // After signup we want the user signed in. Default = remember (matches the
+    // sign-in card's default checkbox state).
+    remember = true;
+  } else {
+    username = safeText(document.querySelector("#username").value);
+    password = document.querySelector("#password").value;
+    body = { username, password };
+    // Remember-me is opt-out: checked by default. If unchecked, we keep the
+    // token in sessionStorage only — closing the tab forgets the user.
+    remember = !!document.querySelector("#remember-me")?.checked;
+  }
+
+  const endpoint = signup ? "/api/auth/signup" : "/api/auth/login";
+  const data = await api(endpoint, { method: "POST", body: JSON.stringify(body) });
+
+  state.token = data.access_token;
+  state.user = data.user;
+  storeToken(state.token, remember);
+  setSignedIn(true);
+  renderUser();
+  await refreshAll();
+  renderCurrentView();
+  showToast(signup ? "Account created" : "Logged in");
+}
+
+async function loadMe() {
+  await checkHealth();
+
+  if (!state.token) {
+    setSignedIn(false);
+    renderUser();
+    return;
+  }
+
+  try {
+    state.user = await api("/api/auth/me", { body: undefined });
+    setSignedIn(true);
+    renderUser();
+    await refreshAll();
+    setView(state.view);
+  } catch (error) {
+    clearStoredToken();
+    state.token = "";
+    state.user = null;
+    setSignedIn(false);
+    renderUser();
+    showToast(error.message, "error");
+  }
+}
+
+function getFormValue(id) {
+  return document.querySelector(id)?.value?.trim() || "";
+}
+
+function syncSubtaskVendorFields() {
+  const licenseInput = document.querySelector("#sub-license");
+  const vendorInput = document.querySelector("#sub-vendor");
+  const ibanSelect = document.querySelector("#sub-iban");
+  const preview = document.querySelector("#sub-bank-preview");
+  if (!licenseInput || !vendorInput || !ibanSelect || !preview) return;
+
+  const vendor = findVendorByLicense(licenseInput.value);
+  if (!vendor) {
+    vendorInput.value = "";
+    ibanSelect.innerHTML = `<option value="">No matching vendor</option>`;
+    ibanSelect.disabled = true;
+    preview.innerHTML = `<strong>Bank information</strong><span>No vendor found for this license.</span>`;
+    return;
+  }
+
+  vendorInput.value = vendor.name || "";
+  const banks = vendor.bank_accounts || [];
+  ibanSelect.disabled = !banks.length;
+  ibanSelect.innerHTML = banks.length
+    ? banks.map((bank) => `<option value="${encodeAttr(bank.iban)}">${escapeHtml(bank.iban)} / ${escapeHtml(bank.bank_name)}</option>`).join("")
+    : `<option value="">No IBAN saved for this vendor</option>`;
+  syncSubtaskBankPreview(vendor);
+}
+
+function syncSubtaskBankPreview(vendor = null) {
+  const licenseInput = document.querySelector("#sub-license");
+  const ibanSelect = document.querySelector("#sub-iban");
+  const preview = document.querySelector("#sub-bank-preview");
+  if (!licenseInput || !ibanSelect || !preview) return;
+  const selectedVendor = vendor || findVendorByLicense(licenseInput.value);
+  const bank = findBank(selectedVendor, ibanSelect.value);
+  if (!bank) {
+    preview.innerHTML = `<strong>Bank information</strong><span>No bank account selected.</span>`;
+    return;
+  }
+  preview.innerHTML = `
+    <strong>${escapeHtml(bank.bank_name)}</strong>
+    <span>Account: ${escapeHtml(bank.account_name || "")}</span>
+    <span>IBAN: ${escapeHtml(bank.iban || "")}</span>
+    <span>Account No: ${escapeHtml(bank.account_number || "")}</span>
+    <span>SWIFT: ${escapeHtml(bank.swift_code || "")}</span>
+  `;
+}
+
+function selectedPlatformKeys() {
+  return [...document.querySelectorAll(".platform-checkbox:checked")].map((input) => input.value);
+}
+
+function normalizeHandle(value) {
+  const cleaned = String(value || "").trim().replace(/^@+/, "");
+  return cleaned ? `@${cleaned}` : "";
+}
+
+function normalizeIban(value) {
+  return String(value || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function renderPlatformHandleFields() {
+  const container = document.querySelector("#platform-handles");
+  if (!container) return;
+
+  const keys = selectedPlatformKeys();
+  if (!keys.length) {
+    container.innerHTML = `<p class="form-hint">Select a platform to add its handle.</p>`;
+    syncPlatformPayload();
+    return;
+  }
+
+  const existing = {};
+  document.querySelectorAll(".platform-handle").forEach((input) => {
+    existing[input.dataset.platform] = input.value;
+  });
+
+  container.innerHTML = keys.map((key) => {
+    const label = platformLabel(key);
+    return `
+      <label>
+        ${label}
+        <div class="handle-input">
+          <span>@</span>
+          <input class="platform-handle" data-platform="${key}" placeholder="name" value="${encodeAttr(String(existing[key] || "").replace(/^@+/, ""))}" />
+        </div>
+      </label>
+    `;
+  }).join("");
+  syncPlatformPayload();
+}
+
+function syncPlatformPayload() {
+  const platformsInput = document.querySelector("#sub-platforms");
+  const channelInput = document.querySelector("#sub-channel");
+  if (!platformsInput || !channelInput) return;
+
+  const keys = selectedPlatformKeys();
+  const handles = [...document.querySelectorAll(".platform-handle")];
+  const handleByKey = Object.fromEntries(handles.map((input) => [input.dataset.platform, normalizeHandle(input.value)]));
+
+  platformsInput.value = keys.join(",");
+  if (keys.length === 1) {
+    channelInput.value = handleByKey[keys[0]] || "";
+    return;
+  }
+
+  channelInput.value = keys
+    .map((key) => {
+      const handle = handleByKey[key];
+      return handle ? `${platformLabel(key)}: ${handle}` : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+async function downloadFile(path, fallbackName) {
+  setBusy(true);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      headers: authHeaders(false),
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Download failed with ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename = match ? match[1] : fallbackName;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function saveTask(event) {
+  event.preventDefault();
+  const taskId = getFormValue("#task-id");
+  const body = {
+    brand: getFormValue("#task-brand"),
+    contract_type: getFormValue("#task-type"),
+    status: getFormValue("#task-status"),
+    end_date: getFormValue("#task-end-date"),
+    notes: getFormValue("#task-notes"),
+  };
+
+  if (taskId) {
+    const updated = await api(`/api/tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    state.tasks = state.tasks.map((task) => task.id === updated.id ? updated : task);
+    showToast("Task saved");
+  } else {
+    const created = await api("/api/tasks/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    state.selectedTaskId = created.id;
+    localStorage.setItem("aq_selected_task", created.id);
+    state.tasks = [created, ...state.tasks];
+    showToast("Task created");
+  }
+
+  renderTasksView();
+}
+
+async function addSubtask(event) {
+  event.preventDefault();
+  const task = selectedTask();
+  if (!task) throw new Error("Select a task first");
+  const vendor = findVendorByLicense(getFormValue("#sub-license"));
+  if (!vendor) throw new Error("Choose a valid vendor license first");
+  const bank = findBank(vendor, getFormValue("#sub-iban"));
+  if (!bank) throw new Error("Choose an IBAN for this vendor");
+  syncPlatformPayload();
+  if (!getFormValue("#sub-platforms")) throw new Error("Choose at least one platform");
+  if (!getFormValue("#sub-channel")) throw new Error("Enter a handle for at least one selected platform");
+
+  await api("/api/subtasks/", {
+    method: "POST",
+    body: JSON.stringify({
+      task_id: task.id,
+      vendor: vendor.name || "",
+      license_number: vendor.license_number || "",
+      iban: bank.iban || "",
+      channel: getFormValue("#sub-channel"),
+      platforms: getFormValue("#sub-platforms"),
+      ad_type: getFormValue("#sub-ad-type"),
+      qty: getFormValue("#sub-qty") || "1",
+      details: getFormValue("#sub-details"),
+      price: getFormValue("#sub-price") || "0",
+    }),
+  });
+
+  await loadTasks();
+  await renderTasksView();
+  showToast("Subtask added");
+}
+
+/**
+ * Generate contracts for the given subtask IDs (or all subtasks under the
+ * task when subtaskIds is null). After success, reloads contracts, switches
+ * to the Contracts view, and shows a toast.
+ */
+async function generateForSubtasks(taskId, subtaskIds, successMessage) {
+  const body = { task_id: taskId };
+  if (subtaskIds && subtaskIds.length) body.subtask_ids = subtaskIds;
+  const generated = await api("/api/contracts/generate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  await loadContracts();
+  state.selectedSubtaskIds = new Set();        // wipe the checkboxes
+  const pdfCount = generated.filter((item) => item.pdf_path).length;
+  const failed = generated.filter((item) => !item.pdf_path);
+  // Switch to the Contracts view so the user sees what they just made.
+  setView("contracts");
+  renderContractsView();
+  if (failed.length === 0) {
+    showToast(`${successMessage} (${pdfCount} PDFs)`);
+  } else {
+    showToast(`${successMessage} ${failed.length} PDF conversion${failed.length === 1 ? "" : "s"} failed — DOCX still saved.`, "warn");
+  }
+}
+
+function showClientContractModal() {
+  const task = selectedTask();
+  if (!task) { showToast("Select a task first", "error"); return; }
+  if (!state.clients.length) { showToast("No clients found. Add a client first from the Vendors & Clients view.", "error"); return; }
+
+  // Pre-select the client from the inline client mode form if one was chosen there
+  const preSelectedClient = document.querySelector("#cc-client-select")?.value || "";
+
+  const clientOptions = state.clients.map((c) =>
+    `<option value="${encodeAttr(c.id)}" ${String(c.id) === preSelectedClient ? "selected" : ""}>${escapeHtml(c.company_name || c.name || c.id)}</option>`
+  ).join("");
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:480px">
+      <h2>Generate Client Contract</h2>
+      <p style="color:#888;font-size:0.9em;margin-bottom:1rem">Task: ${escapeHtml(task.brand)} — ${state.subtasks.length} influencer(s)${state.subtasks.length === 0 ? " (table will be empty)" : ""}</p>
+      <label>Client
+        <select id="cc-client">${clientOptions}</select>
+      </label>
+      <label>Brand
+        <select id="cc-brand"><option value="">Loading brands...</option></select>
+      </label>
+      <label>Total Amount
+        <input id="cc-amount" type="text" value="${encodeAttr(task.amount || "0")}" />
+      </label>
+      <div style="display:flex;gap:0.5rem;margin-top:1rem">
+        <button class="primary-button" id="cc-submit" style="flex:1">Generate</button>
+        <button class="secondary-button" id="cc-cancel" style="flex:1">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Load brands for the first selected client
+  const clientSelect = overlay.querySelector("#cc-client");
+  const brandSelect = overlay.querySelector("#cc-brand");
+
+  async function refreshBrands() {
+    const clientId = clientSelect.value;
+    if (!clientId) { brandSelect.innerHTML = '<option value="">-- no client --</option>'; return; }
+    try {
+      const brands = await api(`/api/brands?client_id=${encodeURIComponent(clientId)}`, { body: undefined });
+      state.clientBrands = brands;
+      if (brands.length) {
+        brandSelect.innerHTML = brands.map((b) =>
+          `<option value="${encodeAttr(b.id)}">${escapeHtml(b.brand_name)}</option>`
+        ).join("");
+      } else {
+        brandSelect.innerHTML = '<option value="">No brands — will use client name</option>';
+      }
+    } catch {
+      brandSelect.innerHTML = '<option value="">Error loading brands</option>';
+    }
+  }
+  refreshBrands();
+  clientSelect.addEventListener("change", refreshBrands);
+
+  overlay.querySelector("#cc-cancel").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector("#cc-submit").addEventListener("click", async () => {
+    const clientId = clientSelect.value;
+    const brandId = brandSelect.value || null;
+    const amount = overlay.querySelector("#cc-amount").value || "0";
+    if (!clientId) { showToast("Select a client", "error"); return; }
+
+    overlay.querySelector("#cc-submit").disabled = true;
+    overlay.querySelector("#cc-submit").textContent = "Generating...";
+
+    try {
+      const result = await api("/api/contracts/generate-client", {
+        method: "POST",
+        body: JSON.stringify({
+          task_id: task.id,
+          client_id: clientId,
+          brand_id: brandId,
+          total_amount: amount,
+        }),
+      });
+      await loadContracts();
+      overlay.remove();
+      setView("contracts");
+      renderContractsView();
+      const msg = result.pdf_path
+        ? "Client contract generated (DOCX + PDF)"
+        : `Client contract generated (DOCX only — ${result.pdf_error || "PDF failed"})`;
+      showToast(msg, result.pdf_path ? "success" : "warn");
+    } catch (err) {
+      overlay.querySelector("#cc-submit").disabled = false;
+      overlay.querySelector("#cc-submit").textContent = "Generate";
+      showToast(`Generation failed: ${err.message || err}`, "error");
+    }
+  });
+}
+
+async function createClient(event) {
+  event.preventDefault();
+  const body = {
+    company_name: getFormValue("#new-client-company"),
+    cr_number: getFormValue("#new-client-cr"),
+    vat_number: getFormValue("#new-client-vat"),
+    signatory_name: getFormValue("#new-client-signatory"),
+    phone: getFormValue("#new-client-phone"),
+    email: getFormValue("#new-client-email"),
+    company_email: getFormValue("#new-client-company-email"),
+    street: getFormValue("#new-client-street"),
+    city: getFormValue("#new-client-city"),
+    postcode: getFormValue("#new-client-postcode"),
+    country: getFormValue("#new-client-country"),
+    national_address: getFormValue("#new-client-national"),
+  };
+  const created = await api("/api/vendors/manual/clients", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  await loadClients();
+  state.selectedClientId = String(created.id);
+  localStorage.setItem("aq_selected_client", state.selectedClientId);
+  renderVendorsView();
+  showToast("Client created");
+}
+
+async function updateClient(event) {
+  event.preventDefault();
+  const cl = selectedClient();
+  if (!cl) throw new Error("Choose a client first");
+  const body = {
+    company_name: getFormValue("#client-edit-company"),
+    cr_number: getFormValue("#client-edit-cr"),
+    vat_number: getFormValue("#client-edit-vat"),
+    signatory_name: getFormValue("#client-edit-signatory"),
+    phone: getFormValue("#client-edit-phone"),
+    email: getFormValue("#client-edit-email"),
+    company_email: getFormValue("#client-edit-company-email"),
+    street: getFormValue("#client-edit-street"),
+    city: getFormValue("#client-edit-city"),
+    postcode: getFormValue("#client-edit-postcode"),
+    country: getFormValue("#client-edit-country"),
+    national_address: getFormValue("#client-edit-national"),
+  };
+  await api(`/api/vendors/clients/${cl.id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  await loadClients();
+  renderVendorsView();
+  showToast("Client saved");
+}
+
+async function generateContracts(event) {
+  event?.preventDefault();
+  const taskId = getFormValue("#generate-task") || selectedTask()?.id;
+  const rawIds = getFormValue("#generate-subtasks");
+  const subtask_ids = rawIds
+    ? rawIds.split(",").map((id) => Number(id.trim())).filter(Boolean)
+    : null;
+  const template_key = getFormValue("#generate-template") || null;
+
+  const generated = await api("/api/contracts/generate", {
+    method: "POST",
+    body: JSON.stringify({ task_id: taskId, subtask_ids, template_key }),
+  });
+
+  await loadContracts();
+  renderContractsView();
+  const pdfCount = generated.filter((item) => item.pdf_path).length;
+  const failed = generated.filter((item) => !item.pdf_path);
+  if (failed.length === 0) {
+    showToast(`Generated ${generated.length} DOCX and ${pdfCount} PDF`);
+  } else {
+    const firstReason = failed[0].pdf_error || "see uvicorn logs";
+    showToast(
+      `Generated ${generated.length} DOCX, ${pdfCount} PDF — ${failed.length} PDF failed (${firstReason})`,
+      "error",
+    );
+  }
+}
+
+async function createVendor(event) {
+  event.preventDefault();
+  const created = await api("/api/vendors/", {
+    method: "POST",
+    body: JSON.stringify({
+      name: getFormValue("#vendor-name"),
+      license_number: getFormValue("#vendor-license"),
+    }),
+  });
+  state.vendors = [{ ...created, bank_accounts: created.bank_accounts || [] }, ...state.vendors];
+  state.selectedVendorId = String(created.id);
+  localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
+  renderVendorsView();
+  showToast("Vendor created");
+}
+
+async function updateVendor(event) {
+  event.preventDefault();
+  const vendorId = getFormValue("#vendor-edit-select");
+  if (!vendorId) throw new Error("Choose a vendor first");
+  const updated = await api(`/api/vendors/${vendorId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: getFormValue("#vendor-edit-name"),
+      license_number: getFormValue("#vendor-edit-license"),
+    }),
+  });
+  state.selectedVendorId = String(vendorId);
+  localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
+  state.vendors = state.vendors.map((vendor) => String(vendor.id) === String(updated.id) ? updated : vendor);
+  renderVendorsView();
+  showToast("Vendor saved");
+}
+
+async function deleteSelectedVendor() {
+  const vendor = selectedVendor();
+  if (!vendor) throw new Error("Choose a vendor first");
+  if (!confirm(`Delete vendor "${vendor.name}" and all bank accounts?`)) return;
+
+  await api(`/api/vendors/${vendor.id}`, { method: "DELETE" });
+  state.vendors = state.vendors.filter((item) => String(item.id) !== String(vendor.id));
+  // Leave the right-side panel blank after delete instead of jumping to the
+  // first remaining vendor — the user should pick the next one themselves.
+  state.selectedVendorId = "";
+  state.selectedBankId = "";
+  localStorage.removeItem("aq_selected_vendor");
+  renderVendorsView();
+  showToast("Vendor deleted");
+}
+
+async function addBank(event) {
+  event.preventDefault();
+  const vendorId = getFormValue("#bank-vendor");
+  const iban = normalizeIban(getFormValue("#bank-iban"));
+  const created = await api(`/api/vendors/${vendorId}/bank-accounts`, {
+    method: "POST",
+    body: JSON.stringify({
+      vendor_id: Number(vendorId),
+      bank_name: getFormValue("#bank-name"),
+      account_name: getFormValue("#bank-account-name"),
+      iban,
+      account_number: getFormValue("#bank-account-number"),
+      swift_code: getFormValue("#bank-swift"),
+    }),
+  });
+  state.vendors = state.vendors.map((vendor) => {
+    if (String(vendor.id) !== String(vendorId)) return vendor;
+    const banks = vendor.bank_accounts || [];
+    const exists = banks.some((bank) => String(bank.id) === String(created.id));
+    return {
+      ...vendor,
+      bank_accounts: exists
+        ? banks.map((bank) => String(bank.id) === String(created.id) ? created : bank)
+        : [...banks, created],
+    };
+  });
+  state.selectedVendorId = String(vendorId);
+  state.selectedBankId = String(created.id);
+  event.target.reset();
+  renderVendorsView();
+  showToast("Bank account saved");
+}
+
+async function updateBank(event) {
+  event.preventDefault();
+  const bankId = getFormValue("#bank-edit-select");
+  if (!bankId) throw new Error("Choose a bank account first");
+  const updated = await api(`/api/vendors/bank-accounts/${bankId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      bank_name: getFormValue("#bank-edit-name"),
+      account_name: getFormValue("#bank-edit-account-name"),
+      iban: normalizeIban(getFormValue("#bank-edit-iban")),
+      account_number: getFormValue("#bank-edit-account-number"),
+      swift_code: getFormValue("#bank-edit-swift"),
+    }),
+  });
+  state.selectedBankId = String(bankId);
+  state.vendors = state.vendors.map((vendor) => ({
+    ...vendor,
+    bank_accounts: (vendor.bank_accounts || []).map((bank) => String(bank.id) === String(updated.id) ? updated : bank),
+  }));
+  renderVendorsView();
+  showToast("Bank account saved");
+}
+
+async function uploadTemplate(event) {
+  event.preventDefault();
+  const key = getFormValue("#upload-key");
+  const file = document.querySelector("#upload-file")?.files?.[0];
+  if (!file) throw new Error("Choose a DOCX file first");
+  const form = new FormData();
+  form.append("file", file);
+  await api(`/api/templates/${key}/upload`, {
+    method: "POST",
+    body: form,
+  });
+  event.target.reset();
+  await loadTemplates();
+  renderTemplatesView();
+  showToast("Template uploaded");
+}
+
+async function createTemplateSlot(event) {
+  event.preventDefault();
+  const name = getFormValue("#new-template-name");
+  const key = getFormValue("#new-template-key");
+  const file = document.querySelector("#new-template-file")?.files?.[0];
+  if (!name) throw new Error("Template name is required");
+  if (!file) throw new Error("Choose a DOCX file first");
+
+  const form = new FormData();
+  form.append("display_name", name);
+  if (key) form.append("key", key);
+  form.append("file", file);
+
+  const created = await api("/api/templates/slots", {
+    method: "POST",
+    body: form,
+  });
+  event.target.reset();
+  await loadTemplates();
+  renderTemplatesView();
+  showToast(`Template slot created: ${created.display_name}`);
+}
+
+async function setDefaultTemplate(key) {
+  if (!isAdmin()) throw new Error("Admin access required");
+  const updated = await api(`/api/templates/${encodeURIComponent(key)}/default`, { method: "POST" });
+  await loadTemplates();
+  renderTemplatesView();
+  showToast(`${updated.display_name} is now the default`);
+}
+
+async function deleteTemplate(key) {
+  if (!isAdmin()) throw new Error("Admin access required");
+  const template = state.templates.find((item) => item.key === key);
+  const label = template?.display_name || key;
+  const message = `Delete the ${label} slot completely? It will be removed from dropdowns and contract generation.`;
+  if (!confirm(message)) return;
+
+  const result = await api(`/api/templates/${encodeURIComponent(key)}`, { method: "DELETE" });
+  await loadTemplates();
+  renderTemplatesView();
+  showToast(result?.slot_deleted ? "Template slot deleted" : "Template removed");
+}
+
+async function saveProfile(event) {
+  event.preventDefault();
+  const body = {
+    full_name: getFormValue("#profile-name"),
+    email: getFormValue("#profile-email"),
+    profile_color: getFormValue("#profile-color"),
+  };
+  const password = getFormValue("#profile-password");
+  if (password) body.new_password = password;
+
+  state.user = await api("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  renderUser();
+  renderSettingsView();
+  showToast("Profile saved");
+}
+
+document.addEventListener("submit", async (event) => {
+  const submitter = event.submitter || event.target.querySelector("button[type='submit']");
+  try {
+    setButtonLoading(submitter, true);
+    if (event.target.id === "login-form") {
+      event.preventDefault();
+      await login(false);
+    } else if (event.target.id === "signup-form") {
+      event.preventDefault();
+      await login(true);
+    } else if (event.target.id === "task-form") {
+      await saveTask(event);
+    } else if (event.target.id === "subtask-form") {
+      await addSubtask(event);
+    } else if (event.target.id === "vendor-form") {
+      await createVendor(event);
+    } else if (event.target.id === "vendor-edit-form") {
+      await updateVendor(event);
+    } else if (event.target.id === "bank-form") {
+      await addBank(event);
+    } else if (event.target.id === "bank-edit-form") {
+      await updateBank(event);
+    } else if (event.target.id === "client-edit-form") {
+      await updateClient(event);
+    } else if (event.target.id === "client-form") {
+      await createClient(event);
+    } else if (event.target.id === "generate-form") {
+      await generateContracts(event);
+    } else if (event.target.id === "template-upload-form") {
+      await uploadTemplate(event);
+    } else if (event.target.id === "template-create-form") {
+      await createTemplateSlot(event);
+    } else if (event.target.id === "profile-form") {
+      await saveProfile(event);
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    setButtonLoading(submitter, false);
+  }
+});
+
+// (Signup is now driven by the form's submit handler — no separate click.)
+
+els.logoutButton.addEventListener("click", () => {
+  clearStoredToken();
+  state.token = "";
+  state.user = null;
+  setSignedIn(false);
+  renderUser();
+});
+
+els.refreshButton.addEventListener("click", async () => {
+  try {
+    setButtonLoading(els.refreshButton, true);
+    await refreshAll();
+    renderCurrentView();
+    showToast("Workspace refreshed");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    setButtonLoading(els.refreshButton, false);
+  }
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.id === "task-search") {
+    state.search = event.target.value;
+    renderTasksView();
+  }
+  if (event.target.id === "vendor-search") {
+    state.vendorSearch = event.target.value;
+    renderVendorsView();
+  }
+  if (event.target.id === "client-search") {
+    state.clientSearch = event.target.value;
+    renderVendorsView();
+  }
+  if (event.target.id === "sub-license") {
+    syncSubtaskVendorFields();
+  }
+  if (event.target.classList.contains("platform-handle")) {
+    const raw = event.target.value;
+    event.target.value = raw.replace(/^@+/, "");
+    syncPlatformPayload();
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  try {
+    if (event.target.id === "task-limit") {
+      state.taskLimit = Math.max(5, Number(event.target.value) || 0);
+      if (Number(event.target.value) === 0) state.taskLimit = 0;
+      localStorage.setItem("aq_task_limit", String(state.taskLimit));
+      await renderTasksView();
+    }
+    if (event.target.id === "sub-iban") {
+      syncSubtaskBankPreview();
+    }
+    if (event.target.classList.contains("platform-checkbox")) {
+      renderPlatformHandleFields();
+    }
+    if (event.target.id === "vendor-edit-select") {
+      state.selectedVendorId = event.target.value;
+      localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
+      state.selectedBankId = "";
+      renderVendorsView();
+    }
+    if (event.target.id === "bank-edit-select") {
+      state.selectedBankId = event.target.value;
+      renderVendorsView();
+    }
+    if (event.target.id === "cc-client-select") {
+      const clientId = event.target.value;
+      const detailsDiv = document.querySelector("#cc-client-details");
+      const brandSelect = document.querySelector("#cc-brand-select");
+      if (!clientId) {
+        if (detailsDiv) detailsDiv.innerHTML = "";
+        if (brandSelect) brandSelect.innerHTML = '<option value="">-- select client first --</option>';
+        return;
+      }
+      const cl = state.clients.find((c) => String(c.id) === String(clientId));
+      if (detailsDiv && cl) {
+        detailsDiv.innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.25rem 1rem">
+            <span><strong>Company:</strong> ${escapeHtml(cl.company_name || cl.name || "")}</span>
+            <span><strong>CR:</strong> ${escapeHtml(cl.cr_number || "—")}</span>
+            <span><strong>VAT:</strong> ${escapeHtml(cl.vat_number || "—")}</span>
+            <span><strong>Signatory:</strong> ${escapeHtml(cl.signatory_name || "—")}</span>
+            <span><strong>Phone:</strong> ${escapeHtml(cl.contact_phone || cl.phone || "—")}</span>
+            <span><strong>Email:</strong> ${escapeHtml(cl.contact_email || cl.email || "—")}</span>
+            <span style="grid-column:1/-1"><strong>Address:</strong> ${escapeHtml([cl.street, cl.city, cl.postcode, cl.country].filter(Boolean).join(", ") || "—")}</span>
+          </div>
+        `;
+      }
+      // Load brands for this client
+      if (brandSelect) {
+        brandSelect.innerHTML = '<option value="">Loading...</option>';
+        try {
+          const brands = await api(`/api/brands?client_id=${encodeURIComponent(clientId)}`, { body: undefined });
+          if (brands.length) {
+            brandSelect.innerHTML = brands.map((b) =>
+              `<option value="${encodeAttr(b.id)}">${escapeHtml(b.brand_name)}</option>`
+            ).join("");
+          } else {
+            brandSelect.innerHTML = '<option value="">No brands — will use client name</option>';
+          }
+        } catch {
+          brandSelect.innerHTML = '<option value="">Error loading brands</option>';
+        }
+      }
+    }
+    if (event.target.id === "task-type") {
+      // Auto-switch to client mode when client_contract is selected
+      if (event.target.value === "client_contract" && !state.clientMode) {
+        state.clientMode = true;
+        await renderTasksView();
+      } else if (event.target.value !== "client_contract" && state.clientMode) {
+        state.clientMode = false;
+        await renderTasksView();
+      }
+    }
+    // Per-row subtask checkboxes — toggle membership in selectedSubtaskIds
+    // without re-rendering the whole table (just keep state in sync).
+    if (event.target.classList.contains("subtask-pick")) {
+      const set = state.selectedSubtaskIds || (state.selectedSubtaskIds = new Set());
+      const id = String(event.target.dataset.id || "");
+      if (event.target.checked) set.add(id); else set.delete(id);
+    }
+    // Header "select all" toggle
+    if (event.target.id === "subtask-pick-all") {
+      const set = state.selectedSubtaskIds || (state.selectedSubtaskIds = new Set());
+      if (event.target.checked) {
+        state.subtasks.forEach((s) => set.add(String(s.id)));
+      } else {
+        set.clear();
+      }
+      // Re-render so individual checkboxes follow.
+      renderTasksView();
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+});
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button");
+  const row = event.target.closest("tr[data-task-id]");
+  const vendorCard = event.target.closest(".vendor-card[data-vendor-id]");
+  // Task-group header expand/collapse — separate handler because the header
+  // is a div, not a button. Inner buttons opt out via data-stop.
+  const taskGroupHeader = event.target.closest('.task-group-header[data-action="toggle-task-group"]');
+
+  try {
+    const loadableButton = button && !button.classList.contains("nav-item") ? button : null;
+    setButtonLoading(loadableButton, true);
+
+    if (taskGroupHeader && (!button || !button.dataset.stop)) {
+      // Click landed on the header itself, OR on an inner button that
+      // does NOT have data-stop set. Toggle in either case.
+      if (!button) {
+        const tid = String(taskGroupHeader.dataset.taskId || "");
+        if (tid) {
+          const set = state.expandedTasks || (state.expandedTasks = new Set());
+          if (set.has(tid)) set.delete(tid); else set.add(tid);
+          renderContractsView();
+        }
+        return;
+      }
+    }
+
+    if (row && !button) {
+      // Switching task → wipe the subtask-selection set so IDs from the
+      // previous task don't leak into Generate selected.
+      if (String(state.selectedTaskId) !== String(row.dataset.taskId)) {
+        state.selectedSubtaskIds = new Set();
+      }
+      state.selectedTaskId = row.dataset.taskId;
+      localStorage.setItem("aq_selected_task", state.selectedTaskId);
+      await renderTasksView();
+      return;
+    }
+
+    if (vendorCard && !button) {
+      state.selectedVendorId = vendorCard.dataset.vendorId;
+      localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
+      state.selectedBankId = "";
+      renderVendorsView();
+      return;
+    }
+
+    const clientCard = event.target.closest(".vendor-card[data-client-id]");
+    if (clientCard && !button) {
+      state.selectedClientId = clientCard.dataset.clientId;
+      localStorage.setItem("aq_selected_client", state.selectedClientId);
+      renderVendorsView();
+      return;
+    }
+
+    if (!button) return;
+    const action = button.dataset.action;
+
+    if (button.classList.contains("nav-item")) {
+      setView(button.dataset.view);
+      return;
+    }
+
+    if (action === "go-tasks") setView("tasks");
+    if (action === "go-contracts") setView("contracts");
+    if (action === "clear-task-form") {
+      state.selectedTaskId = "__new__";
+      state.selectedSubtaskIds = new Set();
+      localStorage.setItem("aq_selected_task", state.selectedTaskId);
+      await renderTasksView();
+    }
+    if (action === "duplicate-task") {
+      const task = selectedTask();
+      if (!task) throw new Error("Select a task first");
+      const created = await api(`/api/tasks/${task.id}/duplicate`, { method: "POST" });
+      state.selectedTaskId = created.id;
+      localStorage.setItem("aq_selected_task", created.id);
+      await loadTasks();
+      await renderTasksView();
+      showToast("Task duplicated");
+    }
+    if (action === "delete-task") {
+      const task = selectedTask();
+      if (!task) throw new Error("Select a task first");
+      if (!confirm(`Delete task ${task.id}?`)) return;
+      await api(`/api/tasks/${task.id}`, { method: "DELETE" });
+      state.selectedTaskId = "";
+      state.selectedSubtaskIds = new Set();
+      await loadTasks();
+      await renderTasksView();
+      showToast("Task deleted");
+    }
+    if (action === "mark-paid") {
+      const id = button.dataset.id;
+      const sub = state.subtasks.find((item) => String(item.id) === String(id));
+      const path = sub?.paid_at ? `/api/subtasks/${id}/unmark-paid` : `/api/subtasks/${id}/mark-paid`;
+      await api(path, {
+        method: "POST",
+        body: JSON.stringify({ payment_note: "Marked from web UI" }),
+      });
+      await loadTasks();
+      await renderTasksView();
+      showToast(sub?.paid_at ? "Payment unmarked" : "Payment marked");
+    }
+    if (action === "delete-subtask") {
+      if (!confirm("Delete this subtask?")) return;
+      await api(`/api/subtasks/${button.dataset.id}`, { method: "DELETE" });
+      await loadTasks();
+      await renderTasksView();
+      showToast("Subtask deleted");
+    }
+    if (action === "generate-one") {
+      const task = selectedTask();
+      if (!task) throw new Error("Select a task first");
+      const sid = Number(button.dataset.id);
+      if (!sid) throw new Error("Subtask id missing");
+      await generateForSubtasks(task.id, [sid], "Generated 1 contract.");
+    }
+    if (action === "generate-selected") {
+      const task = selectedTask();
+      if (!task) throw new Error("Select a task first");
+      const set = state.selectedSubtaskIds || new Set();
+      const ids = Array.from(set).map(Number).filter(Boolean);
+      if (ids.length === 0) {
+        showToast("Tick at least one subtask first, or use Generate ALL", "error");
+        return;
+      }
+      await generateForSubtasks(task.id, ids, `Generated ${ids.length} contract${ids.length === 1 ? "" : "s"}.`);
+    }
+    if (action === "generate-all") {
+      const task = selectedTask();
+      if (!task) throw new Error("Select a task first");
+      if (!state.subtasks.length) {
+        showToast("This task has no subtasks", "error");
+        return;
+      }
+      await generateForSubtasks(task.id, null, `Generated ${state.subtasks.length} contract${state.subtasks.length === 1 ? "" : "s"}.`);
+    }
+    if (action === "toggle-client-mode") {
+      state.clientMode = !state.clientMode;
+      await renderTasksView();
+    }
+    if (action === "generate-client-contract") {
+      if (state.clientMode) {
+        // Use inline form values instead of modal
+        const task = selectedTask();
+        if (!task) { showToast("Select a task first", "error"); return; }
+        const clientId = getFormValue("#cc-client-select");
+        if (!clientId) { showToast("Select a client first", "error"); return; }
+        const brandId = getFormValue("#cc-brand-select") || null;
+        const amount = getFormValue("#cc-total-amount") || "0";
+        button.disabled = true;
+        button.textContent = "Generating...";
+        try {
+          const result = await api("/api/contracts/generate-client", {
+            method: "POST",
+            body: JSON.stringify({
+              task_id: task.id,
+              client_id: clientId,
+              brand_id: brandId,
+              total_amount: amount,
+            }),
+          });
+          await loadContracts();
+          setView("contracts");
+          renderContractsView();
+          const msg = result.pdf_path
+            ? "Client contract generated (DOCX + PDF)"
+            : `Client contract generated (DOCX only — ${result.pdf_error || "PDF failed"})`;
+          showToast(msg, result.pdf_path ? "success" : "warn");
+        } catch (err) {
+          showToast(`Generation failed: ${err.message || err}`, "error");
+        }
+      } else {
+        showClientContractModal();
+      }
+    }
+    if (action === "refresh-contracts") {
+      await loadContracts();
+      renderContractsView();
+    }
+    if (action === "download-pdf") {
+      await downloadFile(`/api/contracts/download/pdf/${button.dataset.id}`, `${button.dataset.id}.pdf`);
+    }
+    if (action === "download-docx") {
+      await downloadFile(`/api/contracts/download/docx/${button.dataset.id}`, `${button.dataset.id}.docx`);
+    }
+    if (action === "toggle-task-group") {
+      const tid = String(button.dataset.taskId || button.closest("[data-task-id]")?.dataset?.taskId || "");
+      if (!tid) return;
+      const set = state.expandedTasks || (state.expandedTasks = new Set());
+      if (set.has(tid)) set.delete(tid); else set.add(tid);
+      renderContractsView();
+    }
+    if (action === "download-all-task") {
+      const tid = String(button.dataset.taskId);
+      const list = state.contracts.filter((c) => String(c.task_id) === tid);
+      if (!confirm(`Download ${list.length} contract${list.length === 1 ? "" : "s"} (PDF + DOCX)?`)) return;
+      for (const c of list) {
+        if (c.pdf_path) {
+          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, `${c.contract_id}.pdf`); }
+          catch (_) {}
+        }
+        try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, `${c.contract_id}.docx`); }
+        catch (_) {}
+      }
+      showToast(`Downloaded ${list.length} contract${list.length === 1 ? "" : "s"}`);
+    }
+    if (action === "delete-contract") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
+      if (!confirm(`Delete contract ${button.dataset.id}? This cannot be undone.`)) return;
+      await api(`/api/contracts/${button.dataset.id}`, { method: "DELETE" });
+      await loadContracts();
+      renderContractsView();
+      showToast("Contract deleted");
+    }
+    if (action === "delete-task-contracts") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
+      const tid = String(button.dataset.taskId);
+      const list = state.contracts.filter((c) => String(c.task_id) === tid);
+      if (!confirm(`Delete ALL ${list.length} contract${list.length === 1 ? "" : "s"} under this task? This cannot be undone.`)) return;
+      await api(`/api/contracts/task/${tid}`, { method: "DELETE" });
+      await loadContracts();
+      renderContractsView();
+      showToast(`Deleted ${list.length} contract${list.length === 1 ? "" : "s"}`);
+    }
+    if (action === "scan-templates") {
+      const scan = await api("/api/templates/scan", { method: "POST" });
+      await loadTemplates();
+      renderTemplatesView();
+      showToast(`Found ${scan.found.length}, missing ${scan.missing.length}`);
+    }
+    if (action === "select-template-upload") {
+      const select = document.querySelector("#upload-key");
+      const file = document.querySelector("#upload-file");
+      if (select) select.value = button.dataset.key;
+      if (file) file.focus();
+    }
+    if (action === "set-default-template") {
+      await setDefaultTemplate(button.dataset.key);
+    }
+    if (action === "delete-template") {
+      await deleteTemplate(button.dataset.key);
+    }
+    if (action === "load-vendors") {
+      await loadVendors();
+      renderVendorsView();
+    }
+    if (action === "refresh-clients") {
+      await loadClients();
+      renderVendorsView();
+    }
+    if (action === "delete-client") {
+      const cl = selectedClient();
+      if (!cl) throw new Error("Choose a client first");
+      if (!confirm(`Delete client "${cl.company_name || cl.name}"?`)) return;
+      await api(`/api/vendors/clients/${cl.id}`, { method: "DELETE" });
+      state.clients = state.clients.filter((c) => String(c.id) !== String(cl.id));
+      state.selectedClientId = "";
+      localStorage.removeItem("aq_selected_client");
+      renderVendorsView();
+      showToast("Client deleted");
+    }
+    if (action === "delete-vendor") {
+      await deleteSelectedVendor();
+    }
+    if (action === "approve-vendor" || action === "reject-vendor") {
+      const approved = action === "approve-vendor";
+      await api(`/api/vendors/pending/vendors/${button.dataset.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
+      });
+      await loadVendors();
+      await loadPendingData();
+      renderVendorsView();
+      showToast(approved ? "Vendor approved" : "Vendor rejected");
+    }
+    if (action === "approve-client" || action === "reject-client") {
+      const approved = action === "approve-client";
+      await api(`/api/vendors/pending/clients/${button.dataset.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
+      });
+      await loadPendingData();
+      renderVendorsView();
+      showToast(approved ? "Client approved" : "Client rejected");
+    }
+    if (action === "create-backup") {
+      await api("/api/settings/backups/create", { method: "POST" });
+      await loadAdminData();
+      renderSettingsView();
+      showToast("Backup created");
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    const loadableButton = button && !button.classList.contains("nav-item") ? button : null;
+    setButtonLoading(loadableButton, false);
+  }
+});
+
+document.querySelectorAll(".nav-item").forEach((button) => {
+  button.classList.toggle("active", button.dataset.view === state.view);
+});
+
+// Bootstrap once the DOM is parsed and the script tag has finished loading.
+setSignedIn(Boolean(state.token));
+renderUser();
+loadMe();
