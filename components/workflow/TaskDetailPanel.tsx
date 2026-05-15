@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useTask, useTaskSubtasks, useTaskComments, useTaskAttachments, useTaskServiceTypes,
-  addComment, deleteComment, addAttachmentLink, deleteAttachment,
+  addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
+  getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
   type Profile, type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -11,21 +12,19 @@ import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 
 /**
- * Slide-over panel that shows a single task — header, fields, subtasks,
- * attachments, and a comments thread. Behavior is role-gated:
+ * Slide-over panel that shows a single task — header, fields, subtasks list,
+ * file uploads, and a comments thread. Behavior is role-gated:
  *
  *   - owner / admin / marketing -> full edit + delete
  *   - sales (creator) → can edit own draft tasks
  *   - key_account on the task → can mark complete + see everything
- *   - member → READ-ONLY everywhere except the comment box (text + file URL)
+ *   - member → READ-ONLY everywhere except the comment box and uploads
  *
- * Members specifically can:
- *   - read all task fields
- *   - post comments (text)
- *   - attach a file by pasting its URL (mention a teammate by name in text)
- * Members cannot:
- *   - edit title / description / status / priority / service types / KA
- *   - delete the task or anyone else's comments/attachments
+ * Internal navigation: clicking a subtask row opens the subtask in the
+ * SAME panel. A "← Back to parent task" button at the top brings you
+ * back. Each subtask has its own comments, attachments, budget, and
+ * assignee — they are first-class `pm_tasks` rows with `parent_task_id`
+ * set, so all the existing hooks just work on them.
  */
 export function TaskDetailPanel({
   taskId, currentUserId, role, profiles, onClose, onChanged,
@@ -37,18 +36,32 @@ export function TaskDetailPanel({
   onClose: () => void;
   onChanged?: () => void;
 }) {
-  const { task, refetch: refetchTask, loading } = useTask(taskId);
-  const { subtasks, refetch: refetchSubs } = useTaskSubtasks(taskId);
-  const { comments, refetch: refetchComments } = useTaskComments(taskId);
-  const { attachments, refetch: refetchAtt } = useTaskAttachments(taskId);
-  const { items: taskServiceTypes } = useTaskServiceTypes(taskId);
+  // The task we're CURRENTLY viewing in the panel — may be the original
+  // taskId or a subtask the user clicked into.
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(taskId);
+  useEffect(() => { setCurrentTaskId(taskId); }, [taskId]);
+
+  const { task, refetch: refetchTask, loading } = useTask(currentTaskId);
+  const { subtasks, refetch: refetchSubs } = useTaskSubtasks(currentTaskId);
+  const { comments, refetch: refetchComments } = useTaskComments(currentTaskId);
+  const { attachments, refetch: refetchAtt } = useTaskAttachments(currentTaskId);
+  const { items: taskServiceTypes } = useTaskServiceTypes(currentTaskId);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [commentText, setCommentText] = useState('');
-  const [attachUrl, setAttachUrl] = useState('');
-  const [attachName, setAttachName] = useState('');
   const [requestOpen, setRequestOpen] = useState(false);
+
+  // Inline-editable fields. Initialized from `task` and synced when it changes.
+  const [budgetDraft, setBudgetDraft] = useState<string>('');
+  const [budgetSaving, setBudgetSaving] = useState(false);
+  const [assigneeSaving, setAssigneeSaving] = useState(false);
+  useEffect(() => {
+    setBudgetDraft(task?.budget != null ? String(task.budget) : '');
+  }, [task?.id, task?.budget]);
+
+  // File picker (kept hidden; clicking the "Upload file" button triggers it).
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isOpen = Boolean(taskId);
 
@@ -60,9 +73,9 @@ export function TaskDetailPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
-  const isCreator   = task?.creator_id === currentUserId;
-  const isKeyAcct   = task?.key_account_id === currentUserId;
-  const isAssignee  = task?.assignee_id === currentUserId;
+  const isCreator    = task?.creator_id === currentUserId;
+  const isKeyAcct    = task?.key_account_id === currentUserId;
+  const isAssignee   = task?.assignee_id === currentUserId;
   const isPrivileged = role && ['owner','admin','marketing'].includes(role);
   const canEdit      = Boolean(isPrivileged || (role === 'sales' && isCreator && task?.stage === 'draft'));
   const canDelete    = Boolean(isPrivileged || (role === 'sales' && isCreator));
@@ -70,6 +83,10 @@ export function TaskDetailPanel({
   const canRequestContract = Boolean(
     role && ['owner','admin','marketing','sales','key_account'].includes(role)
   );
+  // Budget + subtask assignee can always be edited by privileged roles, plus
+  // by the key account on this task. Sales (as creator) keeps draft-edit rights.
+  const canEditBudget   = Boolean(isPrivileged || isKeyAcct || (role === 'sales' && isCreator && task?.stage === 'draft'));
+  const canEditAssignee = canEditBudget;
   // Everyone with workspace access can comment/attach (RLS will reject
   // if they're not actually allowed).
   const canComment = true;
@@ -80,8 +97,18 @@ export function TaskDetailPanel({
     return m;
   }, [profiles]);
 
-  const closer = task?.sales_closer_id ? profileById.get(task.sales_closer_id) : null;
-  const ka     = task?.key_account_id  ? profileById.get(task.key_account_id)  : null;
+  const closer        = task?.sales_closer_id ? profileById.get(task.sales_closer_id) : null;
+  const ka            = task?.key_account_id  ? profileById.get(task.key_account_id)  : null;
+  const subAssignee   = task?.assignee_id     ? profileById.get(task.assignee_id)     : null;
+
+  // Variance: parent budget vs sum of subtask budgets. Only meaningful on a
+  // parent that actually has subtasks.
+  const subtaskBudgetSum = useMemo(
+    () => subtasks.reduce((acc, s) => acc + (Number(s.budget) || 0), 0),
+    [subtasks],
+  );
+  const parentBudget = Number(task?.budget) || 0;
+  const variance = parentBudget - subtaskBudgetSum;
 
   const handleAddComment = async () => {
     if (!task || !commentText.trim()) return;
@@ -94,24 +121,37 @@ export function TaskDetailPanel({
     finally { setBusy(false); }
   };
 
-  const handleAddAttachment = async () => {
-    if (!task) return;
-    if (!attachUrl.trim() || !attachName.trim()) {
-      setError('Both file name and URL are required.');
+  const handleFilePicked = async (file: File | null) => {
+    if (!file || !task) return;
+    if (!task.workspace_id) {
+      setError('Cannot upload — task has no workspace.');
       return;
     }
     setBusy(true); setError('');
     try {
-      await addAttachmentLink({
+      await uploadTaskAttachment({
+        file,
         task_id: task.id,
         uploader_id: currentUserId,
-        filename: attachName.trim(),
-        file_url: attachUrl.trim(),
+        workspace_id: task.workspace_id,
       });
-      setAttachUrl(''); setAttachName('');
       await refetchAtt();
-    } catch (e: any) { setError(e?.message ?? String(e)); }
-    finally { setBusy(false); }
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setBusy(false);
+      // Reset the input so the same filename can be re-picked later.
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleOpenAttachment = async (a: { file_url: string; filename: string }) => {
+    try {
+      const url = await getAttachmentDownloadUrl(a.file_url);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      setError(`Could not open ${a.filename}: ${e?.message ?? String(e)}`);
+    }
   };
 
   const handleDeleteAttachment = async (id: string) => {
@@ -150,20 +190,41 @@ export function TaskDetailPanel({
     finally { setBusy(false); }
   };
 
-  const handleSubtaskToggle = async (subId: string, currentStatus: string) => {
-    setBusy(true); setError('');
+  const handleSaveBudget = async () => {
+    if (!task) return;
+    const raw = budgetDraft.trim().replace(/,/g, '');
+    const parsed = raw === '' ? null : Number(raw);
+    if (parsed != null && (!Number.isFinite(parsed) || parsed < 0)) {
+      setError('Budget must be a positive number or empty.');
+      return;
+    }
+    setBudgetSaving(true); setError('');
     try {
-      const next = currentStatus === 'done' ? 'todo' : 'done';
-      await updateTaskFields(subId, {
-        status: next,
-        completed_at: next === 'done' ? (new Date().toISOString() as any) : null as any,
-      } as any);
+      await updateTaskFields(task.id, { budget: parsed } as any);
+      await refetchTask();
+      // Refetching subs too refreshes the parent's variance display when a
+      // subtask budget was just changed.
       await refetchSubs();
+      onChanged?.();
     } catch (e: any) { setError(e?.message ?? String(e)); }
-    finally { setBusy(false); }
+    finally { setBudgetSaving(false); }
+  };
+
+  const handleChangeAssignee = async (newId: string) => {
+    if (!task) return;
+    setAssigneeSaving(true); setError('');
+    try {
+      await updateTaskFields(task.id, { assignee_id: newId || null } as any);
+      await refetchTask();
+      await refetchSubs();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setAssigneeSaving(false); }
   };
 
   if (!isOpen) return null;
+
+  const isSubtaskView = Boolean(task?.parent_task_id);
 
   return (
     <div
@@ -193,6 +254,23 @@ export function TaskDetailPanel({
           <div style={{ padding: 28, color: 'var(--aq-text-muted)' }}>Loading task…</div>
         ) : (
           <>
+            {/* Back-to-parent link, only when viewing a subtask */}
+            {isSubtaskView && task.parent_task_id && (
+              <div style={{
+                padding: '10px 24px',
+                borderBottom: '1px solid var(--aq-border-light)',
+                background: 'var(--aq-bg-sunken)',
+                fontSize: 13,
+              }}>
+                <button
+                  type="button"
+                  className="aq-btn aq-btn-ghost"
+                  onClick={() => setCurrentTaskId(task.parent_task_id!)}
+                  style={{ padding: '4px 10px' }}
+                >← Back to parent task</button>
+              </div>
+            )}
+
             {/* Header */}
             <header style={{
               padding: '20px 24px',
@@ -210,7 +288,7 @@ export function TaskDetailPanel({
                   {task.priority !== 'none' && (
                     <span className="aq-badge aq-badge-muted">{task.priority}</span>
                   )}
-                  {task.parent_task_id && <span className="aq-badge aq-badge-muted">subtask</span>}
+                  {isSubtaskView && <span className="aq-badge aq-badge-muted">subtask</span>}
                 </div>
                 <h2 style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.25 }}>
                   {task.task_name || task.title}
@@ -223,7 +301,7 @@ export function TaskDetailPanel({
                 )}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                {!task.parent_task_id && canRequestContract && (
+                {!isSubtaskView && canRequestContract && (
                   <button className="aq-btn aq-btn-secondary" onClick={() => setRequestOpen(true)}>
                     Request contract
                   </button>
@@ -252,7 +330,7 @@ export function TaskDetailPanel({
 
               {!canEdit && role === 'member' && (
                 <div className="aq-badge aq-badge-info" style={{ alignSelf: 'flex-start' }}>
-                  Read-only — you can comment and attach files
+                  Read-only — you can comment and upload files
                 </div>
               )}
 
@@ -262,8 +340,7 @@ export function TaskDetailPanel({
                 <FieldRow label="Brand"        value={task.brand_name ?? '—'} />
                 <FieldRow label="Client"       value={task.legacy_client_id ?? '—'} />
                 <FieldRow label="Sales closer" value={closer?.full_name ?? '—'} />
-                <FieldRow label="Key account"  value={ka?.full_name ?? '—'} />
-                <FieldRow label="Budget"       value={task.budget != null ? `SAR ${Number(task.budget).toLocaleString()}` : '—'} />
+                <FieldRow label="Key account (owner)" value={ka?.full_name ?? '—'} />
                 <FieldRow label="Priority"     value={task.priority} />
                 <FieldRow label="Service types" value={
                   taskServiceTypes.length
@@ -272,6 +349,73 @@ export function TaskDetailPanel({
                 } />
                 <FieldRow label="Created"      value={new Date(task.created_at).toLocaleString()} />
                 {task.completed_at && <FieldRow label="Completed" value={new Date(task.completed_at).toLocaleString()} />}
+
+                {/* Editable budget */}
+                <div style={{
+                  display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
+                  padding: '6px 0', fontSize: 13, alignItems: 'center',
+                }}>
+                  <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>Budget (SAR)</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {canEditBudget ? (
+                      <>
+                        <input
+                          className="aq-input"
+                          style={{ maxWidth: 180 }}
+                          value={budgetDraft}
+                          onChange={(e) => setBudgetDraft(e.target.value)}
+                          inputMode="decimal"
+                          placeholder="0.00"
+                        />
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-secondary"
+                          onClick={handleSaveBudget}
+                          disabled={budgetSaving || (budgetDraft.trim() === (task.budget != null ? String(task.budget) : ''))}
+                        >{budgetSaving ? 'Saving…' : 'Save'}</button>
+                      </>
+                    ) : (
+                      <span style={{ color: 'var(--aq-text)' }}>
+                        {task.budget != null ? `SAR ${Number(task.budget).toLocaleString()}` : '—'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Per-subtask assignee (the "doer"). Hidden on parents — parents
+                    use the multi-collaborator panel below. */}
+                {isSubtaskView && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
+                    padding: '6px 0', fontSize: 13, alignItems: 'center',
+                  }}>
+                    <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>Assigned to</span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {canEditAssignee ? (
+                        <select
+                          className="aq-input"
+                          style={{ maxWidth: 280 }}
+                          value={task.assignee_id ?? ''}
+                          onChange={(e) => handleChangeAssignee(e.target.value)}
+                          disabled={assigneeSaving}
+                        >
+                          <option value="">— Unassigned —</option>
+                          {profiles.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.full_name}{p.role ? ` (${p.role})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span style={{ color: 'var(--aq-text)' }}>{subAssignee?.full_name ?? '—'}</span>
+                      )}
+                      {assigneeSaving && (
+                        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>Saving…</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {task.description && (
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--aq-border-light)' }}>
                     <div className="aq-label">Description</div>
@@ -282,65 +426,123 @@ export function TaskDetailPanel({
                 )}
               </section>
 
-              {/* Assignees */}
-              <TaskAssignees
-                taskId={task.id}
-                currentUserId={currentUserId}
-                role={role}
-                profiles={profiles}
-                canEdit={Boolean(isPrivileged || isKeyAcct)}
-              />
+              {/* Multi-assignee panel — parent only.
+                  Subtasks have a single "doer" picker above. */}
+              {!isSubtaskView && (
+                <TaskAssignees
+                  taskId={task.id}
+                  currentUserId={currentUserId}
+                  role={role}
+                  profiles={profiles}
+                  canEdit={Boolean(isPrivileged || isKeyAcct)}
+                />
+              )}
 
-              {/* Subtasks */}
-              {subtasks.length > 0 && (
+              {/* Subtasks list — clickable rows, no checklist.
+                  Only shown on the parent (subtasks don't currently have grandchildren). */}
+              {!isSubtaskView && subtasks.length > 0 && (
                 <section className="aq-card" style={{ padding: 18 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
-                    Subtasks ({subtasks.filter((s) => s.status === 'done').length} / {subtasks.length})
-                  </h3>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12,
+                    gap: 12, flexWrap: 'wrap',
+                  }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>
+                      Subtasks ({subtasks.filter((s) => s.status === 'done').length} of {subtasks.length} done)
+                    </h3>
+                    <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                      Distributed: <strong style={{ color: 'var(--aq-text)' }}>SAR {subtaskBudgetSum.toLocaleString()}</strong>
+                      {parentBudget > 0 && (
+                        <> of SAR {parentBudget.toLocaleString()} ·{' '}
+                          <span style={{
+                            color: variance < 0 ? 'var(--aq-error)' : variance > 0 ? 'var(--aq-warning, #b45309)' : 'var(--aq-text-muted)',
+                          }}>
+                            {variance === 0 ? 'fully allocated'
+                              : variance > 0 ? `SAR ${variance.toLocaleString()} unallocated`
+                              : `SAR ${Math.abs(variance).toLocaleString()} over budget`}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  </div>
                   <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {subtasks.map((s) => {
                       const done = s.status === 'done';
-                      const subAssignee = s.assignee_id ? profileById.get(s.assignee_id) : null;
-                      const canToggle = canMarkDone || s.assignee_id === currentUserId;
+                      const sa = s.assignee_id ? profileById.get(s.assignee_id) : null;
                       return (
-                        <li key={s.id} style={{
-                          display: 'flex', alignItems: 'center', gap: 10,
-                          padding: '8px 12px', borderRadius: 'var(--aq-radius)',
-                          background: done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
-                        }}>
-                          <input
-                            type="checkbox"
-                            checked={done}
-                            disabled={!canToggle || busy}
-                            onChange={() => handleSubtaskToggle(s.id, s.status)}
-                            style={{ width: 16, height: 16, cursor: canToggle ? 'pointer' : 'not-allowed' }}
-                          />
-                          <span style={{
-                            flex: 1, fontSize: 14,
-                            textDecoration: done ? 'line-through' : 'none',
-                            color: done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
-                          }}>{s.title}</span>
-                          {subAssignee && (
-                            <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{subAssignee.full_name}</span>
-                          )}
+                        <li key={s.id}>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentTaskId(s.id)}
+                            style={{
+                              width: '100%', textAlign: 'left',
+                              display: 'flex', alignItems: 'center', gap: 10,
+                              padding: '10px 12px', borderRadius: 'var(--aq-radius)',
+                              background: done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
+                              border: '1px solid var(--aq-border-light)',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <span style={{
+                              flex: 1, fontSize: 14,
+                              textDecoration: done ? 'line-through' : 'none',
+                              color: done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
+                              fontWeight: 600,
+                            }}>{s.title}</span>
+                            {s.budget != null && (
+                              <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                                SAR {Number(s.budget).toLocaleString()}
+                              </span>
+                            )}
+                            <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                              {sa?.full_name ?? 'Unassigned'}
+                            </span>
+                            <span className={`aq-badge ${done ? 'aq-badge-success' : 'aq-badge-muted'}`}>
+                              {done ? 'done' : s.status}
+                            </span>
+                            <span aria-hidden style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>›</span>
+                          </button>
                         </li>
                       );
                     })}
                   </ul>
+                  <p style={{ marginTop: 10, fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                    Click a subtask to open it — each has its own files, comments, budget, and assignee.
+                  </p>
                 </section>
               )}
 
-              {/* Attachments */}
+              {/* Files */}
               <section className="aq-card" style={{ padding: 18 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
-                  Attachments ({attachments.length})
-                </h3>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  marginBottom: 12, gap: 12,
+                }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700 }}>
+                    Files ({attachments.length})
+                  </h3>
+                  {canAttach && (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        style={{ display: 'none' }}
+                        onChange={(e) => handleFilePicked(e.target.files?.[0] ?? null)}
+                      />
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-primary"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={busy}
+                      >{busy ? 'Uploading…' : 'Upload file'}</button>
+                    </div>
+                  )}
+                </div>
                 {attachments.length === 0 && (
                   <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
-                    No files attached yet.
+                    No files yet. Click <strong>Upload file</strong> above to attach one.
                   </p>
                 )}
-                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {attachments.map((a) => {
                     const canRemove = a.uploader_id === currentUserId || isPrivileged;
                     return (
@@ -350,10 +552,16 @@ export function TaskDetailPanel({
                         background: 'var(--aq-bg-sunken)',
                       }}>
                         <span aria-hidden style={{ fontSize: 18 }}>📎</span>
-                        <a href={a.file_url} target="_blank" rel="noreferrer" style={{
-                          flex: 1, fontSize: 14, color: 'var(--aq-accent)', textDecoration: 'none',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }}>{a.filename}</a>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAttachment(a)}
+                          style={{
+                            flex: 1, fontSize: 14, color: 'var(--aq-accent)',
+                            background: 'none', border: 'none', padding: 0,
+                            cursor: 'pointer', textAlign: 'left',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}
+                        >{a.filename}</button>
                         <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
                           {new Date(a.created_at).toLocaleDateString()}
                         </span>
@@ -371,28 +579,6 @@ export function TaskDetailPanel({
                     );
                   })}
                 </ul>
-                {canAttach && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr auto', gap: 8 }}>
-                    <input
-                      className="aq-input"
-                      placeholder="File name"
-                      value={attachName}
-                      onChange={(e) => setAttachName(e.target.value)}
-                    />
-                    <input
-                      className="aq-input"
-                      placeholder="Paste a Drive / Dropbox / direct URL"
-                      value={attachUrl}
-                      onChange={(e) => setAttachUrl(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="aq-btn aq-btn-secondary"
-                      onClick={handleAddAttachment}
-                      disabled={busy || !attachUrl.trim() || !attachName.trim()}
-                    >Attach</button>
-                  </div>
-                )}
               </section>
 
               {/* Comments */}
@@ -402,7 +588,7 @@ export function TaskDetailPanel({
                 </h3>
                 {comments.length === 0 && (
                   <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
-                    Be the first to comment. Tip: type @name to mention a teammate (search not yet wired — name as plain text for now).
+                    Be the first to comment.
                   </p>
                 )}
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>

@@ -440,7 +440,7 @@ export function useTaskAttachments(taskId: string | null) {
   return { attachments, loading, refetch: fetch };
 }
 
-/** Add an attachment by URL (Drive, Dropbox, paste, etc). Storage upload TBD. */
+/** Add an attachment by URL (Drive, Dropbox, paste, etc). */
 export async function addAttachmentLink(input: {
   task_id: string;
   uploader_id: string;
@@ -458,9 +458,88 @@ export async function addAttachmentLink(input: {
   if (error) throw error;
 }
 
+/**
+ * Upload a real file to Supabase Storage (bucket `task-files`) and create
+ * the matching `task_attachments` row.
+ *
+ * Path convention: `{workspace_id}/{task_id}/{uuid}-{originalFilename}` —
+ * the leading workspace_id is what the storage RLS policies key on, so a
+ * member of one workspace can never read/write another workspace's files.
+ */
+export async function uploadTaskAttachment(input: {
+  file: File;
+  task_id: string;
+  uploader_id: string;
+  workspace_id: string;
+}) {
+  const safeName = input.file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+  const uid =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const path = `${input.workspace_id}/${input.task_id}/${uid}-${safeName}`;
+
+  const { error: upErr } = await supabase.storage
+    .from('task-files')
+    .upload(path, input.file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: input.file.type || undefined,
+    });
+  if (upErr) throw upErr;
+
+  // Store the storage path in `file_url`. We sign download URLs at click time.
+  const { error: insErr } = await supabase.from('task_attachments').insert({
+    task_id: input.task_id,
+    uploader_id: input.uploader_id,
+    filename: input.file.name,
+    file_url: path,
+    file_size: input.file.size,
+    mime_type: input.file.type || null,
+  });
+  if (insErr) {
+    // Best-effort cleanup if metadata insert fails after upload succeeded.
+    await supabase.storage.from('task-files').remove([path]).catch(() => {});
+    throw insErr;
+  }
+}
+
+/**
+ * Get a temporary download URL for a stored file. Storage rows store the
+ * `file_url` column as either:
+ *   - a Supabase Storage path (no leading slash, no http) — sign on demand
+ *   - or an external http(s) URL (legacy `addAttachmentLink` rows) — return as-is
+ */
+export async function getAttachmentDownloadUrl(
+  fileUrl: string,
+  expiresInSeconds = 60 * 5,
+): Promise<string> {
+  if (/^https?:\/\//i.test(fileUrl)) return fileUrl;
+  const { data, error } = await supabase.storage
+    .from('task-files')
+    .createSignedUrl(fileUrl, expiresInSeconds);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
 export async function deleteAttachment(id: string) {
+  // Look up the row first so we know what to remove from Storage too.
+  const { data: row, error: fetchErr } = await supabase
+    .from('task_attachments')
+    .select('file_url')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchErr) throw fetchErr;
+
   const { error } = await supabase.from('task_attachments').delete().eq('id', id);
   if (error) throw error;
+
+  // Best-effort: if the file_url is a storage path (not an external URL),
+  // also remove the bytes. Failure here is non-fatal — RLS/cleanup policies
+  // will catch any orphans.
+  if (row?.file_url && !/^https?:\/\//i.test(row.file_url)) {
+    await supabase.storage.from('task-files').remove([row.file_url]).catch(() => {});
+  }
 }
 
 // ============================================================
