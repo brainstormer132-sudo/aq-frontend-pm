@@ -11,7 +11,7 @@ import { ContractsTable, Stat, DetailGrid } from '@/app/vendor/page';
 export default function ClientPortalPage() {
   return (
     <PortalShell expectedRole="client">
-      {(me) => <ClientDashboard me={me} />}
+      {(me) => (me.role === 'client' ? <ClientDashboard me={me} /> : null)}
     </PortalShell>
   );
 }

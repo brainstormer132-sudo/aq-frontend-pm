@@ -7,7 +7,7 @@ import { portal, type PortalContractRow, type PortalMe } from '@/lib/portal-api'
 export default function VendorPortalPage() {
   return (
     <PortalShell expectedRole="vendor">
-      {(me) => <VendorDashboard me={me} />}
+      {(me) => (me.role === 'vendor' ? <VendorDashboard me={me} /> : null)}
     </PortalShell>
   );
 }
