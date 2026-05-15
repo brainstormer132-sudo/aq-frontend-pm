@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useTask, useTaskSubtasks, useTaskComments, useTaskAttachments, useTaskServiceTypes,
+  useLegacyVendors,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
+  autoCreateContractRequestForSubtask,
   type Profile, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { TaskAssignees } from './TaskAssignees';
@@ -47,6 +49,13 @@ export function TaskDetailPanel({
   const { attachments, refetch: refetchAtt } = useTaskAttachments(currentTaskId);
   const { items: taskServiceTypes } = useTaskServiceTypes(currentTaskId);
 
+  // For subtasks we also need the PARENT task (for brand_name / legacy_client_id
+  // when auto-creating a contract request). For top-level tasks parentTask is null.
+  const { task: parentTask } = useTask(task?.parent_task_id ?? null);
+
+  // Vendors list — used by the per-subtask vendor picker and the auto-fire flow.
+  const { vendors, banks } = useLegacyVendors();
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [commentText, setCommentText] = useState('');
@@ -56,8 +65,12 @@ export function TaskDetailPanel({
   const [budgetDraft, setBudgetDraft] = useState<string>('');
   const [budgetSaving, setBudgetSaving] = useState(false);
   const [assigneeSaving, setAssigneeSaving] = useState(false);
+  const [vendorSaving, setVendorSaving] = useState(false);
+  // Banner shown after the auto-fire creates a contract request.
+  const [autoSentBanner, setAutoSentBanner] = useState<string | null>(null);
   useEffect(() => {
     setBudgetDraft(task?.budget != null ? String(task.budget) : '');
+    setAutoSentBanner(null);
   }, [task?.id, task?.budget]);
 
   // File picker (kept hidden; clicking the "Upload file" button triggers it).
@@ -222,6 +235,66 @@ export function TaskDetailPanel({
     finally { setAssigneeSaving(false); }
   };
 
+  /**
+   * Auto-fire a contract request when a subtask now has BOTH vendor + budget.
+   * Idempotent (no-op if `contract_request_id` is already set).
+   */
+  const tryAutoSendContractRequest = async () => {
+    if (!task || !task.parent_task_id) return; // subtasks only
+    if (task.contract_request_id) return;       // already sent
+    const vendor = task.vendor_id != null
+      ? vendors.find((v) => v.id === task.vendor_id) ?? null
+      : null;
+    if (!vendor) return;
+    const amount = Number(task.budget);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!parentTask) return;                    // parent not loaded yet
+
+    const bank = banks.find((b) => b.vendor_id === vendor.id) ?? null;
+    try {
+      const newId = await autoCreateContractRequestForSubtask({
+        subtask: task,
+        parent: parentTask,
+        vendor,
+        bank,
+        requestedBy: currentUserId,
+        notes: null,
+      });
+      if (newId) {
+        setAutoSentBanner('Contract request sent to the contract maker. Add notes below — they go through as comments.');
+        await refetchTask();
+        onChanged?.();
+      }
+    } catch (e: any) {
+      setError(`Could not send contract request: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const handleChangeVendor = async (newId: string) => {
+    if (!task) return;
+    setVendorSaving(true); setError('');
+    try {
+      const numericId = newId ? Number(newId) : null;
+      await updateTaskFields(task.id, { vendor_id: numericId } as any);
+      await refetchTask();
+      // Auto-fire happens after the next refetch when state has the new vendor_id.
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setVendorSaving(false); }
+  };
+
+  // Watch for the moment a subtask has vendor + budget + no request yet → fire.
+  useEffect(() => {
+    if (!task || !task.parent_task_id) return;
+    if (task.contract_request_id) return;
+    if (!task.vendor_id) return;
+    const amount = Number(task.budget);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!parentTask) return;
+    if (vendors.length === 0) return;
+    tryAutoSendContractRequest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id, task?.vendor_id, task?.budget, task?.contract_request_id, parentTask?.id, vendors.length]);
+
   if (!isOpen) return null;
 
   const isSubtaskView = Boolean(task?.parent_task_id);
@@ -334,6 +407,29 @@ export function TaskDetailPanel({
                 </div>
               )}
 
+              {autoSentBanner && (
+                <div style={{
+                  background: 'var(--aq-accent-light)',
+                  color: 'var(--aq-accent)',
+                  padding: '10px 14px',
+                  borderRadius: 'var(--aq-radius)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                }}>
+                  <span>{autoSentBanner}</span>
+                  <button
+                    type="button"
+                    className="aq-btn aq-btn-ghost"
+                    onClick={() => setAutoSentBanner(null)}
+                    style={{ padding: '2px 8px', fontSize: 11 }}
+                  >dismiss</button>
+                </div>
+              )}
+
               {/* Fields */}
               <section className="aq-card" style={{ padding: 18 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Details</h3>
@@ -411,6 +507,47 @@ export function TaskDetailPanel({
                       )}
                       {assigneeSaving && (
                         <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>Saving…</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Per-subtask vendor (picked from the vendors table — not typeable).
+                    When this is set AND budget > 0, the contract request auto-fires. */}
+                {isSubtaskView && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
+                    padding: '6px 0', fontSize: 13, alignItems: 'center',
+                  }}>
+                    <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>Vendor</span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {canEditAssignee ? (
+                        <select
+                          className="aq-input"
+                          style={{ maxWidth: 360 }}
+                          value={task.vendor_id ?? ''}
+                          onChange={(e) => handleChangeVendor(e.target.value)}
+                          disabled={vendorSaving || Boolean(task.contract_request_id)}
+                        >
+                          <option value="">— No vendor —</option>
+                          {vendors.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name}{v.license_number ? ` · ${v.license_number}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span style={{ color: 'var(--aq-text)' }}>
+                          {vendors.find((v) => v.id === task.vendor_id)?.name ?? '—'}
+                        </span>
+                      )}
+                      {vendorSaving && (
+                        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>Saving…</span>
+                      )}
+                      {task.contract_request_id && (
+                        <span className="aq-badge aq-badge-success" style={{ fontSize: 11 }}>
+                          Contract request sent
+                        </span>
                       )}
                     </div>
                   </div>

@@ -54,6 +54,10 @@ export interface PMTask {
   task_name: string | null;
   brand_name: string | null;
   legacy_client_id: string | null;
+  // FK to public.clients (set by NewTaskForm picker, may be null on legacy rows).
+  client_id: string | null;
+  // FK to public.client_brands (set by NewTaskForm picker).
+  brand_id: string | null;
   sales_closer_id: string | null;
   key_account_id: string | null;
   service_type_id: string | null;
@@ -69,6 +73,10 @@ export interface PMTask {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  // Per-subtask vendor (added in migration 011). FK to public.vendors.
+  vendor_id: number | null;
+  // Auto-set when the subtask spawns a contract request (migration 011).
+  contract_request_id: string | null;
 }
 
 export interface Profile {
@@ -211,7 +219,12 @@ export async function createSalesTask(input: {
   workspace_id: string;
   task_name: string;
   brand_name: string;
+  /** Legacy text identifier kept for compat with the contract maker. */
   legacy_client_id?: string | null;
+  /** FK to public.clients.id — set by the new dropdown picker. */
+  client_id?: string | null;
+  /** FK to public.client_brands.id — set by the new dropdown picker. */
+  brand_id?: string | null;
   sales_closer_id?: string | null;
   budget?: number | null;
   details?: string | null;
@@ -225,6 +238,8 @@ export async function createSalesTask(input: {
       task_name: input.task_name,
       brand_name: input.brand_name,
       legacy_client_id: input.legacy_client_id ?? null,
+      client_id: input.client_id ?? null,
+      brand_id: input.brand_id ?? null,
       sales_closer_id: input.sales_closer_id ?? null,
       budget: input.budget ?? null,
       description: input.details ?? null,
@@ -1100,6 +1115,147 @@ export function useLegacyVendors() {
 
   useEffect(() => { fetch(); }, [fetch]);
   return { vendors, banks, loading, refetch: fetch };
+}
+
+// ============================================================
+// Clients & brands (the contract-app `clients` + `client_brands`
+// tables, which both apps share). NewTaskForm uses these to make
+// Client/Brand pickers instead of free-text inputs.
+// ============================================================
+
+export interface ClientRow {
+  id: string;
+  company_name: string;
+  cr_number: string | null;
+  vat_number: string | null;
+  signatory_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  city: string | null;
+  country: string | null;
+  status: string | null;
+}
+
+export interface ClientBrandRow {
+  id: string;
+  client_id: string;
+  brand_name: string;
+  description: string | null;
+  status: string | null;
+}
+
+export function useClients() {
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status')
+      .order('company_name', { ascending: true });
+    if (error) logSbError('useClients', error);
+    setClients((data || []) as ClientRow[]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { clients, loading, refetch: fetch };
+}
+
+export function useClientBrands(clientId: string | null) {
+  const [brands, setBrands] = useState<ClientBrandRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!clientId) { setBrands([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('client_brands')
+      .select('id, client_id, brand_name, description, status')
+      .eq('client_id', clientId)
+      .order('brand_name', { ascending: true });
+    if (error) logSbError('useClientBrands', error, { clientId });
+    setBrands((data || []) as ClientBrandRow[]);
+    setLoading(false);
+  }, [clientId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { brands, loading, refetch: fetch };
+}
+
+/**
+ * Auto-create a contract request for a subtask the moment it has both a
+ * vendor AND a non-zero budget. No-op if the subtask already has a
+ * `contract_request_id` (idempotent: safe to call from any save path).
+ *
+ * Returns the new contract_request id, or null if no action was taken.
+ */
+export async function autoCreateContractRequestForSubtask(opts: {
+  subtask: PMTask;
+  parent: PMTask;
+  vendor: LegacyVendor | null;
+  bank: LegacyBankAccount | null;
+  requestedBy: string;
+  notes?: string | null;
+}): Promise<string | null> {
+  const { subtask, parent, vendor, bank, requestedBy, notes } = opts;
+
+  // Already sent? Don't double-fire.
+  if ((subtask as any).contract_request_id) return null;
+
+  // Need both vendor + budget to be meaningful.
+  if (!vendor) return null;
+  const amount = Number(subtask.budget);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  if (!subtask.workspace_id) {
+    throw new Error('Subtask has no workspace_id; cannot create contract request.');
+  }
+
+  const created = await createContractRequest({
+    pm_task_id: subtask.id,
+    workspace_id: subtask.workspace_id,
+    requested_by: requestedBy,
+    request_kind: 'vendor',
+    template_key: null,
+    brand_name: parent.brand_name ?? subtask.brand_name ?? '',
+    amount,
+    notes: notes ?? null,
+
+    client_name: null,
+    client_id_legacy: parent.legacy_client_id ?? null,
+    pending_client_id: null,
+    cr_number: null, vat_number: null, signatory_name: null,
+    street: null, city: null, postcode: null, country: null,
+    email: null, phone: null,
+
+    pending_vendor_id: null,
+    vendor_id: vendor.id,
+    vendor_name: vendor.name,
+    vendor_category: null,
+    vendor_email: null,
+    vendor_phone: null,
+    bank_account_id: bank?.id ?? null,
+    bank_name: bank?.bank_name ?? null,
+    account_name: bank?.account_name ?? null,
+    iban: bank?.iban ?? null,
+    account_number: bank?.account_number ?? null,
+    swift_code: bank?.swift_code ?? null,
+    license_number: vendor.license_number ?? null,
+    is_influencer: null,
+    platforms: null,
+    ad_type: null,
+    qty: null,
+    channel: null,
+    details: subtask.title ?? null,
+  } as any);
+
+  // Link the request id back onto the subtask so we don't re-fire.
+  await supabase
+    .from('pm_tasks')
+    .update({ contract_request_id: created.id } as any)
+    .eq('id', subtask.id);
+
+  return created.id;
 }
 
 // Pending vendor & client onboarding queues (legacy contract app)

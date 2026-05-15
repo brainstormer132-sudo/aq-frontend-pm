@@ -1,13 +1,24 @@
 'use client';
 
-import { useState } from 'react';
-import { createSalesTask, type Profile, type WorkspaceRole } from '@/hooks/use-workflow';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  createSalesTask,
+  useClients,
+  useClientBrands,
+  type Profile,
+  type WorkspaceRole,
+} from '@/hooks/use-workflow';
 
 /**
- * Sales create-task screen — matches the user's hand-drawn sketch.
- * Open boxes for sales fields; greyed-out lockers for the marketing-side
- * fields (Priority / Service Type / Key Account / Done) which display
- * as "Marketing will fill" placeholders.
+ * Sales create-task screen. Open boxes for sales fields; greyed-out
+ * lockers for the marketing-side fields (Priority / Service Type /
+ * Key Account / Done) which display as "Marketing will fill"
+ * placeholders.
+ *
+ * Hardened (2026-05-15): Client and Brand are now picked from
+ * dropdowns sourced from `clients` / `client_brands`, not free
+ * text. Client must be picked first; the Brand dropdown then
+ * cascades to that client's brands.
  */
 export function NewTaskForm({
   workspaceId, currentUserId, role, profiles, onCreated,
@@ -18,15 +29,30 @@ export function NewTaskForm({
   profiles: (Profile & { role: WorkspaceRole })[];
   onCreated?: (taskId: string) => void;
 }) {
-  const [taskName, setTaskName]   = useState('');
-  const [clientName, setClientName] = useState('');
-  const [brandName, setBrandName] = useState('');
+  const [taskName, setTaskName]       = useState('');
+  const [clientId, setClientId]       = useState<string>('');
+  const [brandId, setBrandId]         = useState<string>('');
   const [salesCloser, setSalesCloser] = useState('');
-  const [budget, setBudget]       = useState('');
-  const [details, setDetails]     = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError]         = useState('');
-  const [success, setSuccess]     = useState('');
+  const [budget, setBudget]           = useState('');
+  const [details, setDetails]         = useState('');
+  const [submitting, setSubmitting]   = useState(false);
+  const [error, setError]             = useState('');
+  const [success, setSuccess]         = useState('');
+
+  const { clients, loading: clientsLoading } = useClients();
+  const { brands, loading: brandsLoading }   = useClientBrands(clientId || null);
+
+  // Reset brand whenever client changes — old brand wouldn't belong to new client.
+  useEffect(() => { setBrandId(''); }, [clientId]);
+
+  const selectedClient = useMemo(
+    () => clients.find((c) => c.id === clientId) ?? null,
+    [clients, clientId],
+  );
+  const selectedBrand = useMemo(
+    () => brands.find((b) => b.id === brandId) ?? null,
+    [brands, brandId],
+  );
 
   const canCreate = role && ['owner','admin','sales','marketing'].includes(role);
 
@@ -34,8 +60,16 @@ export function NewTaskForm({
     e.preventDefault();
     setError('');
     setSuccess('');
-    if (!taskName.trim() || !clientName.trim() || !brandName.trim()) {
-      setError('Task name, client, and brand are required.');
+    if (!taskName.trim()) {
+      setError('Task name is required.');
+      return;
+    }
+    if (!selectedClient) {
+      setError('Pick a client from the list.');
+      return;
+    }
+    if (!selectedBrand) {
+      setError('Pick a brand from the list. (If the brand isn\'t there, add it under Vendors & Clients first.)');
       return;
     }
     setSubmitting(true);
@@ -43,8 +77,10 @@ export function NewTaskForm({
       const created = await createSalesTask({
         workspace_id: workspaceId,
         task_name: taskName.trim(),
-        brand_name: brandName.trim(),
-        legacy_client_id: clientName.trim(),
+        brand_name: selectedBrand.brand_name,
+        legacy_client_id: selectedClient.cr_number || selectedClient.id,
+        client_id: selectedClient.id,
+        brand_id: selectedBrand.id,
         sales_closer_id: salesCloser || null,
         budget: budget ? Number(budget.replace(/,/g, '')) : null,
         details: details.trim() || null,
@@ -52,7 +88,7 @@ export function NewTaskForm({
       });
       setSuccess(`Task "${created.task_name}" sent to marketing for triage.`);
       // reset form
-      setTaskName(''); setClientName(''); setBrandName('');
+      setTaskName(''); setClientId(''); setBrandId('');
       setSalesCloser(''); setBudget(''); setDetails('');
       onCreated?.(created.id);
     } catch (err: any) {
@@ -87,7 +123,7 @@ export function NewTaskForm({
           <header>
             <h2 style={{ fontSize: 18, fontWeight: 700 }}>New Task</h2>
             <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-              Fill these fields. Marketing will pick up the task once you submit.
+              Pick the client and brand from the lists. Marketing will pick up the task once you submit.
             </p>
           </header>
 
@@ -102,25 +138,69 @@ export function NewTaskForm({
           </Field>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <Field label="Client ID / name *">
-              <input
-                className="aq-input"
-                value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                placeholder="Client identifier"
+            <Field label="Client *">
+              <select
+                className="aq-select"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
                 required
-              />
+                disabled={clientsLoading}
+              >
+                <option value="">
+                  {clientsLoading
+                    ? 'Loading clients…'
+                    : clients.length === 0
+                      ? 'No clients yet — add one under Vendors & Clients'
+                      : '— Select client —'}
+                </option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.company_name}
+                    {c.cr_number ? ` · CR ${c.cr_number}` : ''}
+                  </option>
+                ))}
+              </select>
             </Field>
-            <Field label="Brand name *">
-              <input
-                className="aq-input"
-                value={brandName}
-                onChange={(e) => setBrandName(e.target.value)}
-                placeholder="Brand"
+
+            <Field label="Brand *">
+              <select
+                className="aq-select"
+                value={brandId}
+                onChange={(e) => setBrandId(e.target.value)}
                 required
-              />
+                disabled={!clientId || brandsLoading}
+              >
+                <option value="">
+                  {!clientId
+                    ? 'Pick a client first'
+                    : brandsLoading
+                      ? 'Loading brands…'
+                      : brands.length === 0
+                        ? 'No brands for this client'
+                        : '— Select brand —'}
+                </option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.brand_name}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
+
+          {selectedClient && (
+            <div style={{
+              fontSize: 12, color: 'var(--aq-text-muted)',
+              padding: '6px 10px',
+              background: 'var(--aq-bg-sunken)',
+              borderRadius: 'var(--aq-radius)',
+            }}>
+              <strong style={{ color: 'var(--aq-text)' }}>{selectedClient.company_name}</strong>
+              {selectedClient.signatory_name && ` · Signatory: ${selectedClient.signatory_name}`}
+              {selectedClient.contact_email && ` · ${selectedClient.contact_email}`}
+              {selectedBrand && ` · Brand: ${selectedBrand.brand_name}`}
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Sales closer">
