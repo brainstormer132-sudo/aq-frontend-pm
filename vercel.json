@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "_comment": "Vercel routing — mirrors aqagency.conf. Backend lives on Render at aq-backend-p5zd.onrender.com.",
 
   "rewrites": [
     {
