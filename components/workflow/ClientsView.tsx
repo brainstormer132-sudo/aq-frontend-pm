@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  createApprovedClientRegistration,
   usePendingClients,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import {
-  brands as brandsApi, clientOps,
+  brands as brandsApi, clientOps, manualCreate,
   type BrandRow,
 } from '@/lib/contract-api';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
@@ -26,7 +25,7 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
     setLoading(true);
     const { data, error: e } = await supabase
       .from('clients')
-      .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, phone, cr_number, vat_number, street, city, postcode, country, invite_status, status')
+      .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, vat_number, street, city, postcode, country, invite_status, status')
       .eq('status', 'active')
       .order('company_name');
     if (e) setError(e.message);
@@ -62,11 +61,29 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   }, [allClients, query]);
 
   const submit = async () => {
-    if (!form.company_name.trim()) return;
+    if (!form.company_name.trim()) {
+      setError('Company name is required.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
-      await createApprovedClientRegistration(form);
+      // Route through the contract backend so field mapping (phone→contact_phone,
+      // email→contact_email, etc.) and audit logging happen server-side. The
+      // backend's vendors.py:manual_create_client is gated to admin/owner roles.
+      await manualCreate.client({
+        company_name: form.company_name.trim(),
+        cr_number: form.cr_number.trim(),
+        vat_number: form.vat_number.trim(),
+        signatory_name: form.signatory_name.trim(),
+        email: form.email.trim(),
+        company_email: form.email.trim(),
+        phone: form.phone.trim(),
+        street: form.street.trim(),
+        city: form.city.trim(),
+        postcode: form.postcode.trim(),
+        country: form.country.trim(),
+      });
       setForm({
         company_name: '',
         cr_number: '',
@@ -397,7 +414,7 @@ function ClientCard({
       <dl style={metaGrid}>
         <Meta label="CR" value={client.cr_number} />
         <Meta label="VAT" value={client.vat_number} />
-        <Meta label="Phone" value={client.phone} />
+        <Meta label="Phone" value={client.contact_phone} />
         <Meta label="Address" value={[client.street, client.city, client.postcode, client.country].filter(Boolean).join(', ')} />
       </dl>
 
