@@ -90,6 +90,45 @@
       }
       a.card:hover .card-arrow { transform: translateX(3px); }
 
+      .signup-card {
+        margin-top: 32px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 24px;
+        text-align: left;
+      }
+      .signup-card h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+      .signup-card .tag { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+      .signup-card label {
+        display: block; font-size: 12px; font-weight: 600;
+        color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+        margin-bottom: 4px;
+      }
+      .signup-card input {
+        width: 100%; padding: 10px 12px; font-size: 14px;
+        border: 1px solid var(--border); border-radius: 8px;
+        margin-bottom: 12px; font-family: inherit;
+      }
+      .signup-card input:focus {
+        outline: none; border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(31, 143, 79, 0.15);
+      }
+      .signup-card button {
+        width: 100%; padding: 12px;
+        background: var(--accent); color: #fff;
+        border: none; border-radius: 8px;
+        font-weight: 700; font-size: 14px; cursor: pointer;
+        font-family: inherit;
+      }
+      .signup-card button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .signup-msg {
+        margin-top: 12px; padding: 10px 12px;
+        border-radius: 8px; font-size: 13px;
+      }
+      .signup-msg.ok    { background: #e8f5ed; color: #1f8f4f; }
+      .signup-msg.error { background: #fee2e2; color: #b91c1c; }
+
       footer {
         margin-top: 40px;
         color: var(--muted);
@@ -136,7 +175,79 @@
         </a>
       </div>
 
+      <section class="signup-card">
+        <h2>Create staff account</h2>
+        <p class="tag">Use the invite code your admin gave you. Without one, signup is disabled.</p>
+        <form id="hub-signup">
+          <label>Username</label>
+          <input name="username" autocomplete="username" required pattern="[A-Za-z0-9_-]{2,32}" title="2–32 chars, letters/digits/underscore/dash" />
+
+          <label>Full name</label>
+          <input name="full_name" autocomplete="name" required />
+
+          <label>Email</label>
+          <input name="email" type="email" autocomplete="email" required />
+
+          <label>Password</label>
+          <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+
+          <label>Invite code</label>
+          <input name="invite_code" autocomplete="off" required />
+
+          <button type="submit">Create account</button>
+        </form>
+        <p id="hub-signup-msg" class="signup-msg" style="display:none;"></p>
+      </section>
+
       <footer>© AQ Creativity</footer>
     </div>
+
+    <script>
+      (function () {
+        const form = document.getElementById('hub-signup');
+        const msg  = document.getElementById('hub-signup-msg');
+        if (!form) return;
+        const setMsg = (text, ok) => {
+          msg.textContent = text;
+          msg.className = 'signup-msg ' + (ok ? 'ok' : 'error');
+          msg.style.display = 'block';
+        };
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = form.querySelector('button');
+          btn.disabled = true;
+          msg.style.display = 'none';
+          const fd = new FormData(form);
+          const body = {
+            username:    fd.get('username').trim(),
+            full_name:   fd.get('full_name').trim(),
+            email:       fd.get('email').trim(),
+            password:    fd.get('password'),
+            invite_code: fd.get('invite_code').trim(),
+          };
+          try {
+            const res = await fetch('/contracts/api/auth/signup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              const detail = typeof payload.detail === 'string' ? payload.detail : `Signup failed (${res.status})`;
+              setMsg(detail, false);
+              btn.disabled = false;
+              return;
+            }
+            setMsg('Account created. Redirecting to login…', true);
+            // Don't auto-login here — kick the user to /contracts/ where they
+            // sign in fresh. Avoids any token-state confusion.
+            setTimeout(() => { window.location.href = '/contracts/'; }, 800);
+          } catch (err) {
+            setMsg(err.message || String(err), false);
+            btn.disabled = false;
+          }
+        });
+      })();
+    </script>
   </body>
 </html>

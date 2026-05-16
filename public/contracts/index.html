@@ -75,34 +75,12 @@
                 <button class="primary-button" type="submit">Sign In</button>
               </form>
 
-              <!-- Create Account -->
-              <form id="signup-form" class="auth-panel auth-card">
-                <h2>Create Account</h2>
-                <p class="auth-card-sub">Use the invite code your admin sent you.</p>
-
-                <label>
-                  Username
-                  <input id="signup-username" name="username" autocomplete="username" />
-                </label>
-                <label>
-                  Full name
-                  <input id="signup-full-name" name="full_name" autocomplete="name" />
-                </label>
-                <label>
-                  Email
-                  <input id="signup-email" name="email" type="email" autocomplete="email" />
-                </label>
-                <label>
-                  Password
-                  <input id="signup-password" name="password" type="password" autocomplete="new-password" />
-                </label>
-                <label>
-                  Invite code
-                  <input id="signup-invite-code" name="invite_code" autocomplete="off" />
-                </label>
-
-                <button id="signup-button" class="primary-button" type="submit">Create Account</button>
-              </form>
+              <!-- Signup intentionally removed here. New staff accounts are
+                   created from the Hub (https://<domain>/hub) or by an admin
+                   via Settings → Invites. -->
+              <p class="auth-card-sub" style="margin-top:14px;font-size:13px;text-align:center;">
+                Need an account? <a href="/hub" style="color:#1f8f4f;font-weight:600;">Go to the Hub</a>.
+              </p>
             </div>
           </div>
         </section>

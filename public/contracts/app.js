@@ -1474,6 +1474,15 @@ function buildInviteLink(token) {
 }
 
 async function login(signup = false) {
+  // CRITICAL: clear ANY existing token before logging in. A stale token in
+  // localStorage (e.g. from a deleted user, or from a different deploy)
+  // gets sent as a Bearer header on the login request itself and triggers
+  // the backend's 401 auto-logout path, looking like "session expired" the
+  // moment you try to log in.
+  clearStoredToken();
+  state.token = "";
+  state.user = null;
+
   const online = await checkHealth();
   if (!online) throw new Error("Backend is not reachable");
 
