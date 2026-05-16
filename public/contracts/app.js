@@ -2560,4 +2560,176 @@ document.addEventListener("click", async (event) => {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const tid = String(button.dataset.taskId);
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
-      if (!confirm(`Delete ALL ${list.length} co
+      if (!confirm(`Delete ALL ${list.length} contract${list.length === 1 ? "" : "s"} under this task? This cannot be undone.`)) return;
+      await api(`/api/contracts/task/${tid}`, { method: "DELETE" });
+      await loadContracts();
+      renderContractsView();
+      showToast(`Deleted ${list.length} contract${list.length === 1 ? "" : "s"}`);
+    }
+    if (action === "scan-templates") {
+      const scan = await api("/api/templates/scan", { method: "POST" });
+      await loadTemplates();
+      renderTemplatesView();
+      showToast(`Found ${scan.found.length}, missing ${scan.missing.length}`);
+    }
+    if (action === "select-template-upload") {
+      const select = document.querySelector("#upload-key");
+      const file = document.querySelector("#upload-file");
+      if (select) select.value = button.dataset.key;
+      if (file) file.focus();
+    }
+    if (action === "set-default-template") {
+      await setDefaultTemplate(button.dataset.key);
+    }
+    if (action === "delete-template") {
+      await deleteTemplate(button.dataset.key);
+    }
+    if (action === "load-vendors") {
+      await loadVendors();
+      renderVendorsView();
+    }
+    if (action === "refresh-clients") {
+      await loadClients();
+      renderVendorsView();
+    }
+    if (action === "delete-client") {
+      const cl = selectedClient();
+      if (!cl) throw new Error("Choose a client first");
+      if (!confirm(`Delete client "${cl.company_name || cl.name}"?`)) return;
+      await api(`/api/vendors/clients/${cl.id}`, { method: "DELETE" });
+      state.clients = state.clients.filter((c) => String(c.id) !== String(cl.id));
+      state.selectedClientId = "";
+      localStorage.removeItem("aq_selected_client");
+      renderVendorsView();
+      showToast("Client deleted");
+    }
+    if (action === "delete-vendor") {
+      await deleteSelectedVendor();
+    }
+    if (action === "approve-vendor" || action === "reject-vendor") {
+      const approved = action === "approve-vendor";
+      await api(`/api/vendors/pending/vendors/${button.dataset.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
+      });
+      await loadVendors();
+      await loadPendingData();
+      renderVendorsView();
+      showToast(approved ? "Vendor approved" : "Vendor rejected");
+    }
+    if (action === "approve-client" || action === "reject-client") {
+      const approved = action === "approve-client";
+      await api(`/api/vendors/pending/clients/${button.dataset.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
+      });
+      await loadPendingData();
+      renderVendorsView();
+      showToast(approved ? "Client approved" : "Client rejected");
+    }
+    if (action === "create-backup") {
+      await api("/api/settings/backups/create", { method: "POST" });
+      await loadAdminData();
+      renderSettingsView();
+      showToast("Backup created");
+    }
+    if (action === "copy-invite") {
+      const link = button.dataset.link || "";
+      if (!link) return;
+      try {
+        await navigator.clipboard.writeText(link);
+        showToast("Invite link copied");
+      } catch {
+        // Fallback for browsers without clipboard API permission.
+        window.prompt("Copy this invite link:", link);
+      }
+    }
+    if (action === "revoke-invite") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
+      if (!confirm("Revoke this invite? The link will stop working.")) return;
+      await api(`/api/auth/invites/${button.dataset.id}`, { method: "DELETE" });
+      await loadAdminData();
+      renderSettingsView();
+      showToast("Invite revoked");
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    const loadableButton = button && !button.classList.contains("nav-item") ? button : null;
+    setButtonLoading(loadableButton, false);
+  }
+});
+
+document.querySelectorAll(".nav-item").forEach((button) => {
+  button.classList.toggle("active", button.dataset.view === state.view);
+});
+
+/**
+ * Read ?invite=TOKEN from the URL and pre-fill the signup form. Called
+ * once at bootstrap. Only valid invites are honored — if the token is
+ * expired or already claimed the signup form is left empty and the
+ * landing screen shows a small banner.
+ */
+async function loadInviteFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("invite");
+    if (!token) return;
+    const preview = await api(`/api/auth/invites/preview/${encodeURIComponent(token)}`, { body: undefined });
+    if (preview?.claimed_at) {
+      showToast("This invite has already been claimed.", "warn");
+      return;
+    }
+    if (preview?.expires_at && new Date(preview.expires_at) < new Date()) {
+      showToast("This invite has expired — ask your admin to send a new one.", "error");
+      return;
+    }
+    state.pendingInviteFromUrl = { token, email: preview?.email, role: preview?.role, full_name: preview?.full_name };
+    // Pre-fill what we can on the signup form.
+    const emailInput = document.querySelector("#signup-email");
+    const nameInput  = document.querySelector("#signup-full-name");
+    const codeInput  = document.querySelector("#signup-invite-code");
+    if (emailInput && preview?.email) {
+      emailInput.value = preview.email;
+      emailInput.setAttribute("readonly", "readonly");
+    }
+    if (nameInput && preview?.full_name) {
+      nameInput.value = preview.full_name;
+    }
+    if (codeInput) {
+      // Per-user token bypasses the shared code; hide the field to avoid confusion.
+      const wrapper = codeInput.closest("label") || codeInput.parentElement;
+      if (wrapper) wrapper.style.display = "none";
+    }
+    showToast(`You're invited as ${preview.role}. Pick a username and password to finish.`, "success");
+  } catch (err) {
+    // Don't block the page — just log a friendly warning.
+    showToast(`Invite link issue: ${err.message || err}`, "error");
+  }
+}
+
+/** Admin only — create a per-user invite for the contract-maker. */
+async function sendContractInvite() {
+  const email = safeText(document.querySelector("#invite-email")?.value || "");
+  const name  = safeText(document.querySelector("#invite-name")?.value || "");
+  const role  = document.querySelector("#invite-role")?.value || "member";
+  if (!email) throw new Error("Email is required.");
+  const result = await api("/api/auth/invites", {
+    method: "POST",
+    body: JSON.stringify({ email, full_name: name, role }),
+  });
+  const link = buildInviteLink(result.token);
+  await loadAdminData();
+  renderSettingsView();
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Invite created — link copied to clipboard", "success");
+  } catch {
+    window.prompt("Invite created. Copy this link to send manually:", link);
+  }
+}
+
+// Bootstrap once the DOM is parsed and the script tag has finished loading.
+setSignedIn(Boolean(state.token));
+renderUser();
+loadMe().then(() => loadInviteFromUrl());
