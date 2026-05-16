@@ -136,6 +136,8 @@ const state = {
   users: [],
   audit: [],
   backups: [],
+  invites: [],
+  pendingInviteFromUrl: null,  // populated on page load from ?invite=TOKEN
   pendingVendors: [],
   pendingClients: [],
   expiryAlerts: [],
@@ -590,10 +592,12 @@ async function loadAdminData() {
     api("/api/auth/users", { body: undefined }),
     api("/api/audit/", { body: undefined }),
     api("/api/settings/backups/list", { body: undefined }),
+    api("/api/auth/invites", { body: undefined }),
   ]);
-  state.users = results[0].status === "fulfilled" ? results[0].value : [];
-  state.audit = results[1].status === "fulfilled" ? results[1].value : [];
+  state.users   = results[0].status === "fulfilled" ? results[0].value : [];
+  state.audit   = results[1].status === "fulfilled" ? results[1].value : [];
   state.backups = results[2].status === "fulfilled" ? results[2].value : [];
+  state.invites = results[3].status === "fulfilled" ? results[3].value : [];
 }
 
 async function loadPendingData() {
@@ -1389,11 +1393,84 @@ function renderSettingsView() {
       </div>
     </section>
 
+    ${isAdmin() ? renderInvitesSection() : ""}
+
     <section class="glass-panel">
       <div class="panel-header"><h2>Audit Log</h2></div>
       ${isAdmin() ? simpleTable(["Time", "Actor", "Action", "Entity"], auditRows) : `<p class="empty-note">Audit logs require admin access.</p>`}
     </section>
   `;
+}
+
+/**
+ * Per-user invite admin section (Settings → Invites).
+ * Admin types name + email + role, clicks Send → backend creates a token
+ * and returns the share link. Admin copies the link and sends it manually
+ * (Resend integration will auto-email once configured).
+ */
+function renderInvitesSection() {
+  const inviteRows = (state.invites || []).map((inv) => {
+    const expires = inv.expires_at ? new Date(inv.expires_at) : null;
+    const expired = expires && expires < new Date();
+    const claimed = !!inv.claimed_at;
+    const status = claimed
+      ? pill("claimed", "done")
+      : expired
+        ? pill("expired", "pending")
+        : pill("pending", "");
+    const link = buildInviteLink(inv.token);
+    const actions = claimed ? "" : `
+      <button class="ghost-button" type="button" data-action="copy-invite" data-link="${encodeAttr(link)}">Copy link</button>
+      <button class="ghost-button" type="button" data-action="revoke-invite" data-id="${encodeAttr(inv.id)}">✕</button>
+    `;
+    return `
+      <tr>
+        <td>${escapeHtml(inv.full_name || inv.email)}</td>
+        <td>${escapeHtml(inv.email)}</td>
+        <td>${escapeHtml(inv.role)}</td>
+        <td>${status}</td>
+        <td>${expires ? escapeHtml(expires.toLocaleDateString()) : "—"}</td>
+        <td>${actions}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <section class="glass-panel">
+      <div class="panel-header"><h2>Invites</h2></div>
+      <form id="invite-form" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:14px;">
+        <label style="flex:1;min-width:160px;">
+          Name
+          <input id="invite-name" placeholder="Jane Smith" />
+        </label>
+        <label style="flex:1;min-width:200px;">
+          Email
+          <input id="invite-email" type="email" placeholder="jane@aqcreativity.com" required />
+        </label>
+        <label>
+          Role
+          <select id="invite-role">
+            <option value="member" selected>Member</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <button class="primary-button" type="submit">Send invite</button>
+      </form>
+      ${simpleTable(
+        ["Name", "Email", "Role", "Status", "Expires", ""],
+        inviteRows || `<tr><td colspan="6" class="empty-note">No invites yet.</td></tr>`,
+      )}
+    </section>
+  `;
+}
+
+function buildInviteLink(token) {
+  if (typeof window === "undefined") return "";
+  // The signup form lives in this same SPA at /contracts/, so the link is
+  // simply the current origin + /contracts/?invite=TOKEN. We strip any hash
+  // and existing query to keep the URL clean.
+  const origin = window.location.origin;
+  return `${origin}/contracts/?invite=${encodeURIComponent(token)}`;
 }
 
 async function login(signup = false) {
@@ -1409,10 +1486,20 @@ async function login(signup = false) {
     const fullName = safeText(document.querySelector("#signup-full-name")?.value || "") || username;
     const email = safeText(document.querySelector("#signup-email")?.value || "");
     const inviteCode = safeText(document.querySelector("#signup-invite-code")?.value || "");
+    // Per-user invite token from ?invite=... in the URL. Takes priority
+    // over the shared invite_code when present.
+    const inviteToken = state.pendingInviteFromUrl?.token || "";
     if (!username) throw new Error("Username is required.");
     if (!password) throw new Error("Password is required.");
     if (!email) throw new Error("Email is required to create an account.");
-    body = { username, password, email, full_name: fullName, invite_code: inviteCode || null };
+    body = {
+      username,
+      password,
+      email,
+      full_name: fullName,
+      invite_code: inviteCode || null,
+      invite_token: inviteToken || null,
+    };
     // After signup we want the user signed in. Default = remember (matches the
     // sign-in card's default checkbox state).
     remember = true;
@@ -2100,6 +2187,9 @@ document.addEventListener("submit", async (event) => {
       await createTemplateSlot(event);
     } else if (event.target.id === "profile-form") {
       await saveProfile(event);
+    } else if (event.target.id === "invite-form") {
+      event.preventDefault();
+      await sendContractInvite();
     }
   } catch (error) {
     showToast(error.message, "error");
@@ -2470,92 +2560,4 @@ document.addEventListener("click", async (event) => {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const tid = String(button.dataset.taskId);
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
-      if (!confirm(`Delete ALL ${list.length} contract${list.length === 1 ? "" : "s"} under this task? This cannot be undone.`)) return;
-      await api(`/api/contracts/task/${tid}`, { method: "DELETE" });
-      await loadContracts();
-      renderContractsView();
-      showToast(`Deleted ${list.length} contract${list.length === 1 ? "" : "s"}`);
-    }
-    if (action === "scan-templates") {
-      const scan = await api("/api/templates/scan", { method: "POST" });
-      await loadTemplates();
-      renderTemplatesView();
-      showToast(`Found ${scan.found.length}, missing ${scan.missing.length}`);
-    }
-    if (action === "select-template-upload") {
-      const select = document.querySelector("#upload-key");
-      const file = document.querySelector("#upload-file");
-      if (select) select.value = button.dataset.key;
-      if (file) file.focus();
-    }
-    if (action === "set-default-template") {
-      await setDefaultTemplate(button.dataset.key);
-    }
-    if (action === "delete-template") {
-      await deleteTemplate(button.dataset.key);
-    }
-    if (action === "load-vendors") {
-      await loadVendors();
-      renderVendorsView();
-    }
-    if (action === "refresh-clients") {
-      await loadClients();
-      renderVendorsView();
-    }
-    if (action === "delete-client") {
-      const cl = selectedClient();
-      if (!cl) throw new Error("Choose a client first");
-      if (!confirm(`Delete client "${cl.company_name || cl.name}"?`)) return;
-      await api(`/api/vendors/clients/${cl.id}`, { method: "DELETE" });
-      state.clients = state.clients.filter((c) => String(c.id) !== String(cl.id));
-      state.selectedClientId = "";
-      localStorage.removeItem("aq_selected_client");
-      renderVendorsView();
-      showToast("Client deleted");
-    }
-    if (action === "delete-vendor") {
-      await deleteSelectedVendor();
-    }
-    if (action === "approve-vendor" || action === "reject-vendor") {
-      const approved = action === "approve-vendor";
-      await api(`/api/vendors/pending/vendors/${button.dataset.id}/action`, {
-        method: "POST",
-        body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
-      });
-      await loadVendors();
-      await loadPendingData();
-      renderVendorsView();
-      showToast(approved ? "Vendor approved" : "Vendor rejected");
-    }
-    if (action === "approve-client" || action === "reject-client") {
-      const approved = action === "approve-client";
-      await api(`/api/vendors/pending/clients/${button.dataset.id}/action`, {
-        method: "POST",
-        body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
-      });
-      await loadPendingData();
-      renderVendorsView();
-      showToast(approved ? "Client approved" : "Client rejected");
-    }
-    if (action === "create-backup") {
-      await api("/api/settings/backups/create", { method: "POST" });
-      await loadAdminData();
-      renderSettingsView();
-      showToast("Backup created");
-    }
-  } catch (error) {
-    showToast(error.message, "error");
-  } finally {
-    const loadableButton = button && !button.classList.contains("nav-item") ? button : null;
-    setButtonLoading(loadableButton, false);
-  }
-});
-
-document.querySelectorAll(".nav-item").forEach((button) => {
-  button.classList.toggle("active", button.dataset.view === state.view);
-});
-
-// Bootstrap once the DOM is parsed and the script tag has finished loading.
-setSignedIn(Boolean(state.token));
-renderUser();
-loadMe();
+      if (!confirm(`Delete ALL ${list.length} co
