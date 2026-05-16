@@ -123,6 +123,9 @@ export type PortalMe =
       role: 'vendor';
       external_user_id: string;
       email: string;
+      /** True when admin created this account with a temp password.
+       *  PortalShell forces a password change before showing the dashboard. */
+      must_change_password: boolean;
       profile: PortalProfileVendor;
       banks: PortalBank[];
     }
@@ -130,6 +133,7 @@ export type PortalMe =
       role: 'client';
       external_user_id: string;
       email: string;
+      must_change_password: boolean;
       profile: PortalProfileClient;
     };
 
@@ -157,4 +161,14 @@ export const portal = {
   brands: () => authedFetch<PortalBrandRow[]>('/external-portal/brands'),
   downloadUrl: (contractId: string, kind: 'pdf' | 'docx') =>
     `${resolveBase()}/external-portal/contracts/${encodeURIComponent(contractId)}/download/${kind}`,
+  /**
+   * Update the portal user's password and clear the must_change_password
+   * flag in one round-trip. Backend uses Supabase Admin API (service role)
+   * to set the password, then clears the flag on the external_users row.
+   */
+  changePassword: (newPassword: string) =>
+    authedFetch<{ ok: true; message?: string }>('/external-portal/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ new_password: newPassword }),
+    }),
 };
