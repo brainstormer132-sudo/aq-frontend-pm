@@ -1466,11 +1466,11 @@ function renderInvitesSection() {
 
 function buildInviteLink(token) {
   if (typeof window === "undefined") return "";
-  // The signup form lives in this same SPA at /contracts/, so the link is
-  // simply the current origin + /contracts/?invite=TOKEN. We strip any hash
-  // and existing query to keep the URL clean.
+  // Invite links land on the dedicated /invite page (a small static signup
+  // form that ONLY appears when a valid token is in the URL). The contract
+  // maker (/contracts/) itself never shows signup — login only.
   const origin = window.location.origin;
-  return `${origin}/contracts/?invite=${encodeURIComponent(token)}`;
+  return `${origin}/invite?token=${encodeURIComponent(token)}`;
 }
 
 async function login(signup = false) {

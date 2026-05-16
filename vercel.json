@@ -17,6 +17,10 @@
     {
       "source": "/hub",
       "destination": "/hub.html"
+    },
+    {
+      "source": "/invite",
+      "destination": "/invite.html"
     }
   ],
 

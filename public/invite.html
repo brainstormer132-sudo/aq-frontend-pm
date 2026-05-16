@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AQ Creativity — Accept invite</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #f5f1ea; --card: #fff; --text: #1f2937; --muted: #6b7280;
+        --accent: #1f8f4f; --border: #e5e7eb; --error: #b91c1c; --error-bg: #fee2e2;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        min-height: 100vh; background: var(--bg); color: var(--text);
+        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex; align-items: center; justify-content: center; padding: 24px;
+      }
+      .shell { max-width: 460px; width: 100%; }
+      .logo {
+        width: 56px; height: 56px; border-radius: 14px;
+        background: var(--accent); color: #fff;
+        font-weight: 700; font-size: 22px;
+        display: flex; align-items: center; justify-content: center;
+        margin: 0 auto 16px;
+      }
+      h1 { font-size: 22px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+      .tag { color: var(--muted); font-size: 14px; text-align: center; margin-bottom: 24px; }
+      .card {
+        background: var(--card); border: 1px solid var(--border);
+        border-radius: 14px; padding: 24px;
+      }
+      .invite-summary {
+        background: #e8f5ed; border: 1px solid #c9e8d4;
+        border-radius: 10px; padding: 12px 14px; margin-bottom: 18px;
+        font-size: 13px; color: #166534;
+      }
+      .invite-summary strong { color: #14532d; }
+      label {
+        display: block; font-size: 12px; font-weight: 600;
+        color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%; padding: 10px 12px; font-size: 14px;
+        border: 1px solid var(--border); border-radius: 8px;
+        margin-bottom: 14px; font-family: inherit; color: var(--text);
+      }
+      input[readonly] { background: #f9fafb; color: var(--muted); cursor: not-allowed; }
+      input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,143,79,.15); }
+      button {
+        width: 100%; padding: 12px; background: var(--accent); color: #fff;
+        border: none; border-radius: 8px; font-weight: 700; font-size: 14px;
+        cursor: pointer; font-family: inherit;
+      }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .msg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+      .msg.ok    { background: #e8f5ed; color: #166534; }
+      .msg.error { background: var(--error-bg); color: var(--error); }
+      .no-invite {
+        background: #fff; border: 1px solid var(--border); border-radius: 14px;
+        padding: 28px; text-align: center;
+      }
+      .no-invite p { color: var(--muted); margin-bottom: 16px; line-height: 1.5; font-size: 14px; }
+      .no-invite a {
+        display: inline-block; padding: 10px 18px;
+        background: var(--accent); color: #fff; border-radius: 8px;
+        text-decoration: none; font-weight: 700; font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="logo">AQ</div>
+      <h1>AQ Creativity</h1>
+      <p class="tag">Accept invite</p>
+
+      <div id="root">
+        <div class="card"><p style="color:var(--muted);font-size:14px;">Validating invite…</p></div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const root = document.getElementById('root');
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token') || params.get('invite');
+
+        if (!token) {
+          renderNoInvite('No invite token in the link. Ask your admin for a fresh invite.');
+          return;
+        }
+
+        fetch(`/contracts/api/auth/invites/preview/${encodeURIComponent(token)}`)
+          .then(async (r) => {
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(body?.detail || `Invite check failed (${r.status})`);
+            if (body.claimed_at) throw new Error('This invite has already been claimed.');
+            if (body.expires_at && new Date(body.expires_at) < new Date()) {
+              throw new Error('This invite has expired. Ask your admin for a new one.');
+            }
+            renderForm(token, body);
+          })
+          .catch((err) => {
+            renderNoInvite(err.message || String(err));
+          });
+
+        function renderNoInvite(message) {
+          root.innerHTML = `
+            <div class="no-invite">
+              <p>${escapeHtml(message)}</p>
+              <a href="/hub">Back to Hub</a>
+            </div>
+          `;
+        }
+
+        function renderForm(token, info) {
+          root.innerHTML = `
+            <div class="card">
+              <div class="invite-summary">
+                You've been invited as <strong>${escapeHtml(info.role || 'member')}</strong>
+                using the email <strong>${escapeHtml(info.email || '')}</strong>.
+                Set a username + password to finish.
+              </div>
+              <form id="accept-form">
+                <label>Email</label>
+                <input name="email" type="email" value="${escapeHtml(info.email || '')}" readonly />
+
+                <label>Username</label>
+                <input name="username" autocomplete="username" required
+                       pattern="[A-Za-z0-9_-]{2,32}" title="2–32 chars, letters / digits / underscore / dash" />
+
+                <label>Full name</label>
+                <input name="full_name" autocomplete="name" required value="${escapeHtml(info.full_name || '')}" />
+
+                <label>Password</label>
+                <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+
+                <button type="submit">Create account</button>
+              </form>
+              <p id="msg" class="msg" style="display:none;"></p>
+            </div>
+          `;
+          document.getElementById('accept-form').addEventListener('submit', (e) => onSubmit(e, token, info));
+        }
+
+        async function onSubmit(e, token, info) {
+          e.preventDefault();
+          const form = e.target;
+          const btn = form.querySelector('button');
+          const msg = document.getElementById('msg');
+          btn.disabled = true;
+          msg.style.display = 'none';
+
+          const fd = new FormData(form);
+          const body = {
+            username:     fd.get('username').trim(),
+            full_name:    fd.get('full_name').trim(),
+            email:        info.email,    // locked to invite email
+            password:     fd.get('password'),
+            invite_token: token,         // per-user token; bypasses shared invite_code
+          };
+
+          try {
+            const res = await fetch('/contracts/api/auth/signup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              showMsg(payload?.detail || `Signup failed (${res.status})`, false);
+              btn.disabled = false;
+              return;
+            }
+            showMsg('Account created. Redirecting to login…', true);
+            setTimeout(() => { window.location.href = '/contracts/'; }, 900);
+          } catch (err) {
+            showMsg(err.message || String(err), false);
+            btn.disabled = false;
+          }
+
+          function showMsg(text, ok) {
+            msg.textContent = text;
+            msg.className = 'msg ' + (ok ? 'ok' : 'error');
+            msg.style.display = 'block';
+          }
+        }
+
+        function escapeHtml(s) {
+          return String(s ?? '')
+            .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+        }
+      })();
+    </script>
+  </body>
+</html>
