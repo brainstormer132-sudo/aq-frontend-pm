@@ -1,6 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
 
+  "redirects": [
+    {
+      "source": "/contracts",
+      "destination": "/contracts/",
+      "permanent": false
+    }
+  ],
+
   "rewrites": [
     {
       "source": "/contracts/api/:path*",
@@ -17,10 +25,6 @@
     {
       "source": "/hub",
       "destination": "/hub.html"
-    },
-    {
-      "source": "/contracts",
-      "destination": "/contracts/index.html"
     }
   ],
 
