@@ -4,7 +4,7 @@
   "rewrites": [
     {
       "source": "/contracts/api/:path*",
-      "destination": "https://aq-backend-p5zd.onrender.com/api/:path*"
+      "destination": "https://aq-backend-p5zd.onrender.com/:path*"
     },
     {
       "source": "/contracts/health",
