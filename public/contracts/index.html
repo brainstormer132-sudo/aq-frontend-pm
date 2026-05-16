@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AQ Contract Suite</title>
-    <link rel="stylesheet" href="/contracts/styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div id="progress-bar" class="progress-bar" aria-hidden="true"></div>
     <main class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <img src="/contracts/assets/logo.png" alt="AQ" />
+          <img src="./assets/logo.png" alt="AQ" />
           <div>
             <strong>AQ Suite</strong>
             <span>Contracts</span>
@@ -75,12 +75,36 @@
                 <button class="primary-button" type="submit">Sign In</button>
               </form>
 
-              <!-- Signup intentionally removed here. New staff accounts are
-                   created from the Hub (https://<domain>/hub) or by an admin
-                   via Settings → Invites. -->
-              <p class="auth-card-sub" style="margin-top:14px;font-size:13px;text-align:center;">
-                Need an account? <a href="/hub" style="color:#1f8f4f;font-weight:600;">Go to the Hub</a>.
-              </p>
+              <!-- Create Account -->
+              <form id="signup-form" class="auth-panel auth-card">
+                <h2>Create Account</h2>
+                <p class="auth-card-sub">Use the 6-character invite code your admin gave you (expires in 30 min).</p>
+
+                <label>
+                  Username
+                  <input id="signup-username" name="username" autocomplete="username" required />
+                </label>
+                <label>
+                  Full name
+                  <input id="signup-full-name" name="full_name" autocomplete="name" required />
+                </label>
+                <label>
+                  Email
+                  <input id="signup-email" name="email" type="email" autocomplete="email" required />
+                </label>
+                <label>
+                  Password
+                  <input id="signup-password" name="password" type="password" autocomplete="new-password" required minlength="8" />
+                </label>
+                <label>
+                  Invite code
+                  <input id="signup-invite-code" name="invite_code" autocomplete="off" required
+                         placeholder="e.g. K7P3R9" maxlength="12"
+                         style="text-transform:uppercase;letter-spacing:0.15em;font-weight:600;" />
+                </label>
+
+                <button id="signup-button" class="primary-button" type="submit">Create Account</button>
+              </form>
             </div>
           </div>
         </section>
@@ -93,6 +117,6 @@
       </section>
     </main>
 
-    <script src="/contracts/app.js?v=20260516-1"></script>
+    <script src="./app.js?v=20260428-1015"></script>
   </body>
 </html>

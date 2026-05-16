@@ -1409,27 +1409,41 @@ function renderSettingsView() {
  * (Resend integration will auto-email once configured).
  */
 function renderInvitesSection() {
+  const now = new Date();
   const inviteRows = (state.invites || []).map((inv) => {
     const expires = inv.expires_at ? new Date(inv.expires_at) : null;
-    const expired = expires && expires < new Date();
+    const expired = expires && expires < now;
     const claimed = !!inv.claimed_at;
     const status = claimed
       ? pill("claimed", "done")
       : expired
         ? pill("expired", "pending")
         : pill("pending", "");
-    const link = buildInviteLink(inv.token);
+    // Pretty countdown ("12m" / "expired") so admins can tell at a glance
+    // whether a code is still useful.
+    let countdown = "—";
+    if (expires) {
+      if (expired) countdown = "expired";
+      else {
+        const mins = Math.max(0, Math.round((expires - now) / 60000));
+        countdown = `${mins}m left`;
+      }
+    }
+    const codeDisplay = claimed || expired
+      ? `<code style="opacity:0.5;text-decoration:line-through">${escapeHtml(inv.token)}</code>`
+      : `<code style="font-weight:700;letter-spacing:0.15em;font-size:14px;background:#e8f5ed;padding:3px 8px;border-radius:4px;color:#166534">${escapeHtml(inv.token)}</code>`;
     const actions = claimed ? "" : `
-      <button class="ghost-button" type="button" data-action="copy-invite" data-link="${encodeAttr(link)}">Copy link</button>
-      <button class="ghost-button" type="button" data-action="revoke-invite" data-id="${encodeAttr(inv.id)}">✕</button>
+      <button class="ghost-button" type="button" data-action="copy-invite" data-link="${encodeAttr(inv.token)}" title="Copy the code">Copy</button>
+      <button class="ghost-button" type="button" data-action="revoke-invite" data-id="${encodeAttr(inv.id)}" title="Revoke">✕</button>
     `;
     return `
       <tr>
         <td>${escapeHtml(inv.full_name || inv.email)}</td>
         <td>${escapeHtml(inv.email)}</td>
         <td>${escapeHtml(inv.role)}</td>
+        <td>${codeDisplay}</td>
         <td>${status}</td>
-        <td>${expires ? escapeHtml(expires.toLocaleDateString()) : "—"}</td>
+        <td>${escapeHtml(countdown)}</td>
         <td>${actions}</td>
       </tr>
     `;
@@ -1456,9 +1470,12 @@ function renderInvitesSection() {
         </label>
         <button class="primary-button" type="submit">Send invite</button>
       </form>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        Codes are 6 characters, expire in 30 minutes, and can be used once. Share by WhatsApp / phone / in person — no email is sent.
+      </p>
       ${simpleTable(
-        ["Name", "Email", "Role", "Status", "Expires", ""],
-        inviteRows || `<tr><td colspan="6" class="empty-note">No invites yet.</td></tr>`,
+        ["Name", "Email", "Role", "Code", "Status", "Expires", ""],
+        inviteRows || `<tr><td colspan="7" class="empty-note">No invites yet.</td></tr>`,
       )}
     </section>
   `;
@@ -2717,7 +2734,7 @@ async function loadInviteFromUrl() {
   }
 }
 
-/** Admin only — create a per-user invite for the contract-maker. */
+/** Admin only — generate a 30-min invite code for new staff. */
 async function sendContractInvite() {
   const email = safeText(document.querySelector("#invite-email")?.value || "");
   const name  = safeText(document.querySelector("#invite-name")?.value || "");
@@ -2725,17 +2742,15 @@ async function sendContractInvite() {
   if (!email) throw new Error("Email is required.");
   const result = await api("/api/auth/invites", {
     method: "POST",
-    body: JSON.stringify({ email, full_name: name, role }),
+    body: JSON.stringify({ email, full_name: name, role, expires_minutes: 30 }),
   });
-  const link = buildInviteLink(result.token);
   await loadAdminData();
   renderSettingsView();
-  try {
-    await navigator.clipboard.writeText(link);
-    showToast("Invite created — link copied to clipboard", "success");
-  } catch {
-    window.prompt("Invite created. Copy this link to send manually:", link);
-  }
+  // Big toast with the code so admins can read it off-screen and share it
+  // via WhatsApp / phone / in person.
+  showToast(`Invite code: ${result.token} (expires in 30 min)`, "success");
+  // Also copy code to clipboard for fast paste.
+  try { await navigator.clipboard.writeText(result.token); } catch {}
 }
 
 // Bootstrap once the DOM is parsed and the script tag has finished loading.
