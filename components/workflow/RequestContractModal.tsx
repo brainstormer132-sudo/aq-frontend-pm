@@ -29,6 +29,7 @@ export function RequestContractModal({
   const [amount, setAmount] = useState<string>(task.budget != null ? String(task.budget) : '');
   const [pendingVendorId, setPendingVendorId] = useState<number | ''>('');
   const [pendingClientId, setPendingClientId] = useState<number | ''>('');
+  const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -106,7 +107,7 @@ export function RequestContractModal({
         template_key: null,
         brand_name: brand.trim(),
         amount: Number(amount),
-        notes: null,
+        notes: description.trim() || null,
 
         client_name: kind === 'client' ? selectedClientRegistration!.company_name : null,
         client_id_legacy: task.legacy_client_id ?? null,
@@ -261,6 +262,16 @@ export function RequestContractModal({
               )}
             </>
           )}
+
+          <Field label="Description / notes for legal">
+            <textarea
+              className="aq-textarea"
+              rows={4}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Anything the contract maker should know — special clauses, deliverables, payment timing, etc."
+            />
+          </Field>
 
           {error && (
             <div style={{

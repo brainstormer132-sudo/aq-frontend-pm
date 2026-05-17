@@ -513,11 +513,15 @@ function AllTasks({
       if (!matches) return false;
     }
     if (!q) return true;
-    return (
-      String(t.task_name || t.title || '').toLowerCase().includes(q)
-      || String(t.brand_name || '').toLowerCase().includes(q)
-      || String(t.legacy_client_id || '').toLowerCase().includes(q)
-    );
+    // Multi-field search: name, brand, client identifier, task id,
+    // assignee / KA / closer name (resolved via profiles).
+    return [
+      t.task_name, t.title, t.brand_name, t.legacy_client_id,
+      t.id, t.description, t.contract_request_id,
+      profiles.find((p: any) => p.id === t.assignee_id)?.full_name,
+      profiles.find((p: any) => p.id === t.key_account_id)?.full_name,
+      profiles.find((p: any) => p.id === t.sales_closer_id)?.full_name,
+    ].some((v) => String(v || '').toLowerCase().includes(q));
   });
 
   const completed = filtered.filter((t) => t.stage === 'completed').length;
@@ -527,7 +531,7 @@ function AllTasks({
       <div className="aq-card" style={{ padding: 16, display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 10 }}>
         <input
           className="aq-input"
-          placeholder="Search by client, brand, or task name…"
+          placeholder="Search task name, brand, client, assignee, key account, ID…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

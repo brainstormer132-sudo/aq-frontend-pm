@@ -45,68 +45,124 @@
         </header>
 
         <section id="login-view" class="auth-layout">
-          <div class="auth-shell">
-            <header class="auth-header">
-              <img class="auth-logo-img" src="/contracts/assets/logo.png" alt="" />
-              <p class="auth-tagline">Contract Suite</p>
-            </header>
+          <div class="auth-split">
+            <!-- LEFT: branded panel -->
+            <aside class="auth-brand">
+              <p class="auth-welcome">Welcome to</p>
+              <div class="auth-brand-logo-wrap">
+                <img class="auth-brand-logo" src="/contracts/assets/logo.png" alt="" />
+              </div>
+              <h1 class="auth-brand-name">Contract Suite</h1>
+              <p class="auth-brand-blurb">
+                Internal contract generation, vendor and client management.
+                Staff access only — ask an admin for a 30-minute invite code if you're new.
+              </p>
+              <p class="auth-brand-footer">Internal · Confidential</p>
+            </aside>
 
-            <div class="auth-grid">
+            <!-- RIGHT: form panel -->
+            <div class="auth-form-panel">
+              <div class="auth-tabs" role="tablist">
+                <button id="auth-tab-signin" class="auth-tab active" type="button" role="tab" aria-selected="true">Sign In</button>
+                <button id="auth-tab-signup" class="auth-tab" type="button" role="tab" aria-selected="false">Create Account</button>
+              </div>
+
               <!-- Sign In -->
-              <form id="login-form" class="auth-panel auth-card">
-                <h2>Sign In</h2>
-                <p class="auth-card-sub">Welcome back.</p>
+              <form id="login-form" class="auth-form-card">
+                <h2 class="auth-form-title">Sign in</h2>
+                <p class="auth-form-sub">Welcome back.</p>
 
-                <label>
-                  Username
-                  <input id="username" name="username" autocomplete="username" required />
+                <label class="auth-field">
+                  <span>Username</span>
+                  <input id="username" name="username" autocomplete="username" required placeholder="Enter your username" />
                 </label>
-                <label>
-                  Password
-                  <input id="password" name="password" type="password" autocomplete="current-password" required />
+                <label class="auth-field">
+                  <span>Password</span>
+                  <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password" />
                 </label>
 
-                <label class="auth-remember-label">
+                <label class="auth-remember">
                   <input id="remember-me" type="checkbox" checked />
                   <span>Remember me on this device</span>
                 </label>
 
-                <button class="primary-button" type="submit">Sign In</button>
+                <button class="auth-submit" type="submit">Sign In</button>
+
+                <p class="auth-switch">
+                  Don't have an account?
+                  <a href="#" data-action="auth-go-signup">Create one</a>
+                </p>
               </form>
 
               <!-- Create Account -->
-              <form id="signup-form" class="auth-panel auth-card">
-                <h2>Create Account</h2>
-                <p class="auth-card-sub">Use the 6-character invite code your admin gave you (expires in 30 min).</p>
+              <form id="signup-form" class="auth-form-card hidden">
+                <h2 class="auth-form-title">Create your account</h2>
+                <p class="auth-form-sub">Use the 6-character invite code your admin gave you (expires in 30 min).</p>
 
-                <label>
-                  Username
-                  <input id="signup-username" name="username" autocomplete="username" required />
+                <label class="auth-field">
+                  <span>Username</span>
+                  <input id="signup-username" name="username" autocomplete="username" required placeholder="e.g. siraj" />
                 </label>
-                <label>
-                  Full name
-                  <input id="signup-full-name" name="full_name" autocomplete="name" required />
+                <label class="auth-field">
+                  <span>Full name</span>
+                  <input id="signup-full-name" name="full_name" autocomplete="name" required placeholder="Enter your name" />
                 </label>
-                <label>
-                  Email
-                  <input id="signup-email" name="email" type="email" autocomplete="email" required />
+                <label class="auth-field">
+                  <span>Email</span>
+                  <input id="signup-email" name="email" type="email" autocomplete="email" required placeholder="Enter your email" />
                 </label>
-                <label>
-                  Password
-                  <input id="signup-password" name="password" type="password" autocomplete="new-password" required minlength="8" />
+                <label class="auth-field">
+                  <span>Password</span>
+                  <input id="signup-password" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" />
                 </label>
-                <label>
-                  Invite code
+                <label class="auth-field">
+                  <span>Invite code</span>
                   <input id="signup-invite-code" name="invite_code" autocomplete="off" required
                          placeholder="e.g. K7P3R9" maxlength="12"
-                         style="text-transform:uppercase;letter-spacing:0.15em;font-weight:600;" />
+                         class="auth-code-input" />
                 </label>
 
-                <button id="signup-button" class="primary-button" type="submit">Create Account</button>
+                <button id="signup-button" class="auth-submit" type="submit">Create Account</button>
+
+                <p class="auth-switch">
+                  Already have an account?
+                  <a href="#" data-action="auth-go-signin">Sign in</a>
+                </p>
               </form>
             </div>
           </div>
         </section>
+
+        <script>
+          (function () {
+            // Tab switching for the auth panel. Pure DOM; no app.js dependency.
+            function show(which) {
+              var signinTab  = document.getElementById('auth-tab-signin');
+              var signupTab  = document.getElementById('auth-tab-signup');
+              var signinForm = document.getElementById('login-form');
+              var signupForm = document.getElementById('signup-form');
+              if (!signinTab || !signupTab || !signinForm || !signupForm) return;
+              var isSignin = which === 'signin';
+              signinTab.classList.toggle('active', isSignin);
+              signupTab.classList.toggle('active', !isSignin);
+              signinTab.setAttribute('aria-selected', isSignin ? 'true' : 'false');
+              signupTab.setAttribute('aria-selected', isSignin ? 'false' : 'true');
+              signinForm.classList.toggle('hidden', !isSignin);
+              signupForm.classList.toggle('hidden', isSignin);
+            }
+            document.addEventListener('click', function (e) {
+              var t = e.target;
+              if (!(t instanceof Element)) return;
+              if (t.id === 'auth-tab-signin' || t.closest('[data-action="auth-go-signin"]')) {
+                e.preventDefault();
+                show('signin');
+              } else if (t.id === 'auth-tab-signup' || t.closest('[data-action="auth-go-signup"]')) {
+                e.preventDefault();
+                show('signup');
+              }
+            });
+          })();
+        </script>
 
         <section id="dashboard-view" class="dashboard hidden">
           <div id="view-root"></div>

@@ -25,6 +25,7 @@ export function MyTasksList({
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
 
   const fetch = async () => {
     setLoading(true);
@@ -94,16 +95,31 @@ export function MyTasksList({
     );
   }
 
+  const q = query.trim().toLowerCase();
+  const visible = !q ? tasks : tasks.filter((t: any) => [
+    t.task_name, t.title, t.brand_name, t.legacy_client_id,
+    t.id, t.description, t.stage, t.priority, t.status,
+  ].some((v) => String(v || '').toLowerCase().includes(q)));
+
   return (
     <div className="aq-card animate-fade-in" style={{ padding: 20 }}>
-      <header style={{ marginBottom: 14 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>My tasks</h2>
-        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-          {tasks.length} task{tasks.length === 1 ? '' : 's'} you're working on or own.
-        </p>
+      <header style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 700 }}>My tasks</h2>
+          <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+            {visible.length} of {tasks.length} task{tasks.length === 1 ? '' : 's'} shown.
+          </p>
+        </div>
+        <input
+          className="aq-input"
+          style={{ maxWidth: 320, minWidth: 220 }}
+          placeholder="Search your tasks…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </header>
       <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {tasks.map((t) => {
+        {visible.map((t) => {
           const done = t.status === 'done';
           return (
             <li key={t.id} style={{

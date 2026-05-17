@@ -16,10 +16,14 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard',  icon: 'home',     visibleTo: [] },
   { id: 'new-task',  label: 'New Task',   icon: 'plus',     visibleTo: ['owner','admin','sales','marketing'] },
-  { id: 'inbox',     label: 'Marketing Inbox', icon: 'inbox', visibleTo: ['owner','admin','marketing'] },
+  // Inbox button removed 2026-05-16 — the marketing-triage queue is now
+  // surfaced via the slide-over "My Activity" panel triggered from the topbar.
+  // Marketing/admin still reach the inbox view from the dashboard stat card.
   { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account'] },
   { id: 'my-tasks',  label: 'My Tasks',   icon: 'check',    visibleTo: [] },
-  { id: 'contracts',label: 'Contracts',  icon: 'file',     visibleTo: ['owner','admin','marketing','key_account','sales'] },
+  // Contracts nav removed 2026-05-16 — contract requests flow lives in the
+  // contract maker (/contracts/). The "Request contract" button on a task
+  // still posts here, just no dedicated view in the PM sidebar.
   { id: 'clients',         label: 'Clients',         icon: 'building',  visibleTo: ['owner','admin','marketing','sales'] },
   { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'] },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },
