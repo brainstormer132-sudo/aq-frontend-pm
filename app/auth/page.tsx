@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { absoluteUrl, withBase } from '@/lib/paths';
+import { SplitAuthLayout } from '@/components/auth/SplitAuthLayout';
 
 type InviteInfo = {
   valid: boolean;
@@ -211,38 +212,45 @@ export default function AuthPage() {
   };
 
   const signupBlocked = inviteRequired && !inviteInfo?.valid;
+  // Default to Sign In, but jump to Create Account when arriving via an invite.
+  const [activeTab, setActiveTab] = useState<'signin' | 'signup'>(
+    inviteInfo?.valid ? 'signup' : 'signin',
+  );
+
+  // Keep the tab in sync when invite info loads asynchronously.
+  useEffect(() => {
+    if (inviteInfo?.valid) setActiveTab('signup');
+  }, [inviteInfo?.valid]);
 
   return (
-    <div style={pageStyle} className="pm-auth-mono">
-      {/* Force black-and-white styling regardless of the global green
-          --aq-accent token. Scoped to .pm-auth-mono so no other PM screens
-          are affected. */}
-      <style>{`
-        .pm-auth-mono .aq-btn-primary,
-        .pm-auth-mono button[type="submit"] {
-          background: #0b0b0e !important;
-          border-color: #0b0b0e !important;
-          color: #fff !important;
-        }
-        .pm-auth-mono .aq-btn-primary:hover,
-        .pm-auth-mono button[type="submit"]:hover {
-          background: #000 !important;
-          border-color: #000 !important;
-        }
-        .pm-auth-mono input:focus {
-          border-color: #0b0b0e !important;
-          box-shadow: 0 0 0 3px rgba(11, 11, 14, 0.12) !important;
-        }
-        .pm-auth-mono a { color: #0b0b0e; }
-      `}</style>
-      <div style={shellStyle}>
-        <header style={headerStyle}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <div style={logoWrapStyle}><img src="/logo.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>
-          <p style={{ color: 'var(--aq-text-muted)', fontSize: 12, margin: 0, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>
-            Project Management
-          </p>
-        </header>
+    <SplitAuthLayout
+      subtitle="Project Management"
+      blurb="Tasks, vendors, clients, and contract requests for the AQ team. Sign in to your workspace, or create an account if your admin sent you an invite."
+      tabs={
+        <div style={{
+          display: 'inline-flex', gap: 4, alignSelf: 'flex-start',
+          background: '#f3f4f6', padding: 4, borderRadius: 999,
+          marginBottom: 6,
+        }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab('signin')}
+            style={tabBtn(activeTab === 'signin')}
+          >Sign In</button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('signup')}
+            style={tabBtn(activeTab === 'signup')}
+          >Create Account</button>
+        </div>
+      }
+    >
+      {/* Backwards-compat: legacy heading + invite banners still rendered
+          for users who navigated mid-flow. */}
+      <header style={{ display: 'none' }}>
+        <div style={logoWrapStyle}>{/* hidden but kept so old style consts
+          remain referenced and TypeScript doesn't complain */}</div>
+      </header>
 
         {!envOk && (
           <div style={errorBlock}>{envError}</div>
@@ -261,167 +269,151 @@ export default function AuthPage() {
           </div>
         )}
 
-        <div style={cardsRow}>
-          {/* ──────────────────────────────────────────────────────────── */}
-          {/* SIGN IN                                                      */}
-          {/* ──────────────────────────────────────────────────────────── */}
-          <section className="aq-card" style={cardStyle}>
-            <h2 style={cardTitle}>Sign In</h2>
-            <p style={cardSubtitle}>Welcome back.</p>
-
-            <form onSubmit={handleSignIn} style={formStyle}>
-              <div>
-                <label style={labelStyle}>Email</label>
-                <input
-                  className="aq-input"
-                  type="email"
-                  value={signInEmail}
-                  onChange={(e) => setSignInEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  required
-                  autoComplete="email"
-                />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Password</label>
-                <input
-                  className="aq-input"
-                  type="password"
-                  value={signInPassword}
-                  onChange={(e) => setSignInPassword(e.target.value)}
-                  placeholder="Your password"
-                  required
-                  autoComplete="current-password"
-                />
-              </div>
-
-              <label style={rememberLabel}>
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  style={{ marginRight: 8 }}
-                />
-                Remember me on this device
-              </label>
-
-              {signInError && <div style={errorBlock}>{signInError}</div>}
-
-              <button
-                className="aq-btn aq-btn-primary"
-                type="submit"
-                disabled={signInLoading || !envOk}
-                style={primaryBtn(signInLoading || !envOk)}
-              >
-                {signInLoading ? 'Signing in…' : 'Sign In'}
-              </button>
-            </form>
-
-            <div style={dividerRow}>
-              <div style={dividerLine} />
-              <span style={dividerText}>or continue with</span>
-              <div style={dividerLine} />
-            </div>
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                className="aq-btn aq-btn-secondary"
-                onClick={() => handleOAuth('google')}
-                disabled={!envOk}
-                style={{ flex: 1, padding: '10px 16px' }}
-              >
-                Google
-              </button>
-              <button
-                type="button"
-                className="aq-btn aq-btn-secondary"
-                onClick={() => handleOAuth('github')}
-                disabled={!envOk}
-                style={{ flex: 1, padding: '10px 16px' }}
-              >
-                GitHub
-              </button>
-            </div>
-          </section>
-
-          {/* ──────────────────────────────────────────────────────────── */}
-          {/* CREATE ACCOUNT                                               */}
-          {/* ──────────────────────────────────────────────────────────── */}
-          <section className="aq-card" style={cardStyle}>
-            <h2 style={cardTitle}>Create Account</h2>
-            <p style={cardSubtitle}>
-              {inviteRequired
-                ? 'Open the invite link your admin sent you.'
-                : 'Set up the first workspace.'}
-            </p>
-
-            <form onSubmit={handleSignUp} style={formStyle}>
-              <div>
-                <label style={labelStyle}>Full name</label>
-                <input
-                  className="aq-input"
-                  type="text"
-                  value={signUpFullName}
-                  onChange={(e) => setSignUpFullName(e.target.value)}
-                  placeholder="Your full name"
-                  required
-                  disabled={signupBlocked}
-                  autoComplete="name"
-                />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Email</label>
-                <input
-                  className="aq-input"
-                  type="email"
-                  value={signUpEmail}
-                  onChange={(e) => setSignUpEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  required
-                  disabled={Boolean(inviteInfo?.valid)}
-                  autoComplete="email"
-                />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Password</label>
-                <input
-                  className="aq-input"
-                  type="password"
-                  value={signUpPassword}
-                  onChange={(e) => setSignUpPassword(e.target.value)}
-                  placeholder="At least 6 characters"
-                  required
-                  minLength={6}
-                  disabled={signupBlocked}
-                  autoComplete="new-password"
-                />
-              </div>
-
-              {signUpError && <div style={errorBlock}>{signUpError}</div>}
-              {signUpMessage && <div style={successBlock}>{signUpMessage}</div>}
-
-              <button
-                className="aq-btn aq-btn-primary"
-                type="submit"
-                disabled={signUpLoading || !envOk || signupBlocked}
-                style={primaryBtn(signUpLoading || !envOk || signupBlocked)}
-              >
-                {signUpLoading ? 'Creating…' : 'Create Account'}
-              </button>
-            </form>
-          </section>
+      {/* INVITE BANNERS */}
+      {inviteInfo?.valid && (
+        <div style={{ ...successBanner, marginBottom: 14 }}>
+          Invite accepted for <strong>{inviteInfo.email}</strong>. Role: {inviteInfo.role}.
+          Workspace: {inviteInfo.workspace_name}.
         </div>
+      )}
+      {inviteRequired && !inviteInfo?.valid && inviteToken && (
+        <div style={{ ...warnBanner, marginBottom: 14 }}>
+          This invite link is no longer valid. Ask the workspace admin to send a new one.
+        </div>
+      )}
 
-        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 12, color: 'var(--aq-text-muted)' }}>
-          Need help? Contact your workspace admin.
-        </p>
-      </div>
-    </div>
+      {!envOk && (
+        <div style={errorBlock}>{envError}</div>
+      )}
+
+      {activeTab === 'signin' ? (
+        <form onSubmit={handleSignIn} style={formStyle}>
+          <h2 style={cardTitle}>Sign in</h2>
+          <p style={cardSubtitle}>Welcome back.</p>
+          <div>
+            <label style={labelStyle}>Email</label>
+            <input
+              className="aq-input" type="email"
+              value={signInEmail}
+              onChange={(e) => setSignInEmail(e.target.value)}
+              placeholder="you@example.com"
+              required autoComplete="email"
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Password</label>
+            <input
+              className="aq-input" type="password"
+              value={signInPassword}
+              onChange={(e) => setSignInPassword(e.target.value)}
+              placeholder="Your password"
+              required autoComplete="current-password"
+            />
+          </div>
+          <label style={rememberLabel}>
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{ marginRight: 8 }}
+            />
+            Remember me on this device
+          </label>
+          {signInError && <div style={errorBlock}>{signInError}</div>}
+          <button
+            className="aq-btn aq-btn-primary"
+            type="submit"
+            disabled={signInLoading || !envOk}
+            style={primaryBtn(signInLoading || !envOk)}
+          >
+            {signInLoading ? 'Signing in…' : 'Sign In'}
+          </button>
+          <p style={{ marginTop: 14, fontSize: 13, textAlign: 'center', color: '#6b7280' }}>
+            Don&apos;t have an account?
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); setActiveTab('signup'); }}
+              style={{ marginLeft: 6 }}
+            >Create one</a>
+          </p>
+        </form>
+      ) : (
+        <form onSubmit={handleSignUp} style={formStyle}>
+          <h2 style={cardTitle}>Create your account</h2>
+          <p style={cardSubtitle}>
+            {inviteRequired
+              ? 'Open the invite link your admin sent you, or paste its URL into the address bar first.'
+              : 'Set up the first workspace.'}
+          </p>
+          <div>
+            <label style={labelStyle}>Full name</label>
+            <input
+              className="aq-input" type="text"
+              value={signUpFullName}
+              onChange={(e) => setSignUpFullName(e.target.value)}
+              placeholder="Your full name"
+              required disabled={signupBlocked}
+              autoComplete="name"
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Email</label>
+            <input
+              className="aq-input" type="email"
+              value={signUpEmail}
+              onChange={(e) => setSignUpEmail(e.target.value)}
+              placeholder="you@example.com"
+              required disabled={Boolean(inviteInfo?.valid)}
+              autoComplete="email"
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Password</label>
+            <input
+              className="aq-input" type="password"
+              value={signUpPassword}
+              onChange={(e) => setSignUpPassword(e.target.value)}
+              placeholder="At least 6 characters"
+              required minLength={6} disabled={signupBlocked}
+              autoComplete="new-password"
+            />
+          </div>
+          {signUpError && <div style={errorBlock}>{signUpError}</div>}
+          {signUpMessage && <div style={successBlock}>{signUpMessage}</div>}
+          <button
+            className="aq-btn aq-btn-primary"
+            type="submit"
+            disabled={signUpLoading || !envOk || signupBlocked}
+            style={primaryBtn(signUpLoading || !envOk || signupBlocked)}
+          >
+            {signUpLoading ? 'Creating…' : 'Create Account'}
+          </button>
+          <p style={{ marginTop: 14, fontSize: 13, textAlign: 'center', color: '#6b7280' }}>
+            Already have an account?
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); setActiveTab('signin'); }}
+              style={{ marginLeft: 6 }}
+            >Sign in</a>
+          </p>
+        </form>
+      )}
+    </SplitAuthLayout>
   );
+}
+
+function tabBtn(active: boolean): React.CSSProperties {
+  return {
+    padding: '7px 16px',
+    background: active ? '#0b0b0e' : 'transparent',
+    color: active ? '#fff' : '#6b7280',
+    border: 'none',
+    borderRadius: 999,
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  };
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────

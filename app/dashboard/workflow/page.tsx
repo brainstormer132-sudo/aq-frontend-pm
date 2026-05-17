@@ -465,7 +465,7 @@ function viewTitle(v: View) {
     : v === 'new-task' ? 'New Task'
     : v === 'inbox'    ? 'Inbox'
     : v === 'crm'      ? 'CRM'
-    : v === 'marketing-triage' ? 'Marketing Triage'
+    : v === 'marketing-triage' ? 'Marketing Inbox'
     : v === 'all-tasks'? 'All Tasks'
     : v === 'my-tasks' ? 'My Tasks'
     : v === 'contracts'? 'Contract Requests'

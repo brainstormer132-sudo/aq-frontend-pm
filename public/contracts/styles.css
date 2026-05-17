@@ -1456,16 +1456,17 @@ body.is-auth { background: #0b0b0e !important; }
 }
 
 .auth-brand-logo-wrap {
-  width: 130px;
-  height: 130px;
+  /* No white circle, no padding. Show the logo image at its native shape on
+     the dark panel. Logo file is already a square with white symbol on a
+     dark inner — looks correct on the brand backdrop. */
+  width: 110px;
+  height: 110px;
   margin: 0 auto 22px;
-  background: #fff;
-  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  border-radius: 16px;
+  overflow: hidden;
 }
 
 .auth-brand-logo {
