@@ -213,12 +213,33 @@ export default function AuthPage() {
   const signupBlocked = inviteRequired && !inviteInfo?.valid;
 
   return (
-    <div style={pageStyle}>
+    <div style={pageStyle} className="pm-auth-mono">
+      {/* Force black-and-white styling regardless of the global green
+          --aq-accent token. Scoped to .pm-auth-mono so no other PM screens
+          are affected. */}
+      <style>{`
+        .pm-auth-mono .aq-btn-primary,
+        .pm-auth-mono button[type="submit"] {
+          background: #0b0b0e !important;
+          border-color: #0b0b0e !important;
+          color: #fff !important;
+        }
+        .pm-auth-mono .aq-btn-primary:hover,
+        .pm-auth-mono button[type="submit"]:hover {
+          background: #000 !important;
+          border-color: #000 !important;
+        }
+        .pm-auth-mono input:focus {
+          border-color: #0b0b0e !important;
+          box-shadow: 0 0 0 3px rgba(11, 11, 14, 0.12) !important;
+        }
+        .pm-auth-mono a { color: #0b0b0e; }
+      `}</style>
       <div style={shellStyle}>
         <header style={headerStyle}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <div style={logoWrapStyle}><img src="/logo.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>
-          <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          <p style={{ color: 'var(--aq-text-muted)', fontSize: 12, margin: 0, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>
             Project Management
           </p>
         </header>
@@ -439,16 +460,15 @@ const logoStyle: React.CSSProperties = {
 };
 
 const logoWrapStyle: React.CSSProperties = {
-  width: 96,
-  height: 96,
-  borderRadius: '50%',
-  background: '#fff',
+  // No white circle, no padding — show the logo at its native shape.
+  width: 76,
+  height: 76,
+  borderRadius: 16,
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  marginBottom: 18,
-  padding: 14,
-  boxShadow: '0 6px 18px rgba(0, 0, 0, 0.08)',
+  overflow: 'hidden',
+  marginBottom: 14,
 };
 
 const cardsRow: React.CSSProperties = {
