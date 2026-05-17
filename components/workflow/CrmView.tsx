@@ -56,8 +56,8 @@ export function CrmView({
       type: 'vendor' as const,
       id: String(v.id),
       name: v.name,
-      subtitle: v.license_number || v.email || '—',
-      meta: v.vendor_category || v.phone || '',
+      subtitle: v.license_number ? `License ${v.license_number}` : '—',
+      meta: v.created_at ? new Date(v.created_at).toLocaleDateString() : '',
     }));
   }, [tab, clients, vendors]);
 
