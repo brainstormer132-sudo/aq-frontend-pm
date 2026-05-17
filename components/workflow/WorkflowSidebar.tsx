@@ -2,7 +2,7 @@
 
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 
-type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks'
+type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks' | 'crm'
           | 'clients' | 'vendors' | 'contracts'
           | 'team' | 'settings';
 
@@ -26,6 +26,10 @@ const NAV: NavItem[] = [
   // Contracts nav removed 2026-05-16 — contract requests flow lives in the
   // contract maker (/contracts/). The "Request contract" button on a task
   // still posts here, just no dedicated view in the PM sidebar.
+  // CRM lives ABOVE the raw Clients/Vendors data screens — it's the
+  // primary surface for relationship management; the others stay around
+  // for admin/data entry. Visible to anyone who works with clients/vendors.
+  { id: 'crm',             label: 'CRM',             icon: 'users',     visibleTo: ['owner','admin','marketing','sales','key_account'] },
   { id: 'clients',         label: 'Clients',         icon: 'building',  visibleTo: ['owner','admin','marketing','sales'] },
   { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'] },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },

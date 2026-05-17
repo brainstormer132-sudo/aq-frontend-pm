@@ -1258,6 +1258,114 @@ export async function autoCreateContractRequestForSubtask(opts: {
   return created.id;
 }
 
+// ============================================================
+// CRM activity log (migration 014)
+// Per-client / per-vendor timeline. Foundation for "last contacted",
+// dormant-account queries, follow-up reminders. Same hook handles both
+// target types via the `target_type` discriminator.
+// ============================================================
+
+export type CrmTargetType = 'client' | 'vendor';
+export type CrmActivityKind = 'note' | 'call' | 'meeting' | 'email' | 'status_change';
+
+export interface CrmActivity {
+  id: string;
+  workspace_id: string;
+  target_type: CrmTargetType;
+  target_id: string;
+  kind: CrmActivityKind;
+  body: string;
+  author_id: string | null;
+  author_name: string;
+  occurred_at: string;
+  created_at: string;
+}
+
+/** All activities for the workspace, newest first. Used by the CRM
+ *  dashboard "recent activity" feed. */
+export function useCrmRecentActivities(workspaceId: string | null, limit = 50) {
+  const [items, setItems] = useState<CrmActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('crm_activities')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('occurred_at', { ascending: false })
+      .limit(limit);
+    if (error) logSbError('useCrmRecentActivities', error, { workspaceId });
+    setItems((data || []) as CrmActivity[]);
+    setLoading(false);
+  }, [workspaceId, limit]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+/** Activities for one specific client/vendor, newest first. */
+export function useCrmActivities(
+  workspaceId: string | null,
+  targetType: CrmTargetType | null,
+  targetId: string | null,
+) {
+  const [items, setItems] = useState<CrmActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId || !targetType || !targetId) {
+      setItems([]); setLoading(false); return;
+    }
+    const { data, error } = await supabase
+      .from('crm_activities')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .eq('target_type', targetType)
+      .eq('target_id', String(targetId))
+      .order('occurred_at', { ascending: false });
+    if (error) logSbError('useCrmActivities', error, { workspaceId, targetType, targetId });
+    setItems((data || []) as CrmActivity[]);
+    setLoading(false);
+  }, [workspaceId, targetType, targetId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+export async function addCrmActivity(input: {
+  workspace_id: string;
+  target_type: CrmTargetType;
+  target_id: string;
+  kind: CrmActivityKind;
+  body: string;
+  author_id: string;
+  author_name: string;
+  occurred_at?: string;     // defaults to now() server-side
+}) {
+  const { data, error } = await supabase
+    .from('crm_activities')
+    .insert({
+      workspace_id: input.workspace_id,
+      target_type:  input.target_type,
+      target_id:    String(input.target_id),
+      kind:         input.kind,
+      body:         input.body,
+      author_id:    input.author_id,
+      author_name:  input.author_name,
+      occurred_at:  input.occurred_at ?? new Date().toISOString(),
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as CrmActivity;
+}
+
+export async function deleteCrmActivity(id: string) {
+  const { error } = await supabase.from('crm_activities').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // Pending vendor & client onboarding queues (legacy contract app)
 export interface PendingVendor {
   id: number; full_name: string; license_number: string | null;

@@ -15,6 +15,7 @@ import { TaskDetailPanel } from '@/components/workflow/TaskDetailPanel';
 // item in the left sidebar (see WorkflowSidebar "Inbox" entry) which opens
 // a searchable list view backed by the same notifications + mentions data.
 import { InboxView } from '@/components/workflow/InboxView';
+import { CrmView } from '@/components/workflow/CrmView';
 import { WorkflowDashboard } from '@/components/workflow/WorkflowDashboard';
 import { TeamSettingsPanel } from '@/components/workflow/TeamSettingsPanel';
 import { ContractsView } from '@/components/workflow/ContractsView';
@@ -262,6 +263,14 @@ export default function WorkflowPage() {
           <InboxView onOpenTask={(id) => setOpenTaskId(id)} />
         )}
 
+        {view === 'crm' && (
+          <CrmView
+            workspaceId={workspace.id}
+            currentUserId={user.id}
+            currentUserName={user.full_name || user.email || ''}
+          />
+        )}
+
         {view === 'marketing-triage' && (
           <MarketingInbox
             tasks={pendingMarketing}
@@ -455,6 +464,7 @@ function viewTitle(v: View) {
   return v === 'dashboard' ? 'Dashboard'
     : v === 'new-task' ? 'New Task'
     : v === 'inbox'    ? 'Inbox'
+    : v === 'crm'      ? 'CRM'
     : v === 'marketing-triage' ? 'Marketing Triage'
     : v === 'all-tasks'? 'All Tasks'
     : v === 'my-tasks' ? 'My Tasks'
@@ -468,6 +478,7 @@ function viewSubtitle(v: View) {
   return v === 'dashboard' ? 'Your at-a-glance view of the workspace.'
     : v === 'new-task'  ? 'Sales submits the brief; marketing picks it up next.'
     : v === 'inbox'     ? 'Notifications, mentions, and anything that needs your eyes.'
+    : v === 'crm'       ? 'Client and vendor relationships — activity log, notes, recent contact.'
     : v === 'marketing-triage' ? 'Tasks waiting for priority, service type, and a key account.'
     : v === 'all-tasks' ? 'Every workflow task in this workspace — searchable.'
     : v === 'my-tasks'  ? "What you're assigned to or own."
