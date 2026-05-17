@@ -289,17 +289,13 @@ async function api(path, options = {}) {
       : await response.text();
 
     if (!response.ok) {
-      // Auto-logout on 401 so a stale token doesn't keep producing confusing errors.
-      // The login() flow temporarily flips `state._suppressAutoLogout` so a
-      // single 401 from one parallel refresh call doesn't kill the brand-new
-      // session before the user even sees the app.
-      if (response.status === 401 && state.token && !state._suppressAutoLogout) {
-        clearStoredToken();
-        state.token = "";
-        state.user = null;
-        setSignedIn(false);
-        renderUser();
-        throw new Error("Session expired — please log in again.");
+      // DON'T auto-logout on 401 anymore. Once the user is inside the app
+      // they should stay there until they explicitly click Logout. A single
+      // 401 from a flaky admin endpoint should NOT bounce them back to the
+      // login screen. Just surface the error as a toast and continue.
+      if (response.status === 401) {
+        console.warn("Got 401 from", path, "— token may be stale, but staying signed in.");
+        throw new Error("This action needs you to log in again. Use the Logout button if needed.");
       }
       const detail = typeof data === "object" ? data.detail || JSON.stringify(data) : data;
       throw new Error(detail || `Request failed with ${response.status}`);
@@ -1586,9 +1582,16 @@ async function loadMe() {
     state.user = await api("/api/auth/me", { body: undefined });
     setSignedIn(true);
     renderUser();
-    await refreshAll();
+    try {
+      await refreshAll();
+    } catch (refreshErr) {
+      console.warn("Initial refresh failed (non-fatal):", refreshErr);
+    }
     setView(state.view);
   } catch (error) {
+    // /me itself failed — the token is genuinely bad. Only THIS path bounces
+    // back to the login screen, and only on page-load bootstrap. Once the
+    // user is in the app via a successful login, no automatic logout fires.
     clearStoredToken();
     state.token = "";
     state.user = null;
