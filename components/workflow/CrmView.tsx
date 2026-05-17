@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   useClients, useLegacyVendors, useCrmRecentActivities,
   type ClientRow, type LegacyVendor,
 } from '@/hooks/use-workflow';
 import { CrmContactDetail } from './CrmContactDetail';
+import { CrmDashboard } from './CrmDashboard';
 
 /**
  * Top-level CRM view.
@@ -18,6 +19,7 @@ import { CrmContactDetail } from './CrmContactDetail';
  */
 
 export type CrmTab = 'clients' | 'vendors';
+export type CrmMode = 'dashboard' | 'contacts';
 
 export interface CrmContact {
   type: 'client' | 'vendor';
@@ -34,6 +36,7 @@ export function CrmView({
   currentUserId: string;
   currentUserName: string;
 }) {
+  const [mode, setMode] = useState<CrmMode>('dashboard');
   const [tab, setTab] = useState<CrmTab>('clients');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<CrmContact | null>(null);
@@ -69,12 +72,86 @@ export function CrmView({
     );
   }, [contacts, query]);
 
-  // When the tab changes, clear the selection so the right panel resets to
-  // the recent-activity view.
-  useEffect(() => { setSelected(null); }, [tab]);
+  // NB: we deliberately do NOT clear `selected` when `tab` changes — the
+  // dashboard click-through sets BOTH at once, and a clearing effect would
+  // race the click and immediately unselect the contact.
+
+  // Helper: open a specific contact (used by dashboard click-throughs).
+  const openContact = (c: CrmContact) => {
+    setSelected(c);
+    setTab(c.type === 'client' ? 'clients' : 'vendors');
+    setMode('contacts');
+  };
 
   return (
-    <div className="animate-fade-in" style={{
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Mode tabs (Dashboard / Contacts) */}
+      <div style={{
+        display: 'inline-flex', gap: 4,
+        background: 'var(--aq-bg-sunken)', padding: 4, borderRadius: 999,
+        alignSelf: 'flex-start',
+      }}>
+        <ModeBtn active={mode === 'dashboard'} onClick={() => setMode('dashboard')}>Dashboard</ModeBtn>
+        <ModeBtn active={mode === 'contacts'}  onClick={() => setMode('contacts')}>Contacts</ModeBtn>
+      </div>
+
+      {mode === 'dashboard' ? (
+        <CrmDashboard workspaceId={workspaceId} onOpenContact={openContact} />
+      ) : (
+        <ContactsMaster
+          tab={tab} setTab={setTab}
+          query={query} setQuery={setQuery}
+          contacts={contacts} filtered={filtered}
+          selected={selected} setSelected={setSelected}
+          workspaceId={workspaceId}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
+          recent={recent} loadingRecent={loadingRecent} refetchRecent={refetchRecent}
+          clientsCount={clients?.length ?? 0}
+          vendorsCount={vendors?.length ?? 0}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModeBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: '7px 16px',
+        background: active ? '#0b0b0e' : 'transparent',
+        color: active ? '#fff' : 'var(--aq-text-muted)',
+        border: 'none', borderRadius: 999,
+        fontWeight: 700, fontSize: 13,
+        cursor: 'pointer', fontFamily: 'inherit',
+      }}
+    >{children}</button>
+  );
+}
+
+// Extracted the original master/detail layout into a named subcomponent so we
+// can reuse the same data flow while showing/hiding it alongside the dashboard.
+function ContactsMaster({
+  tab, setTab, query, setQuery, contacts, filtered,
+  selected, setSelected,
+  workspaceId, currentUserId, currentUserName,
+  recent, loadingRecent, refetchRecent,
+  clientsCount, vendorsCount,
+}: {
+  tab: CrmTab; setTab: (t: CrmTab) => void;
+  query: string; setQuery: (q: string) => void;
+  contacts: CrmContact[];
+  filtered: CrmContact[];
+  selected: CrmContact | null; setSelected: (c: CrmContact | null) => void;
+  workspaceId: string; currentUserId: string; currentUserName: string;
+  recent: any[]; loadingRecent: boolean; refetchRecent: () => Promise<any> | void;
+  clientsCount: number; vendorsCount: number;
+}) {
+  return (
+    <div style={{
       display: 'grid',
       gridTemplateColumns: 'minmax(0, 360px) minmax(0, 1fr)',
       gap: 16,
@@ -85,10 +162,10 @@ export function CrmView({
         <div style={{ padding: 14, borderBottom: '1px solid var(--aq-border-light)', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 6, background: 'var(--aq-bg-sunken)', padding: 4, borderRadius: 999 }}>
             <TabButton active={tab === 'clients'} onClick={() => setTab('clients')}>
-              Clients <span style={pillCount}>{clients?.length ?? 0}</span>
+              Clients <span style={pillCount}>{clientsCount}</span>
             </TabButton>
             <TabButton active={tab === 'vendors'} onClick={() => setTab('vendors')}>
-              Vendors <span style={pillCount}>{vendors?.length ?? 0}</span>
+              Vendors <span style={pillCount}>{vendorsCount}</span>
             </TabButton>
           </div>
           <input
