@@ -6,7 +6,14 @@
 // Detection rule: if the page is being served through HTTP from any host
 // (i.e. window.location.protocol === "http:" or "https:"), prefer the
 // same-origin /contracts/api base. file:// pages keep the direct-port list.
-const PROXIED_API_BASE = "/contracts/api";
+// IMPORTANT: do NOT include `/api` at the end here. All api() calls in this
+// file already include /api/ in their path (e.g. api("/api/auth/login")). The
+// Vercel rewrite for `/contracts/api/*` strips that prefix and prepends /api/
+// when forwarding to the backend, so the final URL becomes the backend's
+// /api/<path>. Including /api here would cause double /api/api/... → 404.
+// PM-app code in lib/contract-api.ts uses "/contracts/api" with calls that
+// LACK the /api/ prefix, which lines up to the same rewrite. Both work.
+const PROXIED_API_BASE = "/contracts";
 const DIRECT_API_CANDIDATES = [
   "http://127.0.0.1:8001",
   "http://127.0.0.1:8000",
