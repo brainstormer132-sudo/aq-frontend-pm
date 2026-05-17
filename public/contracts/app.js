@@ -156,6 +156,7 @@ const state = {
   search: "",
   taskLimit: Number(localStorage.getItem("aq_task_limit") || 10),
   vendorSearch: "",
+  contractSearch: "",
   selectedVendorId: localStorage.getItem("aq_selected_vendor") || "",
   selectedVendorLicense: "",
   // Subtask IDs the user has checked in the Tasks view; cleared whenever
@@ -733,9 +734,14 @@ async function renderTasksView() {
     : defaultTemplateKey();
   const query = state.search.trim().toLowerCase();
   const tasks = state.tasks.filter((item) => {
-    return !query
-      || String(item.brand || "").toLowerCase().includes(query)
-      || String(item.id || "").toLowerCase().includes(query);
+    if (!query) return true;
+    // Multi-field: match on brand, task id, vendor name, license, client name,
+    // CR, contract id — anything a user might know off the top of their head.
+    return [
+      item.brand, item.id, item.vendor, item.license_number,
+      item.client_name, item.cr_number, item.contract_id,
+      item.signatory_name, item.email,
+    ].some((v) => String(v || "").toLowerCase().includes(query));
   });
   const visibleTasks = state.taskLimit ? tasks.slice(0, Math.max(5, state.taskLimit)) : tasks;
 
@@ -745,7 +751,7 @@ async function renderTasksView() {
         <div class="panel-header">
           <h2>Contract Tasks</h2>
           <div class="toolbar">
-            <input id="task-search" placeholder="Search brand or ID" value="${encodeAttr(state.search)}" />
+            <input id="task-search" placeholder="Search brand, vendor, license, CR, client, ID…" value="${encodeAttr(state.search)}" />
             <label class="compact-label">Show
               <select id="task-limit">${limitOptions()}</select>
             </label>
@@ -910,10 +916,19 @@ function renderVendorsView() {
   updateHeader("Vendors & Clients", "Manage vendors, clients, bank accounts, and onboarding");
   const vendorQuery = state.vendorSearch.trim().toLowerCase();
   const filteredVendors = state.vendors.filter((vendor) => {
-    return !vendorQuery
-      || String(vendor.name || "").toLowerCase().includes(vendorQuery)
-      || String(vendor.license_number || "").toLowerCase().includes(vendorQuery)
-      || (vendor.bank_accounts || []).some((bank) => String(bank.iban || "").toLowerCase().includes(vendorQuery));
+    if (!vendorQuery) return true;
+    // Multi-field: name, vendor ID, license, email, phone, category,
+    // platforms, plus any bank account IBAN/account_name.
+    const fields = [
+      vendor.name, vendor.id, vendor.license_number, vendor.email,
+      vendor.phone, vendor.vendor_category, vendor.platforms,
+    ];
+    if (fields.some((v) => String(v || "").toLowerCase().includes(vendorQuery))) return true;
+    return (vendor.bank_accounts || []).some((bank) =>
+      String(bank.iban || "").toLowerCase().includes(vendorQuery)
+      || String(bank.account_name || "").toLowerCase().includes(vendorQuery)
+      || String(bank.account_number || "").toLowerCase().includes(vendorQuery)
+    );
   });
   // Right-side detail panel stays blank until the user explicitly picks a
   // vendor. If a stale localStorage id no longer matches any vendor (e.g.,
@@ -954,10 +969,13 @@ function renderVendorsView() {
   // ── Client directory data ──
   const clientQuery = state.clientSearch.trim().toLowerCase();
   const filteredClients = state.clients.filter((c) => {
-    return !clientQuery
-      || String(c.company_name || c.name || "").toLowerCase().includes(clientQuery)
-      || String(c.cr_number || "").toLowerCase().includes(clientQuery)
-      || String(c.signatory_name || "").toLowerCase().includes(clientQuery);
+    if (!clientQuery) return true;
+    // Multi-field: name, ID, CR, VAT, signatory, contact info, address.
+    return [
+      c.company_name, c.name, c.id, c.cr_number, c.vat_number,
+      c.signatory_name, c.contact_name, c.contact_email, c.company_email,
+      c.contact_phone, c.phone, c.city, c.country,
+    ].some((v) => String(v || "").toLowerCase().includes(clientQuery));
   });
   if (state.selectedClientId
       && !state.clients.find((c) => String(c.id) === String(state.selectedClientId))) {
@@ -990,7 +1008,7 @@ function renderVendorsView() {
         <div class="panel-header">
           <h2>Vendor Directory</h2>
           <div class="toolbar">
-            <input id="vendor-search" placeholder="Search vendor, license, IBAN" value="${encodeAttr(state.vendorSearch)}" />
+            <input id="vendor-search" placeholder="Search name, ID, license, email, IBAN…" value="${encodeAttr(state.vendorSearch)}" />
             <button class="secondary-button" type="button" data-action="load-vendors">Refresh</button>
           </div>
         </div>
@@ -1046,7 +1064,7 @@ function renderVendorsView() {
         <div class="panel-header">
           <h2>Client Directory</h2>
           <div class="toolbar">
-            <input id="client-search" placeholder="Search company, CR, signatory" value="${encodeAttr(state.clientSearch)}" />
+            <input id="client-search" placeholder="Search company, CR, VAT, signatory, email…" value="${encodeAttr(state.clientSearch)}" />
             <button class="secondary-button" type="button" data-action="refresh-clients">Refresh</button>
           </div>
         </div>
@@ -1182,8 +1200,18 @@ function renderContractsView() {
   // brand and contract_id. Click the header to expand/collapse.
   const expanded = state.expandedTasks || (state.expandedTasks = new Set());
   const tasksById = new Map(state.tasks.map((t) => [String(t.id), t]));
+
+  // Multi-field contract search — applied BEFORE grouping so task groups
+  // disappear cleanly when none of their contracts match.
+  const contractQuery = (state.contractSearch || "").trim().toLowerCase();
+  const matchingContracts = !contractQuery ? state.contracts : state.contracts.filter((c) => [
+    c.contract_id, c.vendor_name, c.client_name, c.signatory_name,
+    c.brand_name, c.license_number, c.contract_type, c.task_id,
+    c.iban, c.account_name, c.cr_number,
+  ].some((v) => String(v || "").toLowerCase().includes(contractQuery)));
+
   const grouped = new Map();
-  state.contracts.forEach((c) => {
+  matchingContracts.forEach((c) => {
     const key = c.task_id || "(no task)";
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(c);
@@ -1210,9 +1238,18 @@ function renderContractsView() {
     const contractRows = isOpen ? contracts.map((c) => {
       const hasPdf = Boolean(c.pdf_path);
       const pdfTitle = c.pdf_error ? ` title="PDF unavailable: ${encodeAttr(c.pdf_error)}"` : "";
+      // Show the actual party name on the contract (vendor or client),
+      // not just the bare contract_id. Falls back to "—" if the row
+      // somehow has neither.
+      const contractName = c.vendor_name || c.client_name || c.signatory_name || "—";
       return `
         <tr class="archive-row">
-          <td style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px">${escapeHtml(c.contract_id)}</td>
+          <td>
+            <strong>${escapeHtml(contractName)}</strong>
+            <div style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:var(--text-muted)">
+              ${escapeHtml(c.contract_id)}
+            </div>
+          </td>
           <td>${escapeHtml(c.brand_name)}</td>
           <td>${money(c.amount)}</td>
           <td>${escapeHtml(c.contract_type)}</td>
@@ -1248,7 +1285,7 @@ function renderContractsView() {
           </div>
         </div>
         ${isOpen ? simpleTable(
-          ["Contract", "Brand", "Amount", "Type", "Generated", "Status", "Actions"],
+          ["Name / ID", "Brand", "Amount", "Type", "Generated", "Status", "Actions"],
           contractRows,
         ) : ""}
       </div>
@@ -1265,11 +1302,14 @@ function renderContractsView() {
     <section class="glass-panel">
       <div class="panel-header">
         <h2>Archive</h2>
-        <button class="secondary-button" data-action="refresh-contracts" type="button">Refresh</button>
+        <div class="toolbar">
+          <input id="contract-search" placeholder="Search contract id, vendor, license, brand, CR…" value="${encodeAttr(state.contractSearch)}" />
+          <button class="secondary-button" data-action="refresh-contracts" type="button">Refresh</button>
+        </div>
       </div>
       ${state.contracts.length === 0
         ? `<p class="empty-note">No generated contracts yet.</p>`
-        : taskCards}
+        : (taskCards || `<p class="empty-note">No contracts match your search.</p>`)}
     </section>
   `;
 }
@@ -2284,6 +2324,10 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "client-search") {
     state.clientSearch = event.target.value;
     renderVendorsView();
+  }
+  if (event.target.id === "contract-search") {
+    state.contractSearch = event.target.value;
+    renderContractsView();
   }
   if (event.target.id === "sub-license") {
     syncSubtaskVendorFields();

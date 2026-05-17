@@ -16,7 +16,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard',  icon: 'home',     visibleTo: [] },
   { id: 'new-task',  label: 'New Task',   icon: 'plus',     visibleTo: ['owner','admin','sales','marketing'] },
-  { id: 'inbox',     label: 'Triage',     icon: 'inbox',    visibleTo: ['owner','admin','marketing'] },
+  { id: 'inbox',     label: 'Marketing Inbox', icon: 'inbox', visibleTo: ['owner','admin','marketing'] },
   { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account'] },
   { id: 'my-tasks',  label: 'My Tasks',   icon: 'check',    visibleTo: [] },
   { id: 'contracts',label: 'Contracts',  icon: 'file',     visibleTo: ['owner','admin','marketing','key_account','sales'] },

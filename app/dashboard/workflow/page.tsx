@@ -448,7 +448,7 @@ function SetupWorkspace({
 function viewTitle(v: View) {
   return v === 'dashboard' ? 'Dashboard'
     : v === 'new-task' ? 'New Task'
-    : v === 'inbox'    ? 'Marketing Triage Inbox'
+    : v === 'inbox'    ? 'Marketing Inbox'
     : v === 'all-tasks'? 'All Tasks'
     : v === 'my-tasks' ? 'My Tasks'
     : v === 'contracts'? 'Contract Requests'
