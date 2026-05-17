@@ -216,10 +216,10 @@ export default function AuthPage() {
     <div style={pageStyle}>
       <div style={shellStyle}>
         <header style={headerStyle}>
-          <div style={logoStyle}>AQ</div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, margin: '0 0 4px' }}>AQ Creativity</h1>
-          <p style={{ color: 'var(--aq-text-muted)', fontSize: 14, margin: 0 }}>
-            Project Management workspace
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <div style={logoWrapStyle}><img src="/logo.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>
+          <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, margin: 0, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            Project Management
           </p>
         </header>
 
@@ -436,6 +436,19 @@ const logoStyle: React.CSSProperties = {
   fontWeight: 700,
   color: '#fff',
   marginBottom: 14,
+};
+
+const logoWrapStyle: React.CSSProperties = {
+  width: 96,
+  height: 96,
+  borderRadius: '50%',
+  background: '#fff',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginBottom: 18,
+  padding: 14,
+  boxShadow: '0 6px 18px rgba(0, 0, 0, 0.08)',
 };
 
 const cardsRow: React.CSSProperties = {
