@@ -290,7 +290,10 @@ async function api(path, options = {}) {
 
     if (!response.ok) {
       // Auto-logout on 401 so a stale token doesn't keep producing confusing errors.
-      if (response.status === 401 && state.token) {
+      // The login() flow temporarily flips `state._suppressAutoLogout` so a
+      // single 401 from one parallel refresh call doesn't kill the brand-new
+      // session before the user even sees the app.
+      if (response.status === 401 && state.token && !state._suppressAutoLogout) {
         clearStoredToken();
         state.token = "";
         state.user = null;
@@ -1506,6 +1509,10 @@ async function login(signup = false) {
   clearStoredToken();
   state.token = "";
   state.user = null;
+  // Also pause the auto-logout trigger so a stray 401 from refreshAll
+  // immediately after sign-in doesn't yank the user back to the login
+  // screen before they can see anything.
+  state._suppressAutoLogout = true;
 
   const online = await checkHealth();
   if (!online) throw new Error("Backend is not reachable");
@@ -1553,7 +1560,15 @@ async function login(signup = false) {
   storeToken(state.token, remember);
   setSignedIn(true);
   renderUser();
-  await refreshAll();
+  // Catch ANY failure in the bulk refresh after sign-in so a single 401 from
+  // a non-essential admin-only endpoint doesn't tank the fresh session.
+  // Individual views will re-fetch what they need on demand.
+  try {
+    await refreshAll();
+  } catch (refreshErr) {
+    console.warn("Post-login refresh failed (non-fatal):", refreshErr);
+  }
+  state._suppressAutoLogout = false;
   renderCurrentView();
   showToast(signup ? "Account created" : "Logged in");
 }
