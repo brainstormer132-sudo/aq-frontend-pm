@@ -23,6 +23,10 @@ const NAV: NavItem[] = [
   { id: 'inbox',     label: 'Inbox',      icon: 'inbox',    visibleTo: [] },
   { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account'] },
   { id: 'my-tasks',  label: 'My Tasks',   icon: 'check',    visibleTo: [] },
+  // Marketing Triage — tasks waiting for priority/service-type/key-account.
+  // Marketing/admin/owner only. The dashboard "Pending triage" stat card
+  // also links here.
+  { id: 'marketing-triage', label: 'Triage', icon: 'inbox', visibleTo: ['owner','admin','marketing'] },
   // Contracts nav removed 2026-05-16 — contract requests flow lives in the
   // contract maker (/contracts/). The "Request contract" button on a task
   // still posts here, just no dedicated view in the PM sidebar.
