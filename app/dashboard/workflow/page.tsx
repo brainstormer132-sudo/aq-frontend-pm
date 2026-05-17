@@ -11,7 +11,10 @@ import { NewTaskForm } from '@/components/workflow/NewTaskForm';
 import { MarketingInbox } from '@/components/workflow/MarketingInbox';
 import { MyTasksList } from '@/components/workflow/MyTasksList';
 import { TaskDetailPanel } from '@/components/workflow/TaskDetailPanel';
-import { NotificationsBell } from '@/components/workflow/NotificationsBell';
+// NotificationsBell removed from topbar 2026-05-17 — the inbox is now an
+// item in the left sidebar (see WorkflowSidebar "Inbox" entry) which opens
+// a searchable list view backed by the same notifications + mentions data.
+import { InboxView } from '@/components/workflow/InboxView';
 import { WorkflowDashboard } from '@/components/workflow/WorkflowDashboard';
 import { TeamSettingsPanel } from '@/components/workflow/TeamSettingsPanel';
 import { ContractsView } from '@/components/workflow/ContractsView';
@@ -222,7 +225,6 @@ export default function WorkflowPage() {
             </p>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <NotificationsBell onOpenTask={(id) => setOpenTaskId(id)} />
             <button
               type="button"
               className="aq-btn aq-btn-ghost"
@@ -257,6 +259,10 @@ export default function WorkflowPage() {
         )}
 
         {view === 'inbox' && (
+          <InboxView onOpenTask={(id) => setOpenTaskId(id)} />
+        )}
+
+        {view === 'marketing-triage' && (
           <MarketingInbox
             tasks={pendingMarketing}
             serviceTypes={serviceTypes}
@@ -448,7 +454,8 @@ function SetupWorkspace({
 function viewTitle(v: View) {
   return v === 'dashboard' ? 'Dashboard'
     : v === 'new-task' ? 'New Task'
-    : v === 'inbox'    ? 'Marketing Inbox'
+    : v === 'inbox'    ? 'Inbox'
+    : v === 'marketing-triage' ? 'Marketing Triage'
     : v === 'all-tasks'? 'All Tasks'
     : v === 'my-tasks' ? 'My Tasks'
     : v === 'contracts'? 'Contract Requests'
@@ -460,7 +467,8 @@ function viewTitle(v: View) {
 function viewSubtitle(v: View) {
   return v === 'dashboard' ? 'Your at-a-glance view of the workspace.'
     : v === 'new-task'  ? 'Sales submits the brief; marketing picks it up next.'
-    : v === 'inbox'     ? 'Tasks waiting for priority, service type, and a key account.'
+    : v === 'inbox'     ? 'Notifications, mentions, and anything that needs your eyes.'
+    : v === 'marketing-triage' ? 'Tasks waiting for priority, service type, and a key account.'
     : v === 'all-tasks' ? 'Every workflow task in this workspace — searchable.'
     : v === 'my-tasks'  ? "What you're assigned to or own."
     : v === 'contracts' ? 'Vendor and client contract requests submitted from tasks.'

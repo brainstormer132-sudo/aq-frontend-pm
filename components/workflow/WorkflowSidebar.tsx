@@ -2,7 +2,7 @@
 
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 
-type View = 'dashboard' | 'inbox' | 'new-task' | 'all-tasks' | 'my-tasks'
+type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks'
           | 'clients' | 'vendors' | 'contracts'
           | 'team' | 'settings';
 
@@ -16,9 +16,11 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard',  icon: 'home',     visibleTo: [] },
   { id: 'new-task',  label: 'New Task',   icon: 'plus',     visibleTo: ['owner','admin','sales','marketing'] },
-  // Inbox button removed 2026-05-16 — the marketing-triage queue is now
-  // surfaced via the slide-over "My Activity" panel triggered from the topbar.
-  // Marketing/admin still reach the inbox view from the dashboard stat card.
+  // Personal Inbox — searchable list of notifications + mentions for the
+  // current user. Replaces the old topbar bell. Visible to everyone; the
+  // marketing-triage queue (different concept) is reached via the dashboard
+  // "Pending triage" stat card.
+  { id: 'inbox',     label: 'Inbox',      icon: 'inbox',    visibleTo: [] },
   { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account'] },
   { id: 'my-tasks',  label: 'My Tasks',   icon: 'check',    visibleTo: [] },
   // Contracts nav removed 2026-05-16 — contract requests flow lives in the

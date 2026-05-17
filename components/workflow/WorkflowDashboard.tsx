@@ -19,7 +19,7 @@ export function WorkflowDashboard({
   role: WorkspaceRole | null;
   profiles: (Profile & { role: WorkspaceRole })[];
   onOpenTask: (id: string) => void;
-  onGoTo: (view: 'inbox' | 'all-tasks' | 'my-tasks' | 'team' | 'new-task') => void;
+  onGoTo: (view: 'inbox' | 'marketing-triage' | 'all-tasks' | 'my-tasks' | 'team' | 'new-task') => void;
 }) {
   const roleLabel = (value: string | null | undefined) => value === 'key_account' ? 'Key account' : value;
   const { stats } = useWorkspaceStats(workspaceId, userId);
@@ -52,7 +52,7 @@ export function WorkflowDashboard({
         <Stat label="My tasks"          value={stats.mine}             onClick={() => onGoTo('my-tasks')} />
         <Stat label="Overdue"           value={stats.overdue}          tone={stats.overdue ? 'error' : 'default'} />
         <Stat label="Due today"         value={stats.dueToday}         tone={stats.dueToday ? 'warning' : 'default'} />
-        <Stat label="Pending triage"    value={stats.pendingMarketing} onClick={() => onGoTo('inbox')} tone={stats.pendingMarketing ? 'info' : 'default'} />
+        <Stat label="Pending triage"    value={stats.pendingMarketing} onClick={() => onGoTo('marketing-triage')} tone={stats.pendingMarketing ? 'info' : 'default'} />
       </section>
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
         <Stat label="Tasks completed"   value={stats.completed} sub={`of ${stats.total} total`} tone="success" />
