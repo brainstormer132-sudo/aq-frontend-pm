@@ -277,6 +277,28 @@ export interface ZohoImportSummary {
   updated_names: string[];
 }
 
+export interface ZohoImportJobStart {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export interface ZohoImportJobStatus {
+  job_id: string;
+  status: 'running' | 'done' | 'error';
+  message: string;
+  scanned: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  total: number;
+  errors: string[];
+  created_names: string[];
+  updated_names: string[];
+  started_at: string;
+  finished_at?: string | null;
+}
+
 export const zoho = {
   health: () => contractApi<ZohoHealthResp>('/zoho/health'),
   searchContacts: (q: string) =>
@@ -288,6 +310,10 @@ export const zoho = {
     }),
   clientInvoices: (clientId: string) =>
     contractApi<ZohoInvoiceRow[]>(`/zoho/clients/${clientId}/invoices`),
+  /** Kicks off the import job. Returns a job_id you can poll with importStatus. */
   importCustomers: () =>
-    contractApi<ZohoImportSummary>('/zoho/import-customers', { method: 'POST' }),
+    contractApi<ZohoImportJobStart>('/zoho/import-customers', { method: 'POST' }),
+  /** Poll once for live progress on a running import. */
+  importStatus: (jobId: string) =>
+    contractApi<ZohoImportJobStatus>(`/zoho/import-status/${jobId}`),
 };

@@ -7,7 +7,7 @@ import {
 } from '@/hooks/use-workflow';
 import {
   brands as brandsApi, clientOps, manualCreate, zoho as zohoApi,
-  type BrandRow, type ZohoImportSummary,
+  type BrandRow, type ZohoImportJobStatus,
 } from '@/lib/contract-api';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
@@ -54,9 +54,11 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   const canCreate = Boolean(role && ['owner','admin','marketing','sales'].includes(role));
   const canImport = Boolean(role && ['owner','admin'].includes(role));
 
-  // Zoho bulk import state
+  // Zoho bulk import state — backend now runs the job in the background
+  // and we poll for progress, so we keep a ZohoImportJobStatus around to
+  // render live counts in the modal.
   const [importBusy, setImportBusy] = useState(false);
-  const [importResult, setImportResult] = useState<ZohoImportSummary | null>(null);
+  const [importResult, setImportResult] = useState<ZohoImportJobStatus | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
   const runZohoImport = async () => {
@@ -64,8 +66,26 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
     setImportError(null);
     setImportResult(null);
     try {
-      const summary = await zohoApi.importCustomers();
-      setImportResult(summary);
+      const { job_id } = await zohoApi.importCustomers();
+      // Poll every 2s until the job is no longer 'running'. Cap at ~10
+      // minutes so a stuck job can't loop forever.
+      const startedAt = Date.now();
+      const maxMs = 10 * 60 * 1000;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let status: ZohoImportJobStatus;
+        try {
+          status = await zohoApi.importStatus(job_id);
+        } catch (e: any) {
+          // Transient network errors — wait and retry. If the backend redeployed
+          // mid-job the job_id is gone and we surface that.
+          if (Date.now() - startedAt > maxMs) throw e;
+          continue;
+        }
+        setImportResult(status);
+        if (status.status !== 'running') break;
+        if (Date.now() - startedAt > maxMs) throw new Error('Import timed out after 10 minutes — refresh the page to see what landed.');
+      }
       await refetch();
     } catch (e: any) {
       setImportError(e?.message ?? String(e));
@@ -172,6 +192,28 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
             </div>
           ) : importResult && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Live status banner — shows running/done/error + the latest message */}
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: 'var(--aq-radius)',
+                background: importResult.status === 'done' ? '#dcfce7'
+                          : importResult.status === 'error' ? '#fee2e2'
+                          : 'var(--aq-bg-sunken)',
+                color: importResult.status === 'done' ? '#166534'
+                      : importResult.status === 'error' ? '#991b1b'
+                      : 'var(--aq-text)',
+                fontSize: 13, fontWeight: 600,
+              }}>
+                {importResult.status === 'running' && '⏳ '}
+                {importResult.status === 'done' && '✓ '}
+                {importResult.status === 'error' && '✗ '}
+                {importResult.message}
+                {importResult.status === 'running' && importResult.total > 0 && (
+                  <span style={{ marginLeft: 8, fontWeight: 400, opacity: 0.7 }}>
+                    ({importResult.scanned} of {importResult.total})
+                  </span>
+                )}
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
                 <ImportStat label="Scanned" value={importResult.scanned} />
                 <ImportStat label="Created" value={importResult.created} accent="#16a34a" />
