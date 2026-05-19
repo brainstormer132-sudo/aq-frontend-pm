@@ -12,11 +12,12 @@ import { createClient } from '@/lib/supabase-browser';
 const supabase = createClient();
 
 function resolveBase(): string {
-  // When running behind nginx, hit the same origin (cookies + JWT both work).
-  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-    return `${window.location.origin}/contracts/api`;
-  }
-  // SSR / standalone fallback.
+  // 2026-05-17 — always prefer the direct backend URL via the env var.
+  // The Vercel proxy at `${origin}/contracts/api` strips the Authorization
+  // header when rewriting to external destinations, which makes every
+  // authenticated request 401. Calling the backend directly works because
+  // its CORS config explicitly allows the Vercel origin + Authorization
+  // header. The localhost fallback is for the legacy nginx dev setup.
   const direct = process.env.NEXT_PUBLIC_CONTRACT_API_URL || 'http://127.0.0.1:8000';
   return `${direct.replace(/\/$/, '')}/api`;
 }

@@ -6,21 +6,17 @@
 // Detection rule: if the page is being served through HTTP from any host
 // (i.e. window.location.protocol === "http:" or "https:"), prefer the
 // same-origin /contracts/api base. file:// pages keep the direct-port list.
-// IMPORTANT: do NOT include `/api` at the end here. All api() calls in this
-// file already include /api/ in their path (e.g. api("/api/auth/login")). The
-// Vercel rewrite for `/contracts/api/*` strips that prefix and prepends /api/
-// when forwarding to the backend, so the final URL becomes the backend's
-// /api/<path>. Including /api here would cause double /api/api/... → 404.
-// PM-app code in lib/contract-api.ts uses "/contracts/api" with calls that
-// LACK the /api/ prefix, which lines up to the same rewrite. Both work.
-const PROXIED_API_BASE = "/contracts";
+// 2026-05-17 — DO NOT use the Vercel proxy path (`/contracts/api/...`).
+// Vercel's rewrite to external destinations strips the Authorization
+// header, which makes every authenticated request return 401 "Not
+// authenticated" even when the client sends a valid Bearer token.
+// Calling Render directly works because the backend's CORS config
+// explicitly allows the Vercel origin + Authorization header.
+const PROXIED_API_BASE = "https://aq-backend-p5zd.onrender.com";
 
-// 2026-05-17: scrub any stored API base override. Earlier troubleshooting
-// inadvertently saved the Render URL directly to localStorage, which then
-// caused every API call to hit Render cross-origin — and the browser
-// silently dropped the Authorization header during CORS preflight, giving
-// "Not authenticated" 401s on every authenticated route. Clearing it on
-// every load forces the proxied path, which is same-origin and works.
+// Scrub any stale override that earlier troubleshooting may have stored
+// (e.g. localhost ports, stale Vercel paths). The default above is the
+// only correct value for production.
 try { localStorage.removeItem("aq_api_base"); } catch {}
 const DIRECT_API_CANDIDATES = [
   "http://127.0.0.1:8001",
