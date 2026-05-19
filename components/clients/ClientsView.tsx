@@ -190,7 +190,7 @@ export function ClientsView({
                               <span key={b.id} className="aq-badge" style={{ background: 'var(--aq-bg-sunken)', color: 'var(--aq-text-secondary)', padding: '4px 10px', fontSize: 12 }}>
                                 {b.brand_name}
                                 {canDo(userRole, 'edit_clients') && (
-                                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete brand "${b.brand_name}"?`)) onDeleteBrand(b.id); }}
+                                  <button onClick={(e) => { e.stopPropagation(); onDeleteBrand(b.id); }}
                                     style={{ marginLeft: 6, background: 'none', border: 'none', color: 'var(--aq-error)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>×</button>
                                 )}
                               </span>

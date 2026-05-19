@@ -233,7 +233,6 @@ function BrandManager({ client }: { client: ClientRow }) {
   };
 
   const onDelete = async (b: BrandRow) => {
-    if (!window.confirm(`Delete brand "${b.brand_name}"? This cannot be undone.`)) return;
     setBusy(b.id);
     setError('');
     try {

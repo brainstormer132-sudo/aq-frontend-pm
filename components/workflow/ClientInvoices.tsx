@@ -116,7 +116,6 @@ export function ClientInvoices({
             type="button"
             className="aq-btn aq-btn-ghost"
             onClick={async () => {
-              if (!confirm('Unlink this client from its Zoho customer? Invoices will hide until you re-link.')) return;
               await zoho.linkClient(clientId, null);
               setZohoCustomerId(null);
               onLinkedChange?.(null);

@@ -205,7 +205,6 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
                         className="aq-btn aq-btn-ghost"
                         style={{ padding: '4px 10px', fontSize: 12, color: 'var(--aq-error)' }}
                         onClick={async () => {
-                          if (!window.confirm(`Delete vendor "${vendor.name}" and all of their bank accounts? This cannot be undone.`)) return;
                           try {
                             await vendorOps.remove(Number(vendor.id));
                             await refetchVendors();

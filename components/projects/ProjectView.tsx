@@ -112,11 +112,7 @@ export function ProjectView({
               <button
                 className="aq-btn aq-btn-ghost"
                 style={{ fontSize: 13, color: 'var(--aq-error)', padding: '4px 8px' }}
-                onClick={() => {
-                  if (confirm(`Delete project "${project.name}" and all its tasks? This cannot be undone.`)) {
-                    onDeleteProject();
-                  }
-                }}
+                onClick={() => onDeleteProject()}
                 title="Delete project"
               >
                 🗑

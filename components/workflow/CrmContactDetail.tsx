@@ -61,7 +61,6 @@ export function CrmContactDetail({
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this activity?')) return;
     try {
       await deleteCrmActivity(id);
       await refetch();

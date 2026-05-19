@@ -60,7 +60,6 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   const [importError, setImportError] = useState<string | null>(null);
 
   const runZohoImport = async () => {
-    if (!confirm('Pull every customer from Zoho Books and add or update them as clients here?')) return;
     setImportBusy(true);
     setImportError(null);
     setImportResult(null);
@@ -487,7 +486,6 @@ function ClientCard({
       );
       return;
     }
-    if (!window.confirm(`Delete ${client.company_name}? This cannot be undone.`)) return;
     try {
       await clientOps.remove(approvedClientId);
       await onChanged();
@@ -635,7 +633,6 @@ function BrandManagerInline({ clientId }: { clientId: string }) {
   };
 
   const onDelete = async (b: BrandRow) => {
-    if (!window.confirm(`Delete brand "${b.brand_name}"?`)) return;
     setBusy(b.id);
     try {
       await brandsApi.remove(b.id);

@@ -183,7 +183,6 @@ export function TaskDetailPanel({
 
   const handleDeleteTask = async () => {
     if (!task) return;
-    if (!confirm(`Delete "${task.task_name || task.title}" and all its subtasks?`)) return;
     setBusy(true); setError('');
     try {
       await deleteTaskFn(task.id);

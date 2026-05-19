@@ -2100,7 +2100,6 @@ async function updateVendor(event) {
 async function deleteSelectedVendor() {
   const vendor = selectedVendor();
   if (!vendor) throw new Error("Choose a vendor first");
-  if (!confirm(`Delete vendor "${vendor.name}" and all bank accounts?`)) return;
 
   await api(`/api/vendors/${vendor.id}`, { method: "DELETE" });
   state.vendors = state.vendors.filter((item) => String(item.id) !== String(vendor.id));
@@ -2219,11 +2218,6 @@ async function setDefaultTemplate(key) {
 
 async function deleteTemplate(key) {
   if (!isAdmin()) throw new Error("Admin access required");
-  const template = state.templates.find((item) => item.key === key);
-  const label = template?.display_name || key;
-  const message = `Delete the ${label} slot completely? It will be removed from dropdowns and contract generation.`;
-  if (!confirm(message)) return;
-
   const result = await api(`/api/templates/${encodeURIComponent(key)}`, { method: "DELETE" });
   await loadTemplates();
   renderTemplatesView();
@@ -2524,7 +2518,6 @@ document.addEventListener("click", async (event) => {
     if (action === "delete-task") {
       const task = selectedTask();
       if (!task) throw new Error("Select a task first");
-      if (!confirm(`Delete task ${task.id}?`)) return;
       await api(`/api/tasks/${task.id}`, { method: "DELETE" });
       state.selectedTaskId = "";
       state.selectedSubtaskIds = new Set();
@@ -2545,7 +2538,6 @@ document.addEventListener("click", async (event) => {
       showToast(sub?.paid_at ? "Payment unmarked" : "Payment marked");
     }
     if (action === "delete-subtask") {
-      if (!confirm("Delete this subtask?")) return;
       await api(`/api/subtasks/${button.dataset.id}`, { method: "DELETE" });
       await loadTasks();
       await renderTasksView();
@@ -2637,7 +2629,6 @@ document.addEventListener("click", async (event) => {
     if (action === "download-all-task") {
       const tid = String(button.dataset.taskId);
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
-      if (!confirm(`Download ${list.length} contract${list.length === 1 ? "" : "s"} (PDF + DOCX)?`)) return;
       for (const c of list) {
         if (c.pdf_path) {
           try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, `${c.contract_id}.pdf`); }
@@ -2650,7 +2641,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "delete-contract") {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }
-      if (!confirm(`Delete contract ${button.dataset.id}? This cannot be undone.`)) return;
+      // Confirm prompt removed per user request — deletion is now one-click.
       await api(`/api/contracts/${button.dataset.id}`, { method: "DELETE" });
       await loadContracts();
       renderContractsView();
@@ -2660,7 +2651,6 @@ document.addEventListener("click", async (event) => {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const tid = String(button.dataset.taskId);
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
-      if (!confirm(`Delete ALL ${list.length} contract${list.length === 1 ? "" : "s"} under this task? This cannot be undone.`)) return;
       await api(`/api/contracts/task/${tid}`, { method: "DELETE" });
       await loadContracts();
       renderContractsView();
@@ -2695,7 +2685,6 @@ document.addEventListener("click", async (event) => {
     if (action === "delete-client") {
       const cl = selectedClient();
       if (!cl) throw new Error("Choose a client first");
-      if (!confirm(`Delete client "${cl.company_name || cl.name}"?`)) return;
       await api(`/api/vendors/clients/${cl.id}`, { method: "DELETE" });
       state.clients = state.clients.filter((c) => String(c.id) !== String(cl.id));
       state.selectedClientId = "";
@@ -2746,7 +2735,6 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "revoke-invite") {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }
-      if (!confirm("Revoke this invite? The link will stop working.")) return;
       await api(`/api/auth/invites/${button.dataset.id}`, { method: "DELETE" });
       await loadAdminData();
       renderSettingsView();

@@ -125,7 +125,6 @@ export function MarketingInbox({
 
   const handleDelete = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Delete this task and all its subtasks?')) return;
     setDeletingId(taskId); setError('');
     try {
       await deleteTask(taskId);
