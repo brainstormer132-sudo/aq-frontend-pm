@@ -320,4 +320,7 @@ export const zoho = {
    *  fields like CR are stored in this tenant's data. Admin/owner only. */
   sampleContact: () =>
     contractApi<any>('/zoho/debug/sample-contact'),
+  /** Delete every client in the caller's workspace. Destructive. */
+  resetClients: () =>
+    contractApi<{ deleted: number }>('/zoho/reset-clients', { method: 'POST' }),
 };

@@ -86,6 +86,47 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
     }
   };
 
+  /**
+   * Reset wipes every client in this workspace and immediately re-imports
+   * from Zoho. Use when you want a clean slate. Triggered via ctrl/cmd+click
+   * on the Import button.
+   */
+  const runZohoReset = async () => {
+    setImportBusy(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const { deleted } = await zohoApi.resetClients();
+      // eslint-disable-next-line no-console
+      console.log(`Reset deleted ${deleted} clients. Starting fresh import…`);
+      // Fall through to a fresh import.
+      await runZohoImportInner();
+    } catch (e: any) {
+      setImportError('Reset failed: ' + (e?.message ?? String(e)));
+      setImportBusy(false);
+    }
+  };
+
+  const runZohoImportInner = async () => {
+    const { job_id } = await zohoApi.importCustomers();
+    const startedAt = Date.now();
+    const maxMs = 10 * 60 * 1000;
+    while (true) {
+      await new Promise((r) => setTimeout(r, 2000));
+      let status: ZohoImportJobStatus;
+      try {
+        status = await zohoApi.importStatus(job_id);
+      } catch (e: any) {
+        if (Date.now() - startedAt > maxMs) throw e;
+        continue;
+      }
+      setImportResult(status);
+      if (status.status !== 'running') break;
+      if (Date.now() - startedAt > maxMs) throw new Error('Import timed out after 10 minutes — refresh the page to see what landed.');
+    }
+    await refetch();
+  };
+
   const runZohoImport = async () => {
     setImportBusy(true);
     setImportError(null);
@@ -181,7 +222,11 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
       canCreate={canCreate}
       onAction={() => setOpen(true)}
       secondaryActionLabel={importBusy ? 'Importing…' : 'Import from Zoho'}
-      onSecondaryAction={(e) => (e?.shiftKey ? runZohoDebug() : runZohoImport())}
+      onSecondaryAction={(e) => {
+        if (e?.shiftKey) return runZohoDebug();
+        if (e?.ctrlKey || e?.metaKey) return runZohoReset();
+        return runZohoImport();
+      }}
       showSecondaryAction={canImport}
       secondaryActionBusy={importBusy}
     >
@@ -370,7 +415,7 @@ function RegistryShell({
               className="aq-btn aq-btn-ghost"
               disabled={secondaryActionBusy}
               onClick={(e) => onSecondaryAction(e)}
-              title="Pull customers from Zoho Books (shift+click to inspect one contact's raw fields)"
+              title="Click: import (safe to re-run, dedups by Zoho ID). Ctrl/Cmd+click: wipe all clients and re-import. Shift+click: inspect one Zoho contact's raw fields."
             >
               {secondaryActionLabel}
             </button>
