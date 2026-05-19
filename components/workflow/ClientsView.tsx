@@ -6,8 +6,8 @@ import {
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import {
-  brands as brandsApi, clientOps, manualCreate,
-  type BrandRow,
+  brands as brandsApi, clientOps, manualCreate, zoho as zohoApi,
+  type BrandRow, type ZohoImportSummary,
 } from '@/lib/contract-api';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
@@ -52,6 +52,28 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   });
 
   const canCreate = Boolean(role && ['owner','admin','marketing','sales'].includes(role));
+  const canImport = Boolean(role && ['owner','admin'].includes(role));
+
+  // Zoho bulk import state
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<ZohoImportSummary | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const runZohoImport = async () => {
+    if (!confirm('Pull every customer from Zoho Books and add or update them as clients here?')) return;
+    setImportBusy(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const summary = await zohoApi.importCustomers();
+      setImportResult(summary);
+      await refetch();
+    } catch (e: any) {
+      setImportError(e?.message ?? String(e));
+    } finally {
+      setImportBusy(false);
+    }
+  };
   const clients = useMemo(() => {
     const q = query.trim().toLowerCase();
     return allClients.filter((c: any) => !q || [
@@ -114,6 +136,10 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
       actionLabel="+ Add Client"
       canCreate={canCreate}
       onAction={() => setOpen(true)}
+      secondaryActionLabel={importBusy ? 'Importing…' : 'Import from Zoho'}
+      onSecondaryAction={runZohoImport}
+      showSecondaryAction={canImport}
+      secondaryActionBusy={importBusy}
     >
       {error && <div className="aq-badge aq-badge-error">{error}</div>}
 
@@ -137,6 +163,62 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
             />
           ))}
         </div>
+      )}
+
+      {(importResult || importError) && (
+        <Modal title="Zoho Import" onClose={() => { setImportResult(null); setImportError(null); }}>
+          {importError ? (
+            <div className="aq-badge aq-badge-error" style={{ padding: 12 }}>
+              {importError}
+            </div>
+          ) : importResult && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                <ImportStat label="Scanned" value={importResult.scanned} />
+                <ImportStat label="Created" value={importResult.created} accent="#16a34a" />
+                <ImportStat label="Updated" value={importResult.updated} accent="#2563eb" />
+                <ImportStat label="Skipped" value={importResult.skipped} accent="#6b7280" />
+              </div>
+              {importResult.errors.length > 0 && (
+                <details>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--aq-error)' }}>
+                    {importResult.errors.length} error{importResult.errors.length === 1 ? '' : 's'}
+                  </summary>
+                  <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                    {importResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </details>
+              )}
+              {importResult.created_names.length > 0 && (
+                <details>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                    New clients ({importResult.created_names.length})
+                  </summary>
+                  <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12 }}>
+                    {importResult.created_names.map((n, i) => <li key={i}>{n}</li>)}
+                  </ul>
+                </details>
+              )}
+              {importResult.updated_names.length > 0 && (
+                <details>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                    Updated ({importResult.updated_names.length})
+                  </summary>
+                  <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12 }}>
+                    {importResult.updated_names.map((n, i) => <li key={i}>{n}</li>)}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+          <Actions
+            busy={false}
+            disabled={false}
+            submitLabel="Close"
+            onCancel={() => { setImportResult(null); setImportError(null); }}
+            onSubmit={() => { setImportResult(null); setImportError(null); }}
+          />
+        </Modal>
       )}
 
       {open && (
@@ -181,7 +263,9 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
 }
 
 function RegistryShell({
-  title, count, search, setSearch, actionLabel, canCreate, onAction, children,
+  title, count, search, setSearch, actionLabel, canCreate, onAction,
+  secondaryActionLabel, onSecondaryAction, showSecondaryAction, secondaryActionBusy,
+  children,
 }: {
   title: string;
   count: string;
@@ -190,6 +274,11 @@ function RegistryShell({
   actionLabel: string;
   canCreate: boolean;
   onAction: () => void;
+  /** Optional secondary action (e.g. "Import from Zoho") rendered to the left of the primary button. */
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
+  showSecondaryAction?: boolean;
+  secondaryActionBusy?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -210,12 +299,31 @@ function RegistryShell({
               style={{ width: 220, paddingLeft: 34 }}
             />
           </label>
+          {showSecondaryAction && onSecondaryAction && secondaryActionLabel && (
+            <button
+              className="aq-btn aq-btn-ghost"
+              disabled={secondaryActionBusy}
+              onClick={onSecondaryAction}
+              title="Pull customers from Zoho Books"
+            >
+              {secondaryActionLabel}
+            </button>
+          )}
           <button className="aq-btn aq-btn-primary" disabled={!canCreate} onClick={onAction}>
             {actionLabel}
           </button>
         </div>
       </div>
       {children}
+    </div>
+  );
+}
+
+function ImportStat({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div className="aq-card" style={{ padding: 12, textAlign: 'center' }}>
+      <div style={{ fontSize: 22, fontWeight: 800, color: accent || 'var(--aq-text)' }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
     </div>
   );
 }

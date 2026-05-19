@@ -6,6 +6,7 @@ import {
   type CrmActivityKind,
 } from '@/hooks/use-workflow';
 import { KindIcon, type CrmContact } from './CrmView';
+import { ClientInvoices } from './ClientInvoices';
 
 /**
  * Right-hand detail panel for the CRM.
@@ -153,6 +154,16 @@ export function CrmContactDetail({
           >{busy ? 'Logging…' : 'Log activity'}</button>
         </form>
       </section>
+
+      {/* Invoices (Zoho Books) — clients only */}
+      {contact.type === 'client' && (
+        <ClientInvoices
+          clientId={contact.id}
+          clientName={contact.name}
+          initialZohoCustomerId={contact.zohoCustomerId ?? null}
+          onLinkedChange={() => onChanged?.()}
+        />
+      )}
 
       {/* Timeline */}
       <section className="aq-card" style={{ padding: 22 }}>

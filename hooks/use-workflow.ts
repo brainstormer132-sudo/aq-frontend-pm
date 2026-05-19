@@ -1134,6 +1134,7 @@ export interface ClientRow {
   city: string | null;
   country: string | null;
   status: string | null;
+  zoho_customer_id: string | null;
 }
 
 export interface ClientBrandRow {
@@ -1151,7 +1152,7 @@ export function useClients() {
   const fetch = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status')
+      .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id')
       .order('company_name', { ascending: true });
     if (error) logSbError('useClients', error);
     setClients((data || []) as ClientRow[]);

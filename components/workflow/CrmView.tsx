@@ -27,6 +27,8 @@ export interface CrmContact {
   name: string;
   subtitle?: string;
   meta?: string;
+  /** Only set for clients — used by the Invoices tab on the detail panel. */
+  zohoCustomerId?: string | null;
 }
 
 export function CrmView({
@@ -53,6 +55,7 @@ export function CrmView({
         name: c.company_name,
         subtitle: c.signatory_name || c.contact_email || '—',
         meta: c.cr_number ? `CR ${c.cr_number}` : (c.city || ''),
+        zohoCustomerId: c.zoho_customer_id || null,
       }));
     }
     return (vendors || []).map((v: LegacyVendor) => ({

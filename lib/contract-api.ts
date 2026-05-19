@@ -238,3 +238,56 @@ export const brands = {
   remove: (id: string) =>
     contractApi<void>(`/brands/${id}`, { method: 'DELETE' }),
 };
+
+// ─── Zoho Books ────────────────────────────────────────────────────────
+
+export interface ZohoHealthResp {
+  configured: boolean;
+  organization_id?: string | null;
+  api_host?: string | null;
+}
+
+export interface ZohoContactRow {
+  contact_id: string;
+  contact_name: string;
+  company_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}
+
+export interface ZohoInvoiceRow {
+  invoice_id: string;
+  invoice_number: string;
+  date?: string | null;
+  due_date?: string | null;
+  status?: string | null;
+  total?: number | null;
+  balance?: number | null;
+  currency_code?: string | null;
+  web_url: string;
+}
+
+export interface ZohoImportSummary {
+  scanned: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  created_names: string[];
+  updated_names: string[];
+}
+
+export const zoho = {
+  health: () => contractApi<ZohoHealthResp>('/zoho/health'),
+  searchContacts: (q: string) =>
+    contractApi<ZohoContactRow[]>('/zoho/contacts/search', { query: { q } }),
+  linkClient: (clientId: string, zohoCustomerId: string | null) =>
+    contractApi<void>(`/zoho/clients/${clientId}/link`, {
+      method: 'POST',
+      body: { zoho_customer_id: zohoCustomerId },
+    }),
+  clientInvoices: (clientId: string) =>
+    contractApi<ZohoInvoiceRow[]>(`/zoho/clients/${clientId}/invoices`),
+  importCustomers: () =>
+    contractApi<ZohoImportSummary>('/zoho/import-customers', { method: 'POST' }),
+};
