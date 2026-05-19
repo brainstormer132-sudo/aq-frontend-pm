@@ -14,6 +14,14 @@
 // PM-app code in lib/contract-api.ts uses "/contracts/api" with calls that
 // LACK the /api/ prefix, which lines up to the same rewrite. Both work.
 const PROXIED_API_BASE = "/contracts";
+
+// 2026-05-17: scrub any stored API base override. Earlier troubleshooting
+// inadvertently saved the Render URL directly to localStorage, which then
+// caused every API call to hit Render cross-origin — and the browser
+// silently dropped the Authorization header during CORS preflight, giving
+// "Not authenticated" 401s on every authenticated route. Clearing it on
+// every load forces the proxied path, which is same-origin and works.
+try { localStorage.removeItem("aq_api_base"); } catch {}
 const DIRECT_API_CANDIDATES = [
   "http://127.0.0.1:8001",
   "http://127.0.0.1:8000",
