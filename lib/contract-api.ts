@@ -316,4 +316,8 @@ export const zoho = {
   /** Poll once for live progress on a running import. */
   importStatus: (jobId: string) =>
     contractApi<ZohoImportJobStatus>(`/zoho/import-status/${jobId}`),
+  /** Diagnostic: fetch one Zoho customer's raw JSON so we can see where
+   *  fields like CR are stored in this tenant's data. Admin/owner only. */
+  sampleContact: () =>
+    contractApi<any>('/zoho/debug/sample-contact'),
 };

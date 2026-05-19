@@ -61,6 +61,31 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   const [importResult, setImportResult] = useState<ZohoImportJobStatus | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
+  // Diagnostic: shift+click the Import button to dump one Zoho contact's
+  // raw shape to the console + clipboard so we can see which field name
+  // holds the CRN for this tenant. Doesn't actually run an import.
+  const runZohoDebug = async () => {
+    setImportBusy(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const data = await zohoApi.sampleContact();
+      const pretty = JSON.stringify(data, null, 2);
+      try { await navigator.clipboard.writeText(pretty); } catch {}
+      // eslint-disable-next-line no-console
+      console.log('Zoho sample contact:', data);
+      setImportError(
+        'Sample fetched — copied to clipboard. Open DevTools console for full output, ' +
+        'or paste the clipboard contents back to me. Top-level keys: ' +
+        (Array.isArray(data?.all_top_level_keys) ? data.all_top_level_keys.join(', ') : 'none')
+      );
+    } catch (e: any) {
+      setImportError('Debug fetch failed: ' + (e?.message ?? String(e)));
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   const runZohoImport = async () => {
     setImportBusy(true);
     setImportError(null);
@@ -156,7 +181,7 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
       canCreate={canCreate}
       onAction={() => setOpen(true)}
       secondaryActionLabel={importBusy ? 'Importing…' : 'Import from Zoho'}
-      onSecondaryAction={runZohoImport}
+      onSecondaryAction={(e) => (e?.shiftKey ? runZohoDebug() : runZohoImport())}
       showSecondaryAction={canImport}
       secondaryActionBusy={importBusy}
     >
@@ -317,7 +342,7 @@ function RegistryShell({
   onAction: () => void;
   /** Optional secondary action (e.g. "Import from Zoho") rendered to the left of the primary button. */
   secondaryActionLabel?: string;
-  onSecondaryAction?: () => void;
+  onSecondaryAction?: (e?: React.MouseEvent) => void;
   showSecondaryAction?: boolean;
   secondaryActionBusy?: boolean;
   children: React.ReactNode;
@@ -344,8 +369,8 @@ function RegistryShell({
             <button
               className="aq-btn aq-btn-ghost"
               disabled={secondaryActionBusy}
-              onClick={onSecondaryAction}
-              title="Pull customers from Zoho Books"
+              onClick={(e) => onSecondaryAction(e)}
+              title="Pull customers from Zoho Books (shift+click to inspect one contact's raw fields)"
             >
               {secondaryActionLabel}
             </button>
