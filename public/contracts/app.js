@@ -290,16 +290,17 @@ async function api(path, options = {}) {
       : await response.text();
 
     if (!response.ok) {
-      // DON'T auto-logout on 401 anymore. Once the user is inside the app
-      // they should stay there until they explicitly click Logout. A single
-      // 401 from a flaky admin endpoint should NOT bounce them back to the
-      // login screen. Just surface the error as a toast and continue.
+      // Always surface the backend's actual error message. Most 401s on
+      // this backend are role/permission rejections (e.g. "Admin access
+      // required") or stale-token messages from the backend itself —
+      // showing a generic "log in again" was both misleading and noisy.
+      const detail = typeof data === "object"
+        ? (data.detail || JSON.stringify(data))
+        : (data || `Request failed with ${response.status}`);
       if (response.status === 401) {
-        console.warn("Got 401 from", path, "— token may be stale, but staying signed in.");
-        throw new Error("This action needs you to log in again. Use the Logout button if needed.");
+        console.warn("401 from", path, ":", detail);
       }
-      const detail = typeof data === "object" ? data.detail || JSON.stringify(data) : data;
-      throw new Error(detail || `Request failed with ${response.status}`);
+      throw new Error(String(detail));
     }
 
     return data;
