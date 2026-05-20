@@ -1558,3 +1558,197 @@ export function useTaskServiceTypes(taskId: string | null) {
   useEffect(() => { fetch(); }, [fetch]);
   return { items, loading, refetch: fetch };
 }
+
+
+// ─── CRM Deals (sales pipeline) ──────────────────────────────────────
+
+export type DealStage = 'prospect' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost';
+export const DEAL_STAGES: { key: DealStage; label: string }[] = [
+  { key: 'prospect',    label: 'Prospect' },
+  { key: 'qualified',   label: 'Qualified' },
+  { key: 'proposal',    label: 'Proposal' },
+  { key: 'negotiation', label: 'Negotiation' },
+  { key: 'won',         label: 'Won' },
+  { key: 'lost',        label: 'Lost' },
+];
+
+export interface CrmDeal {
+  id: string;
+  workspace_id: string;
+  target_type: 'client' | 'vendor' | null;
+  target_id: string | null;
+  name: string;
+  value: number;
+  currency_code: string;
+  stage: DealStage;
+  probability: number | null;
+  expected_close_date: string | null;
+  owner_id: string | null;
+  owner_name: string;
+  notes: string;
+  stage_changed_at: string;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function useCrmDeals(workspaceId: string | null) {
+  const [items, setItems] = useState<CrmDeal[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('crm_deals')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('stage_changed_at', { ascending: false });
+    if (error) logSbError('useCrmDeals', error, { workspaceId });
+    setItems((data || []) as CrmDeal[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+export async function addCrmDeal(deal: {
+  workspace_id: string;
+  name: string;
+  value?: number;
+  currency_code?: string;
+  stage?: DealStage;
+  probability?: number | null;
+  expected_close_date?: string | null;
+  target_type?: 'client' | 'vendor' | null;
+  target_id?: string | null;
+  owner_id?: string | null;
+  owner_name?: string;
+  notes?: string;
+}) {
+  const { data, error } = await supabase
+    .from('crm_deals')
+    .insert([deal])
+    .select()
+    .single();
+  if (error) throw error;
+  return data as CrmDeal;
+}
+
+export async function updateCrmDeal(id: string, updates: Partial<CrmDeal>) {
+  const { error } = await supabase.from('crm_deals').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+export async function moveCrmDealStage(id: string, stage: DealStage) {
+  // stage_changed_at + closed_at are maintained by the trigger.
+  const { error } = await supabase.from('crm_deals').update({ stage }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteCrmDeal(id: string) {
+  const { error } = await supabase.from('crm_deals').delete().eq('id', id);
+  if (error) throw error;
+}
+
+
+// ─── CRM Tasks (follow-ups / next actions) ───────────────────────────
+
+export interface CrmTask {
+  id: string;
+  workspace_id: string;
+  target_type: 'client' | 'vendor' | null;
+  target_id: string | null;
+  deal_id: string | null;
+  title: string;
+  description: string;
+  due_at: string | null;
+  assigned_to_id: string | null;
+  assigned_to_name: string;
+  completed_at: string | null;
+  completed_by_id: string | null;
+  created_by_id: string | null;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function useCrmTasks(workspaceId: string | null, opts?: {
+  assignedTo?: string;            // user id — show only this user's tasks
+  targetType?: 'client' | 'vendor';
+  targetId?: string;
+  dealId?: string;
+  includeCompleted?: boolean;
+}) {
+  const [items, setItems] = useState<CrmTask[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    let q = supabase
+      .from('crm_tasks')
+      .select('*')
+      .eq('workspace_id', workspaceId);
+    if (opts?.assignedTo)   q = q.eq('assigned_to_id', opts.assignedTo);
+    if (opts?.targetType)   q = q.eq('target_type', opts.targetType);
+    if (opts?.targetId)     q = q.eq('target_id', opts.targetId);
+    if (opts?.dealId)       q = q.eq('deal_id', opts.dealId);
+    if (!opts?.includeCompleted) q = q.is('completed_at', null);
+    q = q.order('due_at', { ascending: true, nullsFirst: false });
+    const { data, error } = await q;
+    if (error) logSbError('useCrmTasks', error, { workspaceId, opts });
+    setItems((data || []) as CrmTask[]);
+    setLoading(false);
+  }, [workspaceId, opts?.assignedTo, opts?.targetType, opts?.targetId, opts?.dealId, opts?.includeCompleted]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+export async function addCrmTask(task: {
+  workspace_id: string;
+  title: string;
+  description?: string;
+  due_at?: string | null;
+  target_type?: 'client' | 'vendor' | null;
+  target_id?: string | null;
+  deal_id?: string | null;
+  assigned_to_id?: string | null;
+  assigned_to_name?: string;
+  created_by_id?: string | null;
+  created_by_name?: string;
+}) {
+  const { data, error } = await supabase
+    .from('crm_tasks')
+    .insert([task])
+    .select()
+    .single();
+  if (error) throw error;
+  return data as CrmTask;
+}
+
+export async function updateCrmTask(id: string, updates: Partial<CrmTask>) {
+  const { error } = await supabase.from('crm_tasks').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+export async function completeCrmTask(id: string, userId: string) {
+  const { error } = await supabase.from('crm_tasks').update({
+    completed_at: new Date().toISOString(),
+    completed_by_id: userId,
+  }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function uncompleteCrmTask(id: string) {
+  const { error } = await supabase.from('crm_tasks').update({
+    completed_at: null,
+    completed_by_id: null,
+  }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteCrmTask(id: string) {
+  const { error } = await supabase.from('crm_tasks').delete().eq('id', id);
+  if (error) throw error;
+}

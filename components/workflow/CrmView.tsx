@@ -7,6 +7,9 @@ import {
 } from '@/hooks/use-workflow';
 import { CrmContactDetail } from './CrmContactDetail';
 import { CrmDashboard } from './CrmDashboard';
+import { DealsKanban } from './DealsKanban';
+import { CrmTasksView } from './CrmTasksView';
+import { CrmAnalytics } from './CrmAnalytics';
 
 /**
  * Top-level CRM view.
@@ -19,7 +22,7 @@ import { CrmDashboard } from './CrmDashboard';
  */
 
 export type CrmTab = 'clients' | 'vendors';
-export type CrmMode = 'dashboard' | 'contacts';
+export type CrmMode = 'dashboard' | 'contacts' | 'deals' | 'tasks' | 'analytics';
 
 export interface CrmContact {
   type: 'client' | 'vendor';
@@ -96,11 +99,15 @@ export function CrmView({
       }}>
         <ModeBtn active={mode === 'dashboard'} onClick={() => setMode('dashboard')}>Dashboard</ModeBtn>
         <ModeBtn active={mode === 'contacts'}  onClick={() => setMode('contacts')}>Contacts</ModeBtn>
+        <ModeBtn active={mode === 'deals'}     onClick={() => setMode('deals')}>Deals</ModeBtn>
+        <ModeBtn active={mode === 'tasks'}     onClick={() => setMode('tasks')}>Tasks</ModeBtn>
+        <ModeBtn active={mode === 'analytics'} onClick={() => setMode('analytics')}>Analytics</ModeBtn>
       </div>
 
-      {mode === 'dashboard' ? (
+      {mode === 'dashboard' && (
         <CrmDashboard workspaceId={workspaceId} onOpenContact={openContact} />
-      ) : (
+      )}
+      {mode === 'contacts' && (
         <ContactsMaster
           tab={tab} setTab={setTab}
           query={query} setQuery={setQuery}
@@ -113,6 +120,23 @@ export function CrmView({
           clientsCount={clients?.length ?? 0}
           vendorsCount={vendors?.length ?? 0}
         />
+      )}
+      {mode === 'deals' && (
+        <DealsKanban
+          workspaceId={workspaceId}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
+        />
+      )}
+      {mode === 'tasks' && (
+        <CrmTasksView
+          workspaceId={workspaceId}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
+        />
+      )}
+      {mode === 'analytics' && (
+        <CrmAnalytics workspaceId={workspaceId} />
       )}
     </div>
   );

@@ -1,29 +1,48 @@
 'use client';
 
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { portal, type PortalMe } from '@/lib/portal-api';
+import { Icon, initials } from './PortalUI';
 
 /**
  * Outer chrome for the vendor and client dashboards. Boots the session,
- * redirects to /<role>/auth if signed out or wrong role, then renders the
- * children with a small top bar.
+ * redirects to /<role>/auth if signed out or wrong role, gates first-login
+ * password change, and renders the sidebar + topbar shell.
  *
- * First-login password change (2026-05-15): when admin creates the portal
- * account with a temp password, the backend marks `must_change_password=true`
- * on the external_users row. If that flag is set, we block the dashboard
- * and require the user to set their own password before continuing.
+ * Each page declares its views via the `buildViews` prop. PortalShell owns
+ * the active-view state and renders the matching sub-view.
+ *
+ * History (2026-05-15): added must_change_password gate.
+ * History (2026-05-20): replaced single-page chrome with sidebar layout +
+ *   per-view dispatch. Visual-only redesign — backend surfaces for "Download
+ *   all", "Export CSV", "Request a change" and the AQ contact card remain
+ *   on the frontend until the next backend pass.
  */
+export interface PortalView {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  count?: number | string;
+  render: () => ReactNode;
+}
+
 export function PortalShell({
   expectedRole,
-  children,
+  buildViews,
 }: {
   expectedRole: 'vendor' | 'client';
-  children: (me: PortalMe) => ReactNode;
+  /**
+   * Build the sidebar views. Receives `me` and a `navigate(viewId)` callback
+   * so views can jump to other tabs (e.g. the Profile "Request a change"
+   * button jumps to Help).
+   */
+  buildViews: (me: PortalMe, navigate: (viewId: string) => void) => PortalView[];
 }) {
   const [supabase] = useState(() => createClient());
   const [me, setMe] = useState<PortalMe | null>(null);
   const [error, setError] = useState('');
+  const [activeId, setActiveId] = useState<string>('overview');
 
   const refetchMe = async () => {
     const data = await portal.me();
@@ -34,14 +53,10 @@ export function PortalShell({
   useEffect(() => {
     (async () => {
       const { data: { user }, error: getUserError } = await supabase.auth.getUser();
-
-      // Not signed in at all → send to the portal login. Use replace so
-      // the back button doesn't recycle the loop.
       if (!user || getUserError) {
         window.location.replace(expectedRole === 'vendor' ? '/vendor/auth' : '/client/auth');
         return;
       }
-
       try {
         const data = await portal.me();
         if (data.role !== expectedRole) {
@@ -50,9 +65,6 @@ export function PortalShell({
         }
         setMe(data);
       } catch (e: any) {
-        // DON'T redirect on a /me failure — surfacing the error in the
-        // page prevents a redirect loop when the backend is unreachable
-        // or the external_users row hasn't been linked yet.
         setError(
           (e?.message ?? 'Could not load your account.') +
           '\n\nIf this says "not a portal user", your AQ admin needs to ' +
@@ -67,86 +79,167 @@ export function PortalShell({
     window.location.href = expectedRole === 'vendor' ? '/vendor/auth' : '/client/auth';
   };
 
+  // ─── Loading / error states ───────────────────────────────────────────────
   if (error) {
     return (
-      <div style={pageWrap}>
-        <div className="aq-card" style={{ padding: 32, color: 'var(--aq-error)' }}>
-          <strong>Could not load your portal:</strong> {error}
+      <div style={{ minHeight: '100vh', background: 'var(--aq-bg)', padding: 32 }}>
+        <div className="aq-card" style={{ padding: 32, color: 'var(--aq-error)', maxWidth: 720, margin: '60px auto' }}>
+          <strong>Could not load your portal:</strong>
+          <pre style={{ whiteSpace: 'pre-wrap', marginTop: 10, fontFamily: 'inherit', fontSize: 13 }}>{error}</pre>
         </div>
       </div>
     );
   }
   if (!me) {
     return (
-      <div style={pageWrap}>
-        <div className="aq-card" style={{ padding: 32 }}>
+      <div style={{ minHeight: '100vh', background: 'var(--aq-bg)', padding: 32 }}>
+        <div className="aq-card" style={{ padding: 32, maxWidth: 720, margin: '60px auto' }}>
           <p style={{ color: 'var(--aq-text-muted)' }}>Loading your portal…</p>
         </div>
       </div>
     );
   }
 
-  // ── First-login password-change gate ──────────────────────
+  // ─── First-login password-change gate ────────────────────────────────────
   if (me.must_change_password) {
     return (
-      <div style={pageWrap}>
-        <header style={topbar}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={logoMini}>AQ</div>
-            <div>
-              <strong style={{ fontSize: 15 }}>Welcome to AQ Creativity</strong>
-              <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-                {me.role === 'vendor' ? 'Vendor portal' : 'Client portal'} · {me.email}
-              </div>
-            </div>
-          </div>
-          <button type="button" className="aq-btn aq-btn-ghost" onClick={signOut}>
-            Sign out
-          </button>
-        </header>
-        <main style={contentWrap}>
-          <MustChangePasswordForm
-            onSuccess={async () => {
-              await refetchMe();
-            }}
-          />
+      <div style={{ minHeight: '100vh', background: 'var(--aq-bg)' }}>
+        <MinimalTopbar me={me} onSignOut={signOut} />
+        <main style={{ maxWidth: 560, margin: '40px auto', padding: '0 20px' }}>
+          <MustChangePasswordForm onSuccess={async () => { await refetchMe(); }} />
         </main>
       </div>
     );
   }
 
-  const headline = me.role === 'vendor'
-    ? me.profile.name
-    : (me.profile as any).company_name;
+  // ─── Main dashboard ──────────────────────────────────────────────────────
+  return (
+    <Shell
+      me={me}
+      // Pass the active-view setter as the navigate callback so pages can wire
+      // cross-view buttons (e.g. Profile → Help).
+      buildViews={(meArg) => buildViews(meArg, setActiveId)}
+      activeId={activeId}
+      setActiveId={setActiveId}
+      onSignOut={signOut}
+    />
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Sidebar + topbar layout
+   ───────────────────────────────────────────────────────────────────────── */
+
+function Shell({
+  me, buildViews, activeId, setActiveId, onSignOut,
+}: {
+  me: PortalMe;
+  buildViews: (me: PortalMe) => PortalView[];
+  activeId: string;
+  setActiveId: (id: string) => void;
+  onSignOut: () => void;
+}) {
+  // Recompute views whenever me changes. Memoize so handlers stay stable.
+  const views = useMemo(() => buildViews(me), [me, buildViews]);
+  const current = views.find((v) => v.id === activeId) ?? views[0];
+
+  // If buildViews returns empty (e.g. role mismatch), bail. The PortalShell
+  // would already have redirected, but this keeps the renderer honest.
+  if (!current) return null;
+
+  const headline =
+    me.role === 'vendor' ? me.profile.name : me.profile.company_name;
+  const subtitle =
+    me.role === 'vendor' ? 'Vendor portal' : 'Client portal';
 
   return (
-    <div style={pageWrap}>
-      <header style={topbar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={logoMini}>AQ</div>
-          <div>
-            <strong style={{ fontSize: 15 }}>{headline}</strong>
-            <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-              {me.role === 'vendor' ? 'Vendor portal' : 'Client portal'} · {me.email}
-            </div>
+    <div className="portal-shell">
+      <aside className="portal-aside">
+        <div className="portal-brand">
+          <div className="portal-brand-mark">AQ</div>
+          <div style={{ minWidth: 0 }}>
+            <div className="portal-brand-name">AQ Creativity</div>
+            <div className="portal-brand-sub">{subtitle}</div>
           </div>
         </div>
-        <button type="button" className="aq-btn aq-btn-ghost" onClick={signOut}>
-          Sign out
-        </button>
-      </header>
-      <main style={contentWrap}>{children(me)}</main>
+
+        <nav className="portal-nav">
+          {views.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              className={`portal-nav-item${v.id === current.id ? ' active' : ''}`}
+              onClick={() => setActiveId(v.id)}
+            >
+              {v.icon}
+              <span>{v.label}</span>
+              {v.count != null && <span className="portal-nav-count">{v.count}</span>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="portal-aside-footer">
+          <div className="portal-avatar">{initials(headline)}</div>
+          <div className="who">
+            <strong>{headline}</strong>
+            <span>{me.email}</span>
+          </div>
+          <button type="button" onClick={onSignOut} title="Sign out" aria-label="Sign out">⎋</button>
+        </div>
+      </aside>
+
+      <main className="portal-main">
+        <div className="portal-topbar">
+          <div>
+            <div className="crumbs">{subtitle} · {current.label}</div>
+            <h1>{current.label}</h1>
+          </div>
+          <div className="portal-toolbar">
+            {/* Topbar slots could be view-driven later; keeping minimal for v1. */}
+            <button type="button" className="aq-btn aq-btn-ghost aq-btn-sm" onClick={onSignOut}>
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        <div className="portal-content">{current.render()}</div>
+      </main>
     </div>
   );
 }
 
-/**
- * Forced password change form. Shown the FIRST time a portal user signs in
- * after the admin gave them a temp password. Calls backend
- * /api/external-portal/change-password which:
- *   1. Uses Supabase Admin API to set the new password
- *   2. Clears must_change_password = false on the external_users row
- */
+/* ─────────────────────────────────────────────────────────────────────────
+   Minimal topbar (used during the forced password change before the full
+   sidebar shell is reasonable to render).
+   ───────────────────────────────────────────────────────────────────────── */
+
+function MinimalTopbar({ me, onSignOut }: { me: PortalMe; onSignOut: () => void }) {
+  return (
+    <header style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '14px 28px',
+      borderBottom: '1px solid var(--aq-border-light)',
+      background: 'var(--aq-bg-elevated)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="portal-brand-mark" style={{ width: 36, height: 36, fontSize: 14 }}>AQ</div>
+        <div>
+          <strong style={{ fontSize: 15 }}>Welcome to AQ Creativity</strong>
+          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+            {me.role === 'vendor' ? 'Vendor portal' : 'Client portal'} · {me.email}
+          </div>
+        </div>
+      </div>
+      <button type="button" className="aq-btn aq-btn-ghost" onClick={onSignOut}>Sign out</button>
+    </header>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Forced password change form. Unchanged from previous version — kept here
+   so PortalShell stays the single auth boundary.
+   ───────────────────────────────────────────────────────────────────────── */
+
 function MustChangePasswordForm({ onSuccess }: { onSuccess: () => Promise<void> }) {
   const [pw1, setPw1] = useState('');
   const [pw2, setPw2] = useState('');
@@ -157,22 +250,13 @@ function MustChangePasswordForm({ onSuccess }: { onSuccess: () => Promise<void> 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (pw1.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    if (pw1 !== pw2) {
-      setError('Passwords do not match.');
-      return;
-    }
+    if (pw1.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (pw1 !== pw2) { setError('Passwords do not match.'); return; }
     setBusy(true);
     try {
       await portal.changePassword(pw1);
       setDone(true);
-      setPw1('');
-      setPw2('');
-      // Refetch /me so the must_change_password flag flips to false and
-      // PortalShell renders the real dashboard.
+      setPw1(''); setPw2('');
       await onSuccess();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -182,10 +266,8 @@ function MustChangePasswordForm({ onSuccess }: { onSuccess: () => Promise<void> 
   };
 
   return (
-    <div className="aq-card" style={{ maxWidth: 480, padding: 28, margin: '20px auto' }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 6 }}>
-        Set your password
-      </h2>
+    <div className="aq-card" style={{ padding: 28 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 6 }}>Set your password</h2>
       <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginBottom: 18 }}>
         Your AQ administrator created this account with a temporary password.
         Pick a new one to continue.
@@ -194,29 +276,16 @@ function MustChangePasswordForm({ onSuccess }: { onSuccess: () => Promise<void> 
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
           New password
-          <input
-            type="password"
-            className="aq-input"
-            value={pw1}
+          <input type="password" className="aq-input" value={pw1}
             onChange={(e) => setPw1(e.target.value)}
-            autoComplete="new-password"
-            minLength={8}
-            required
-            autoFocus
-          />
+            autoComplete="new-password" minLength={8} required autoFocus />
         </label>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
           Confirm new password
-          <input
-            type="password"
-            className="aq-input"
-            value={pw2}
+          <input type="password" className="aq-input" value={pw2}
             onChange={(e) => setPw2(e.target.value)}
-            autoComplete="new-password"
-            minLength={8}
-            required
-          />
+            autoComplete="new-password" minLength={8} required />
         </label>
 
         {error && (
@@ -233,35 +302,15 @@ function MustChangePasswordForm({ onSuccess }: { onSuccess: () => Promise<void> 
           }}>Password updated. Loading your portal…</div>
         )}
 
-        <button
-          type="submit"
-          className="aq-btn aq-btn-primary"
-          disabled={busy || done}
-          style={{ alignSelf: 'flex-start' }}
-        >{busy ? 'Saving…' : 'Save new password'}</button>
+        <button type="submit" className="aq-btn aq-btn-primary"
+          disabled={busy || done} style={{ alignSelf: 'flex-start' }}>
+          {busy ? 'Saving…' : 'Save new password'}
+        </button>
       </form>
     </div>
   );
 }
 
-const pageWrap: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'var(--aq-bg)',
-};
-const topbar: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '14px 28px',
-  borderBottom: '1px solid var(--aq-border-light)',
-  background: 'var(--aq-bg-elevated, #fff)',
-};
-const logoMini: React.CSSProperties = {
-  width: 36, height: 36, borderRadius: 10,
-  background: 'var(--aq-accent)', color: '#fff',
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  fontSize: 15, fontWeight: 800,
-};
-const contentWrap: React.CSSProperties = {
-  maxWidth: 1100,
-  margin: '0 auto',
-  padding: '28px 28px 60px',
-};
+// Re-export the Icon set so pages can grab icons via the same import path
+// they already use for PortalShell.
+export { Icon };
