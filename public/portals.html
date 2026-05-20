@@ -35,29 +35,45 @@
       .brand {
         background: var(--ink);
         color: #fff;
-        padding: 48px 56px;
+        padding: 56px;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
-        gap: 24px;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        position: relative;
+        min-height: 380px;
       }
-      .brand-top { display: flex; align-items: center; gap: 12px; }
+      .brand-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        max-width: 440px;
+      }
       .brand-mark {
-        width: 40px; height: 40px;
+        width: 96px; height: 96px;
         background: #fff;
-        border-radius: 9px;
+        border-radius: 22px;
         display: flex; align-items: center; justify-content: center;
         overflow: hidden;
+        margin-bottom: 4px;
       }
       .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
-      .brand-name { font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.85); }
+      .brand-name {
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.55);
+      }
 
       .brand-headline {
         font-size: clamp(28px, 4.2vw, 44px);
         font-weight: 500;
         line-height: 1.1;
         letter-spacing: -0.01em;
-        margin-bottom: 16px;
+        margin-top: 8px;
       }
       .brand-blurb {
         font-size: 15px;
@@ -67,6 +83,10 @@
       }
 
       .brand-footer {
+        position: absolute;
+        bottom: 28px;
+        left: 50%;
+        transform: translateX(-50%);
         display: flex;
         align-items: center;
         gap: 8px;
@@ -166,12 +186,9 @@
   <body>
     <!-- Left: brand panel -->
     <aside class="brand">
-      <div class="brand-top">
+      <div class="brand-stack">
         <div class="brand-mark"><img src="/logo.png" alt="" /></div>
         <span class="brand-name">AQ Creativity</span>
-      </div>
-
-      <div>
         <h2 class="brand-headline">Welcome back.</h2>
         <p class="brand-blurb">
           Your hub for contracts, brand assignments, and payouts with AQ Creativity. Sign in with the credentials your admin shared with you.
