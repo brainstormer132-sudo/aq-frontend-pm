@@ -1,0 +1,228 @@
+/* ============================================================
+   styles-theme.css
+   Layered on top of styles.css. Adds:
+     1. Light / dark theme variables (toggled via data-theme on <html>)
+     2. Collapsible sidebar (icon-only when .sidebar-collapsed)
+     3. Theme + sidebar toggle controls
+   Nothing in styles.css is removed — these rules override colors
+   and add the collapse animation.
+   ============================================================ */
+
+:root {
+  --t-canvas: #edf5f7;
+  --t-canvas-bg-1: rgba(36, 154, 98, 0.16);
+  --t-canvas-bg-2: rgba(14, 140, 154, 0.18);
+  --t-canvas-bg-3: #f7fbfb;
+  --t-canvas-bg-4: #e9f1f4;
+  --t-ink: #102033;
+  --t-muted: #6d7f93;
+  --t-line: rgba(122, 144, 166, 0.24);
+  --t-panel: rgba(255, 255, 255, 0.78);
+  --t-panel-strong: rgba(255, 255, 255, 0.92);
+  --t-sidebar: rgba(14, 29, 42, 0.96);
+  --t-sidebar-text: #f8fafc;
+  --t-sidebar-muted: #b6c7d8;
+  --t-shadow: 0 24px 70px rgba(30, 54, 79, 0.14);
+  --t-soft-shadow: 0 12px 30px rgba(30, 54, 79, 0.08);
+}
+
+html[data-theme="dark"] {
+  --t-canvas: #0b0d10;
+  --t-canvas-bg-1: rgba(36, 154, 98, 0.08);
+  --t-canvas-bg-2: rgba(14, 140, 154, 0.10);
+  --t-canvas-bg-3: #0e1115;
+  --t-canvas-bg-4: #07090b;
+  --t-ink: #e4ebf2;
+  --t-muted: #8493a4;
+  --t-line: rgba(160, 180, 200, 0.12);
+  --t-panel: rgba(20, 26, 34, 0.82);
+  --t-panel-strong: rgba(24, 30, 38, 0.95);
+  --t-sidebar: rgba(8, 12, 18, 0.98);
+  --t-sidebar-text: #f0f5fa;
+  --t-sidebar-muted: #8ea0b3;
+  --t-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  --t-soft-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme="dark"] body {
+  background:
+    radial-gradient(circle at 18% 8%, var(--t-canvas-bg-1), transparent 30%),
+    radial-gradient(circle at 80% 0%, var(--t-canvas-bg-2), transparent 34%),
+    linear-gradient(135deg, var(--t-canvas-bg-3) 0%, var(--t-canvas) 48%, var(--t-canvas-bg-4) 100%);
+  color: var(--t-ink);
+}
+
+html[data-theme="dark"] .auth-panel,
+html[data-theme="dark"] .side-panel,
+html[data-theme="dark"] .glass-panel,
+html[data-theme="dark"] .metric,
+html[data-theme="dark"] .hero-panel,
+html[data-theme="dark"] .vendor-card,
+html[data-theme="dark"] .auth-form-card,
+html[data-theme="dark"] .auth-form-panel {
+  background: var(--t-panel) !important;
+  border-color: var(--t-line) !important;
+  color: var(--t-ink) !important;
+}
+
+html[data-theme="dark"] .topbar h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] h3,
+html[data-theme="dark"] strong {
+  color: var(--t-ink) !important;
+}
+
+html[data-theme="dark"] .eyebrow,
+html[data-theme="dark"] .view-subtitle,
+html[data-theme="dark"] .compact-label,
+html[data-theme="dark"] label,
+html[data-theme="dark"] .muted {
+  color: var(--t-muted) !important;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: var(--t-ink) !important;
+  border-color: rgba(160, 180, 200, 0.18) !important;
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: rgba(180, 200, 220, 0.45);
+}
+
+html[data-theme="dark"] table th,
+html[data-theme="dark"] table td {
+  border-color: var(--t-line) !important;
+  color: var(--t-ink);
+}
+
+/* ─── Collapsible sidebar ────────────────────────────────────────── */
+
+.app-shell {
+  transition: grid-template-columns 220ms ease;
+}
+
+.sidebar {
+  position: relative;
+  transition: padding 220ms ease;
+}
+
+.sidebar-toggle {
+  position: absolute;
+  top: 22px;
+  right: -12px;
+  z-index: 5;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--t-sidebar);
+  color: var(--t-sidebar-text);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.sidebar-toggle:hover {
+  background: #1d3346;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  padding: 26px 8px;
+}
+
+.app-shell.sidebar-collapsed .brand strong,
+.app-shell.sidebar-collapsed .brand span,
+.app-shell.sidebar-collapsed .nav-item-label,
+.app-shell.sidebar-collapsed .session-panel .api-url,
+.app-shell.sidebar-collapsed .session-panel #logout-button,
+.app-shell.sidebar-collapsed .session-panel .status-dot span {
+  display: none !important;
+}
+
+.app-shell.sidebar-collapsed .brand {
+  justify-content: center;
+}
+
+.app-shell.sidebar-collapsed .brand img {
+  margin: 0 auto;
+}
+
+.app-shell.sidebar-collapsed .nav-item {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+}
+
+.app-shell.sidebar-collapsed .nav-item::before {
+  content: attr(data-icon);
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* When NOT collapsed, render the icon inline before the label so both
+   states share a single visual language. */
+.nav-item[data-icon]::before {
+  content: attr(data-icon);
+  display: inline-block;
+  margin-right: 10px;
+  font-size: 16px;
+  vertical-align: -2px;
+  width: 18px;
+  text-align: center;
+}
+
+.app-shell.sidebar-collapsed .nav-item[data-icon]::before {
+  margin-right: 0;
+}
+
+/* ─── Theme toggle button (lives in the session-panel area) ───────── */
+
+.theme-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #d7e3ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.theme-toggle .theme-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-shell.sidebar-collapsed .theme-toggle {
+  padding: 8px 0;
+  justify-content: center;
+}
+
+.app-shell.sidebar-collapsed .theme-toggle .theme-toggle-label span,
+.app-shell.sidebar-collapsed .theme-toggle .theme-toggle-state {
+  display: none;
+}

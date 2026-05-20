@@ -704,6 +704,7 @@ function renderTaskTable(tasks, compact = false) {
       <td>${pill(task.status || "NEW", statusClass(task.status))}</td>
       ${compact ? "" : `<td>${escapeHtml(task.contract_type || "after_pay")}</td>`}
       <td>${Number(task.subtask_count || 0)} / ${Number(task.paid_count || 0)}</td>
+      ${compact ? "" : `<td class="actions-cell"><button type="button" class="row-edit-button" data-action="edit-task" data-id="${encodeAttr(task.id)}">Edit</button></td>`}
     </tr>
   `).join("");
 
@@ -718,9 +719,10 @@ function renderTaskTable(tasks, compact = false) {
             <th>Status</th>
             ${compact ? "" : "<th>Type</th>"}
             <th>Subtasks</th>
+            ${compact ? "" : "<th></th>"}
           </tr>
         </thead>
-        <tbody>${rows || `<tr><td colspan="${compact ? 5 : 6}">No tasks found</td></tr>`}</tbody>
+        <tbody>${rows || `<tr><td colspan="${compact ? 5 : 7}">No tasks found</td></tr>`}</tbody>
       </table>
     </div>
   `;
@@ -750,8 +752,14 @@ async function renderTasksView() {
   });
   const visibleTasks = state.taskLimit ? tasks.slice(0, Math.max(5, state.taskLimit)) : tasks;
 
+  const selectedCount = state.selectedSubtaskIds?.size || 0;
+  const editorOpen = Boolean(state.taskEditorOpen);
+  const subtaskEditorOpen = Boolean(state.subtaskEditorOpen) && !state.clientMode;
+  const editorMode = state.taskEditorMode || (task ? "edit" : "new");
+  const editingTask = editorMode === "new" ? null : task;
+
   els.viewRoot.innerHTML = `
-    <section class="split-workspace">
+    <section class="tasks-list-full">
       <div class="glass-panel">
         <div class="panel-header">
           <h2>Contract Tasks</h2>
@@ -762,64 +770,99 @@ async function renderTasksView() {
             </label>
             <button class="secondary-button" type="button" data-action="duplicate-task" ${task ? "" : "disabled"}>Duplicate</button>
             <button class="danger-button" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
+            <button class="primary-button" type="button" data-action="open-new-task">+ New Task</button>
           </div>
         </div>
         ${renderTaskTable(visibleTasks)}
         <p class="table-note">Showing ${visibleTasks.length} of ${tasks.length} matching tasks. Minimum page size is 5.</p>
       </div>
-
-      <form id="task-form" class="side-panel">
-        <h2>${task ? "Edit Selected Task" : "New Task"}</h2>
-        <input type="hidden" id="task-id" value="${encodeAttr(task?.id || "")}" />
-        <label>Brand <input id="task-brand" required value="${encodeAttr(task?.brand || "")}" /></label>
-        <label>Amount <input id="task-amount" inputmode="decimal" readonly value="${encodeAttr(task?.amount || "0.00")}" /></label>
-        <p class="form-hint">Amount is calculated automatically from subtask prices.</p>
-        <label>Contract Type <select id="task-type">${templateOptions(activeTaskTemplate)}</select></label>
-        <label>Status <select id="task-status">${statusOptions(task?.status || "NEW")}</select></label>
-        <label>End Date <input id="task-end-date" type="date" value="${encodeAttr((task?.end_date || "").slice(0, 10))}" /></label>
-        <label>Notes <textarea id="task-notes" rows="4">${escapeHtml(task?.notes || "")}</textarea></label>
-          <button class="primary-button" type="submit">${task ? "Save Task" : "Create Task"}</button>
-        <button class="secondary-button" type="button" data-action="clear-task-form">New Blank Task</button>
-      </form>
     </section>
 
     <section class="glass-panel subtask-panel">
       <div class="panel-header">
-        <h2>${state.clientMode ? "Client Contract" : "Subtasks"} ${task ? `/ ${escapeHtml(task.brand)}` : ""}</h2>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div class="mode-tabs" role="tablist">
+            <button type="button" class="mode-tab ${state.clientMode ? "" : "active"}" data-action="set-vendor-mode" role="tab" aria-selected="${state.clientMode ? "false" : "true"}">Vendor subtasks</button>
+            <button type="button" class="mode-tab ${state.clientMode ? "active" : ""}" data-action="set-client-mode" role="tab" aria-selected="${state.clientMode ? "true" : "false"}" ${task ? "" : "disabled"}>Client contract</button>
+          </div>
+          ${task ? `<span style="font-size:13px;color:var(--muted)">${escapeHtml(task.brand)}</span>` : ""}
+        </div>
         <div class="toolbar">
           ${state.clientMode ? `
-            <button class="primary-button" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract" style="background:#7c3aed;border-color:#7c3aed">Generate Client Contract</button>
-            <button class="secondary-button" type="button" data-action="toggle-client-mode" title="Switch back to vendor subtasks">Vendor Mode</button>
+            <button class="primary-button" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract">Generate client contract</button>
           ` : `
-            <button class="secondary-button" type="button" data-action="generate-selected" ${task && state.subtasks.length ? "" : "disabled"} title="Generate only the subtasks you ticked">Generate selected</button>
-            <button class="primary-button" type="button" data-action="generate-all" ${task && state.subtasks.length ? "" : "disabled"} title="Generate every subtask under this task">Generate ALL</button>
-            <button class="secondary-button" type="button" data-action="toggle-client-mode" ${task ? "" : "disabled"} title="Switch to client contract mode" style="background:#7c3aed;color:#fff;border-color:#7c3aed">Client Contract</button>
+            <button class="secondary-button" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add subtask</button>
+            <div class="generate-menu">
+              <button class="primary-button" type="button" data-action="toggle-generate-menu" ${task && state.subtasks.length ? "" : "disabled"} aria-haspopup="menu" aria-expanded="false">Generate <span class="caret-icon">▾</span></button>
+              <div class="generate-menu-popup" id="generate-menu-popup" hidden role="menu">
+                <button type="button" class="generate-menu-item" data-action="generate-all" role="menuitem" ${state.subtasks.length ? "" : "disabled"}>All subtasks <span class="menu-badge">${state.subtasks.length}</span></button>
+                <button type="button" class="generate-menu-item" data-action="generate-selected" role="menuitem" ${selectedCount ? "" : "disabled"}>Selected only <span class="menu-badge">${selectedCount}</span></button>
+                <div class="generate-menu-divider" role="separator"></div>
+                <button type="button" class="generate-menu-item" data-action="download-task-contracts" role="menuitem" data-task-id="${encodeAttr(task?.id || "")}" ${task ? "" : "disabled"}>Download existing contracts</button>
+              </div>
+            </div>
           `}
         </div>
       </div>
-      <div class="subtask-grid">
-        <div>${renderSubtaskTable()}</div>
-        ${state.clientMode ? `
-        <div class="inline-form" style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:10px;padding:1rem">
-          <h3 style="color:#7c3aed">Client Contract Settings</h3>
-          <label>Client
-            <select id="cc-client-select">
-              <option value="">-- select client --</option>
-              ${state.clients.map((c) => `<option value="${encodeAttr(c.id)}">${escapeHtml(c.company_name || c.name || "")}</option>`).join("")}
-            </select>
-          </label>
-          <div id="cc-client-details" style="font-size:0.85em;color:#aaa;line-height:1.7;margin:0.5rem 0"></div>
-          <label>Brand
-            <select id="cc-brand-select"><option value="">-- select client first --</option></select>
-          </label>
-          <label>Total Amount
-            <input id="cc-total-amount" type="text" value="${encodeAttr(task?.amount || "0")}" />
-          </label>
-          <p class="form-hint">Select a client above, then click "Generate Client Contract" in the toolbar. The influencer table is built from the subtasks listed on the left.</p>
+      ${state.clientMode ? `
+        <div class="subtask-grid">
+          <div>${renderSubtaskTable()}</div>
+          <div class="inline-form" style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:10px;padding:1rem">
+            <h3 style="color:#7c3aed">Client Contract Settings</h3>
+            <label>Client
+              <select id="cc-client-select">
+                <option value="">-- select client --</option>
+                ${state.clients.map((c) => `<option value="${encodeAttr(c.id)}">${escapeHtml(c.company_name || c.name || "")}</option>`).join("")}
+              </select>
+            </label>
+            <div id="cc-client-details" style="font-size:0.85em;color:#aaa;line-height:1.7;margin:0.5rem 0"></div>
+            <label>Brand
+              <select id="cc-brand-select"><option value="">-- select client first --</option></select>
+            </label>
+            <label>Total Amount
+              <input id="cc-total-amount" type="text" value="${encodeAttr(task?.amount || "0")}" />
+            </label>
+            <p class="form-hint">Select a client above, then click "Generate client contract" in the toolbar. The influencer table is built from the subtasks listed on the left.</p>
+          </div>
         </div>
-        ` : `
-        <form id="subtask-form" class="inline-form">
-          <h3>Add Vendor Subtask</h3>
+      ` : `
+        ${renderSubtaskTable()}
+      `}
+    </section>
+
+    <!-- Slide-over: task editor (new / edit) -->
+    <div class="slide-over-overlay ${editorOpen ? "is-open" : ""}" id="task-editor-overlay" data-dismiss-overlay>
+      <aside class="slide-over-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
+        <header class="slide-over-header">
+          <h2 id="task-editor-title">${editingTask ? "Edit task" : "New task"}</h2>
+          <button type="button" class="slide-over-close" data-action="close-task-editor" aria-label="Close">×</button>
+        </header>
+        <form id="task-form" class="slide-over-body in-slide-over">
+          <input type="hidden" id="task-id" value="${encodeAttr(editingTask?.id || "")}" />
+          <label>Brand <input id="task-brand" required value="${encodeAttr(editingTask?.brand || "")}" /></label>
+          <label>Amount <input id="task-amount" inputmode="decimal" readonly value="${encodeAttr(editingTask?.amount || "0.00")}" /></label>
+          <p class="form-hint">Amount is calculated automatically from subtask prices.</p>
+          <label>Contract Type <select id="task-type">${templateOptions(activeTaskTemplate)}</select></label>
+          <label>Status <select id="task-status">${statusOptions(editingTask?.status || "NEW")}</select></label>
+          <label>End Date <input id="task-end-date" type="date" value="${encodeAttr((editingTask?.end_date || "").slice(0, 10))}" /></label>
+          <label>Notes <textarea id="task-notes" rows="4">${escapeHtml(editingTask?.notes || "")}</textarea></label>
+          <div style="display:flex;gap:10px;margin-top:6px">
+            <button class="primary-button" type="submit" style="flex:1">${editingTask ? "Save task" : "Create task"}</button>
+            <button class="secondary-button" type="button" data-action="close-task-editor">Cancel</button>
+          </div>
+        </form>
+      </aside>
+    </div>
+
+    <!-- Slide-over: add subtask (vendor mode only) -->
+    ${state.clientMode ? "" : `
+    <div class="slide-over-overlay ${subtaskEditorOpen ? "is-open" : ""}" id="subtask-editor-overlay" data-dismiss-overlay>
+      <aside class="slide-over-panel" role="dialog" aria-modal="true" aria-labelledby="subtask-editor-title">
+        <header class="slide-over-header">
+          <h2 id="subtask-editor-title">Add vendor subtask</h2>
+          <button type="button" class="slide-over-close" data-action="close-add-subtask" aria-label="Close">×</button>
+        </header>
+        <form id="subtask-form" class="slide-over-body in-slide-over">
           <label>License Number <input id="sub-license" list="vendor-license-list" placeholder="Type vendor license" /></label>
           <datalist id="vendor-license-list">
             ${state.vendors.map((vendor) => `<option value="${encodeAttr(vendor.license_number)}">${escapeHtml(vendor.name)}</option>`).join("")}
@@ -863,11 +906,14 @@ async function renderTasksView() {
           <label>Qty <input id="sub-qty" value="1" /></label>
           <label>Price <input id="sub-price" value="0" /></label>
           <label>Details <textarea id="sub-details" rows="3"></textarea></label>
-          <button class="primary-button" type="submit" ${task ? "" : "disabled"}>Add Subtask</button>
+          <div style="display:flex;gap:10px;margin-top:6px">
+            <button class="primary-button" type="submit" style="flex:1" ${task ? "" : "disabled"}>Add Subtask</button>
+            <button class="secondary-button" type="button" data-action="close-add-subtask">Cancel</button>
+          </div>
         </form>
-        `}
-      </div>
-    </section>
+      </aside>
+    </div>
+    `}
   `;
 }
 
@@ -2255,8 +2301,14 @@ document.addEventListener("submit", async (event) => {
       await login(true);
     } else if (event.target.id === "task-form") {
       await saveTask(event);
+      // Close slide-over after a successful save.
+      state.taskEditorOpen = false;
+      await renderTasksView();
     } else if (event.target.id === "subtask-form") {
       await addSubtask(event);
+      // Close slide-over after a successful add.
+      state.subtaskEditorOpen = false;
+      await renderTasksView();
     } else if (event.target.id === "vendor-form") {
       await createVendor(event);
     } else if (event.target.id === "vendor-edit-form") {
@@ -2435,7 +2487,48 @@ document.addEventListener("change", async (event) => {
   }
 });
 
+// Escape closes whichever slide-over is open + the Generate dropdown.
+document.addEventListener("keydown", async (event) => {
+  if (event.key !== "Escape") return;
+  const popup = document.getElementById("generate-menu-popup");
+  if (popup && !popup.hidden) {
+    popup.hidden = true;
+    return;
+  }
+  if (state.taskEditorOpen) {
+    state.taskEditorOpen = false;
+    await renderTasksView();
+    return;
+  }
+  if (state.subtaskEditorOpen) {
+    state.subtaskEditorOpen = false;
+    await renderTasksView();
+    return;
+  }
+});
+
 document.addEventListener("click", async (event) => {
+  // Slide-over dismiss: clicking the dark overlay (but not the panel
+  // inside) closes whichever editor is open.
+  const overlay = event.target.closest(".slide-over-overlay[data-dismiss-overlay]");
+  if (overlay && event.target === overlay) {
+    if (overlay.id === "task-editor-overlay") {
+      state.taskEditorOpen = false;
+      await renderTasksView();
+    } else if (overlay.id === "subtask-editor-overlay") {
+      state.subtaskEditorOpen = false;
+      await renderTasksView();
+    }
+    return;
+  }
+
+  // Close the Generate dropdown when clicking anywhere outside it.
+  const popup = document.getElementById("generate-menu-popup");
+  if (popup && !popup.hidden) {
+    const insideMenu = event.target.closest(".generate-menu");
+    if (!insideMenu) popup.hidden = true;
+  }
+
   const button = event.target.closest("button");
   const row = event.target.closest("tr[data-task-id]");
   const vendorCard = event.target.closest(".vendor-card[data-vendor-id]");
@@ -2497,6 +2590,12 @@ document.addEventListener("click", async (event) => {
       return;
     }
 
+    // Close the Generate dropdown the moment any menu item is picked.
+    if (button.classList.contains("generate-menu-item")) {
+      const popup = document.getElementById("generate-menu-popup");
+      if (popup) popup.hidden = true;
+    }
+
     if (action === "go-tasks") setView("tasks");
     if (action === "go-contracts") setView("contracts");
     if (action === "clear-task-form") {
@@ -2504,6 +2603,78 @@ document.addEventListener("click", async (event) => {
       state.selectedSubtaskIds = new Set();
       localStorage.setItem("aq_selected_task", state.selectedTaskId);
       await renderTasksView();
+    }
+    // ── Tasks-view redesign: slide-over editor + tab/dropdown toolbar ──
+    if (action === "open-new-task") {
+      state.taskEditorMode = "new";
+      state.taskEditorOpen = true;
+      state.selectedSubtaskIds = new Set();
+      await renderTasksView();
+      return;
+    }
+    if (action === "edit-task") {
+      const id = button.dataset.id;
+      if (id) {
+        if (String(state.selectedTaskId) !== String(id)) {
+          state.selectedSubtaskIds = new Set();
+        }
+        state.selectedTaskId = id;
+        localStorage.setItem("aq_selected_task", id);
+      }
+      state.taskEditorMode = "edit";
+      state.taskEditorOpen = true;
+      await renderTasksView();
+      return;
+    }
+    if (action === "close-task-editor") {
+      state.taskEditorOpen = false;
+      await renderTasksView();
+      return;
+    }
+    if (action === "open-add-subtask") {
+      state.subtaskEditorOpen = true;
+      await renderTasksView();
+      return;
+    }
+    if (action === "close-add-subtask") {
+      state.subtaskEditorOpen = false;
+      await renderTasksView();
+      return;
+    }
+    if (action === "set-vendor-mode") {
+      state.clientMode = false;
+      await renderTasksView();
+      return;
+    }
+    if (action === "set-client-mode") {
+      state.clientMode = true;
+      state.subtaskEditorOpen = false;
+      await renderTasksView();
+      return;
+    }
+    if (action === "toggle-generate-menu") {
+      const popup = document.getElementById("generate-menu-popup");
+      if (popup) {
+        const wasHidden = popup.hidden;
+        popup.hidden = !wasHidden;
+        button.setAttribute("aria-expanded", wasHidden ? "true" : "false");
+      }
+      return;
+    }
+    if (action === "download-task-contracts" && button.dataset.taskId) {
+      // Reuse the contracts-view download action by synthesizing a button.
+      const tid = button.dataset.taskId;
+      const list = state.contracts.filter((c) => String(c.task_id) === tid);
+      for (const c of list) {
+        if (c.pdf_path) {
+          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, `${c.contract_id}.pdf`); } catch (_) {}
+        }
+        try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, `${c.contract_id}.docx`); } catch (_) {}
+      }
+      showToast(`Downloaded ${list.length} contract${list.length === 1 ? "" : "s"}`);
+      const popup = document.getElementById("generate-menu-popup");
+      if (popup) popup.hidden = true;
+      return;
     }
     if (action === "duplicate-task") {
       const task = selectedTask();
