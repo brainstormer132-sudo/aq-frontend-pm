@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
+import { AnimatedAQLogo } from './AnimatedAQLogo';
 
 /**
  * Shared split-screen auth layout — dark branded panel on the left,
@@ -58,8 +59,7 @@ export function SplitAuthLayout({
         <aside style={brandStyle}>
           <p style={welcomeStyle}>Welcome to</p>
           <div style={logoWrapStyle}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="" style={logoImgStyle} />
+            <AnimatedAQLogo />
           </div>
           <h1 style={brandNameStyle}>AQ Creativity</h1>
           {blurb && <p style={blurbStyle}>{blurb}</p>}
