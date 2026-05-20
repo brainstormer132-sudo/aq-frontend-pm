@@ -1311,6 +1311,7 @@ function renderContractsView() {
               ? `<button class="mini-button" data-action="download-pdf" data-id="${encodeAttr(c.contract_id)}">PDF</button>`
               : `<button class="mini-button" disabled${pdfTitle}>PDF ✗</button>`}
             <button class="mini-button" data-action="download-docx" data-id="${encodeAttr(c.contract_id)}">DOCX</button>
+            <button class="mini-button" data-action="regenerate-contract" data-id="${encodeAttr(c.contract_id)}" title="Re-render this contract from the source task + subtask">Regen</button>
             ${adminOnly
               ? `<button class="mini-button danger" data-action="delete-contract" data-id="${encodeAttr(c.contract_id)}">Delete</button>`
               : ""}
@@ -1812,9 +1813,26 @@ function syncPlatformPayload() {
 async function downloadFile(path, fallbackName) {
   setBusy(true);
   try {
-    const response = await fetch(`${API_BASE}${path}`, {
+    let response = await fetch(`${API_BASE}${path}`, {
       headers: authHeaders(false),
     });
+
+    // Auto-heal: 404 on a download usually means the local file got wiped
+    // (Render redeploy) AND there's no Storage backup. Pull the contract_id
+    // out of the path, hit /regenerate, then retry the download once.
+    if (response.status === 404) {
+      const m = path.match(/\/contracts\/download\/(pdf|docx)\/([^/?#]+)/);
+      if (m) {
+        const contractId = decodeURIComponent(m[2]);
+        showToast(`File missing — regenerating ${contractId}…`, "warn");
+        try {
+          await api(`/api/contracts/${contractId}/regenerate`, { method: "POST" });
+          response = await fetch(`${API_BASE}${path}`, { headers: authHeaders(false) });
+        } catch (regenErr) {
+          throw new Error(`File missing and regenerate failed: ${regenErr.message || regenErr}`);
+        }
+      }
+    }
 
     if (!response.ok) {
       const message = await response.text();
@@ -1911,10 +1929,31 @@ async function addSubtask(event) {
 async function generateForSubtasks(taskId, subtaskIds, successMessage) {
   const body = { task_id: taskId };
   if (subtaskIds && subtaskIds.length) body.subtask_ids = subtaskIds;
-  const generated = await api("/api/contracts/generate", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+
+  // One-shot auto-retry: Render's free-tier worker often cold-starts on the
+  // first request after idle, which can blow past the proxy timeout. If the
+  // first call dies with a network/timeout/5xx, wait 3s and try once more —
+  // the backend is now warm and the second request usually succeeds.
+  let generated;
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      generated = await api("/api/contracts/generate", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      break;
+    } catch (err) {
+      lastError = err;
+      const msg = String(err?.message || err);
+      const isTransient = /failed to fetch|networkerror|timeout|502|503|504/i.test(msg);
+      if (attempt === 2 || !isTransient) throw err;
+      showToast("Backend is warming up — retrying in 3 seconds…", "warn");
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  if (!generated) throw lastError || new Error("Generation failed");
+
   await loadContracts();
   state.selectedSubtaskIds = new Set();        // wipe the checkboxes
   const pdfCount = generated.filter((item) => item.pdf_path).length;
@@ -1925,8 +1964,17 @@ async function generateForSubtasks(taskId, subtaskIds, successMessage) {
   if (failed.length === 0) {
     showToast(`${successMessage} (${pdfCount} PDFs)`);
   } else {
-    showToast(`${successMessage} ${failed.length} PDF conversion${failed.length === 1 ? "" : "s"} failed — DOCX still saved.`, "warn");
+    showToast(`${successMessage} ${failed.length} PDF conversion${failed.length === 1 ? "" : "s"} failed — DOCX still saved. Click Regenerate on the contract row to retry.`, "warn");
   }
+}
+
+/** Re-run generation for one existing contract (used when a download 404s). */
+async function regenerateContract(contractId) {
+  const result = await api(`/api/contracts/${contractId}/regenerate`, { method: "POST" });
+  await loadContracts();
+  renderContractsView();
+  showToast(result.pdf_path ? `Regenerated ${contractId}` : `${contractId} regenerated (DOCX only — PDF failed)`, result.pdf_path ? "success" : "warn");
+  return result;
 }
 
 function showClientContractModal() {
@@ -2789,6 +2837,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "download-docx") {
       await downloadFile(`/api/contracts/download/docx/${button.dataset.id}`, `${button.dataset.id}.docx`);
+    }
+    if (action === "regenerate-contract") {
+      if (!button.dataset.id) return;
+      await regenerateContract(button.dataset.id);
     }
     if (action === "toggle-task-group") {
       const tid = String(button.dataset.taskId || button.closest("[data-task-id]")?.dataset?.taskId || "");
