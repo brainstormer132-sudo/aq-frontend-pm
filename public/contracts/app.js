@@ -1926,17 +1926,50 @@ async function addSubtask(event) {
  * task when subtaskIds is null). After success, reloads contracts, switches
  * to the Contracts view, and shows a toast.
  */
+/**
+ * Update the Generate dropdown's "Selected only" button in-place so its
+ * disabled state + count badge reflect state.selectedSubtaskIds without
+ * needing a full renderTasksView() (which would re-mount the checkboxes
+ * mid-click and steal focus).
+ *
+ * Also syncs the header "select all" checkbox so it shows the right state
+ * when individual rows are ticked up to fully-selected.
+ */
+function refreshGenerateSelectedHandle() {
+  const count = state.selectedSubtaskIds?.size || 0;
+
+  const btn = document.querySelector('[data-action="generate-selected"]');
+  if (btn) {
+    if (count === 0) btn.setAttribute('disabled', '');
+    else btn.removeAttribute('disabled');
+    const badge = btn.querySelector('.menu-badge');
+    if (badge) badge.textContent = String(count);
+  }
+
+  const headerAll = document.getElementById('subtask-pick-all');
+  if (headerAll) {
+    const total = state.subtasks?.length || 0;
+    headerAll.checked = total > 0 && count === total;
+    headerAll.indeterminate = count > 0 && count < total;
+  }
+}
+
 async function generateForSubtasks(taskId, subtaskIds, successMessage) {
   const body = { task_id: taskId };
   if (subtaskIds && subtaskIds.length) body.subtask_ids = subtaskIds;
 
-  // One-shot auto-retry: Render's free-tier worker often cold-starts on the
-  // first request after idle, which can blow past the proxy timeout. If the
-  // first call dies with a network/timeout/5xx, wait 3s and try once more —
-  // the backend is now warm and the second request usually succeeds.
+  // Auto-retry: Render's free-tier worker cold-starts on the first request
+  // after idle, and LibreOffice on Linux is itself slow + intermittent, so
+  // we give up to 3 attempts with backoff. Per the HANDOFF gotcha, the
+  // strategy is to extend the *retry surface* (not the per-attempt timeout)
+  // because past attempts at extending the server timeout blew browser
+  // limits. Worst case total wait added by retries: 3s + 6s = 9s.
+  // (Bumped from 2 to 3 attempts on 2026-05-21.)
+  const MAX_ATTEMPTS = 3;
+  const RETRY_DELAYS_MS = [3000, 6000];  // delay before attempt 2 and 3
   let generated;
   let lastError;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       generated = await api("/api/contracts/generate", {
         method: "POST",
@@ -1947,9 +1980,13 @@ async function generateForSubtasks(taskId, subtaskIds, successMessage) {
       lastError = err;
       const msg = String(err?.message || err);
       const isTransient = /failed to fetch|networkerror|timeout|502|503|504/i.test(msg);
-      if (attempt === 2 || !isTransient) throw err;
-      showToast("Backend is warming up — retrying in 3 seconds…", "warn");
-      await new Promise((r) => setTimeout(r, 3000));
+      if (attempt === MAX_ATTEMPTS || !isTransient) throw err;
+      const delay = RETRY_DELAYS_MS[attempt - 1] ?? 6000;
+      showToast(
+        `Backend is warming up — retrying in ${Math.round(delay / 1000)}s (attempt ${attempt + 1} of ${MAX_ATTEMPTS})…`,
+        "warn",
+      );
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   if (!generated) throw lastError || new Error("Generation failed");
@@ -2512,12 +2549,17 @@ document.addEventListener("change", async (event) => {
         await renderTasksView();
       }
     }
-    // Per-row subtask checkboxes — toggle membership in selectedSubtaskIds
-    // without re-rendering the whole table (just keep state in sync).
+    // Per-row subtask checkboxes — toggle membership in selectedSubtaskIds.
+    // Surgically refresh the Generate menu so "Selected only" enables and
+    // its badge counts up as the user ticks rows. Doing a full re-render
+    // here would steal focus mid-click; updating just the dropdown handles
+    // are enough. (Bug reported 2026-05-21: partial selection appeared
+    // broken because the menu item stayed disabled with badge "0".)
     if (event.target.classList.contains("subtask-pick")) {
       const set = state.selectedSubtaskIds || (state.selectedSubtaskIds = new Set());
       const id = String(event.target.dataset.id || "");
       if (event.target.checked) set.add(id); else set.delete(id);
+      refreshGenerateSelectedHandle();
     }
     // Header "select all" toggle
     if (event.target.id === "subtask-pick-all") {

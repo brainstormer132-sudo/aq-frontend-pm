@@ -6,6 +6,16 @@
 
 html[data-theme="dark"] {
   color-scheme: dark;
+
+  /* Override the design tokens used throughout styles.css. Doing it at the
+     token level fixes every consumer at once — e.g. .task-group, which uses
+     background: var(--panel) and was rendering as a bright translucent white
+     in the archive view. (Reported 2026-05-21.) */
+  --panel:        rgba(28, 36, 46, 0.78);
+  --panel-strong: rgba(28, 36, 46, 0.92);
+  --line:         rgba(160, 180, 200, 0.14);
+  --ink:          #e4ebf2;
+  --muted:        #8493a4;
 }
 
 html[data-theme="dark"] body {
@@ -14,6 +24,44 @@ html[data-theme="dark"] body {
     radial-gradient(circle at 80% 0%, rgba(14, 140, 154, 0.10), transparent 34%),
     linear-gradient(135deg, #0e1115 0%, #0b0d10 48%, #07090b 100%);
   color: #e4ebf2;
+}
+
+/* Containers that use the --panel token directly. The token override above
+   handles these, but keep these explicit rules as belt-and-braces in case
+   the token is overridden inline somewhere. */
+html[data-theme="dark"] .task-group,
+html[data-theme="dark"] .template-item {
+  background: rgba(28, 36, 46, 0.78) !important;
+  border-color: rgba(160, 180, 200, 0.14) !important;
+}
+html[data-theme="dark"] .task-group-header:hover,
+html[data-theme="dark"] .task-group.open .task-group-header {
+  background: rgba(36, 154, 98, 0.12) !important;
+}
+
+/* Table headers (th) hard-code an rgba(255,255,255,…) background; override
+   so the column headers don't shine bright on the dark panel. */
+html[data-theme="dark"] table th {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #8493a4 !important;
+}
+
+/* Status pills use opaque pastel backgrounds that read OK on dark, but
+   "DOCX only" warn-pill in particular looks fluorescent. Soften it. */
+html[data-theme="dark"] .status-pill {
+  background: rgba(36, 154, 98, 0.18);
+}
+html[data-theme="dark"] .status-pill.done {
+  background: rgba(63, 123, 216, 0.22);
+  color: #a8c5f5;
+}
+html[data-theme="dark"] .status-pill.warn {
+  background: rgba(183, 121, 31, 0.22);
+  color: #f0c674;
+}
+html[data-theme="dark"] .status-pill.hold {
+  background: rgba(201, 68, 62, 0.22);
+  color: #f4a4a0;
 }
 
 html[data-theme="dark"] .auth-panel,
