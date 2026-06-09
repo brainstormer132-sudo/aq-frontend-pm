@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useTask, useTaskSubtasks, useTaskComments, useTaskAttachments, useTaskServiceTypes,
   useLegacyVendors,
+  useTaskSources, useClientCategories,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
@@ -55,6 +56,12 @@ export function TaskDetailPanel({
 
   // Vendors list — used by the per-subtask vendor picker and the auto-fire flow.
   const { vendors, banks } = useLegacyVendors();
+
+  // Operations lookups (migration 028) — Source + Client Category dropdowns
+  // on the parent campaign. Empty list = workspace hasn't seeded any yet,
+  // in which case the inputs gracefully degrade to "—".
+  const { items: taskSources } = useTaskSources(task?.workspace_id ?? null);
+  const { items: clientCategories } = useClientCategories(task?.workspace_id ?? null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -562,6 +569,19 @@ export function TaskDetailPanel({
                 )}
               </section>
 
+              {/* ── Operations panel (migration 028) ───────────────────────
+                  Per-vendor financial fields on subtasks; per-campaign
+                  quotation / invoice / payment / contract on parents. Same
+                  edit permissions as the Budget field above. */}
+              <OperationsPanel
+                task={task}
+                isSubtaskView={isSubtaskView}
+                canEdit={canEditBudget}
+                taskSources={taskSources}
+                clientCategories={clientCategories}
+                onChanged={async () => { await refetchTask(); onChanged?.(); }}
+              />
+
               {/* Multi-assignee panel — parent only.
                   Subtasks have a single "doer" picker above. */}
               {!isSubtaskView && (
@@ -806,5 +826,328 @@ function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
       <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>{label}</span>
       <span style={{ color: 'var(--aq-text)' }}>{value}</span>
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   OperationsPanel
+   Edits the migration-028 operations columns. One section that swaps its
+   fields based on whether we're looking at a parent campaign or a vendor
+   subtask. Each field saves on blur (text/number) or change (select/date).
+   ───────────────────────────────────────────────────────────────────── */
+
+import type { PMTask, TaskSource, ClientCategory } from '@/hooks/use-workflow';
+
+function OperationsPanel({
+  task, isSubtaskView, canEdit, taskSources, clientCategories, onChanged,
+}: {
+  task: PMTask;
+  isSubtaskView: boolean;
+  canEdit: boolean;
+  taskSources: TaskSource[];
+  clientCategories: ClientCategory[];
+  onChanged: () => Promise<void>;
+}) {
+  // Generic field saver — writes `{ [field]: value }` to pm_tasks and
+  // refetches the row. Null-coerced empties so a cleared field actually
+  // becomes NULL in the DB, not the string "".
+  const save = async (field: keyof PMTask, raw: any) => {
+    const value =
+      raw === '' || raw === undefined ? null :
+      raw;
+    try {
+      await updateTaskFields(task.id, { [field]: value } as any);
+      await onChanged();
+    } catch (e: any) {
+      window.alert(`Save failed: ${e?.message ?? e}`);
+    }
+  };
+
+  const numberOrNull = (raw: string): number | null => {
+    const trimmed = raw.trim().replace(/,/g, '');
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // Render a single labeled row with a generic editor. `kind` switches
+  // between inline-editable text/number/date/select. Read-only fall-back
+  // when canEdit=false.
+  const Row = ({
+    label, children,
+  }: { label: string; children: React.ReactNode }) => (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '160px 1fr', gap: 12,
+      padding: '6px 0', fontSize: 13, alignItems: 'center',
+    }}>
+      <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>{label}</span>
+      <div>{children}</div>
+    </div>
+  );
+
+  const fmtMoney = (n: number | null | undefined) =>
+    n == null ? '—' : `SAR ${Number(n).toLocaleString()}`;
+
+  // PER-VENDOR (subtask) fields ───────────────────────────────────────
+  if (isSubtaskView) {
+    return (
+      <section className="aq-card" style={{ padding: 18 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Operations · Vendor</h3>
+
+        <Row label="Price (SAR)">
+          {canEdit
+            ? <TextInput
+                defaultValue={task.price != null ? String(task.price) : ''}
+                placeholder="0.00"
+                inputMode="decimal"
+                onCommit={(v) => save('price', numberOrNull(v))}
+                style={{ maxWidth: 200 }}
+              />
+            : <span>{fmtMoney(task.price)}</span>}
+        </Row>
+
+        <Row label="Net amount (SAR)">
+          {canEdit
+            ? <TextInput
+                defaultValue={task.net_amount != null ? String(task.net_amount) : ''}
+                placeholder="0.00"
+                inputMode="decimal"
+                onCommit={(v) => save('net_amount', numberOrNull(v))}
+                style={{ maxWidth: 200 }}
+              />
+            : <span>{fmtMoney(task.net_amount)}</span>}
+        </Row>
+
+        <Row label="AQ Gross">
+          {/* Generated column: read-only. Falls back to "—" until both
+              price and net_amount are entered. */}
+          <span style={{
+            fontWeight: 600,
+            color: task.aq_gross != null && Number(task.aq_gross) < 0
+              ? 'var(--aq-error)' : 'var(--aq-text)',
+          }}>
+            {fmtMoney(task.aq_gross)}
+            {task.aq_gross != null && task.price != null && Number(task.price) > 0 && (
+              <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                ({Math.round((Number(task.aq_gross) / Number(task.price)) * 100)}% margin)
+              </span>
+            )}
+          </span>
+        </Row>
+
+        <Row label="Platform">
+          {canEdit
+            ? <TextInput
+                defaultValue={task.platform ?? ''}
+                placeholder="Instagram, TikTok"
+                onCommit={(v) => save('platform', v.trim() || null)}
+              />
+            : <span>{task.platform || '—'}</span>}
+        </Row>
+
+        <Row label="AD type">
+          {canEdit
+            ? <TextInput
+                defaultValue={task.ad_type ?? ''}
+                placeholder="VideoShot"
+                onCommit={(v) => save('ad_type', v.trim() || null)}
+              />
+            : <span>{task.ad_type || '—'}</span>}
+        </Row>
+
+        <Row label="Vendor paid (SAR)">
+          {canEdit
+            ? <TextInput
+                defaultValue={task.vendor_payment_amount != null ? String(task.vendor_payment_amount) : ''}
+                placeholder="0.00"
+                inputMode="decimal"
+                onCommit={(v) => save('vendor_payment_amount', numberOrNull(v))}
+                style={{ maxWidth: 200 }}
+              />
+            : <span>{fmtMoney(task.vendor_payment_amount)}</span>}
+        </Row>
+
+        <Row label="Vendor paid on">
+          {canEdit
+            ? <input
+                type="date"
+                className="aq-input"
+                style={{ maxWidth: 200 }}
+                defaultValue={task.vendor_payment_date ?? ''}
+                onChange={(e) => save('vendor_payment_date', e.target.value || null)}
+              />
+            : <span>{task.vendor_payment_date || '—'}</span>}
+        </Row>
+      </section>
+    );
+  }
+
+  // PER-CAMPAIGN (parent) fields ──────────────────────────────────────
+  return (
+    <section className="aq-card" style={{ padding: 18 }}>
+      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Operations · Campaign</h3>
+
+      <Row label="Source">
+        {canEdit
+          ? <select
+              className="aq-input"
+              style={{ maxWidth: 240 }}
+              value={task.source_id ?? ''}
+              onChange={(e) => save('source_id', e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              {taskSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          : <span>{taskSources.find((s) => s.id === task.source_id)?.name || '—'}</span>}
+      </Row>
+
+      <Row label="Client category">
+        {canEdit
+          ? <select
+              className="aq-input"
+              style={{ maxWidth: 240 }}
+              value={task.client_category_id ?? ''}
+              onChange={(e) => save('client_category_id', e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              {clientCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          : <span>{clientCategories.find((c) => c.id === task.client_category_id)?.name || '—'}</span>}
+      </Row>
+
+      <Row label="Quotation #">
+        {canEdit
+          ? <TextInput
+              defaultValue={task.quotation_no ?? ''}
+              placeholder="QT-2026-…"
+              onCommit={(v) => save('quotation_no', v.trim() || null)}
+              style={{ maxWidth: 240 }}
+            />
+          : <span>{task.quotation_no || '—'}</span>}
+      </Row>
+
+      <Row label="Quo. breakdown">
+        {canEdit
+          ? <select
+              className="aq-input"
+              style={{ maxWidth: 240 }}
+              value={task.quotation_breakdown ?? ''}
+              onChange={(e) => save('quotation_breakdown', e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              <option value="With Breakdown">With Breakdown</option>
+              <option value="Without Breakdown">Without Breakdown</option>
+            </select>
+          : <span>{task.quotation_breakdown || '—'}</span>}
+      </Row>
+
+      <Row label="Invoice #">
+        {canEdit
+          ? <TextInput
+              defaultValue={task.invoice_no ?? ''}
+              placeholder="INV-…"
+              onCommit={(v) => save('invoice_no', v.trim() || null)}
+              style={{ maxWidth: 240 }}
+            />
+          : <span>{task.invoice_no || '—'}</span>}
+      </Row>
+
+      <Row label="Client payment">
+        {canEdit ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <select
+              className="aq-input"
+              style={{ maxWidth: 160 }}
+              value={task.client_payment_status ?? ''}
+              onChange={(e) => save('client_payment_status', e.target.value || null)}
+            >
+              <option value="">— status —</option>
+              <option value="pending">Pending</option>
+              <option value="partial">Partial</option>
+              <option value="paid">Paid</option>
+            </select>
+            <input
+              type="date"
+              className="aq-input"
+              style={{ maxWidth: 160 }}
+              defaultValue={task.client_payment_date ?? ''}
+              onChange={(e) => save('client_payment_date', e.target.value || null)}
+            />
+            <TextInput
+              defaultValue={task.client_payment_amount != null ? String(task.client_payment_amount) : ''}
+              placeholder="amount"
+              inputMode="decimal"
+              onCommit={(v) => save('client_payment_amount', numberOrNull(v))}
+              style={{ maxWidth: 160 }}
+            />
+          </div>
+        ) : (
+          <span>
+            {[task.client_payment_status, task.client_payment_date, fmtMoney(task.client_payment_amount)]
+              .filter(Boolean).join(' · ') || '—'}
+          </span>
+        )}
+      </Row>
+
+      <Row label="Contract status">
+        {canEdit
+          ? <select
+              className="aq-input"
+              style={{ maxWidth: 240 }}
+              value={task.contract_status ?? ''}
+              onChange={(e) => save('contract_status', e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              <option value="Pending">Pending</option>
+              <option value="On Process">On Process</option>
+              <option value="No Contract">No Contract</option>
+              <option value="Signed">Signed</option>
+            </select>
+          : <span>{task.contract_status || '—'}</span>}
+      </Row>
+    </section>
+  );
+}
+
+/**
+ * Uncontrolled text input that fires `onCommit(value)` on blur or Enter.
+ * Lets the OperationsPanel use simple field-by-field saves without
+ * juggling a draft state for every column.
+ */
+function TextInput({
+  defaultValue, onCommit, placeholder, inputMode, style,
+}: {
+  defaultValue: string;
+  onCommit: (value: string) => void;
+  placeholder?: string;
+  inputMode?: 'text' | 'decimal' | 'numeric';
+  style?: React.CSSProperties;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  // Reset the input when the parent's defaultValue changes (e.g. after the
+  // task refetches with the saved value).
+  useEffect(() => {
+    if (ref.current && ref.current.value !== defaultValue) {
+      ref.current.value = defaultValue;
+    }
+  }, [defaultValue]);
+  return (
+    <input
+      ref={ref}
+      className="aq-input"
+      style={style}
+      defaultValue={defaultValue}
+      placeholder={placeholder}
+      inputMode={inputMode}
+      onBlur={(e) => {
+        if (e.target.value !== defaultValue) onCommit(e.target.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
   );
 }

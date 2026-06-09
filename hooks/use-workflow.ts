@@ -77,6 +77,68 @@ export interface PMTask {
   vendor_id: number | null;
   // Auto-set when the subtask spawns a contract request (migration 011).
   contract_request_id: string | null;
+
+  // ── Operations workflow columns (migration 028) ──────────────────
+  // Per-vendor (child rows). Parent rows usually leave these null and read
+  // the rollup view instead.
+  price: number | null;
+  net_amount: number | null;
+  /** Generated column: price - net_amount. Read-only in the app. */
+  aq_gross: number | null;
+  platform: string | null;
+  ad_type: string | null;
+  vendor_payment_date: string | null;
+  vendor_payment_amount: number | null;
+
+  // Per-campaign (parent rows).
+  source_id: string | null;
+  client_category_id: string | null;
+  quotation_no: string | null;
+  /** "With Breakdown" / "Without Breakdown" — text for forward compat. */
+  quotation_breakdown: string | null;
+  invoice_no: string | null;
+  /** "pending" / "paid" / "partial" — rendered as chip in the UI. */
+  client_payment_status: string | null;
+  client_payment_date: string | null;
+  client_payment_amount: number | null;
+  /** Manual override. Common values: "Pending", "On Process", "No Contract", "Signed". */
+  contract_status: string | null;
+}
+
+// ── Operations lookup types (migration 028) ─────────────────────────
+
+export interface TaskSource {
+  id: string;
+  workspace_id: string;
+  name: string;
+  position: number;
+  created_at: string;
+}
+
+export interface ClientCategory {
+  id: string;
+  workspace_id: string;
+  name: string;
+  position: number;
+  created_at: string;
+}
+
+/** One row per PARENT pm_task. Sum of children's price/net/gross. */
+export interface PmTaskCampaignRollup {
+  parent_task_id: string;
+  workspace_id: string | null;
+  title: string;
+  brand_name: string | null;
+  parent_total_amount: number | null;
+  client_payment_status: string | null;
+  contract_status: string | null;
+  vendor_count: number;
+  vendors_done: number;
+  sum_prices: number;
+  sum_nets: number;
+  sum_aq_gross: number;
+  /** sum_prices - parent_total_amount. Non-zero = data-entry mismatch. */
+  price_vs_total_variance: number;
 }
 
 export interface Profile {
@@ -144,6 +206,112 @@ export function useServiceTypes(workspaceId: string | null) {
 
   useEffect(() => { fetch(); }, [fetch]);
   return { serviceTypes, steps, loading, refetch: fetch };
+}
+
+/**
+ * Operations workflow lookups (migration 028). Source + client category
+ * are workspace-scoped admin-editable dropdowns used on parent campaigns.
+ */
+export function useTaskSources(workspaceId: string | null) {
+  const [items, setItems] = useState<TaskSource[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('task_sources')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('position', { ascending: true });
+    if (error) logSbError('useTaskSources', error, { workspaceId });
+    setItems((data || []) as TaskSource[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+export function useClientCategories(workspaceId: string | null) {
+  const [items, setItems] = useState<ClientCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('client_categories')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('position', { ascending: true });
+    if (error) logSbError('useClientCategories', error, { workspaceId });
+    setItems((data || []) as ClientCategory[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+/**
+ * Per-parent campaign rollup view (migration 028). Returns one row per
+ * top-level campaign with Σ price / net / aq_gross + vendor counts +
+ * the variance between Σ prices and the manually-entered Total Amount
+ * (`budget`). Non-zero variance is a data-entry sanity flag for ops.
+ */
+export function usePmTaskCampaignRollup(workspaceId: string | null) {
+  const [rows, setRows] = useState<PmTaskCampaignRollup[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setRows([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('pm_task_campaign_rollup')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('parent_task_id', { ascending: false });
+    if (error) logSbError('usePmTaskCampaignRollup', error, { workspaceId });
+    setRows((data || []) as PmTaskCampaignRollup[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { rows, loading, refetch: fetch };
+}
+
+/** CRUD for the task_sources lookup (admin-only via RLS). */
+export async function createTaskSource(workspaceId: string, name: string, position: number) {
+  const { data, error } = await supabase
+    .from('task_sources')
+    .insert({ workspace_id: workspaceId, name, position })
+    .select('*').single();
+  if (error) throw error;
+  return data as TaskSource;
+}
+export async function updateTaskSource(id: string, fields: Partial<Pick<TaskSource, 'name' | 'position'>>) {
+  const { error } = await supabase.from('task_sources').update(fields).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteTaskSource(id: string) {
+  const { error } = await supabase.from('task_sources').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/** CRUD for the client_categories lookup (admin-only via RLS). */
+export async function createClientCategory(workspaceId: string, name: string, position: number) {
+  const { data, error } = await supabase
+    .from('client_categories')
+    .insert({ workspace_id: workspaceId, name, position })
+    .select('*').single();
+  if (error) throw error;
+  return data as ClientCategory;
+}
+export async function updateClientCategory(id: string, fields: Partial<Pick<ClientCategory, 'name' | 'position'>>) {
+  const { error } = await supabase.from('client_categories').update(fields).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteClientCategory(id: string) {
+  const { error } = await supabase.from('client_categories').delete().eq('id', id);
+  if (error) throw error;
 }
 
 /** Workspace members (for sales closer / key account / assignee dropdowns). */

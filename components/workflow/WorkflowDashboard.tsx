@@ -3,7 +3,9 @@
 import { useMemo } from 'react';
 import {
   useWorkspaceStats, useRecentActivity, useTaskCountsByMember,
-  useWorkflowTasks, type Profile, type WorkspaceRole,
+  useWorkflowTasks,
+  usePmTaskCampaignRollup,
+  type Profile, type WorkspaceRole, type PmTaskCampaignRollup,
 } from '@/hooks/use-workflow';
 
 /**
@@ -26,6 +28,7 @@ export function WorkflowDashboard({
   const { items: activity } = useRecentActivity(workspaceId, 10);
   const { counts } = useTaskCountsByMember(workspaceId);
   const { tasks: allTasks } = useWorkflowTasks(workspaceId, 'all');
+  const { rows: campaignRollup } = usePmTaskCampaignRollup(workspaceId);
 
   const myTasks = useMemo(
     () => allTasks
@@ -59,6 +62,13 @@ export function WorkflowDashboard({
         <Stat label="In progress"       value={stats.inProgress} />
         <Stat label="Total tasks"       value={stats.total}        onClick={() => onGoTo('all-tasks')} />
       </section>
+
+      {/* Campaign rollup — sum of price/net/gross per parent campaign.
+          Reads the pm_task_campaign_rollup view from migration 028.
+          Hidden when no campaigns have any operations data yet. */}
+      {campaignRollup.length > 0 && (
+        <CampaignRollupSection rows={campaignRollup} onOpenTask={onOpenTask} />
+      )}
 
       {/* My tasks + Activity */}
       <section style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
@@ -200,6 +210,143 @@ function makeGreeting() {
   const h = new Date().getHours();
   return h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
+
+/**
+ * Per-campaign rollup row. Reads from the `pm_task_campaign_rollup` view
+ * (migration 028). One row per parent task with Σ price / Σ net /
+ * Σ AQ gross / vendor count, plus a variance badge that lights up
+ * when the sum of child prices doesn't match the parent's manually-
+ * entered Total Amount (the same data-entry check the ops team currently
+ * does by re-reading the Asana export).
+ */
+function CampaignRollupSection({
+  rows, onOpenTask,
+}: {
+  rows: PmTaskCampaignRollup[];
+  onOpenTask: (id: string) => void;
+}) {
+  // Hide campaigns with zero vendors AND zero parent total — they're
+  // either blank parents that someone abandoned, or new ones with nothing
+  // entered yet. Show the rest sorted by Σ prices descending so the
+  // biggest deals are at the top.
+  const interesting = rows
+    .filter((r) => r.vendor_count > 0 || (r.parent_total_amount ?? 0) > 0)
+    .sort((a, b) => (b.sum_prices || 0) - (a.sum_prices || 0))
+    .slice(0, 8);
+
+  if (interesting.length === 0) return null;
+
+  const total = (key: 'sum_prices' | 'sum_nets' | 'sum_aq_gross') =>
+    interesting.reduce((acc, r) => acc + (r[key] || 0), 0);
+
+  const money = (n: number | null | undefined) =>
+    n == null ? '—' : `SAR ${Math.round(Number(n)).toLocaleString()}`;
+
+  return (
+    <section className="aq-card" style={{ padding: 20 }}>
+      <header style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+        marginBottom: 12, gap: 12, flexWrap: 'wrap',
+      }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700 }}>Active campaigns</h3>
+        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+          Σ prices <strong style={{ color: 'var(--aq-text)' }}>{money(total('sum_prices'))}</strong>
+          {' · '}Σ nets <strong style={{ color: 'var(--aq-text)' }}>{money(total('sum_nets'))}</strong>
+          {' · '}Σ AQ gross <strong style={{ color: 'var(--aq-accent)' }}>{money(total('sum_aq_gross'))}</strong>
+        </span>
+      </header>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ color: 'var(--aq-text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <th style={th}>Campaign</th>
+              <th style={th}>Vendors</th>
+              <th style={{ ...th, textAlign: 'right' }}>Σ Prices</th>
+              <th style={{ ...th, textAlign: 'right' }}>Σ Nets</th>
+              <th style={{ ...th, textAlign: 'right' }}>Σ AQ Gross</th>
+              <th style={{ ...th, textAlign: 'right' }}>Margin</th>
+              <th style={th}>Variance</th>
+              <th style={th}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {interesting.map((r) => {
+              const margin = r.sum_prices > 0
+                ? Math.round((r.sum_aq_gross / r.sum_prices) * 100)
+                : null;
+              const variance = Number(r.price_vs_total_variance || 0);
+              const mismatch = Math.abs(variance) > 1;  // SAR 1 tolerance for rounding
+              return (
+                <tr
+                  key={r.parent_task_id}
+                  onClick={() => onOpenTask(r.parent_task_id)}
+                  style={{ cursor: 'pointer', borderTop: '1px solid var(--aq-border-light)' }}
+                >
+                  <td style={td}>
+                    <strong>{r.title}</strong>
+                    {r.brand_name && (
+                      <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{r.brand_name}</div>
+                    )}
+                  </td>
+                  <td style={td}>
+                    {r.vendors_done}/{r.vendor_count}
+                  </td>
+                  <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money(r.sum_prices)}</td>
+                  <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money(r.sum_nets)}</td>
+                  <td style={{
+                    ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                    color: r.sum_aq_gross > 0 ? 'var(--aq-accent)' : 'var(--aq-text-muted)',
+                    fontWeight: 700,
+                  }}>{money(r.sum_aq_gross)}</td>
+                  <td style={{ ...td, textAlign: 'right' }}>
+                    {margin == null ? '—' : (
+                      <span className={`aq-badge ${margin >= 30 ? 'aq-badge-success' : margin >= 15 ? 'aq-badge-info' : 'aq-badge-warning'}`}>
+                        {margin}%
+                      </span>
+                    )}
+                  </td>
+                  <td style={td}>
+                    {mismatch ? (
+                      <span
+                        className="aq-badge aq-badge-warning"
+                        title={`Σ prices ${money(r.sum_prices)} vs Total ${money(r.parent_total_amount)} — someone forgot to update one of them`}
+                      >
+                        {variance > 0 ? '+' : ''}{money(variance)}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>OK</span>
+                    )}
+                  </td>
+                  <td style={td}>
+                    {r.contract_status && (
+                      <span className="aq-badge aq-badge-muted" style={{ marginRight: 6 }}>
+                        {r.contract_status}
+                      </span>
+                    )}
+                    {r.client_payment_status && (
+                      <span className={`aq-badge ${r.client_payment_status === 'paid' ? 'aq-badge-success' : 'aq-badge-warning'}`}>
+                        {r.client_payment_status}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+const th: React.CSSProperties = {
+  textAlign: 'left', padding: '8px 10px', fontWeight: 700,
+  borderBottom: '1px solid var(--aq-border-light)',
+};
+const td: React.CSSProperties = {
+  padding: '10px', verticalAlign: 'top',
+};
 
 function humanAction(a: string) {
   const m: Record<string, string> = {

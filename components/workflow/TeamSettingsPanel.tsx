@@ -12,6 +12,7 @@ import {
   type InviteEventRow,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
+import { OperationsLookupsPanel } from './OperationsLookupsPanel';
 
 const ROLES: WorkspaceRole[] = [
   'owner','admin','operations','sales','marketing','key_account','member',
@@ -484,6 +485,11 @@ export function TeamSettingsPanel({
           onConfirm={clearExpired}
         />
       )}
+
+      {/* Operations lookups — admin-only screen for editing Source +
+          Client Category dropdown options used on every campaign.
+          Added in migration 028. */}
+      <OperationsLookupsPanel workspaceId={workspaceId} role={role} />
     </div>
   );
 }
