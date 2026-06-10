@@ -1893,21 +1893,58 @@ async function downloadFile(path, fallbackName) {
       if (asciiMatch) filename = asciiMatch[1];
     }
 
-    // Chrome-on-Windows bug (confirmed 2026-06-10): when the anchor's href
-    // is a blob: URL, Chrome strips non-ASCII characters (Arabic, CJK, …)
-    // from `link.download` before passing it to the Save File dialog. The
-    // same code path with a data: URL preserves them. Workaround: for any
-    // blob small enough to base64-encode without blowing memory (under
-    // 30 MB raw → ~40 MB data-URL string), read it into a data URL and
-    // download from that. Larger files fall back to the blob URL — the
-    // Arabic name might get stripped but at least the user can save.
+    // Chrome-on-Windows bug (2026-06-10): non-ASCII chars in `link.download`
+    // are stripped when href is a blob: URL OR a data: URL of type
+    // application/pdf. The same code works for data:text/plain (proven
+    // by an earlier test). So the stripping is keyed off MIME, not URL
+    // type. Two-tier fix:
+    //
+    //   1. Prefer File System Access API (showSaveFilePicker) — Chrome
+    //      86+ on HTTPS. Bypasses Chrome's download-filename sanitization
+    //      entirely; shows a native Save dialog with the suggested name
+    //      verbatim. User confirms with one click.
+    //   2. Fallback: re-blob the bytes as application/octet-stream (no
+    //      PDF-specific download mangling) and trigger via data URL.
+    //   3. Last resort: blob URL (Arabic will get stripped, but the
+    //      download still works).
+    if (typeof window.showSaveFilePicker === "function") {
+      try {
+        const isPdf = filename.toLowerCase().endsWith(".pdf");
+        const isDocx = filename.toLowerCase().endsWith(".docx");
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: isPdf ? [{
+            description: "PDF document",
+            accept: { "application/pdf": [".pdf"] },
+          }] : isDocx ? [{
+            description: "Word document",
+            accept: { "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"] },
+          }] : [],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch (err) {
+        // User dismissed the picker — treat as cancel.
+        if (err && err.name === "AbortError") return;
+        // SecurityError = called without user gesture; fall through to
+        // the data-URL path so the user still gets the file.
+        console.warn("showSaveFilePicker failed, falling back:", err);
+      }
+    }
+
+    // Fallback path: re-blob as octet-stream so Chrome doesn't apply
+    // PDF-specific filename sanitization to the data URL download.
     const LARGE_FILE_BYTES = 30 * 1024 * 1024;
     if (blob.size <= LARGE_FILE_BYTES) {
+      const buf = await blob.arrayBuffer();
+      const genericBlob = new Blob([buf], { type: "application/octet-stream" });
       const dataUrl = await new Promise((resolve, reject) => {
         const fr = new FileReader();
         fr.onload  = () => resolve(fr.result);
         fr.onerror = () => reject(fr.error || new Error("FileReader failed"));
-        fr.readAsDataURL(blob);
+        fr.readAsDataURL(genericBlob);
       });
       const link = document.createElement("a");
       link.href = dataUrl;
@@ -1915,8 +1952,6 @@ async function downloadFile(path, fallbackName) {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      // No URL.revokeObjectURL needed — data: URLs are not retained by the
-      // browser's URL store the way blob: URLs are.
     } else {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
