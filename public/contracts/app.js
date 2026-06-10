@@ -1892,14 +1892,41 @@ async function downloadFile(path, fallbackName) {
       const asciiMatch = disposition.match(/filename\s*=\s*"?([^";\n]+)"?/i);
       if (asciiMatch) filename = asciiMatch[1];
     }
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+
+    // Chrome-on-Windows bug (confirmed 2026-06-10): when the anchor's href
+    // is a blob: URL, Chrome strips non-ASCII characters (Arabic, CJK, …)
+    // from `link.download` before passing it to the Save File dialog. The
+    // same code path with a data: URL preserves them. Workaround: for any
+    // blob small enough to base64-encode without blowing memory (under
+    // 30 MB raw → ~40 MB data-URL string), read it into a data URL and
+    // download from that. Larger files fall back to the blob URL — the
+    // Arabic name might get stripped but at least the user can save.
+    const LARGE_FILE_BYTES = 30 * 1024 * 1024;
+    if (blob.size <= LARGE_FILE_BYTES) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload  = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error || new Error("FileReader failed"));
+        fr.readAsDataURL(blob);
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // No URL.revokeObjectURL needed — data: URLs are not retained by the
+      // browser's URL store the way blob: URLs are.
+    } else {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
   } finally {
     setBusy(false);
   }
