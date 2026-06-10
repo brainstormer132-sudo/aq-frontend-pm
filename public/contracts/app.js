@@ -1313,6 +1313,9 @@ function renderContractsView() {
             <button class="mini-button" data-action="download-docx" data-id="${encodeAttr(c.contract_id)}">DOCX</button>
             <button class="mini-button" data-action="regenerate-contract" data-id="${encodeAttr(c.contract_id)}" title="Re-render this contract from the source task + subtask">Regen</button>
             ${adminOnly
+              ? `<button class="mini-button" data-action="replace-contract" data-id="${encodeAttr(c.contract_id)}" title="Upload an edited PDF or DOCX to replace this version">Replace</button>`
+              : ""}
+            ${adminOnly
               ? `<button class="mini-button danger" data-action="delete-contract" data-id="${encodeAttr(c.contract_id)}">Delete</button>`
               : ""}
           </td>
@@ -1810,6 +1813,35 @@ function syncPlatformPayload() {
     .join(" ");
 }
 
+/**
+ * Build the user-facing download filename:  "vendor - brand - 08-Jun-2026.pdf"
+ *
+ * The backend now sends this exact format via Content-Disposition (see
+ * _pretty_download_name in app/routers/contracts.py). We keep a matching
+ * client-side builder so the *fallback* name (used when the browser
+ * couldn't parse Content-Disposition) stays consistent. (Format change
+ * requested 2026-06-09 by Siraj — contract_id is intentionally NOT in
+ * the filename anymore; it's printed inside the contract document via
+ * the template's {{ id }} field.)
+ */
+const _MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function prettyContractName(c, ext) {
+  const safe = (s) => String(s ?? "").replace(/[\\/*?:"<>|]/g, "").trim();
+  const vendor = safe(c?.vendor_name || c?.client_name || c?.signatory_name || c?.contract_id || "contract");
+  const brand  = safe(c?.brand_name) || "Unknown";
+  let date = "";
+  const m = String(c?.generated_at || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const mo = parseInt(m[2], 10);
+    if (mo >= 1 && mo <= 12) date = `${m[3]}-${_MONTH_ABBR[mo - 1]}-${m[1]}`;
+  }
+  if (!date) {
+    const d = new Date();
+    date = `${String(d.getDate()).padStart(2, "0")}-${_MONTH_ABBR[d.getMonth()]}-${d.getFullYear()}`;
+  }
+  return `${vendor} - ${brand} - ${date}.${ext}`;
+}
+
 async function downloadFile(path, fallbackName) {
   setBusy(true);
   try {
@@ -2012,6 +2044,86 @@ async function regenerateContract(contractId) {
   renderContractsView();
   showToast(result.pdf_path ? `Regenerated ${contractId}` : `${contractId} regenerated (DOCX only — PDF failed)`, result.pdf_path ? "success" : "warn");
   return result;
+}
+
+/**
+ * Replace-contract flow (added 2026-06-09):
+ *   1. Open a hidden <input type="file" accept=".pdf,.docx"> on demand.
+ *   2. User picks ONE file. We detect extension → choose endpoint.
+ *   3. POST as multipart/form-data to /api/contracts/{id}/replace/{kind}.
+ *   4. Refresh the archive so the "DOCX + PDF" badge updates.
+ *
+ * The backend (app/routers/contracts.py :: replace_contract_file) validates
+ * size + magic bytes and writes to Supabase Storage (upsert), so the very
+ * next download returns the user's edited file.
+ */
+async function openReplaceFilePicker(contractId) {
+  // Lazy-build a single hidden input we can reuse across clicks.
+  let input = document.getElementById("__replace-contract-input");
+  if (!input) {
+    input = document.createElement("input");
+    input.id = "__replace-contract-input";
+    input.type = "file";
+    input.accept = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    input.style.display = "none";
+    document.body.appendChild(input);
+  }
+  // Reset previous selection so the same file can be picked again later.
+  input.value = "";
+
+  // One-shot handler — replaced on every open so handlers don't pile up.
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    const kind = name.endsWith(".pdf") ? "pdf"
+               : name.endsWith(".docx") ? "docx"
+               : null;
+    if (!kind) {
+      showToast("Pick a .pdf or .docx file", "error");
+      return;
+    }
+    if (file.size === 0) {
+      showToast("That file is empty", "error");
+      return;
+    }
+    // Confirm to prevent fat-finger replacements on the wrong row.
+    if (!confirm(`Replace the ${kind.toUpperCase()} for ${contractId} with "${file.name}"?\n\nThis will overwrite the current file. The old one cannot be restored.`)) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+
+      // We can't use api() here because it stringifies JSON bodies; build
+      // the fetch by hand with the JWT header and multipart body.
+      const resp = await fetch(
+        `${API_BASE}/api/contracts/${encodeURIComponent(contractId)}/replace/${kind}`,
+        {
+          method: "POST",
+          headers: authHeaders(false),  // no Content-Type — browser sets multipart boundary
+          body: formData,
+        },
+      );
+
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(body || `Replace failed (${resp.status})`);
+      }
+      const result = await resp.json().catch(() => ({}));
+      showToast(`${kind.toUpperCase()} replaced (${Math.round((result.size || file.size) / 1024)} KB)`, "success");
+      await loadContracts();
+      renderContractsView();
+    } catch (err) {
+      showToast(`Replace failed: ${err.message || err}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  input.click();
 }
 
 function showClientContractModal() {
@@ -2757,9 +2869,9 @@ document.addEventListener("click", async (event) => {
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
       for (const c of list) {
         if (c.pdf_path) {
-          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, `${c.contract_id}.pdf`); } catch (_) {}
+          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, prettyContractName(c, "pdf")); } catch (_) {}
         }
-        try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, `${c.contract_id}.docx`); } catch (_) {}
+        try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, prettyContractName(c, "docx")); } catch (_) {}
       }
       showToast(`Downloaded ${list.length} contract${list.length === 1 ? "" : "s"}`);
       const popup = document.getElementById("generate-menu-popup");
@@ -2875,14 +2987,23 @@ document.addEventListener("click", async (event) => {
       renderContractsView();
     }
     if (action === "download-pdf") {
-      await downloadFile(`/api/contracts/download/pdf/${button.dataset.id}`, `${button.dataset.id}.pdf`);
+      const c = (state.contracts || []).find((x) => x.contract_id === button.dataset.id);
+      await downloadFile(`/api/contracts/download/pdf/${button.dataset.id}`, prettyContractName(c || { contract_id: button.dataset.id }, "pdf"));
     }
     if (action === "download-docx") {
-      await downloadFile(`/api/contracts/download/docx/${button.dataset.id}`, `${button.dataset.id}.docx`);
+      const c = (state.contracts || []).find((x) => x.contract_id === button.dataset.id);
+      await downloadFile(`/api/contracts/download/docx/${button.dataset.id}`, prettyContractName(c || { contract_id: button.dataset.id }, "docx"));
     }
     if (action === "regenerate-contract") {
       if (!button.dataset.id) return;
       await regenerateContract(button.dataset.id);
+    }
+    if (action === "replace-contract") {
+      // Admin-only "I edited this contract, upload my version" flow.
+      // One picker that accepts both .pdf and .docx; the server endpoint
+      // is selected by the extension of whatever file the user picks.
+      if (!button.dataset.id) return;
+      await openReplaceFilePicker(button.dataset.id);
     }
     if (action === "toggle-task-group") {
       const tid = String(button.dataset.taskId || button.closest("[data-task-id]")?.dataset?.taskId || "");
@@ -2896,7 +3017,7 @@ document.addEventListener("click", async (event) => {
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
       for (const c of list) {
         if (c.pdf_path) {
-          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, `${c.contract_id}.pdf`); }
+          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, prettyContractName(c, "pdf")); }
           catch (_) {}
         }
         try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, `${c.contract_id}.docx`); }
