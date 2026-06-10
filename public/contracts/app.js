@@ -1879,8 +1879,19 @@ async function downloadFile(path, fallbackName) {
 
     const blob = await response.blob();
     const disposition = response.headers.get("content-disposition") || "";
-    const match = disposition.match(/filename="?([^"]+)"?/i);
-    const filename = match ? match[1] : fallbackName;
+    // Prefer RFC 5987's filename*=UTF-8''<percent-encoded> when present —
+    // that's where non-ASCII names (Arabic vendor names, etc.) actually
+    // round-trip without being mangled by the latin-1 header pipeline.
+    // Fall back to plain filename= for old browsers / old servers.
+    let filename = fallbackName;
+    const utf8Match = disposition.match(/filename\*\s*=\s*UTF-8''([^;\n]+)/i);
+    if (utf8Match) {
+      try { filename = decodeURIComponent(utf8Match[1]); }
+      catch (_) { /* malformed encoding — keep the fallback */ }
+    } else {
+      const asciiMatch = disposition.match(/filename\s*=\s*"?([^";\n]+)"?/i);
+      if (asciiMatch) filename = asciiMatch[1];
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
