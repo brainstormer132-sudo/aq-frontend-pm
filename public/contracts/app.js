@@ -1827,8 +1827,11 @@ function syncPlatformPayload() {
 const _MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function prettyContractName(c, ext) {
   const safe = (s) => String(s ?? "").replace(/[\\/*?:"<>|]/g, "").trim();
-  const vendor = safe(c?.vendor_name || c?.client_name || c?.signatory_name || c?.contract_id || "contract");
-  const brand  = safe(c?.brand_name) || "Unknown";
+  // Skip empty parts instead of falling back to contract_id — client
+  // contracts have vendor_name="" by design, and substituting contract_id
+  // there was reintroducing "CTR…" into the filename (reported 2026-06-10).
+  const vendor = safe(c?.vendor_name || c?.client_name || c?.signatory_name || "");
+  const brand  = safe(c?.brand_name);
   let date = "";
   const m = String(c?.generated_at || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) {
@@ -1839,7 +1842,10 @@ function prettyContractName(c, ext) {
     const d = new Date();
     date = `${String(d.getDate()).padStart(2, "0")}-${_MONTH_ABBR[d.getMonth()]}-${d.getFullYear()}`;
   }
-  return `${vendor} - ${brand} - ${date}.${ext}`;
+  const parts = [vendor, brand, date].filter(Boolean);
+  // Last-resort safety net so the file always has SOME name.
+  if (parts.length === 0) parts.push(safe(c?.contract_id) || "contract");
+  return `${parts.join(" - ")}.${ext}`;
 }
 
 async function downloadFile(path, fallbackName) {
