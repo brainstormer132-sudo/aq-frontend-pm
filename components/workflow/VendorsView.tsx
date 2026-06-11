@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   approvePendingVendor,
   createApprovedVendorRegistration,
@@ -9,8 +9,14 @@ import {
   useLegacyVendors,
   usePendingVendors,
   useVendorCategoriesLegacy,
+  useVendorFiles,
+  uploadVendorFile,
+  deleteVendorFile,
+  getVendorFileDownloadUrl,
+  VENDOR_FILE_MAX_BYTES,
   type LegacyVendor,
   type LegacyVendorCategory,
+  type VendorFileRow,
   type VendorRegistrationInput,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -431,6 +437,14 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
             categories={categories}
             selectedCategory={selectedCategory}
           />
+          {/*
+            File uploads only show on Edit (we need a saved vendor_id
+            to attach files to). For a brand-new vendor: save the
+            basics first, then re-open the edit modal to add files.
+          */}
+          {editVendor && (
+            <VendorFilesSection vendorId={editVendor.id} canEdit={canEdit} />
+          )}
           <Actions
             busy={busy}
             disabled={!form.full_name.trim()}
@@ -466,6 +480,189 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
 //
 //   All other categories show only the base fields.
 // ────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
+// VendorFilesSection — list, upload, download, delete vendor files.
+//
+// Files live in the Supabase Storage bucket `vendor-files`; metadata is
+// in public.vendor_files (migration 030). One simple list, any file
+// type, 25 MB cap per upload. Downloads use short-lived signed URLs.
+//
+// Renders only when editVendor is set (we need a saved vendor_id to
+// attach things to).
+// ────────────────────────────────────────────────────────────────────
+function VendorFilesSection({ vendorId, canEdit }: { vendorId: number; canEdit: boolean }) {
+  const { files, loading, refetch } = useVendorFiles(vendorId);
+  const [uploading, setUploading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const onPickFiles = () => fileInputRef.current?.click();
+
+  const onFilesChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length === 0) return;
+    // Reset the input so picking the same filename again still triggers
+    // a change event.
+    e.target.value = '';
+
+    setUploading(true);
+    setError('');
+    try {
+      // Upload sequentially so a 25 MB cap rejection doesn't kill the
+      // whole batch silently — we surface the first failure.
+      for (const f of picked) {
+        await uploadVendorFile(vendorId, f);
+      }
+      await refetch();
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onDownload = async (file: VendorFileRow) => {
+    setBusyId(file.id);
+    setError('');
+    try {
+      const url = await getVendorFileDownloadUrl(file);
+      // Use a hidden anchor with `download` so the filename is preserved
+      // in the saved file (mirrors how Content-Disposition is wired on
+      // the contract endpoints).
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.file_name;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDelete = async (file: VendorFileRow) => {
+    if (!window.confirm(`Delete "${file.file_name}"? This cannot be undone.`)) return;
+    setBusyId(file.id);
+    setError('');
+    try {
+      await deleteVendorFile(file);
+      await refetch();
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div style={{
+      gridColumn: '1 / -1',
+      marginTop: 8, padding: 16,
+      border: '1px solid var(--aq-border-light)',
+      borderRadius: 'var(--aq-radius)',
+      background: 'var(--aq-bg-sunken)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>Files</div>
+          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+            IDs, licenses, bank confirmations, anything else. Max 25 MB per file.
+          </div>
+        </div>
+        {canEdit && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={onFilesChosen}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              onClick={onPickFiles}
+              disabled={uploading}
+              style={{ padding: '6px 12px', fontSize: 12 }}
+            >
+              {uploading ? 'Uploading...' : '+ Upload'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {error && (
+        <div className="aq-badge aq-badge-error" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12 }}>
+        {loading ? (
+          <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>Loading files...</div>
+        ) : files.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+            No files yet.
+          </div>
+        ) : (
+          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6, margin: 0, padding: 0 }}>
+            {files.map((f) => (
+              <li key={f.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 10px',
+                background: 'var(--aq-bg-elevated)',
+                border: '1px solid var(--aq-border-light)',
+                borderRadius: 'var(--aq-radius)',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {f.file_name}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                    {formatBytes(f.file_size)} · {new Date(f.uploaded_at).toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="aq-btn aq-btn-ghost"
+                  onClick={() => onDownload(f)}
+                  disabled={busyId === f.id}
+                  style={{ padding: '4px 10px', fontSize: 12 }}
+                >
+                  {busyId === f.id ? 'Working...' : 'Download'}
+                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="aq-btn aq-btn-ghost"
+                    onClick={() => onDelete(f)}
+                    disabled={busyId === f.id}
+                    style={{ padding: '4px 10px', fontSize: 12, color: 'var(--aq-error)' }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function VendorFormFields({
   form,
   setForm,

@@ -1328,6 +1328,155 @@ export interface LegacyBankAccount {
   account_number: string;
   swift_code: string;
 }
+// ─────────────────────────────────────────────────────────────────────
+// Vendor files (one file list per vendor, any file type).
+//
+// Storage: bucket `vendor-files`, path `{vendor_id}/{uuid}-{filename}`.
+// Schema: public.vendor_files (migration 030).
+// ─────────────────────────────────────────────────────────────────────
+
+export interface VendorFileRow {
+  id: string;
+  vendor_id: number;
+  storage_path: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
+const VENDOR_FILES_BUCKET = 'vendor-files';
+export const VENDOR_FILE_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+
+/** List the files attached to a vendor, newest first. */
+export function useVendorFiles(vendorId: number | null) {
+  const [files, setFiles] = useState<VendorFileRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetch = useCallback(async () => {
+    if (vendorId == null) {
+      setFiles([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('vendor_files')
+      .select('*')
+      .eq('vendor_id', vendorId)
+      .order('uploaded_at', { ascending: false });
+    if (error) logSbError('useVendorFiles', error, { vendorId });
+    setFiles((data || []) as VendorFileRow[]);
+    setLoading(false);
+  }, [vendorId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { files, loading, refetch: fetch };
+}
+
+/**
+ * Upload a single file to a vendor.
+ *
+ * Path layout: `{vendor_id}/{rand}-{sanitized_filename}`. The random
+ * prefix prevents collisions when the same filename is uploaded twice;
+ * the original name is preserved as a column for display.
+ *
+ * On success, returns the created vendor_files row.
+ *
+ * Throws if the file exceeds VENDOR_FILE_MAX_BYTES (25 MB) — the UI
+ * surfaces that as a friendly inline error.
+ */
+export async function uploadVendorFile(vendorId: number, file: File): Promise<VendorFileRow> {
+  if (file.size > VENDOR_FILE_MAX_BYTES) {
+    throw new Error(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max is 25 MB.`);
+  }
+
+  // Build a collision-resistant storage path while keeping the original
+  // filename visible in the URL (helps with debugging Supabase Studio).
+  const rand = crypto.randomUUID().slice(0, 8);
+  const safeName = (file.name || 'file')
+    .replace(/[\\/:*?"<>|]/g, '_')   // strip OS-illegal chars
+    .replace(/\s+/g, '_')
+    .slice(0, 120);
+  const storagePath = `${vendorId}/${rand}-${safeName}`;
+
+  // 1) push the bytes to storage
+  const { error: uploadErr } = await supabase
+    .storage
+    .from(VENDOR_FILES_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false,
+    });
+  if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
+
+  // 2) record the metadata row. If this fails we orphan the storage
+  //    object — surface the error so the caller can decide to retry.
+  //    We could also try to delete the storage object here, but
+  //    leaving it lets a manual SQL cleanup recover.
+  const { data: userResp } = await supabase.auth.getUser();
+  const uploadedBy = userResp?.user?.id ?? null;
+
+  const insertPayload = {
+    vendor_id: vendorId,
+    storage_path: storagePath,
+    file_name: file.name,
+    file_size: file.size,
+    mime_type: file.type || 'application/octet-stream',
+    uploaded_by: uploadedBy,
+  };
+  const { data, error: insertErr } = await supabase
+    .from('vendor_files')
+    .insert(insertPayload)
+    .select()
+    .single();
+  if (insertErr) throw new Error(`Saved file but couldn't index it: ${insertErr.message}`);
+
+  return data as VendorFileRow;
+}
+
+/**
+ * Delete a vendor file — wipes the storage object and the metadata
+ * row. Best-effort: if storage deletion fails the metadata row is
+ * still removed (otherwise the UI would keep showing a broken link).
+ */
+export async function deleteVendorFile(file: VendorFileRow): Promise<void> {
+  const { error: storageErr } = await supabase
+    .storage
+    .from(VENDOR_FILES_BUCKET)
+    .remove([file.storage_path]);
+  if (storageErr) {
+    // Log but keep going so the row gets cleaned up.
+    logSbError('deleteVendorFile.storage', storageErr, { path: file.storage_path });
+  }
+
+  const { error: rowErr } = await supabase
+    .from('vendor_files')
+    .delete()
+    .eq('id', file.id);
+  if (rowErr) throw new Error(`Could not delete file row: ${rowErr.message}`);
+}
+
+/**
+ * Mint a short-lived signed URL the browser can open to download the
+ * file. Default expiry is 10 minutes — plenty to click through.
+ */
+export async function getVendorFileDownloadUrl(
+  file: VendorFileRow,
+  expirySeconds = 600,
+): Promise<string> {
+  const { data, error } = await supabase
+    .storage
+    .from(VENDOR_FILES_BUCKET)
+    .createSignedUrl(file.storage_path, expirySeconds, { download: file.file_name });
+  if (error || !data?.signedUrl) {
+    throw new Error(`Could not create download link: ${error?.message ?? 'unknown error'}`);
+  }
+  return data.signedUrl;
+}
+
+
 export function useLegacyVendors() {
   const [vendors, setVendors] = useState<LegacyVendor[]>([]);
   const [banks, setBanks] = useState<LegacyBankAccount[]>([]);
