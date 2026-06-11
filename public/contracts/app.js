@@ -659,6 +659,7 @@ function renderCurrentView() {
     dashboard: renderDashboard,
     tasks: renderTasksView,
     vendors: renderVendorsView,
+    clients: renderClientsView,
     contracts: renderContractsView,
     templates: renderTemplatesView,
     settings: renderSettingsView,
@@ -1172,7 +1173,7 @@ function readVendorFormPayload(prefix) {
 }
 
 function renderVendorsView() {
-  updateHeader("Vendors & Clients", "Manage vendors, clients, bank accounts, and onboarding");
+  updateHeader("Vendors", "Manage vendors, bank accounts, and onboarding");
   const vendorQuery = state.vendorSearch.trim().toLowerCase();
   const filteredVendors = state.vendors.filter((vendor) => {
     if (!vendorQuery) return true;
@@ -1225,40 +1226,10 @@ function renderVendorsView() {
     </article>
   `).join("");
 
-  // ── Client directory data ──
-  const clientQuery = state.clientSearch.trim().toLowerCase();
-  const filteredClients = state.clients.filter((c) => {
-    if (!clientQuery) return true;
-    // Multi-field: name, ID, CR, VAT, signatory, contact info, address.
-    return [
-      c.company_name, c.name, c.id, c.cr_number, c.vat_number,
-      c.signatory_name, c.contact_name, c.contact_email, c.company_email,
-      c.contact_phone, c.phone, c.city, c.country,
-    ].some((v) => String(v || "").toLowerCase().includes(clientQuery));
-  });
-  if (state.selectedClientId
-      && !state.clients.find((c) => String(c.id) === String(state.selectedClientId))) {
-    state.selectedClientId = "";
-    localStorage.removeItem("aq_selected_client");
-  }
-  const client = selectedClient();
-  const clientCards = filteredClients.map((c) => `
-    <article class="vendor-card ${String(c.id) === String(client?.id) ? "selected-card" : ""}" data-client-id="${c.id}">
-      <div>
-        <h3>${escapeHtml(c.company_name || c.name || "")}</h3>
-        <p>${escapeHtml(c.cr_number || "No CR")}</p>
-      </div>
-      <span>${escapeHtml(c.signatory_name || "")}</span>
-      ${c.city ? `<small>${escapeHtml(c.city)}${c.country ? ", " + escapeHtml(c.country) : ""}</small>` : ""}
-    </article>
-  `).join("");
-
   els.viewRoot.innerHTML = `
     <section class="stats-row">
       ${cardMetric("Approved Vendors", state.vendors.length)}
-      ${cardMetric("Approved Clients", state.clients.length)}
       ${cardMetric("Pending Vendors", state.pendingVendors.length, isAdmin() ? "" : "admin")}
-      ${cardMetric("Pending Clients", state.pendingClients.length, isAdmin() ? "" : "admin")}
       ${cardMetric("Expiry Alerts", state.expiryAlerts.length, isAdmin() ? "" : "admin")}
     </section>
 
@@ -1316,7 +1287,55 @@ function renderVendorsView() {
       </div>
     </section>
 
-    <section class="split-workspace" style="margin-top:1.5rem">
+    ${renderPendingPanel("vendors")}
+  `;
+}
+
+/**
+ * Clients view — split out of renderVendorsView on 2026-06-11. Same
+ * sub-pieces (stats row, directory + side forms, pending panel) but
+ * scoped to client data only. Keeps a much cleaner sidebar with
+ * Vendors and Clients as separate destinations.
+ */
+function renderClientsView() {
+  updateHeader("Clients", "Manage client master records, signatories, and onboarding");
+
+  // ── Client directory data ──
+  const clientQuery = state.clientSearch.trim().toLowerCase();
+  const filteredClients = state.clients.filter((c) => {
+    if (!clientQuery) return true;
+    return [
+      c.company_name, c.name, c.id, c.cr_number, c.vat_number,
+      c.signatory_name, c.contact_name, c.contact_email, c.company_email,
+      c.contact_phone, c.phone, c.city, c.country,
+    ].some((v) => String(v || "").toLowerCase().includes(clientQuery));
+  });
+
+  if (state.selectedClientId
+      && !state.clients.find((c) => String(c.id) === String(state.selectedClientId))) {
+    state.selectedClientId = "";
+    localStorage.removeItem("aq_selected_client");
+  }
+  const client = selectedClient();
+
+  const clientCards = filteredClients.map((c) => `
+    <article class="vendor-card ${String(c.id) === String(client?.id) ? "selected-card" : ""}" data-client-id="${c.id}">
+      <div>
+        <h3>${escapeHtml(c.company_name || c.name || "")}</h3>
+        <p>${escapeHtml(c.cr_number || "No CR")}</p>
+      </div>
+      <span>${escapeHtml(c.signatory_name || "")}</span>
+      ${c.city ? `<small>${escapeHtml(c.city)}${c.country ? ", " + escapeHtml(c.country) : ""}</small>` : ""}
+    </article>
+  `).join("");
+
+  els.viewRoot.innerHTML = `
+    <section class="stats-row">
+      ${cardMetric("Approved Clients", state.clients.length)}
+      ${cardMetric("Pending Clients", state.pendingClients.length, isAdmin() ? "" : "admin")}
+    </section>
+
+    <section class="split-workspace">
       <div class="glass-panel">
         <div class="panel-header">
           <h2>Client Directory</h2>
@@ -1368,20 +1387,61 @@ function renderVendorsView() {
       </div>
     </section>
 
-    ${renderPendingPanel()}
+    ${renderPendingPanel("clients")}
   `;
 }
 
-function renderPendingPanel() {
+/**
+ * Onboarding queue for the Vendors or Clients view.
+ *
+ * `scope`:
+ *   "vendors" → Pending Vendors + Expiry Monitor
+ *   "clients" → Pending Clients
+ *
+ * Defaults to "vendors" so any old call sites keep working. The split
+ * (separate Vendors and Clients views) landed 2026-06-11.
+ */
+function renderPendingPanel(scope = "vendors") {
   if (!isAdmin()) {
+    const lead = scope === "clients"
+      ? "Pending clients and approval actions require an admin account."
+      : "Pending vendors, expiry alerts, and approval actions require an admin account.";
     return `
       <section class="glass-panel">
         <div class="panel-header"><h2>Onboarding Queue</h2></div>
-        <p class="empty-note">Pending vendors, clients, expiry alerts, and approval actions require an admin account.</p>
+        <p class="empty-note">${lead}</p>
       </section>
     `;
   }
 
+  if (scope === "clients") {
+    const pendingClientRows = state.pendingClients.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.company_name)}</td>
+        <td>${escapeHtml(item.cr_number)}</td>
+        <td>${escapeHtml(item.signatory_name)}</td>
+        <td>${escapeHtml(item.email || item.company_email)}</td>
+        <td>
+          <button class="mini-button" data-action="approve-client" data-id="${item.id}">Approve</button>
+          <button class="mini-button danger-text" data-action="reject-client" data-id="${item.id}">Reject</button>
+        </td>
+      </tr>
+    `).join("");
+
+    return `
+      <section class="glass-panel">
+        <div class="panel-header"><h2>Onboarding Queue</h2></div>
+        <div class="queue-grid">
+          <div>
+            <h3>Pending Clients</h3>
+            ${simpleTable(["Company", "CR", "Signatory", "Email", "Actions"], pendingClientRows)}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  // Vendors scope (default): pending vendor onboarding + expiring licenses.
   const pendingVendorRows = state.pendingVendors.map((item) => `
     <tr>
       <td>${escapeHtml(item.full_name)}</td>
@@ -1391,19 +1451,6 @@ function renderPendingPanel() {
       <td>
         <button class="mini-button" data-action="approve-vendor" data-id="${item.id}">Approve</button>
         <button class="mini-button danger-text" data-action="reject-vendor" data-id="${item.id}">Reject</button>
-      </td>
-    </tr>
-  `).join("");
-
-  const pendingClientRows = state.pendingClients.map((item) => `
-    <tr>
-      <td>${escapeHtml(item.company_name)}</td>
-      <td>${escapeHtml(item.cr_number)}</td>
-      <td>${escapeHtml(item.signatory_name)}</td>
-      <td>${escapeHtml(item.email || item.company_email)}</td>
-      <td>
-        <button class="mini-button" data-action="approve-client" data-id="${item.id}">Approve</button>
-        <button class="mini-button danger-text" data-action="reject-client" data-id="${item.id}">Reject</button>
       </td>
     </tr>
   `).join("");
@@ -1424,10 +1471,6 @@ function renderPendingPanel() {
         <div>
           <h3>Pending Vendors</h3>
           ${simpleTable(["Name", "License", "IBAN", "Platforms", "Actions"], pendingVendorRows)}
-        </div>
-        <div>
-          <h3>Pending Clients</h3>
-          ${simpleTable(["Company", "CR", "Signatory", "Email", "Actions"], pendingClientRows)}
         </div>
         <div>
           <h3>Expiry Monitor</h3>
@@ -2600,7 +2643,7 @@ async function createClient(event) {
   await loadClients();
   state.selectedClientId = String(created.id);
   localStorage.setItem("aq_selected_client", state.selectedClientId);
-  renderVendorsView();
+  renderClientsView();
   showToast("Client created");
 }
 
@@ -2627,7 +2670,7 @@ async function updateClient(event) {
     body: JSON.stringify(body),
   });
   await loadClients();
-  renderVendorsView();
+  renderClientsView();
   showToast("Client saved");
 }
 
@@ -2923,7 +2966,7 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.id === "client-search") {
     state.clientSearch = event.target.value;
-    renderVendorsView();
+    renderClientsView();
   }
   if (event.target.id === "contract-search") {
     state.contractSearch = event.target.value;
@@ -3152,7 +3195,7 @@ document.addEventListener("click", async (event) => {
     if (clientCard && !button) {
       state.selectedClientId = clientCard.dataset.clientId;
       localStorage.setItem("aq_selected_client", state.selectedClientId);
-      renderVendorsView();
+      renderClientsView();
       return;
     }
 
@@ -3438,7 +3481,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "refresh-clients") {
       await loadClients();
-      renderVendorsView();
+      renderClientsView();
     }
     if (action === "delete-client") {
       const cl = selectedClient();
@@ -3447,7 +3490,7 @@ document.addEventListener("click", async (event) => {
       state.clients = state.clients.filter((c) => String(c.id) !== String(cl.id));
       state.selectedClientId = "";
       localStorage.removeItem("aq_selected_client");
-      renderVendorsView();
+      renderClientsView();
       showToast("Client deleted");
     }
     if (action === "delete-vendor") {
@@ -3471,7 +3514,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ action: approved ? "approved" : "rejected" }),
       });
       await loadPendingData();
-      renderVendorsView();
+      renderClientsView();
       showToast(approved ? "Client approved" : "Client rejected");
     }
     if (action === "create-backup") {
