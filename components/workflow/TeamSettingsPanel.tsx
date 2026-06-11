@@ -4,12 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { absoluteUrl, withBase } from '@/lib/paths';
 import {
   useWorkspaceMembers, setWorkspaceMemberRole, useTaskCountsByMember,
-  useWorkspaceInvites, createWorkspaceInvite, deleteWorkspaceInvite,
-  deleteExpiredWorkspaceInvites,
-  recordInviteResend, recordInviteResendFailure,
-  useInviteEvents,
+  useWorkspaceInvites, deleteWorkspaceInvite, deleteExpiredWorkspaceInvites,
   type WorkspaceInviteRow,
-  type InviteEventRow,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { OperationsLookupsPanel } from './OperationsLookupsPanel';
@@ -39,14 +35,12 @@ const ROLE_BADGE: Record<WorkspaceRole, string> = {
   member: 'aq-badge-muted',
 };
 
-const RESEND_COOLDOWN_SECONDS = 60;
-
-type LastInvite = {
-  link: string;
+type CreatedAccount = {
   email: string;
-  status: string;
-  ok: boolean;
-  detail?: string | null;
+  // null when we linked an existing auth user — they keep their own password.
+  password: string | null;
+  role: WorkspaceRole;
+  created_new_user: boolean;
 };
 
 type DeleteTarget = {
@@ -65,14 +59,12 @@ export function TeamSettingsPanel({
   const { members, refetch, loading } = useWorkspaceMembers(workspaceId);
   const { counts } = useTaskCountsByMember(workspaceId);
   const { invites, refetch: refetchInvites, loading: loadingInvites } = useWorkspaceInvites(workspaceId);
-  const { events, refetch: refetchEvents } = useInviteEvents(workspaceId, 15);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>('member');
-  const [inviteHours, setInviteHours] = useState<1 | 12 | 24>(24);
-  const [lastInvite, setLastInvite] = useState<LastInvite | null>(null);
+  const [createdAccount, setCreatedAccount] = useState<CreatedAccount | null>(null);
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [showClearExpiredConfirm, setShowClearExpiredConfirm] = useState(false);
@@ -105,26 +97,6 @@ export function TeamSettingsPanel({
     [invites, now],
   );
 
-  const sendInviteEmail = async (email: string, link: string, roleLabel: string, expiresAt: string) => {
-    const mail = await fetch(withBase('/api/invites/send'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        link,
-        role: roleLabel,
-        expiresAt,
-        workspaceName: 'AQ Creativity',
-      }),
-    });
-    const result = await mail.json().catch(() => ({}));
-    if (!mail.ok) {
-      const err = new Error(result?.error || mail.statusText);
-      (err as any).provider = result?.provider ?? null;
-      throw err;
-    }
-  };
-
   const change = async (membershipId: string, newRole: WorkspaceRole) => {
     setBusyId(membershipId);
     setError('');
@@ -138,100 +110,50 @@ export function TeamSettingsPanel({
     }
   };
 
-  const invite = async () => {
+  /**
+   * Admin-create: skip the email link entirely. Server provisions the
+   * auth user (random password) and links them to the workspace; we
+   * reveal the credentials inline for the admin to copy / share.
+   *
+   * Mirrors the contract app's AdminCreatePortalModal but for team
+   * members instead of vendor/client portal accounts.
+   */
+  const createAccount = async () => {
     if (!inviteEmail.trim()) return;
     setInviteBusy(true);
     setError('');
-    setLastInvite(null);
+    setCreatedAccount(null);
 
     try {
       const targetEmail = inviteEmail.trim();
-      const created = await createWorkspaceInvite(workspaceId, targetEmail, inviteRole, inviteHours);
-      const link = absoluteUrl(`/auth?invite=${created.token}`);
-      await navigator.clipboard?.writeText(link).catch(() => {});
+      const response = await fetch(withBase('/api/team/admin-create'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          email: targetEmail,
+          role: inviteRole,
+        }),
+      });
 
-      try {
-        await sendInviteEmail(created.email, link, ROLE_LABELS[created.role], created.expires_at);
-        setLastInvite({
-          email: targetEmail,
-          link,
-          ok: true,
-          status: `Invite email sent to ${targetEmail}. The link was also copied.`,
-        });
-      } catch (mailError: any) {
-        const provider = mailError?.provider;
-        const detail = provider
-          ? `${provider.name ?? 'error'} (${provider.status ?? '???'}): ${provider.message ?? ''}`
-          : null;
-        setLastInvite({
-          email: targetEmail,
-          link,
-          ok: false,
-          status: `Invite created, but email was not sent: ${mailError?.message ?? mailError}`,
-          detail,
-        });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.error || response.statusText || 'Account creation failed');
       }
 
+      setCreatedAccount({
+        email: result.email,
+        password: result.password ?? null,
+        role: result.role,
+        created_new_user: !!result.created_new_user,
+      });
       setInviteEmail('');
       setInviteRole('member');
-      setInviteHours(24);
-      await refetchInvites();
-      await refetchEvents();
+      await refetch();
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
       setInviteBusy(false);
-    }
-  };
-
-  const resendInvite = async (inv: WorkspaceInviteRow) => {
-    setBusyId(inv.id);
-    setError('');
-    setLastInvite(null);
-    const link = absoluteUrl(`/auth?invite=${inv.token}`);
-
-    try {
-      // 1. Server-side cooldown check + counter bump. If this throws, no email
-      //    is sent and no counter is consumed for follow-up clicks.
-      await recordInviteResend(inv.id);
-
-      // 2. Actually send the email.
-      try {
-        await sendInviteEmail(inv.email, link, ROLE_LABELS[inv.role], inv.expires_at);
-        await navigator.clipboard?.writeText(link).catch(() => {});
-        setLastInvite({
-          email: inv.email,
-          link,
-          ok: true,
-          status: `Invite resent to ${inv.email}. The link was also copied.`,
-        });
-      } catch (mailError: any) {
-        const provider = mailError?.provider;
-        const reason = provider
-          ? `${provider.name ?? 'error'} (${provider.status ?? '???'}): ${provider.message ?? ''}`
-          : (mailError?.message ?? String(mailError));
-        // Log the failure so admins can see it in the audit trail.
-        await recordInviteResendFailure(inv.id, reason).catch(() => {});
-        setLastInvite({
-          email: inv.email,
-          link,
-          ok: false,
-          status: `Invite was not resent: ${mailError?.message ?? mailError}`,
-          detail: reason,
-        });
-      }
-    } catch (cooldownError: any) {
-      // The cooldown RPC threw — show the message verbatim, no email sent.
-      setLastInvite({
-        email: inv.email,
-        link,
-        ok: false,
-        status: cooldownError?.message ?? String(cooldownError),
-      });
-    } finally {
-      await refetchInvites();
-      await refetchEvents();
-      setBusyId(null);
     }
   };
 
@@ -252,7 +174,6 @@ export function TeamSettingsPanel({
     try {
       await deleteWorkspaceInvite(target.id);
       await refetchInvites();
-      await refetchEvents();
       setDeleteTarget(null);
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -267,7 +188,6 @@ export function TeamSettingsPanel({
     try {
       await deleteExpiredWorkspaceInvites(workspaceId);
       await refetchInvites();
-      await refetchEvents();
       setShowClearExpiredConfirm(false);
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -293,7 +213,9 @@ export function TeamSettingsPanel({
         <header style={{ marginBottom: 16 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700 }}>Team & roles</h2>
           <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 4 }}>
-            Invite teammates, promote, demote, or remove access. Invites expire in the window you choose.
+            Create a teammate's account directly — no email is sent. You'll
+            get a one-time password to share with them. They can change it
+            after signing in.
           </p>
         </header>
 
@@ -301,7 +223,7 @@ export function TeamSettingsPanel({
 
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(220px, 1fr) 170px 150px auto',
+          gridTemplateColumns: 'minmax(220px, 1fr) 170px auto',
           gap: 10,
           marginBottom: 18,
         }}>
@@ -319,27 +241,21 @@ export function TeamSettingsPanel({
           >
             {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
           </select>
-          <select
-            className="aq-select"
-            value={inviteHours}
-            onChange={(e) => setInviteHours(Number(e.target.value) as 1 | 12 | 24)}
-          >
-            <option value={1}>1 hour</option>
-            <option value={12}>12 hours</option>
-            <option value={24}>24 hours</option>
-          </select>
           <button
             type="button"
             className="aq-btn aq-btn-primary"
-            onClick={invite}
+            onClick={createAccount}
             disabled={inviteBusy || !inviteEmail.trim()}
           >
-            {inviteBusy ? 'Creating...' : 'Create invite'}
+            {inviteBusy ? 'Creating...' : 'Create account'}
           </button>
         </div>
 
-        {lastInvite && (
-          <InviteStatus invite={lastInvite} />
+        {createdAccount && (
+          <CreatedAccountCard
+            account={createdAccount}
+            onClose={() => setCreatedAccount(null)}
+          />
         )}
 
         {loading ? (
@@ -390,69 +306,57 @@ export function TeamSettingsPanel({
         )}
       </div>
 
-      <div className="aq-card" style={{ padding: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
-          <div>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Recent invites</h3>
-            <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 4 }}>
-              Resend pending invites, copy a link, or clear all expired pending invites.
-            </p>
-            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-              <span className="aq-badge aq-badge-warning">{summary.pending} pending</span>
-              <span className="aq-badge aq-badge-success">{summary.accepted} accepted</span>
-              <span className="aq-badge aq-badge-error">{summary.expired} expired</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="aq-btn aq-btn-secondary"
-            onClick={() => setShowClearExpiredConfirm(true)}
-            disabled={busyId === 'clear-expired' || expiredPendingCount === 0}
-            title={expiredPendingCount === 0 ? 'No expired invites to clear' : ''}
-          >
-            {busyId === 'clear-expired' ? 'Clearing...' : `Clear expired${expiredPendingCount ? ` (${expiredPendingCount})` : ''}`}
-          </button>
-        </div>
-
-        {loadingInvites ? (
-          <p style={{ color: 'var(--aq-text-muted)', marginTop: 14 }}>Loading invites...</p>
-        ) : invites.length === 0 ? (
-          <p style={{ color: 'var(--aq-text-muted)', marginTop: 14 }}>No invites yet.</p>
-        ) : (
-          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-            {invites.map((inv) => (
-              <InviteRow
-                key={inv.id}
-                invite={inv}
-                now={now}
-                busyId={busyId}
-                copiedInviteId={copiedInviteId}
-                onResend={() => resendInvite(inv)}
-                onCopy={() => copyInviteLink(inv)}
-                onRequestDelete={(status) => setDeleteTarget({ id: inv.id, email: inv.email, status })}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {events.length > 0 && (
+      {/*
+       * Legacy invites — kept visible only so admins can clean up rows
+       * left over from the old email-link flow. New invites no longer
+       * go through this table. Existing pending links still work for
+       * the recipient (the /auth?invite=<token> path is unchanged), but
+       * we don't expose Resend any more because email sending is gone.
+       */}
+      {invites.length > 0 && (
         <div className="aq-card" style={{ padding: 24 }}>
-          <header style={{ marginBottom: 12 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Invite activity</h3>
-            <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 4 }}>
-              Audit trail of every invite action in this workspace.
-            </p>
-          </header>
-          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {events.map((ev) => (
-              <li key={ev.id} style={{ fontSize: 12, color: 'var(--aq-text-secondary)', padding: '4px 0' }}>
-                <strong>{ev.actor?.full_name ?? 'Someone'}</strong>
-                {' '}{describeEvent(ev)}{' '}
-                <span style={{ color: 'var(--aq-text-muted)' }}>· {formatRelative(ev.created_at, now)}</span>
-              </li>
-            ))}
-          </ul>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+            <div>
+              <h3 style={{ fontSize: 16, fontWeight: 700 }}>Legacy invite links</h3>
+              <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 4 }}>
+                Old token-based invites from the previous flow. You can copy
+                a link or delete the row. New accounts are now created
+                directly above — no email or token needed.
+              </p>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <span className="aq-badge aq-badge-warning">{summary.pending} pending</span>
+                <span className="aq-badge aq-badge-success">{summary.accepted} accepted</span>
+                <span className="aq-badge aq-badge-error">{summary.expired} expired</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              onClick={() => setShowClearExpiredConfirm(true)}
+              disabled={busyId === 'clear-expired' || expiredPendingCount === 0}
+              title={expiredPendingCount === 0 ? 'No expired invites to clear' : ''}
+            >
+              {busyId === 'clear-expired' ? 'Clearing...' : `Clear expired${expiredPendingCount ? ` (${expiredPendingCount})` : ''}`}
+            </button>
+          </div>
+
+          {loadingInvites ? (
+            <p style={{ color: 'var(--aq-text-muted)', marginTop: 14 }}>Loading invites...</p>
+          ) : (
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
+              {invites.map((inv) => (
+                <InviteRow
+                  key={inv.id}
+                  invite={inv}
+                  now={now}
+                  busyId={busyId}
+                  copiedInviteId={copiedInviteId}
+                  onCopy={() => copyInviteLink(inv)}
+                  onRequestDelete={(status) => setDeleteTarget({ id: inv.id, email: inv.email, status })}
+                />
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -500,13 +404,12 @@ export function TeamSettingsPanel({
 
 function InviteRow({
   invite, now, busyId, copiedInviteId,
-  onResend, onCopy, onRequestDelete,
+  onCopy, onRequestDelete,
 }: {
   invite: WorkspaceInviteRow;
   now: number;
   busyId: string | null;
   copiedInviteId: string | null;
-  onResend: () => void;
   onCopy: () => void;
   onRequestDelete: (status: 'pending' | 'accepted' | 'expired') => void;
 }) {
@@ -516,28 +419,10 @@ function InviteRow({
   const status: 'pending' | 'accepted' | 'expired' =
     invite.accepted_at ? 'accepted' : expired ? 'expired' : 'pending';
 
-  const cooldownLeft = invite.last_resent_at
-    ? Math.max(
-        0,
-        RESEND_COOLDOWN_SECONDS -
-          Math.floor((now - new Date(invite.last_resent_at).getTime()) / 1000),
-      )
-    : 0;
-  const onCooldown = cooldownLeft > 0;
-
-  const resendDisabled = !pending || busyId === invite.id || onCooldown;
-  const resendLabel = busyId === invite.id
-    ? 'Working...'
-    : onCooldown
-      ? `Resend (${cooldownLeft}s)`
-      : invite.resend_count > 0
-        ? `Resend (sent ${invite.resend_count}x)`
-        : 'Resend';
-
   return (
     <li style={{
       display: 'grid',
-      gridTemplateColumns: 'minmax(180px, 1fr) auto auto auto auto auto',
+      gridTemplateColumns: 'minmax(180px, 1fr) auto auto auto auto',
       gap: 10,
       alignItems: 'center',
       padding: '12px 14px',
@@ -572,22 +457,6 @@ function InviteRow({
       </button>
       <button
         type="button"
-        className="aq-btn aq-btn-secondary"
-        onClick={onResend}
-        disabled={resendDisabled}
-        title={
-          onCooldown
-            ? `Wait ${cooldownLeft}s before resending`
-            : !pending
-              ? 'Only pending invites can be resent'
-              : ''
-        }
-        style={{ padding: '6px 10px' }}
-      >
-        {resendLabel}
-      </button>
-      <button
-        type="button"
         className="aq-btn aq-btn-ghost"
         onClick={() => onRequestDelete(status)}
         disabled={busyId === invite.id}
@@ -599,31 +468,112 @@ function InviteRow({
   );
 }
 
-function InviteStatus({ invite }: { invite: LastInvite }) {
+/**
+ * Reveal-once credentials card shown after the admin-create POST
+ * succeeds. Mirrors the vendor/client portal AdminCreatePortalModal
+ * UX: email + password + role in copyable code blocks.
+ */
+function CreatedAccountCard({
+  account, onClose,
+}: {
+  account: CreatedAccount;
+  onClose: () => void;
+}) {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const copy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(label);
+      setTimeout(() => setCopiedField((c) => (c === label ? null : c)), 1500);
+    } catch { /* swallow — user can select & copy by hand */ }
+  };
+
   return (
-    <div className={`aq-badge ${invite.ok ? 'aq-badge-success' : 'aq-badge-warning'}`} style={{
-      display: 'block',
+    <div className="aq-card" style={{
       marginBottom: 16,
-      whiteSpace: 'normal',
-      lineHeight: 1.45,
+      padding: 16,
+      background: 'var(--aq-bg-elevated)',
+      border: '1px solid var(--aq-border)',
     }}>
-      {invite.status}
-      {invite.detail && (
-        <div style={{ fontSize: 11, opacity: 0.85, marginTop: 4 }}>
-          Provider response: {invite.detail}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>
+            {account.created_new_user ? 'Account created' : 'Workspace access granted'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+            {account.created_new_user
+              ? `Share these credentials with the new ${ROLE_LABELS[account.role]}. They can change the password after signing in.`
+              : `${account.email} already had an account — they were added to this workspace as ${ROLE_LABELS[account.role]}. No new password needed.`}
+          </div>
         </div>
-      )}
-      <br />
-      <code style={{ wordBreak: 'break-all' }}>{invite.link}</code>
-      <div style={{ marginTop: 10 }}>
-        <a
-          className="aq-btn aq-btn-secondary"
-          href={`mailto:${encodeURIComponent(invite.email)}?subject=${encodeURIComponent('AQ Creativity workspace invite')}&body=${encodeURIComponent(`You have been invited to AQ Creativity.\n\nOpen this link within the invite window to create your account:\n${invite.link}`)}`}
-          style={{ display: 'inline-flex', textDecoration: 'none' }}
+        <button
+          type="button"
+          className="aq-btn aq-btn-ghost"
+          onClick={onClose}
+          style={{ padding: '4px 10px', fontSize: 12 }}
         >
-          Open email draft
-        </a>
+          Dismiss
+        </button>
       </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+        <CredentialLine
+          label="Email"
+          value={account.email}
+          copied={copiedField === 'email'}
+          onCopy={() => copy('email', account.email)}
+        />
+        {account.password && (
+          <CredentialLine
+            label="Password"
+            value={account.password}
+            copied={copiedField === 'password'}
+            onCopy={() => copy('password', account.password!)}
+          />
+        )}
+        <CredentialLine
+          label="Sign-in URL"
+          value={absoluteUrl('/auth')}
+          copied={copiedField === 'url'}
+          onCopy={() => copy('url', absoluteUrl('/auth'))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CredentialLine({
+  label, value, copied, onCopy,
+}: {
+  label: string;
+  value: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+        textTransform: 'uppercase', color: 'var(--aq-text-muted)',
+        minWidth: 80,
+      }}>
+        {label}
+      </span>
+      <code style={{
+        flex: 1, fontSize: 13, padding: '8px 10px',
+        background: 'var(--aq-bg)', borderRadius: 'var(--aq-radius)',
+        wordBreak: 'break-all',
+      }}>
+        {value}
+      </code>
+      <button
+        type="button"
+        className="aq-btn aq-btn-secondary"
+        onClick={onCopy}
+        style={{ padding: '6px 12px', fontSize: 12 }}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
     </div>
   );
 }
@@ -680,31 +630,4 @@ function ConfirmDialog({
       </div>
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function describeEvent(ev: InviteEventRow): string {
-  const role = ROLE_LABELS[ev.invite_role] ?? ev.invite_role;
-  const target = ev.invite_email;
-  switch (ev.action) {
-    case 'created':       return `created an invite for ${target} (${role})`;
-    case 'resent':        return `resent the invite to ${target}`;
-    case 'accepted':      return `accepted the invite for ${target}`;
-    case 'revoked':       return `revoked the invite for ${target}`;
-    case 'expired':       return `cleared an expired invite for ${target}`;
-    case 'role_changed':  return `changed the role on ${target}'s invite`;
-    case 'resend_failed': return `tried to resend ${target}'s invite, but email failed`;
-    default:              return `${ev.action} (${target})`;
-  }
-}
-
-function formatRelative(iso: string, nowMs: number): string {
-  const diff = nowMs - new Date(iso).getTime();
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return new Date(iso).toLocaleDateString();
 }
