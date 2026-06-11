@@ -355,7 +355,7 @@ export function TeamSettingsPanel({
                     busy={busyId === m.id}
                     onClick={() => setRemoveMemberTarget({
                       membershipId: m.id,
-                      displayName: m.profile?.full_name ?? m.profile?.email ?? 'this member',
+                      displayName: m.profile?.full_name ?? 'this member',
                       role: m.role,
                       isSelf: isMe,
                     })}
