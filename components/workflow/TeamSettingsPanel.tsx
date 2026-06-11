@@ -49,6 +49,18 @@ type DeleteTarget = {
   status: 'pending' | 'accepted' | 'expired';
 };
 
+/**
+ * "Remove member" confirm-dialog target. Separate from DeleteTarget
+ * because that one is for legacy invite-link rows; this one is for
+ * actual workspace_members rows.
+ */
+type RemoveMemberTarget = {
+  membershipId: string;
+  displayName: string;
+  role: WorkspaceRole;
+  isSelf: boolean;
+};
+
 export function TeamSettingsPanel({
   workspaceId, currentUserId, role,
 }: {
@@ -69,6 +81,7 @@ export function TeamSettingsPanel({
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [showClearExpiredConfirm, setShowClearExpiredConfirm] = useState(false);
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<RemoveMemberTarget | null>(null);
 
   // Tick once a second so cooldown countdowns and "expired" pills stay accurate
   // even when the tab sits open.
@@ -196,6 +209,36 @@ export function TeamSettingsPanel({
     }
   };
 
+  /**
+   * Remove a member from the workspace (keep their auth account intact).
+   * Server enforces: owner/admin only, blocks removing the last owner,
+   * and blocks admin from removing an owner.
+   */
+  const removeMember = async (target: RemoveMemberTarget) => {
+    setBusyId(target.membershipId);
+    setError('');
+    try {
+      const response = await fetch(withBase('/api/team/remove-member'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          membership_id: target.membershipId,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.error || response.statusText || 'Removal failed');
+      }
+      setRemoveMemberTarget(null);
+      await refetch();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (!canEdit) {
     return (
       <div className="aq-card" style={{ padding: 28 }}>
@@ -267,7 +310,7 @@ export function TeamSettingsPanel({
               return (
                 <li key={m.id} style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr auto auto auto',
+                  gridTemplateColumns: '1fr auto auto auto auto',
                   gap: 12,
                   alignItems: 'center',
                   padding: '12px 14px',
@@ -299,6 +342,24 @@ export function TeamSettingsPanel({
                   <span className={`aq-badge ${ROLE_BADGE[m.role]}`}>
                     {ROLE_LABELS[m.role]}
                   </span>
+                  {/*
+                   * Remove button: server enforces the real rules (last
+                   * owner, admin-vs-owner). The UI just hides it for
+                   * obvious cases: you can't remove yourself if you're
+                   * the only owner, and admins can't see Remove on owners.
+                   */}
+                  <RemoveMemberButton
+                    member={m}
+                    isMe={isMe}
+                    callerRole={role}
+                    busy={busyId === m.id}
+                    onClick={() => setRemoveMemberTarget({
+                      membershipId: m.id,
+                      displayName: m.profile?.full_name ?? m.profile?.email ?? 'this member',
+                      role: m.role,
+                      isSelf: isMe,
+                    })}
+                  />
                 </li>
               );
             })}
@@ -387,6 +448,22 @@ export function TeamSettingsPanel({
           busy={busyId === 'clear-expired'}
           onCancel={() => setShowClearExpiredConfirm(false)}
           onConfirm={clearExpired}
+        />
+      )}
+
+      {removeMemberTarget && (
+        <ConfirmDialog
+          title={removeMemberTarget.isSelf ? 'Leave this workspace?' : `Remove ${removeMemberTarget.displayName}?`}
+          body={
+            removeMemberTarget.isSelf
+              ? `You will lose access to this workspace. Your Supabase account will not be deleted — an owner can re-add you later.`
+              : `${removeMemberTarget.displayName} will lose access to this workspace as ${ROLE_LABELS[removeMemberTarget.role]}. Their Supabase login is kept, so they could be re-added later.`
+          }
+          confirmLabel={removeMemberTarget.isSelf ? 'Leave workspace' : 'Remove member'}
+          tone="danger"
+          busy={busyId === removeMemberTarget.membershipId}
+          onCancel={() => setRemoveMemberTarget(null)}
+          onConfirm={() => removeMember(removeMemberTarget)}
         />
       )}
 
@@ -539,6 +616,42 @@ function CreatedAccountCard({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Per-row Remove button. The real authorization happens server-side in
+ * /api/team/remove-member — this component just hides cases that are
+ * obviously useless to surface:
+ *   - Don't show "Remove" on an owner row when the caller isn't an
+ *     owner; admin can't remove an owner anyway.
+ *   - Don't show "Remove" on your own row if you're the sole owner —
+ *     it would either fail with "last owner" or leave the workspace
+ *     stranded. (Multi-owner self-removal is allowed.)
+ */
+function RemoveMemberButton({
+  member, isMe, callerRole, busy, onClick,
+}: {
+  member: { id: string; role: WorkspaceRole };
+  isMe: boolean;
+  callerRole: WorkspaceRole | null;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  // Admin viewing an owner → hide.
+  if (member.role === 'owner' && callerRole !== 'owner') return null;
+
+  return (
+    <button
+      type="button"
+      className="aq-btn aq-btn-ghost"
+      onClick={onClick}
+      disabled={busy}
+      style={{ padding: '6px 10px', fontSize: 12, color: 'var(--aq-error)' }}
+      title={isMe ? 'Leave this workspace' : 'Remove from workspace'}
+    >
+      {busy ? 'Working...' : (isMe ? 'Leave' : 'Remove')}
+    </button>
   );
 }
 
