@@ -1849,15 +1849,85 @@ function prettyContractName(c, ext) {
 }
 
 async function downloadFile(path, fallbackName) {
+  // Use a native browser download via hidden iframe rather than fetching
+  // the bytes into JS and triggering a JS-mediated download. Why: Chrome on
+  // Windows strips non-ASCII characters (Arabic, CJK, …) from every
+  // JS-supplied filename — blob URL, data URL, even showSaveFilePicker's
+  // suggestedName. Reported and confirmed via debug snippet on 2026-06-10.
+  //
+  // The native flow uses the server's Content-Disposition header (which
+  // carries filename*=UTF-8'' for proper UTF-8 round-trip) and saves the
+  // file directly without any JS sanitization layer.
+  //
+  // Auth: an iframe request can't carry an Authorization header, so we
+  // append `?token=…` to the URL. The backend's `get_user_for_download`
+  // dependency accepts either header or query param. JWT expiry (~8h)
+  // limits the risk of token leakage via browser history / server logs.
+  const token = (typeof aqToken === "function" && aqToken())
+              || localStorage.getItem("aq_token")
+              || "";
+  if (!token) {
+    showToast("Not signed in.", "error");
+    return;
+  }
+  const url = `${API_BASE}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+
   setBusy(true);
   try {
+    // Pre-check that the file actually exists (and trigger /regenerate if
+    // not) before opening the iframe — otherwise the 404 lands silently
+    // inside the iframe with no user feedback.
+    let response = await fetch(`${API_BASE}${path}`, {
+      headers: authHeaders(false),
+      method: "HEAD",
+    });
+    if (response.status === 404) {
+      const m = path.match(/\/contracts\/download\/(pdf|docx)\/([^/?#]+)/);
+      if (m) {
+        const contractId = decodeURIComponent(m[2]);
+        showToast(`File missing — regenerating ${contractId}…`, "warn");
+        try {
+          await api(`/api/contracts/${contractId}/regenerate`, { method: "POST" });
+        } catch (regenErr) {
+          throw new Error(`File missing and regenerate failed: ${regenErr.message || regenErr}`);
+        }
+      }
+    } else if (!response.ok && response.status !== 405 /* HEAD not allowed */) {
+      const message = await response.text();
+      throw new Error(message || `Download failed with ${response.status}`);
+    }
+
+    // Trigger the native download. The iframe approach keeps the page
+    // visible (vs setting window.location, which can cause navigation
+    // flicker on some browsers). Most browsers fire `load` even for
+    // 200 + Content-Disposition: attachment; the iframe sits idle and
+    // we clean it up later.
+    const iframe = document.createElement("iframe");
+    iframe.style.display = "none";
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    setTimeout(() => { try { iframe.remove(); } catch (_) {} }, 60_000);
+    // Mark the suggested name for the user (toast / log only — no longer
+    // used to set link.download). Browser uses the server's CD header.
+    if (fallbackName) console.debug("Download suggested filename:", fallbackName);
+    return;
+  } finally {
+    setBusy(false);
+  }
+
+  // (Old blob-fetching / JS-mediated download path was removed 2026-06-10
+  // — Chrome on Windows strips Arabic from every JS-supplied filename,
+  // regardless of URL scheme or showSaveFilePicker. The iframe path above
+  // uses the browser's native download flow, which respects the server's
+  // Content-Disposition: filename*=UTF-8'' header correctly.)
+  /* eslint-disable no-unreachable */
+  // The block below is dead code, intentionally kept as a fallback example
+  // in case we need to roll back. Wrapped in `if (false)` so static analyzers
+  // and bundlers eliminate it without breaking syntax.
+  if (false) {
     let response = await fetch(`${API_BASE}${path}`, {
       headers: authHeaders(false),
     });
-
-    // Auto-heal: 404 on a download usually means the local file got wiped
-    // (Render redeploy) AND there's no Storage backup. Pull the contract_id
-    // out of the path, hit /regenerate, then retry the download once.
     if (response.status === 404) {
       const m = path.match(/\/contracts\/download\/(pdf|docx)\/([^/?#]+)/);
       if (m) {
@@ -1962,8 +2032,6 @@ async function downloadFile(path, fallbackName) {
       link.remove();
       URL.revokeObjectURL(url);
     }
-  } finally {
-    setBusy(false);
   }
 }
 
