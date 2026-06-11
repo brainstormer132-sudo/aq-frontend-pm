@@ -141,6 +141,7 @@ const state = {
   tasks: [],
   subtasks: [],
   vendors: [],
+  vendorCategories: [],
   templates: [],
   contracts: [],
   settings: [],
@@ -522,6 +523,7 @@ async function refreshAll() {
   await Promise.all([
     loadTasks(),
     loadVendors({ quiet: true }),
+    loadVendorCategories(),
     loadTemplates({ quiet: true }),
     loadContracts({ quiet: true }),
     loadSettings({ quiet: true }),
@@ -558,6 +560,28 @@ async function loadSelectedSubtasks() {
 async function loadVendors() {
   state.vendors = await api("/api/vendors/", { body: undefined });
   return state.vendors;
+}
+
+/**
+ * Load the vendor_categories lookup (id, key, label, requires_license,
+ * sort_order). Backed by migration 029 + the new GET /api/vendors/categories
+ * endpoint. Cached on `state.vendorCategories` for the form pickers.
+ */
+async function loadVendorCategories() {
+  try {
+    state.vendorCategories = await api("/api/vendors/categories", { body: undefined });
+    if (!Array.isArray(state.vendorCategories)) state.vendorCategories = [];
+  } catch (err) {
+    console.error("loadVendorCategories failed:", err);
+    state.vendorCategories = [];
+  }
+  return state.vendorCategories;
+}
+
+/** Find a category by id. Returns null if missing. */
+function findVendorCategory(categoryId) {
+  if (!categoryId) return null;
+  return (state.vendorCategories || []).find((c) => String(c.id) === String(categoryId)) || null;
 }
 
 async function loadTemplates() {
@@ -903,6 +927,16 @@ async function renderTasksView() {
               <option>Multi Service</option>
             </select>
           </label>
+          <!--
+            Multi-service free-text override. Only shown when the
+            Ad Type dropdown is on "Multi Service" — toggled by the
+            "sub-ad-type" change handler. Whatever the user types
+            here replaces "خدمة متعددة" in the generated contract.
+          -->
+          <label id="sub-ad-type-custom-label" style="display:none">
+            Multi-service text
+            <input id="sub-ad-type-custom" placeholder="What does this multi-service cover?" />
+          </label>
           <label>Qty <input id="sub-qty" value="1" /></label>
           <label>Price <input id="sub-price" value="0" /></label>
           <label>Details <textarea id="sub-details" rows="3"></textarea></label>
@@ -961,6 +995,180 @@ function renderSubtaskTable() {
       </table>
     </div>
   `;
+}
+
+/**
+ * Render the shared field block for the New Vendor / Edit Vendor forms.
+ *
+ * `mode`:
+ *   "new"  → input IDs prefixed `#vendor-*` (matches the existing
+ *            #vendor-name + #vendor-license naming)
+ *   "edit" → input IDs prefixed `#vendor-edit-*`
+ *
+ * `vendor`: the row being edited, or null for the create form.
+ *
+ * Field set mirrors what PM-app VendorsView ships:
+ *   Category picker → ID/License (auto-switched by requires_license)
+ *   Signatory, Contact name/phone/email, VAT, Details (always shown)
+ *   Per-category optional: location_link, short_address, age, gender,
+ *   rental_type, event_opening, event_ceremony, location_type
+ *
+ * Per-category visibility is set initially based on the saved category;
+ * the change handler on `#{prefix}-category` updates visibility live.
+ */
+function renderVendorFormFields(mode, vendor) {
+  const prefix = mode === "edit" ? "vendor-edit" : "vendor";
+  const categories = state.vendorCategories || [];
+  const catId = vendor?.category_id || "";
+  const cat = findVendorCategory(catId);
+  const requiresLicense = !!cat?.requires_license;
+  const catKey = cat?.key || "";
+
+  const categoryOptions = `
+    <option value="">— select a category —</option>
+    ${categories.map((c) => `
+      <option value="${encodeAttr(c.id)}" ${c.id === catId ? "selected" : ""}>
+        ${escapeHtml(c.label)}
+      </option>
+    `).join("")}
+  `;
+
+  const showWhen = (visible) => `style="${visible ? "" : "display:none"}"`;
+
+  return `
+    <label>Category
+      <select id="${prefix}-category" required>${categoryOptions}</select>
+    </label>
+    <label>Vendor name <input id="${prefix}-name" required value="${encodeAttr(vendor?.name || "")}" /></label>
+
+    <!-- ID and License are mutually visible: License for Influencer+UGC, ID for the rest. -->
+    <label id="${prefix}-id-label" ${showWhen(!requiresLicense)}>
+      ID number
+      <input id="${prefix}-id-number" value="${encodeAttr(vendor?.id_number || "")}" />
+    </label>
+    <label id="${prefix}-license-label" ${showWhen(requiresLicense)}>
+      License number
+      <input id="${prefix}-license" value="${encodeAttr(vendor?.license_number || "")}" />
+    </label>
+
+    <label>Signatory name
+      <input id="${prefix}-signatory" placeholder="Who signs the contract" value="${encodeAttr(vendor?.signatory_name || "")}" />
+    </label>
+    <label>Contact name
+      <input id="${prefix}-contact-name" value="${encodeAttr(vendor?.contact_name || "")}" />
+    </label>
+    <label>Contact phone
+      <input id="${prefix}-phone" value="${encodeAttr(vendor?.phone || "")}" />
+    </label>
+    <label>Contact email
+      <input id="${prefix}-email" type="email" value="${encodeAttr(vendor?.email || "")}" />
+    </label>
+    <label>VAT number (optional)
+      <input id="${prefix}-vat" value="${encodeAttr(vendor?.vat_number || "")}" />
+    </label>
+
+    <!-- Per-category optional fields. Visibility toggled by category change. -->
+    <label id="${prefix}-location-link-label" ${showWhen(catKey === "logistics" || catKey === "location")}>
+      Location link (optional)
+      <input id="${prefix}-location-link" placeholder="Google Maps URL" value="${encodeAttr(vendor?.location_link || "")}" />
+    </label>
+    <label id="${prefix}-short-address-label" ${showWhen(catKey === "logistics")}>
+      Short address (optional)
+      <input id="${prefix}-short-address" value="${encodeAttr(vendor?.short_address || "")}" />
+    </label>
+    <label id="${prefix}-age-label" ${showWhen(catKey === "model")}>
+      Age (optional)
+      <input id="${prefix}-age" type="number" min="0" value="${vendor?.age != null ? vendor.age : ""}" />
+    </label>
+    <label id="${prefix}-gender-label" ${showWhen(catKey === "model")}>
+      Gender (optional)
+      <select id="${prefix}-gender">
+        <option value="">—</option>
+        <option value="male"   ${vendor?.gender === "male"   ? "selected" : ""}>Male</option>
+        <option value="female" ${vendor?.gender === "female" ? "selected" : ""}>Female</option>
+      </select>
+    </label>
+    <label id="${prefix}-rental-type-label" ${showWhen(catKey === "rentals")}>
+      Rental type (optional)
+      <input id="${prefix}-rental-type" value="${encodeAttr(vendor?.rental_type || "")}" />
+    </label>
+    <label id="${prefix}-event-opening-label" ${showWhen(catKey === "events")}>
+      Opening (optional)
+      <input id="${prefix}-event-opening" value="${encodeAttr(vendor?.event_opening || "")}" />
+    </label>
+    <label id="${prefix}-event-ceremony-label" ${showWhen(catKey === "events")}>
+      Ceremony (optional)
+      <input id="${prefix}-event-ceremony" value="${encodeAttr(vendor?.event_ceremony || "")}" />
+    </label>
+    <label id="${prefix}-location-type-label" ${showWhen(catKey === "location")}>
+      Location type (optional)
+      <input id="${prefix}-location-type" placeholder="e.g. Studio, outdoor" value="${encodeAttr(vendor?.location_type || "")}" />
+    </label>
+
+    <label>Details (optional)
+      <textarea id="${prefix}-details" rows="2">${escapeHtml(vendor?.details || "")}</textarea>
+    </label>
+  `;
+}
+
+/**
+ * Toggle the visibility of ID/License + per-category optional fields
+ * inside a vendor form when the category picker changes.
+ *
+ * Called from the global `change` listener — see the
+ * `event.target.id.endsWith("-category")` branch.
+ */
+function syncVendorCategoryVisibility(prefix) {
+  const select = document.getElementById(`${prefix}-category`);
+  if (!select) return;
+  const cat = findVendorCategory(select.value);
+  const requiresLicense = !!cat?.requires_license;
+  const key = cat?.key || "";
+  const setShown = (id, shown) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = shown ? "" : "none";
+  };
+  setShown(`${prefix}-id-label`,             !requiresLicense);
+  setShown(`${prefix}-license-label`,        requiresLicense);
+  setShown(`${prefix}-location-link-label`,  key === "logistics" || key === "location");
+  setShown(`${prefix}-short-address-label`,  key === "logistics");
+  setShown(`${prefix}-age-label`,            key === "model");
+  setShown(`${prefix}-gender-label`,         key === "model");
+  setShown(`${prefix}-rental-type-label`,    key === "rentals");
+  setShown(`${prefix}-event-opening-label`,  key === "events");
+  setShown(`${prefix}-event-ceremony-label`, key === "events");
+  setShown(`${prefix}-location-type-label`,  key === "location");
+}
+
+/**
+ * Read a vendor form's current values into the shape the
+ * /api/vendors/ POST / PATCH endpoints expect. Centralised so
+ * createVendor + updateVendor stay tiny.
+ */
+function readVendorFormPayload(prefix) {
+  const val = (suffix) => (getFormValue(`#${prefix}-${suffix}`) || "").trim();
+  const ageRaw = val("age");
+  const ageNum = ageRaw === "" ? null : Number(ageRaw);
+  return {
+    name:           val("name"),
+    category_id:    val("category") || null,
+    id_number:      val("id-number"),
+    license_number: val("license"),
+    signatory_name: val("signatory"),
+    contact_name:   val("contact-name"),
+    phone:          val("phone"),
+    email:          val("email"),
+    vat_number:     val("vat"),
+    details:        val("details"),
+    location_link:  val("location-link"),
+    short_address:  val("short-address"),
+    age:            Number.isFinite(ageNum) ? ageNum : null,
+    gender:         val("gender"),
+    rental_type:    val("rental-type"),
+    event_opening:  val("event-opening"),
+    event_ceremony: val("event-ceremony"),
+    location_type:  val("location-type"),
+  };
 }
 
 function renderVendorsView() {
@@ -1070,8 +1278,7 @@ function renderVendorsView() {
         <form id="vendor-edit-form" class="side-panel">
           <h2>Edit Vendor</h2>
           <label>Vendor <select id="vendor-edit-select" required>${vendorOptions}</select></label>
-          <label>Name <input id="vendor-edit-name" required value="${encodeAttr(vendor?.name || "")}" /></label>
-          <label>License Number <input id="vendor-edit-license" required value="${encodeAttr(vendor?.license_number || "")}" /></label>
+          ${renderVendorFormFields("edit", vendor)}
           <div class="button-row">
             <button class="primary-button" type="submit" ${vendor ? "" : "disabled"}>Save Vendor</button>
             <button class="danger-button" type="button" data-action="delete-vendor" ${vendor ? "" : "disabled"}>Delete Vendor</button>
@@ -1092,8 +1299,7 @@ function renderVendorsView() {
 
         <form id="vendor-form" class="side-panel">
           <h2>New Vendor</h2>
-          <label>Name <input id="vendor-name" required /></label>
-          <label>License Number <input id="vendor-license" required /></label>
+          ${renderVendorFormFields("new", null)}
           <button class="primary-button" type="submit">Create Vendor</button>
         </form>
 
@@ -2089,6 +2295,7 @@ async function addSubtask(event) {
       channel: getFormValue("#sub-channel"),
       platforms: getFormValue("#sub-platforms"),
       ad_type: getFormValue("#sub-ad-type"),
+      ad_type_custom: getFormValue("#sub-ad-type-custom") || "",
       qty: getFormValue("#sub-qty") || "1",
       details: getFormValue("#sub-details"),
       price: getFormValue("#sub-price") || "0",
@@ -2455,12 +2662,12 @@ async function generateContracts(event) {
 
 async function createVendor(event) {
   event.preventDefault();
+  const payload = readVendorFormPayload("vendor");
+  if (!payload.name) throw new Error("Vendor name is required");
+  if (!payload.category_id) throw new Error("Pick a category");
   const created = await api("/api/vendors/", {
     method: "POST",
-    body: JSON.stringify({
-      name: getFormValue("#vendor-name"),
-      license_number: getFormValue("#vendor-license"),
-    }),
+    body: JSON.stringify(payload),
   });
   state.vendors = [{ ...created, bank_accounts: created.bank_accounts || [] }, ...state.vendors];
   state.selectedVendorId = String(created.id);
@@ -2473,12 +2680,10 @@ async function updateVendor(event) {
   event.preventDefault();
   const vendorId = getFormValue("#vendor-edit-select");
   if (!vendorId) throw new Error("Choose a vendor first");
+  const payload = readVendorFormPayload("vendor-edit");
   const updated = await api(`/api/vendors/${vendorId}`, {
     method: "PATCH",
-    body: JSON.stringify({
-      name: getFormValue("#vendor-edit-name"),
-      license_number: getFormValue("#vendor-edit-license"),
-    }),
+    body: JSON.stringify(payload),
   });
   state.selectedVendorId = String(vendorId);
   localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
@@ -2744,6 +2949,26 @@ document.addEventListener("change", async (event) => {
     }
     if (event.target.id === "sub-iban") {
       syncSubtaskBankPreview();
+    }
+    // Toggle the multi-service free-text box when Ad Type changes.
+    // Show it only when the selected option is "Multi Service".
+    if (event.target.id === "sub-ad-type") {
+      const customLabel = document.getElementById("sub-ad-type-custom-label");
+      const customInput = document.getElementById("sub-ad-type-custom");
+      if (customLabel) {
+        const isMulti = (event.target.value || "").trim().toLowerCase() === "multi service";
+        customLabel.style.display = isMulti ? "" : "none";
+        if (!isMulti && customInput) customInput.value = "";
+      }
+    }
+    // Vendor form category changes — drive ID/License + per-category
+    // field visibility. Both the New and Edit forms route through
+    // syncVendorCategoryVisibility, picking the right prefix.
+    if (event.target.id === "vendor-category") {
+      syncVendorCategoryVisibility("vendor");
+    }
+    if (event.target.id === "vendor-edit-category") {
+      syncVendorCategoryVisibility("vendor-edit");
     }
     if (event.target.classList.contains("platform-checkbox")) {
       renderPlatformHandleFields();
