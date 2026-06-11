@@ -5,20 +5,148 @@ import {
   approvePendingVendor,
   createApprovedVendorRegistration,
   rejectPendingVendor,
+  updateVendorRegistration,
   useLegacyVendors,
   usePendingVendors,
+  useVendorCategoriesLegacy,
+  type LegacyVendor,
+  type LegacyVendorCategory,
+  type VendorRegistrationInput,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
-import { externalInvites, vendorOps, type ExternalInvite } from '@/lib/contract-api';
+import { vendorOps, type ExternalInvite } from '@/lib/contract-api';
 import { InviteLinkModal } from '@/components/workflow/InviteLinkModal';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
+
+// ────────────────────────────────────────────────────────────────────
+// Form state — matches the union of base + per-category fields the
+// vendor form can collect. Per-category keys stay in state even when
+// hidden so users don't lose values if they switch categories back.
+// ────────────────────────────────────────────────────────────────────
+type VendorForm = {
+  full_name: string;
+  category_id: string;     // '' = no category yet
+  id_number: string;
+  license_number: string;
+  signatory_name: string;
+  contact_name: string;
+  email: string;
+  phone: string;
+  vat_number: string;
+  details: string;
+  // Legacy free-text — still surfaced for the platforms field.
+  platforms: string;
+  // Bank
+  bank_name: string;
+  account_name: string;
+  iban: string;
+  account_number: string;
+  swift_code: string;
+  // Per-category
+  location_link: string;
+  short_address: string;
+  age: string;             // kept as string for the input; parsed to int on save
+  gender: string;
+  rental_type: string;
+  event_opening: string;
+  event_ceremony: string;
+  location_type: string;
+};
+
+const EMPTY_FORM: VendorForm = {
+  full_name: '',
+  category_id: '',
+  id_number: '',
+  license_number: '',
+  signatory_name: '',
+  contact_name: '',
+  email: '',
+  phone: '',
+  vat_number: '',
+  details: '',
+  platforms: '',
+  bank_name: '',
+  account_name: '',
+  iban: '',
+  account_number: '',
+  swift_code: '',
+  location_link: '',
+  short_address: '',
+  age: '',
+  gender: '',
+  rental_type: '',
+  event_opening: '',
+  event_ceremony: '',
+  location_type: '',
+};
+
+function formToPayload(form: VendorForm): VendorRegistrationInput {
+  const ageNum = form.age.trim() ? parseInt(form.age, 10) : null;
+  return {
+    full_name:      form.full_name.trim(),
+    category_id:    form.category_id || null,
+    id_number:      form.id_number.trim(),
+    license_number: form.license_number.trim(),
+    signatory_name: form.signatory_name.trim(),
+    contact_name:   form.contact_name.trim(),
+    email:          form.email.trim(),
+    phone:          form.phone.trim(),
+    vat_number:     form.vat_number.trim(),
+    details:        form.details.trim(),
+    platforms:      form.platforms.trim(),
+    bank_name:      form.bank_name.trim(),
+    account_name:   form.account_name.trim(),
+    iban:           form.iban.trim(),
+    account_number: form.account_number.trim(),
+    swift_code:     form.swift_code.trim(),
+    location_link:  form.location_link.trim(),
+    short_address:  form.short_address.trim(),
+    age:            Number.isFinite(ageNum as number) ? (ageNum as number) : null,
+    gender:         form.gender.trim(),
+    rental_type:    form.rental_type.trim(),
+    event_opening:  form.event_opening.trim(),
+    event_ceremony: form.event_ceremony.trim(),
+    location_type:  form.location_type.trim(),
+  };
+}
+
+function vendorToForm(v: LegacyVendor, bank?: { bank_name: string; account_name: string; iban: string; account_number: string; swift_code: string } | null): VendorForm {
+  return {
+    full_name:      v.name ?? '',
+    category_id:    v.category_id ?? '',
+    id_number:      v.id_number ?? '',
+    license_number: v.license_number ?? '',
+    signatory_name: v.signatory_name ?? '',
+    contact_name:   v.contact_name ?? '',
+    email:          v.email ?? '',
+    phone:          v.phone ?? '',
+    vat_number:     v.vat_number ?? '',
+    details:        v.details ?? '',
+    platforms:      v.platforms ?? '',
+    bank_name:      bank?.bank_name      ?? '',
+    account_name:   bank?.account_name   ?? '',
+    iban:           bank?.iban           ?? '',
+    account_number: bank?.account_number ?? '',
+    swift_code:     bank?.swift_code     ?? '',
+    location_link:  v.location_link  ?? '',
+    short_address:  v.short_address  ?? '',
+    age:            v.age == null ? '' : String(v.age),
+    gender:         v.gender ?? '',
+    rental_type:    v.rental_type ?? '',
+    event_opening:  v.event_opening ?? '',
+    event_ceremony: v.event_ceremony ?? '',
+    location_type:  v.location_type ?? '',
+  };
+}
 
 export function VendorsView({ role, userName }: { role: WorkspaceRole | null; userName: string }) {
   const { vendors, banks, refetch: refetchVendors } = useLegacyVendors();
   const { items: pending, refetch: refetchPending } = usePendingVendors();
+  const { categories } = useVendorCategoriesLegacy();
   const [tab, setTab] = useState<'vendors' | 'pending'>('vendors');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [editVendor, setEditVendor] = useState<LegacyVendor | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -26,22 +154,11 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
   const [portalTarget, setPortalTarget] = useState<{
     role: 'vendor' | 'client'; label: string; vendor_id?: number; client_id?: string; email?: string | null;
   } | null>(null);
-  const [form, setForm] = useState({
-    full_name: '',
-    license_number: '',
-    email: '',
-    phone: '',
-    vendor_category: '',
-    platforms: '',
-    bank_name: '',
-    account_name: '',
-    iban: '',
-    account_number: '',
-    swift_code: '',
-  });
+  const [form, setForm] = useState<VendorForm>(EMPTY_FORM);
 
   const canCreate = Boolean(role && ['owner','admin','marketing'].includes(role));
   const canApprove = canCreate;
+  const canEdit = canCreate;
   const pendingOnly = pending.filter((p) => p.status === 'pending');
 
   const banksByVendor = new Map<number, typeof banks>();
@@ -50,33 +167,51 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
     (banksByVendor.get(bank.vendor_id) as any).push(bank);
   }
 
+  // Lookup helpers
+  const categoryById = useMemo(() => {
+    const m = new Map<string, LegacyVendorCategory>();
+    for (const c of categories) m.set(c.id, c);
+    return m;
+  }, [categories]);
+  const selectedCategory = form.category_id ? categoryById.get(form.category_id) ?? null : null;
+
   const visibleVendors = useMemo(() => {
     const q = query.trim().toLowerCase();
     return vendors.filter((v) => !q || [
-      v.name, v.license_number, ...(banksByVendor.get(v.id) ?? []).flatMap((b) => [b.bank_name, b.iban, b.account_name]),
+      v.name,
+      v.license_number,
+      v.id_number,
+      v.signatory_name,
+      v.contact_name,
+      v.email,
+      v.phone,
+      ...(banksByVendor.get(v.id) ?? []).flatMap((b) => [b.bank_name, b.iban, b.account_name]),
     ].some((value) => String(value || '').toLowerCase().includes(q)));
   }, [banksByVendor, query, vendors]);
+
+  const openCreate = () => { setForm(EMPTY_FORM); setEditVendor(null); setError(''); setOpen(true); };
+  const openEdit = (v: LegacyVendor) => {
+    const primaryBank = (banksByVendor.get(v.id) ?? [])[0] ?? null;
+    setForm(vendorToForm(v, primaryBank as any));
+    setEditVendor(v);
+    setError('');
+    setOpen(true);
+  };
 
   const submit = async () => {
     if (!form.full_name.trim()) return;
     setBusy(true);
     setError('');
     try {
-      await createApprovedVendorRegistration(form);
-      setForm({
-        full_name: '',
-        license_number: '',
-        email: '',
-        phone: '',
-        vendor_category: '',
-        platforms: '',
-        bank_name: '',
-        account_name: '',
-        iban: '',
-        account_number: '',
-        swift_code: '',
-      });
+      const payload = formToPayload(form);
+      if (editVendor) {
+        await updateVendorRegistration(editVendor.id, payload);
+      } else {
+        await createApprovedVendorRegistration(payload);
+      }
+      setForm(EMPTY_FORM);
       setOpen(false);
+      setEditVendor(null);
       await Promise.all([refetchPending(), refetchVendors()]);
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -119,7 +254,7 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
               style={{ width: 220, paddingLeft: 34 }}
             />
           </label>
-          <button className="aq-btn aq-btn-primary" disabled={!canCreate} onClick={() => setOpen(true)}>
+          <button className="aq-btn aq-btn-primary" disabled={!canCreate} onClick={openCreate}>
             + Add Vendor
           </button>
         </div>
@@ -144,7 +279,7 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
             body="Add your first vendor or accept one from pending requests."
             actionLabel="+ Add Vendor"
             canCreate={canCreate}
-            onAction={() => setOpen(true)}
+            onAction={openCreate}
           />
         ) : (
           <div style={gridStyle}>
@@ -153,13 +288,28 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
               const v = vendor as any;
               const inviteStatus: string = v.invite_status || 'none';
               const email: string | null = v.email || null;
+              const cat = vendor.category_id ? categoryById.get(vendor.category_id) ?? null : null;
+              const idLabel = cat?.requires_license ? 'License' : 'ID';
+              const idValue = cat?.requires_license
+                ? (vendor.license_number || vendor.id_number || '—')
+                : (vendor.id_number || vendor.license_number || '—');
               return (
                 <article key={vendor.id} className="aq-card" style={{ padding: 18 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <div style={{ minWidth: 0 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800 }}>{vendor.name}</h3>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <h3 style={{ fontSize: 16, fontWeight: 800 }}>{vendor.name}</h3>
+                        {cat && (
+                          <span
+                            className="aq-badge"
+                            style={{ background: 'var(--aq-bg-sunken)', color: 'var(--aq-text-secondary)' }}
+                          >
+                            {cat.label}
+                          </span>
+                        )}
+                      </div>
                       <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-                        {vendor.license_number || 'No ID on file'}
+                        {idLabel}: {idValue}
                       </p>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
@@ -193,13 +343,25 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
                     </div>
                   </div>
                   <dl style={metaGrid}>
+                    <Meta label="Contact" value={vendor.contact_name || '—'} />
+                    <Meta label="Phone" value={vendor.phone || '—'} />
                     <Meta label="Bank" value={vendorBanks[0]?.bank_name} />
                     <Meta label="IBAN" value={vendorBanks[0]?.iban} />
-                    <Meta label="Account" value={vendorBanks[0]?.account_name} />
-                    <Meta label="SWIFT" value={vendorBanks[0]?.swift_code} />
+                    {vendor.vat_number ? <Meta label="VAT" value={vendor.vat_number} /> : null}
+                    {vendor.signatory_name ? <Meta label="Signatory" value={vendor.signatory_name} /> : null}
                   </dl>
-                  {(role === 'owner' || role === 'admin') && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                        onClick={() => openEdit(vendor)}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {(role === 'owner' || role === 'admin') && (
                       <button
                         type="button"
                         className="aq-btn aq-btn-ghost"
@@ -217,8 +379,8 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
                       >
                         Delete
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </article>
               );
             })}
@@ -234,7 +396,7 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
             body="Vendor registration requests will appear here for review."
             actionLabel="+ Add Vendor"
             canCreate={canCreate}
-            onAction={() => setOpen(true)}
+            onAction={openCreate}
           />
         ) : (
           <div style={gridStyle}>
@@ -259,43 +421,23 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
       )}
 
       {open && (
-        <Modal title="Add Vendor" onClose={() => setOpen(false)}>
-          <div style={formGrid}>
-            <Field label="Vendor name" required>
-              <input className="aq-input" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} autoFocus />
-            </Field>
-            <Field label="ID / license number">
-              <input className="aq-input" value={form.license_number} onChange={(e) => setForm({ ...form, license_number: e.target.value })} />
-            </Field>
-            <Field label="Email">
-              <input className="aq-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            </Field>
-            <Field label="Phone">
-              <input className="aq-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-            </Field>
-            <Field label="Category">
-              <input className="aq-input" value={form.vendor_category} onChange={(e) => setForm({ ...form, vendor_category: e.target.value })} placeholder="Influencer, filming, model..." />
-            </Field>
-            <Field label="Platform">
-              <input className="aq-input" value={form.platforms} onChange={(e) => setForm({ ...form, platforms: e.target.value })} placeholder="For influencers only" />
-            </Field>
-            <Field label="Bank name">
-              <input className="aq-input" value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} />
-            </Field>
-            <Field label="Account name">
-              <input className="aq-input" value={form.account_name} onChange={(e) => setForm({ ...form, account_name: e.target.value })} />
-            </Field>
-            <Field label="IBAN">
-              <input className="aq-input" value={form.iban} onChange={(e) => setForm({ ...form, iban: e.target.value })} />
-            </Field>
-            <Field label="Account number">
-              <input className="aq-input" value={form.account_number} onChange={(e) => setForm({ ...form, account_number: e.target.value })} />
-            </Field>
-            <Field label="SWIFT">
-              <input className="aq-input" value={form.swift_code} onChange={(e) => setForm({ ...form, swift_code: e.target.value })} />
-            </Field>
-          </div>
-          <Actions busy={busy} disabled={!form.full_name.trim()} submitLabel="Add Vendor" onCancel={() => setOpen(false)} onSubmit={submit} />
+        <Modal
+          title={editVendor ? `Edit ${editVendor.name}` : 'Add Vendor'}
+          onClose={() => { setOpen(false); setEditVendor(null); }}
+        >
+          <VendorFormFields
+            form={form}
+            setForm={setForm}
+            categories={categories}
+            selectedCategory={selectedCategory}
+          />
+          <Actions
+            busy={busy}
+            disabled={!form.full_name.trim()}
+            submitLabel={editVendor ? 'Save Changes' : 'Add Vendor'}
+            onCancel={() => { setOpen(false); setEditVendor(null); }}
+            onSubmit={submit}
+          />
         </Modal>
       )}
 
@@ -305,6 +447,184 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
         target={portalTarget}
         onClose={() => setPortalTarget(null)}
       />
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// VendorFormFields — category picker + base + per-category conditional
+// fields. Lives inside the same Modal we already had.
+//
+// Field visibility logic by category key:
+//
+//   influencer / ugc     → license_number (otherwise id_number)
+//   logistics            → + location_link, short_address
+//   model                → + age, gender
+//   rentals              → + rental_type
+//   events               → + event_opening, event_ceremony
+//   location             → + location_type, location_link
+//
+//   All other categories show only the base fields.
+// ────────────────────────────────────────────────────────────────────
+function VendorFormFields({
+  form,
+  setForm,
+  categories,
+  selectedCategory,
+}: {
+  form: VendorForm;
+  setForm: (updater: (f: VendorForm) => VendorForm) => void;
+  categories: LegacyVendorCategory[];
+  selectedCategory: LegacyVendorCategory | null;
+}) {
+  const set = <K extends keyof VendorForm>(key: K) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const key = selectedCategory?.key ?? null;
+  const showLicense = !!selectedCategory?.requires_license;
+
+  // Per-category visibility
+  const showLogistics = key === 'logistics';
+  const showModel     = key === 'model';
+  const showRentals   = key === 'rentals';
+  const showEvents    = key === 'events';
+  const showLocation  = key === 'location';
+
+  return (
+    <div style={formGrid}>
+      {/* CATEGORY — pick this first so the rest of the form can react. */}
+      <Field label="Category" required>
+        <select
+          className="aq-input"
+          value={form.category_id}
+          onChange={set('category_id')}
+        >
+          <option value="">Select a category…</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.label}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Vendor name" required>
+        <input className="aq-input" value={form.full_name} onChange={set('full_name')} autoFocus />
+      </Field>
+
+      {/* ID vs LICENSE — driven by category.requires_license. */}
+      {showLicense ? (
+        <Field label="License number">
+          <input className="aq-input" value={form.license_number} onChange={set('license_number')} />
+        </Field>
+      ) : (
+        <Field label="ID number">
+          <input className="aq-input" value={form.id_number} onChange={set('id_number')} />
+        </Field>
+      )}
+      <Field label="Signatory name">
+        <input className="aq-input" value={form.signatory_name} onChange={set('signatory_name')} placeholder="Whose name signs the contract" />
+      </Field>
+
+      {/* CONTACT */}
+      <Field label="Contact name">
+        <input className="aq-input" value={form.contact_name} onChange={set('contact_name')} />
+      </Field>
+      <Field label="Contact phone">
+        <input className="aq-input" value={form.phone} onChange={set('phone')} />
+      </Field>
+      <Field label="Contact email">
+        <input className="aq-input" type="email" value={form.email} onChange={set('email')} />
+      </Field>
+      <Field label="VAT number (optional)">
+        <input className="aq-input" value={form.vat_number} onChange={set('vat_number')} placeholder="Tax registration #" />
+      </Field>
+
+      {/* BANK */}
+      <Field label="Bank name">
+        <input className="aq-input" value={form.bank_name} onChange={set('bank_name')} />
+      </Field>
+      <Field label="Account name">
+        <input className="aq-input" value={form.account_name} onChange={set('account_name')} />
+      </Field>
+      <Field label="IBAN">
+        <input className="aq-input" value={form.iban} onChange={set('iban')} />
+      </Field>
+      <Field label="Account number">
+        <input className="aq-input" value={form.account_number} onChange={set('account_number')} />
+      </Field>
+      <Field label="SWIFT">
+        <input className="aq-input" value={form.swift_code} onChange={set('swift_code')} />
+      </Field>
+
+      {/* PLATFORMS — only really relevant for influencer/ugc, but harmless elsewhere. */}
+      {(key === 'influencer' || key === 'ugc') && (
+        <Field label="Platforms">
+          <input className="aq-input" value={form.platforms} onChange={set('platforms')} placeholder="e.g. Instagram, TikTok" />
+        </Field>
+      )}
+
+      {/* ───── PER-CATEGORY OPTIONAL FIELDS ───── */}
+      {showLogistics && (
+        <>
+          <Field label="Location link (optional)">
+            <input className="aq-input" value={form.location_link} onChange={set('location_link')} placeholder="Google Maps URL" />
+          </Field>
+          <Field label="Short address (optional)">
+            <input className="aq-input" value={form.short_address} onChange={set('short_address')} />
+          </Field>
+        </>
+      )}
+      {showModel && (
+        <>
+          <Field label="Age (optional)">
+            <input className="aq-input" type="number" min={0} value={form.age} onChange={set('age')} />
+          </Field>
+          <Field label="Gender (optional)">
+            <select className="aq-input" value={form.gender} onChange={set('gender')}>
+              <option value="">—</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </Field>
+        </>
+      )}
+      {showRentals && (
+        <Field label="Rental type (optional)">
+          <input className="aq-input" value={form.rental_type} onChange={set('rental_type')} placeholder="e.g. Camera, lighting, props" />
+        </Field>
+      )}
+      {showEvents && (
+        <>
+          <Field label="Opening (optional)">
+            <input className="aq-input" value={form.event_opening} onChange={set('event_opening')} />
+          </Field>
+          <Field label="Ceremony (optional)">
+            <input className="aq-input" value={form.event_ceremony} onChange={set('event_ceremony')} />
+          </Field>
+        </>
+      )}
+      {showLocation && (
+        <>
+          <Field label="Location type (optional)">
+            <input className="aq-input" value={form.location_type} onChange={set('location_type')} placeholder="e.g. Studio, outdoor" />
+          </Field>
+          <Field label="Location link (optional)">
+            <input className="aq-input" value={form.location_link} onChange={set('location_link')} placeholder="Google Maps URL" />
+          </Field>
+        </>
+      )}
+
+      {/* DETAILS — full width by spanning the grid. */}
+      <label style={{ gridColumn: '1 / -1' }}>
+        <div className="aq-label">Details (optional)</div>
+        <textarea
+          className="aq-input"
+          value={form.details}
+          onChange={set('details')}
+          rows={3}
+          style={{ resize: 'vertical', fontFamily: 'inherit' }}
+          placeholder="Any relevant notes about this vendor"
+        />
+      </label>
     </div>
   );
 }

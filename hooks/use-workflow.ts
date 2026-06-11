@@ -1249,11 +1249,75 @@ export async function generateContractRequest(id: string, templateKey?: string |
 }
 
 // Vendors + bank accounts (legacy contract app tables)
+//
+// Schema notes: migration 029 added `category_id` (FK → vendor_categories)
+// plus the base fields (id_number, signatory_name, contact_name, vat_number,
+// details) and per-category optional fields. Old `license_number` was
+// relaxed to nullable — Influencer + UGC still use it, the other 9
+// categories use id_number instead.
 export interface LegacyVendor {
   id: number;
   name: string;
-  license_number: string;
+  license_number: string | null;
   created_at: string | null;
+  // 029 additions
+  category_id?: string | null;
+  id_number?: string | null;
+  signatory_name?: string | null;
+  contact_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  vat_number?: string | null;
+  details?: string | null;
+  vendor_category?: string | null; // legacy free-text — read-only now
+  platforms?: string | null;
+  // per-category optional
+  location_link?: string | null;
+  short_address?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  rental_type?: string | null;
+  event_opening?: string | null;
+  event_ceremony?: string | null;
+  location_type?: string | null;
+}
+
+// vendor_categories lookup (seeded by migration 029).
+export interface LegacyVendorCategory {
+  id: string;
+  key:
+    | 'influencer' | 'ugc' | 'props' | 'makeup_artist' | 'logistics'
+    | 'model' | 'videographer' | 'rentals' | 'events' | 'location'
+    | 'photographer';
+  label: string;
+  requires_license: boolean;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+/**
+ * Fetch active vendor_categories in sort_order. Used by the vendor form
+ * to render the category picker and decide whether ID or License is the
+ * required identifier.
+ */
+export function useVendorCategoriesLegacy() {
+  const [categories, setCategories] = useState<LegacyVendorCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('vendor_categories')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    if (error) logSbError('useVendorCategoriesLegacy', error);
+    setCategories((data || []) as LegacyVendorCategory[]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { categories, loading, refetch: fetch };
 }
 export interface LegacyBankAccount {
   id: number;
@@ -1652,39 +1716,106 @@ export async function createApprovedClientRegistration(input: {
   return data as PendingClient;
 }
 
-export async function createApprovedVendorRegistration(input: {
+/**
+ * Vendor create payload — covers the migration-029 surface.
+ *
+ * Required: full_name, category_id, signatory_name, contact info, bank info,
+ * and (id_number OR license_number depending on the category's
+ * requires_license flag — the UI enforces this; the backend just stores
+ * whatever's sent).
+ *
+ * Per-category optional fields are also accepted here. The DB schema lets
+ * them be NULL for any category — the UI hides what isn't relevant.
+ */
+export interface VendorRegistrationInput {
   full_name: string;
+  category_id?: string | null;
+  // Identifiers — one or the other depending on category
+  id_number?: string;
   license_number?: string;
+  // Base
+  signatory_name?: string;
+  contact_name?: string;
   email?: string;
   phone?: string;
+  vat_number?: string;
+  details?: string;
+  // Legacy free-text (kept for backward compat with old form callers)
   vendor_category?: string;
   platforms?: string;
+  // Bank info (goes to public.bank_accounts)
   bank_name?: string;
   account_name?: string;
   iban?: string;
   account_number?: string;
   swift_code?: string;
-}) {
+  // Per-category optional
+  location_link?: string;
+  short_address?: string;
+  age?: number | null;
+  gender?: string;
+  rental_type?: string;
+  event_opening?: string;
+  event_ceremony?: string;
+  location_type?: string;
+}
+
+export async function createApprovedVendorRegistration(input: VendorRegistrationInput) {
   const now = new Date().toISOString();
+  // Mirror request into pending_vendors as an audit trail. We only copy
+  // columns that exist on pending_vendors — the new category fields are
+  // not mirrored there (yet) so we hand-pick.
+  const pendingPayload = {
+    full_name: input.full_name,
+    license_number: input.license_number ?? input.id_number ?? '',
+    email: input.email ?? '',
+    phone: input.phone ?? '',
+    vendor_category: input.vendor_category ?? '',
+    platforms: input.platforms ?? '',
+    bank_name: input.bank_name ?? '',
+    account_name: input.account_name ?? '',
+    iban: input.iban ?? '',
+    account_number: input.account_number ?? '',
+    swift_code: input.swift_code ?? '',
+    status: 'approved',
+    submitted_at: now,
+    reviewed_at: now,
+  };
   const { data: pending, error: pendingErr } = await supabase
     .from('pending_vendors')
-    .insert({
-      ...input,
-      status: 'approved',
-      submitted_at: now,
-      reviewed_at: now,
-    })
+    .insert(pendingPayload)
     .select()
     .single();
   if (pendingErr) throw pendingErr;
 
+  // Actual vendor row — picks up every new 029 column.
+  const vendorPayload: Record<string, any> = {
+    name: input.full_name,
+    license_number: input.license_number ?? null,
+    id_number: input.id_number ?? '',
+    category_id: input.category_id ?? null,
+    signatory_name: input.signatory_name ?? '',
+    contact_name: input.contact_name ?? '',
+    email: input.email ?? '',
+    phone: input.phone ?? '',
+    vat_number: input.vat_number ?? '',
+    details: input.details ?? '',
+    vendor_category: input.vendor_category ?? '',
+    platforms: input.platforms ?? '',
+    // Per-category — store whatever was sent, NULL/empty otherwise.
+    location_link:  input.location_link  ?? '',
+    short_address:  input.short_address  ?? '',
+    age:            input.age ?? null,
+    gender:         input.gender ?? '',
+    rental_type:    input.rental_type ?? '',
+    event_opening:  input.event_opening ?? '',
+    event_ceremony: input.event_ceremony ?? '',
+    location_type:  input.location_type ?? '',
+    created_at: now,
+  };
   const { data: vendor, error: vendorErr } = await supabase
     .from('vendors')
-    .insert({
-      name: input.full_name,
-      license_number: input.license_number ?? '',
-      created_at: now,
-    })
+    .insert(vendorPayload)
     .select()
     .single();
   if (vendorErr) throw vendorErr;
@@ -1704,6 +1835,95 @@ export async function createApprovedVendorRegistration(input: {
   }
 
   return pending as PendingVendor;
+}
+
+/**
+ * Update an existing vendor — covers both the base fields and any
+ * per-category fields. The bank-account update path also lives here:
+ * if `iban` is included we upsert the FIRST bank_accounts row attached
+ * to this vendor (the current schema treats the first row as primary).
+ *
+ * Pass only the fields that should change — undefined keys are stripped.
+ */
+export async function updateVendorRegistration(
+  vendorId: number,
+  patch: Partial<VendorRegistrationInput>,
+) {
+  // Whitelisted vendors-table fields. Anything else is silently ignored.
+  const vendorPatch: Record<string, any> = {};
+  const map: Array<[keyof VendorRegistrationInput, string]> = [
+    ['full_name',       'name'],
+    ['category_id',     'category_id'],
+    ['id_number',       'id_number'],
+    ['license_number',  'license_number'],
+    ['signatory_name',  'signatory_name'],
+    ['contact_name',    'contact_name'],
+    ['email',           'email'],
+    ['phone',           'phone'],
+    ['vat_number',      'vat_number'],
+    ['details',         'details'],
+    ['vendor_category', 'vendor_category'],
+    ['platforms',       'platforms'],
+    ['location_link',   'location_link'],
+    ['short_address',   'short_address'],
+    ['age',             'age'],
+    ['gender',          'gender'],
+    ['rental_type',     'rental_type'],
+    ['event_opening',   'event_opening'],
+    ['event_ceremony',  'event_ceremony'],
+    ['location_type',   'location_type'],
+  ];
+  for (const [from, to] of map) {
+    if (patch[from] !== undefined) vendorPatch[to] = patch[from];
+  }
+
+  if (Object.keys(vendorPatch).length > 0) {
+    const { error } = await supabase
+      .from('vendors')
+      .update(vendorPatch)
+      .eq('id', vendorId);
+    if (error) throw error;
+  }
+
+  // Bank account — upsert the first row if any bank field changed.
+  const bankTouched =
+    patch.bank_name !== undefined ||
+    patch.account_name !== undefined ||
+    patch.iban !== undefined ||
+    patch.account_number !== undefined ||
+    patch.swift_code !== undefined;
+
+  if (bankTouched) {
+    const { data: existing } = await supabase
+      .from('bank_accounts')
+      .select('id')
+      .eq('vendor_id', vendorId)
+      .order('id', { ascending: true })
+      .limit(1);
+
+    const bankPatch: Record<string, any> = {
+      vendor_id: vendorId,
+      bank_name:      patch.bank_name      ?? '',
+      account_name:   patch.account_name   ?? '',
+      iban:           patch.iban           ?? '',
+      account_number: patch.account_number ?? '',
+      swift_code:     patch.swift_code     ?? '',
+    };
+
+    if (existing && existing.length > 0) {
+      const { error } = await supabase
+        .from('bank_accounts')
+        .update(bankPatch)
+        .eq('id', existing[0].id);
+      if (error) throw error;
+    } else if (patch.iban) {
+      // Only create a new bank row if we actually have an IBAN to anchor it.
+      const { error } = await supabase
+        .from('bank_accounts')
+        .insert(bankPatch);
+      if (error) throw error;
+    }
+  }
 }
 
 /** Service types attached to a single task (multi). */

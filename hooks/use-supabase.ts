@@ -7,7 +7,8 @@ import type {
   Section, Task, Comment, ActivityLog, Notification,
   TaskStatus, FilterState,
   // Legacy types
-  LegacyTask, Subtask, Vendor, BankAccount, PendingVendor, PendingClient
+  LegacyTask, Subtask, Vendor, BankAccount, PendingVendor, PendingClient,
+  VendorCategory
 } from '@/types';
 
 const supabase = createClient();
@@ -382,6 +383,32 @@ export function useVendors() {
 
   useEffect(() => { fetch(); }, [fetch]);
   return { vendors, loading, refetch: fetch };
+}
+
+/**
+ * Fetch vendor categories (lookup table from migration 029).
+ *
+ * Returns the 11 seeded categories in sort_order: Influencer, UGC, Props,
+ * Makeup Artist, Logistics, Model, Videographer, Rentals, Events, Location,
+ * Photographer. Each row carries `requires_license` so the form can flip
+ * between "ID #" and "License #" based on the chosen category.
+ */
+export function useVendorCategories() {
+  const [categories, setCategories] = useState<VendorCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    const { data } = await supabase
+      .from('vendor_categories')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    setCategories((data as VendorCategory[]) || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { categories, loading, refetch: fetch };
 }
 
 /** Fetch bank accounts */

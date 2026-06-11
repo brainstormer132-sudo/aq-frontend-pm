@@ -253,13 +253,79 @@ export interface Subtask {
   [key: string]: any;
 }
 
+/**
+ * Vendor categories — single FK on `vendors.category_id`.
+ *
+ * `requires_license = true` means the category uses license_number on the
+ * vendor row (currently Influencer + UGC). Everything else uses id_number.
+ *
+ * Schema lives in supabase/migrations/029_vendor_categories.sql.
+ */
+export interface VendorCategory {
+  id: string;
+  key: string;
+  label: string;
+  requires_license: boolean;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Stable category keys — keep in sync with the seed in migration 029. */
+export type VendorCategoryKey =
+  | 'influencer'
+  | 'ugc'
+  | 'props'
+  | 'makeup_artist'
+  | 'logistics'
+  | 'model'
+  | 'videographer'
+  | 'rentals'
+  | 'events'
+  | 'location'
+  | 'photographer';
+
 export interface Vendor {
   id: string;
+  name: string;
+  // Category (single FK — vendor is one thing at a time)
+  category_id?: string | null;
+  vendor_category?: string;  // legacy free-text — kept for backward compat
+  // Base required fields (some legacy rows may still be empty)
+  id_number?: string;
+  license_number?: string | null;
+  signatory_name?: string;
+  contact_name?: string;
+  email?: string;
+  phone?: string;
+  // Base optional
+  vat_number?: string;
+  details?: string;
+  // Per-category optional fields
+  location_link?: string;     // Logistics, Location
+  short_address?: string;     // Logistics
+  age?: number | null;        // Model
+  gender?: string;            // Model
+  rental_type?: string;       // Rentals
+  event_opening?: string;     // Events
+  event_ceremony?: string;    // Events
+  location_type?: string;     // Location
+  // Other existing fields
+  platforms?: string;
+  invite_status?: string;
+  pending_vendor_id?: string | null;
+  created_at?: string;
   [key: string]: any;
 }
 
 export interface BankAccount {
   id: string;
+  vendor_id?: string;
+  bank_name?: string;
+  account_name?: string;
+  iban?: string;
+  account_number?: string;
+  swift_code?: string;
   [key: string]: any;
 }
 
