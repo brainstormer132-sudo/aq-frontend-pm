@@ -888,10 +888,22 @@ async function renderTasksView() {
           <button type="button" class="slide-over-close" data-action="close-add-subtask" aria-label="Close">×</button>
         </header>
         <form id="subtask-form" class="slide-over-body in-slide-over">
-          <label>License Number <input id="sub-license" list="vendor-license-list" placeholder="Type vendor license" /></label>
-          <datalist id="vendor-license-list">
-            ${state.vendors.map((vendor) => `<option value="${encodeAttr(vendor.license_number)}">${escapeHtml(vendor.name)}</option>`).join("")}
-          </datalist>
+          <!--
+            License autocomplete. We bailed on the native HTML5 <datalist>
+            because the browsers ship inconsistent / sluggish UX (delayed
+            popups, prefix-only matching that doesn't search by vendor
+            name). This is a small custom autocomplete: type anything,
+            we filter live across license number, vendor name, and
+            id_number; click a row to pick. The hidden div underneath
+            holds the suggestion rows and is shown only while the user
+            is interacting with the input.
+          -->
+          <label>Vendor (license or name)
+            <div class="autocomplete-wrap">
+              <input id="sub-license" autocomplete="off" placeholder="Type to search vendors…" />
+              <div id="sub-license-suggestions" class="autocomplete-suggestions" hidden></div>
+            </div>
+          </label>
           <label>Vendor Name <input id="sub-vendor" readonly required placeholder="Autofills from license" /></label>
           <label>IBAN
             <select id="sub-iban" disabled>
@@ -1949,6 +1961,87 @@ function getFormValue(id) {
   return document.querySelector(id)?.value?.trim() || "";
 }
 
+// ─── Vendor license autocomplete ────────────────────────────────────
+//
+// Replaces the native <datalist> on the Add Subtask form. Reasoning:
+//   - Native datalists filter by exact PREFIX on the option's `value`
+//     attr. That meant typing the vendor's name didn't match anything
+//     (the value is the license_number), and even typing the start of
+//     a license got slow / janky in Chrome with many vendors.
+//   - Browsers don't agree on how to render the value vs. label, so
+//     the dropdown looked different on every machine.
+//
+// Now: we render our own dropdown below the input. On every keystroke
+// we score `state.vendors` by case-insensitive substring match on the
+// license number, vendor name, and id_number; the top 20 hits are
+// drawn as clickable rows. Picking a row writes the license_number
+// into the input and dispatches an `input` event so the existing
+// syncSubtaskVendorFields → IBAN/bank-preview chain runs unchanged.
+const SUB_LICENSE_MAX_SUGGESTIONS = 20;
+let subLicenseHoverIndex = -1;
+
+function vendorMatchesQuery(vendor, q) {
+  if (!q) return true;
+  return [vendor.license_number, vendor.name, vendor.id_number]
+    .some((v) => String(v || "").toLowerCase().includes(q));
+}
+
+function getSubLicenseDom() {
+  return {
+    input: document.getElementById("sub-license"),
+    box: document.getElementById("sub-license-suggestions"),
+  };
+}
+
+function renderSubLicenseSuggestions(query) {
+  const { box } = getSubLicenseDom();
+  if (!box) return;
+  const q = (query || "").trim().toLowerCase();
+  // Don't drop the list when the user clears the field — show the top
+  // 20 alphabetical so they can still scroll. Mirrors how native
+  // datalists felt when they were working.
+  const matches = state.vendors.filter((v) => vendorMatchesQuery(v, q))
+    .slice(0, SUB_LICENSE_MAX_SUGGESTIONS);
+
+  if (matches.length === 0) {
+    box.innerHTML = `<div class="autocomplete-empty">No vendors match "${escapeHtml(query)}"</div>`;
+    box.hidden = false;
+    subLicenseHoverIndex = -1;
+    return;
+  }
+
+  // Highlight whichever row matches subLicenseHoverIndex so arrow
+  // keys can move through the list.
+  box.innerHTML = matches.map((v, i) => `
+    <button type="button" class="autocomplete-row ${i === subLicenseHoverIndex ? "is-active" : ""}"
+            data-license="${encodeAttr(v.license_number || "")}"
+            data-vendor-id="${encodeAttr(v.id)}">
+      <span class="autocomplete-primary">${escapeHtml(v.name || "(no name)")}</span>
+      <span class="autocomplete-secondary">${escapeHtml(v.license_number || v.id_number || "—")}</span>
+    </button>
+  `).join("");
+  box.hidden = false;
+}
+
+function hideSubLicenseSuggestions() {
+  const { box } = getSubLicenseDom();
+  if (box) box.hidden = true;
+  subLicenseHoverIndex = -1;
+}
+
+/** Set the input to a picked vendor's license and let the existing
+ *  syncSubtaskVendorFields flow handle bank / IBAN side-effects. */
+function pickSubLicenseVendor(license) {
+  const { input } = getSubLicenseDom();
+  if (!input) return;
+  input.value = license || "";
+  // Dispatch an "input" event so the global listener picks this up and
+  // runs the IBAN/bank preview update. Otherwise the user would see a
+  // selected name with stale bank rows.
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  hideSubLicenseSuggestions();
+}
+
 function syncSubtaskVendorFields() {
   const licenseInput = document.querySelector("#sub-license");
   const vendorInput = document.querySelector("#sub-vendor");
@@ -2974,6 +3067,10 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.id === "sub-license") {
     syncSubtaskVendorFields();
+    // Re-render the suggestion dropdown on every keystroke. We reset
+    // the hover index so the keyboard arrow nav starts from the top.
+    subLicenseHoverIndex = -1;
+    renderSubLicenseSuggestions(event.target.value);
   }
   if (event.target.classList.contains("platform-handle")) {
     const raw = event.target.value;
@@ -3106,6 +3203,42 @@ document.addEventListener("change", async (event) => {
 
 // Escape closes whichever slide-over is open + the Generate dropdown.
 document.addEventListener("keydown", async (event) => {
+  // Vendor license autocomplete: arrow keys move the highlight, Enter
+  // picks the highlighted row, Escape closes the dropdown without
+  // closing the slide-over.
+  if (event.target?.id === "sub-license") {
+    const box = document.getElementById("sub-license-suggestions");
+    const rows = box ? Array.from(box.querySelectorAll(".autocomplete-row")) : [];
+    if (rows.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        subLicenseHoverIndex = Math.min(rows.length - 1, subLicenseHoverIndex + 1);
+        renderSubLicenseSuggestions(event.target.value);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        subLicenseHoverIndex = Math.max(0, subLicenseHoverIndex - 1);
+        renderSubLicenseSuggestions(event.target.value);
+        return;
+      }
+      if (event.key === "Enter") {
+        const idx = subLicenseHoverIndex >= 0 ? subLicenseHoverIndex : 0;
+        const row = rows[idx];
+        if (row) {
+          event.preventDefault();
+          pickSubLicenseVendor(row.dataset.license || "");
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        hideSubLicenseSuggestions();
+        return;
+      }
+    }
+  }
+
   if (event.key !== "Escape") return;
   const popup = document.getElementById("generate-menu-popup");
   if (popup && !popup.hidden) {
@@ -3124,7 +3257,31 @@ document.addEventListener("keydown", async (event) => {
   }
 });
 
+// When the license input gains focus, show the full vendor list so the
+// user has somewhere to start. This is what most "ComboBox" widgets do
+// and matches how native datalists used to behave.
+document.addEventListener("focusin", (event) => {
+  if (event.target?.id === "sub-license") {
+    subLicenseHoverIndex = -1;
+    renderSubLicenseSuggestions(event.target.value);
+  }
+});
+
 document.addEventListener("click", async (event) => {
+  // Vendor license autocomplete: row click picks the vendor.
+  const acRow = event.target.closest("#sub-license-suggestions .autocomplete-row");
+  if (acRow) {
+    event.preventDefault();
+    pickSubLicenseVendor(acRow.dataset.license || "");
+    return;
+  }
+  // Outside-click dismiss for the autocomplete dropdown — close it
+  // unless the click was on the input itself or inside the suggestions
+  // panel (those have their own handlers).
+  if (!event.target.closest(".autocomplete-wrap")) {
+    hideSubLicenseSuggestions();
+  }
+
   // Slide-over dismiss: clicking the dark overlay (but not the panel
   // inside) closes whichever editor is open.
   const overlay = event.target.closest(".slide-over-overlay[data-dismiss-overlay]");
