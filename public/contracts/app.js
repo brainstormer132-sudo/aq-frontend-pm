@@ -186,6 +186,10 @@ const state = {
    *  re-render caused by a tab-switch / add bank / remove bank so the
    *  user doesn't lose typed text. Cleared on close. */
   vendorEditorDraft: null,
+  /** All files attached to the currently-editing vendor, indexed by
+   *  slot. Loaded when the modal opens and refetched after each
+   *  upload/delete. Empty for create flow. */
+  vendorEditorFiles: [],
   /** vendor.id whose card is currently expanded inline (or null). */
   expandedVendorId: null,
 };
@@ -1383,6 +1387,60 @@ function renderVendorEditorTopFields(vendor) {
   `;
 }
 
+/**
+ * Per-slot file uploader for the Design C modal. Lists existing files
+ * in the slot, plus an Upload button. Files are stored in the
+ * vendor_files table (slot column from migration 032) and the
+ * vendor-files Storage bucket. The contract app talks to the FastAPI
+ * /api/vendors/.../files endpoints instead of Supabase directly so it
+ * keeps a single backend pattern.
+ *
+ * Create-mode vendors have no vendor_id yet, so the upload button is
+ * disabled with a hint to save first.
+ */
+function renderVendorFileUploader(slot, title) {
+  const vendor = state.vendorEditorTarget;
+  const isCreate = !vendor;
+  const files = isCreate ? [] : vendorEditorFilesInSlot(slot);
+
+  const fileRows = files.map((f) => `
+    <li style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:var(--panel-strong); border:1px solid var(--line); border-radius:6px">
+      <div style="flex:1; min-width:0">
+        <div style="font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(f.file_name)}</div>
+        <div style="font-size:10px; color:var(--muted)">${(f.file_size / 1024).toFixed(0)} KB · ${new Date(f.uploaded_at).toLocaleString()}</div>
+      </div>
+      <button type="button" class="ghost-button" data-action="ve-download-file" data-file-id="${encodeAttr(f.id)}" style="padding:3px 8px; font-size:11px">Download</button>
+      <button type="button" class="ghost-button" data-action="ve-delete-file" data-file-id="${encodeAttr(f.id)}" style="padding:3px 8px; font-size:11px; color:var(--red)">Delete</button>
+    </li>
+  `).join("");
+
+  return `
+    <div style="border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--canvas)">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px">
+        <div>
+          <div style="font-weight:700; font-size:12px">${escapeHtml(title)}</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:2px">
+            ${isCreate
+              ? "Save the vendor first to attach files."
+              : "Max 25 MB per file. Multiple uploads supported."}
+          </div>
+        </div>
+        ${isCreate ? "" : `
+          <label style="display:inline-flex">
+            <input type="file" multiple class="ve-file-input" data-slot="${encodeAttr(slot)}" style="display:none" />
+            <span class="secondary-button" data-action="ve-trigger-upload" data-slot="${encodeAttr(slot)}" style="padding:5px 10px; font-size:12px; cursor:pointer">+ Upload</span>
+          </label>
+        `}
+      </div>
+      <div style="margin-top:10px">
+        ${files.length === 0
+          ? `<div style="font-size:11px; color:var(--muted); padding:14px 8px; text-align:center; border:1px dashed var(--line); border-radius:6px">No files yet.</div>`
+          : `<ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:5px">${fileRows}</ul>`}
+      </div>
+    </div>
+  `;
+}
+
 // ── BankDraft helpers ───────────────────────────────────────────────
 
 function bankToDraft(b) {
@@ -1419,8 +1477,34 @@ function openVendorEditor(vendor) {
     : [];
   state.vendorEditorTab = { type: "id" };
   state.vendorEditorError = "";
+  state.vendorEditorFiles = [];
+  state.vendorEditorDraft = null;
   state.vendorEditorOpen = true;
   renderVendorsView();
+  // Edit mode: load existing files for this vendor (all slots) in the
+  // background so the tabs show whatever is already attached. Create
+  // mode has no vendor_id yet, so we skip — uploader for those tabs
+  // shows a "save the vendor first" hint.
+  if (vendor) loadVendorEditorFiles(vendor.id);
+}
+
+/** Fetch the vendor's files into state.vendorEditorFiles and repaint. */
+async function loadVendorEditorFiles(vendorId) {
+  try {
+    const files = await api(`/api/vendors/${vendorId}/files`, { body: undefined });
+    if (state.vendorEditorOpen && state.vendorEditorTarget?.id === vendorId) {
+      state.vendorEditorFiles = Array.isArray(files) ? files : [];
+      renderVendorsView();
+    }
+  } catch (err) {
+    console.error("loadVendorEditorFiles failed:", err);
+  }
+}
+
+/** Group files by slot for the tab lookup. Mirrors
+ *  groupVendorFilesBySlot from the PM-app hook. */
+function vendorEditorFilesInSlot(slot) {
+  return state.vendorEditorFiles.filter((f) => (f.slot || "") === slot);
 }
 
 function closeVendorEditor() {
@@ -1430,6 +1514,7 @@ function closeVendorEditor() {
   state.vendorEditorTab = { type: "id" };
   state.vendorEditorError = "";
   state.vendorEditorDraft = null;
+  state.vendorEditorFiles = [];
   renderVendorsView();
 }
 
@@ -1492,22 +1577,28 @@ function renderVendorEditorModal() {
 
   let tabBody = "";
   if (activeTab.type === "id") {
+    const idSlot = cat?.requires_license ? "license" : "id";
     tabBody = `
       <div style="display:flex; flex-direction:column; gap:12px">
-        <div style="border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); font-size:12px">
-          ${identifierLabel} document upload — coming soon in this app.<br>
-          For now manage files from the PM app's vendor editor.
-        </div>
+        ${renderVendorFileUploader(idSlot, `${identifierLabel} document`)}
       </div>
     `;
   } else {
     const b = banks.find((x) => x.localKey === activeTab.localKey);
     if (b) {
+      // Files anchor to the bank's real id. New banks (no id yet) get
+      // a placeholder uploader telling the user to save first — any
+      // files uploaded against a placeholder slot would orphan when
+      // the bank is created with a different id.
+      const bankSlotKey = b.id != null ? `bank:${b.id}` : null;
+      const fileBlock = bankSlotKey
+        ? renderVendorFileUploader(bankSlotKey, "Bank document")
+        : `<div style="border:1px dashed var(--line); border-radius:8px; padding:14px; text-align:center; color:var(--muted); font-size:11px">
+             Save the vendor first to attach a document to this new bank.
+           </div>`;
       tabBody = `
         <div style="display:flex; flex-direction:column; gap:12px">
-          <div style="border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); font-size:12px">
-            Bank document upload — coming soon in this app.
-          </div>
+          ${fileBlock}
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
             <label>Bank name <input class="ve-bank-input" data-field="bank_name" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.bank_name)}" /></label>
             <label>Account name <input class="ve-bank-input" data-field="account_name" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.account_name)}" /></label>
@@ -3178,6 +3269,77 @@ async function createVendor(event) {
  * Errors are surfaced inside the modal — the modal stays open so the
  * user can retry without losing typed bank fields.
  */
+/**
+ * Upload one or more files into a slot for the current edit-mode
+ * vendor. Sequential so the first 25-MB rejection surfaces before
+ * subsequent uploads consume bandwidth. After all uploads we refetch
+ * the list so the new rows appear.
+ *
+ * Uses a raw fetch + multipart body — the api() helper sets a JSON
+ * Content-Type which fights with multipart boundaries.
+ */
+async function uploadVendorEditorFiles(slot, files) {
+  const vendor = state.vendorEditorTarget;
+  if (!vendor) return;
+  captureVendorEditorTopFields();
+  for (const f of files) {
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("slot", slot);
+      const resp = await fetch(`${API_BASE}/api/vendors/${vendor.id}/files`, {
+        method: "POST",
+        body: fd,
+        headers: authHeaders(false),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(txt || `Upload failed (${resp.status})`);
+      }
+    } catch (err) {
+      state.vendorEditorError = err?.message || String(err);
+      renderVendorsView();
+      return;
+    }
+  }
+  await loadVendorEditorFiles(vendor.id);
+}
+
+/** Open a signed-URL download for a single vendor file. */
+async function downloadVendorFile(fileId) {
+  try {
+    const data = await api(`/api/vendors/files/${encodeURIComponent(fileId)}/download`, { body: undefined });
+    if (!data?.url) throw new Error("No URL returned");
+    // Open in a new tab so the host page keeps the modal open. The
+    // server already appended `download=<filename>` so the browser
+    // saves with the original filename rather than the storage path.
+    const a = document.createElement("a");
+    a.href = data.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (err) {
+    state.vendorEditorError = err?.message || String(err);
+    renderVendorsView();
+  }
+}
+
+/** Confirm + delete a vendor file. Refreshes the list on success. */
+async function deleteVendorFile(fileId) {
+  if (!window.confirm("Delete this file? This cannot be undone.")) return;
+  captureVendorEditorTopFields();
+  try {
+    await api(`/api/vendors/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+    const vendor = state.vendorEditorTarget;
+    if (vendor) await loadVendorEditorFiles(vendor.id);
+  } catch (err) {
+    state.vendorEditorError = err?.message || String(err);
+    renderVendorsView();
+  }
+}
+
 async function saveVendorEditor() {
   if (state.vendorEditorSaving) return;
   // Snapshot the live DOM values into the draft so the upcoming
@@ -3538,6 +3700,19 @@ document.addEventListener("change", async (event) => {
     if (event.target.id === "sub-iban") {
       syncSubtaskBankPreview();
     }
+    // Vendor editor file picker — when the user picks a file the
+    // <input type="file"> emits a change event. The slot was stashed
+    // on its dataset by the trigger handler.
+    if (event.target.classList?.contains("ve-file-input")) {
+      const files = Array.from(event.target.files || []);
+      const slot = event.target.dataset.slot || "";
+      // Reset the input so picking the same filename again works.
+      event.target.value = "";
+      if (files.length > 0) {
+        uploadVendorEditorFiles(slot, files);
+      }
+      return;
+    }
     // Vendor editor: bank field updates write straight to state so the
     // next render reflects the current input. No re-render here — that
     // would steal focus mid-typing.
@@ -3785,6 +3960,30 @@ document.addEventListener("click", async (event) => {
   }
   if (veAction === "open-new-vendor") {
     openVendorEditor(null);
+    return;
+  }
+  if (veAction === "ve-trigger-upload") {
+    // The clickable span is paired with a sibling <input type="file">
+    // inside the same <label>. Clicking the label naturally fires
+    // the file picker — but we need to capture the slot from the
+    // button before the file picker resolves.
+    const span = event.target.closest("[data-action='ve-trigger-upload']");
+    if (!span) return;
+    const input = span.parentElement?.querySelector("input.ve-file-input");
+    if (input) {
+      input.dataset.slot = span.dataset.slot || "";
+      input.click();
+    }
+    return;
+  }
+  if (veAction === "ve-download-file") {
+    const fileId = event.target.closest("[data-action='ve-download-file']")?.dataset.fileId;
+    if (fileId) downloadVendorFile(fileId);
+    return;
+  }
+  if (veAction === "ve-delete-file") {
+    const fileId = event.target.closest("[data-action='ve-delete-file']")?.dataset.fileId;
+    if (fileId) deleteVendorFile(fileId);
     return;
   }
 
