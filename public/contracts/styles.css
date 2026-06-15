@@ -1728,3 +1728,44 @@ body.is-auth { background: #0b0b0e !important; }
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ─── Design C vendor editor modal ────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal-panel {
+  width: 100%;
+  max-width: 760px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.tab-pill {
+  padding: 8px 14px;
+  font-size: 13px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--muted);
+  white-space: nowrap;
+  font-family: inherit;
+}
+.tab-pill.is-active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+  font-weight: 700;
+}
+.expanded-card {
+  background: var(--panel-strong);
+}

@@ -169,6 +169,25 @@ const state = {
   selectedSubtaskIds: new Set(),
   selectedBankId: "",
   pendingRequests: 0,
+  // ── Design C vendor editor modal state ─────────────────────────
+  // The full-screen popup replaces the old #vendor-edit-form +
+  // #bank-edit-form side panels. The vendor object being edited
+  // (null = create flow). The active tab is either { type: 'id' }
+  // for the License/ID document tab, or { type: 'bank', localKey }
+  // for a bank tab. Bank drafts are kept in state so we can batch
+  // create/update/delete on save without one-at-a-time round-trips.
+  vendorEditorOpen: false,
+  vendorEditorTarget: null,
+  vendorEditorTab: { type: "id" },
+  vendorEditorBanks: [],        // BankDraft[]
+  vendorEditorSaving: false,
+  vendorEditorError: "",
+  /** Cached top-field values. Repopulated from the DOM before every
+   *  re-render caused by a tab-switch / add bank / remove bank so the
+   *  user doesn't lose typed text. Cleared on close. */
+  vendorEditorDraft: null,
+  /** vendor.id whose card is currently expanded inline (or null). */
+  expandedVendorId: null,
 };
 
 const els = {
@@ -1184,6 +1203,354 @@ function readVendorFormPayload(prefix) {
   };
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Vendor card expansion + Design C editor modal helpers
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Inline summary block shown under a vendor card when the user
+ * clicks it. Reveals every bank, per-category specifics, and notes
+ * without leaving the page. Mirrors the PM-app expansion.
+ */
+function renderVendorCardExpansion(vendor, banks, category) {
+  const rows = [];
+  if (category) {
+    const key = category.key;
+    if (key === "influencer" || key === "ugc") rows.push(["Platforms", vendor.platforms]);
+    else if (key === "logistics") { rows.push(["Location link", vendor.location_link]); rows.push(["Short address", vendor.short_address]); }
+    else if (key === "model") { rows.push(["Age", vendor.age]); rows.push(["Gender", vendor.gender]); }
+    else if (key === "rentals") rows.push(["Rental type", vendor.rental_type]);
+    else if (key === "events") { rows.push(["Opening", vendor.event_opening]); rows.push(["Ceremony", vendor.event_ceremony]); }
+    else if (key === "location") { rows.push(["Location type", vendor.location_type]); rows.push(["Location link", vendor.location_link]); }
+  }
+  const visibleRows = rows.filter(([, v]) => v != null && String(v).trim() !== "");
+
+  const banksBlock = banks.length > 1 ? `
+    <div style="margin-top:10px">
+      <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px">All banks</div>
+      <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:3px">
+        ${banks.map((b) => `
+          <li style="display:flex; justify-content:space-between; gap:8px; font-size:12px">
+            <span style="color:var(--muted)">${escapeHtml(b.bank_name || "—")}</span>
+            <span style="font-family:monospace">${escapeHtml(b.iban || "—")}</span>
+          </li>
+        `).join("")}
+      </ul>
+    </div>
+  ` : "";
+
+  const catBlock = visibleRows.length ? `
+    <div style="margin-top:10px">
+      <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px">${escapeHtml(category.label)} details</div>
+      <dl style="display:grid; grid-template-columns:120px 1fr; gap:3px 12px; font-size:12px; margin:0">
+        ${visibleRows.map(([k, v]) => `
+          <dt style="color:var(--muted)">${escapeHtml(k)}</dt>
+          <dd style="margin:0">${escapeHtml(String(v))}</dd>
+        `).join("")}
+      </dl>
+    </div>
+  ` : "";
+
+  const notesBlock = vendor.details ? `
+    <div style="margin-top:10px">
+      <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px">Notes</div>
+      <p style="font-size:12px; color:var(--muted); margin:0; white-space:pre-wrap">${escapeHtml(vendor.details)}</p>
+    </div>
+  ` : "";
+
+  return `
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--line)">
+      ${banksBlock}${catBlock}${notesBlock}
+    </div>
+  `;
+}
+
+/**
+ * Modal-specific top-fields renderer. Same field set + #vendor-edit-*
+ * input ids as the legacy renderVendorFormFields("edit", v) so
+ * readVendorFormPayload("vendor-edit") still works unchanged, but
+ * deliberately omits bank fields (those live inside the bank tabs).
+ *
+ * Reacts to a category change via the existing
+ * syncVendorCategoryVisibility("vendor-edit") handler — wired in the
+ * global `change` listener.
+ */
+function renderVendorEditorTopFields(vendor) {
+  const categories = state.vendorCategories || [];
+  // Draft overrides vendor (draft is what the user has typed during
+  // this modal session; vendor is the saved state).
+  const d = state.vendorEditorDraft || {};
+  const valOr = (key, fallback) => d[key] !== undefined ? d[key] : (fallback ?? "");
+  const catId = valOr("category", vendor?.category_id || "");
+  const cat = findVendorCategory(catId);
+  const requiresLicense = !!cat?.requires_license;
+  const catKey = cat?.key || "";
+  const showWhen = (visible) => `style="${visible ? "" : "display:none"}"`;
+
+  const categoryOptions = `
+    <option value="">— select a category —</option>
+    ${categories.map((c) => `
+      <option value="${encodeAttr(c.id)}" ${c.id === catId ? "selected" : ""}>
+        ${escapeHtml(c.label)}
+      </option>
+    `).join("")}
+  `;
+
+  // Pull every field from the draft when present, else from the vendor
+  // row, else empty. Selects also honor the draft so a category change
+  // mid-session survives a re-render.
+  const v_name      = valOr("name", vendor?.name);
+  const v_idnum     = valOr("id-number", vendor?.id_number);
+  const v_license   = valOr("license", vendor?.license_number);
+  const v_signatory = valOr("signatory", vendor?.signatory_name);
+  const v_contact   = valOr("contact-name", vendor?.contact_name);
+  const v_phone     = valOr("phone", vendor?.phone);
+  const v_email     = valOr("email", vendor?.email);
+  const v_vat       = valOr("vat", vendor?.vat_number);
+  const v_details   = valOr("details", vendor?.details);
+  const v_loclink   = valOr("location-link", vendor?.location_link);
+  const v_shortaddr = valOr("short-address", vendor?.short_address);
+  const v_age       = valOr("age", vendor?.age != null ? String(vendor.age) : "");
+  const v_gender    = valOr("gender", vendor?.gender);
+  const v_rental    = valOr("rental-type", vendor?.rental_type);
+  const v_opening   = valOr("event-opening", vendor?.event_opening);
+  const v_ceremony  = valOr("event-ceremony", vendor?.event_ceremony);
+  const v_loctype   = valOr("location-type", vendor?.location_type);
+  const v_platforms = valOr("platforms", vendor?.platforms);
+
+  return `
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+      <label>Category <select id="vendor-edit-category" required>${categoryOptions}</select></label>
+      <label>Vendor name <input id="vendor-edit-name" required value="${encodeAttr(v_name)}" /></label>
+
+      <label id="vendor-edit-id-label" ${showWhen(!requiresLicense)}>
+        ID number
+        <input id="vendor-edit-id-number" value="${encodeAttr(v_idnum)}" />
+      </label>
+      <label id="vendor-edit-license-label" ${showWhen(requiresLicense)}>
+        License number
+        <input id="vendor-edit-license" value="${encodeAttr(v_license)}" />
+      </label>
+
+      <label>Signatory name <input id="vendor-edit-signatory" placeholder="Whose name signs" value="${encodeAttr(v_signatory)}" /></label>
+      <label>Contact name <input id="vendor-edit-contact-name" value="${encodeAttr(v_contact)}" /></label>
+      <label>Contact phone <input id="vendor-edit-phone" value="${encodeAttr(v_phone)}" /></label>
+      <label>Contact email <input id="vendor-edit-email" type="email" value="${encodeAttr(v_email)}" /></label>
+      <label>VAT number <input id="vendor-edit-vat" value="${encodeAttr(v_vat)}" /></label>
+
+      <label id="vendor-edit-location-link-label" ${showWhen(catKey === "logistics" || catKey === "location")}>
+        Location link
+        <input id="vendor-edit-location-link" value="${encodeAttr(v_loclink)}" />
+      </label>
+      <label id="vendor-edit-short-address-label" ${showWhen(catKey === "logistics")}>
+        Short address
+        <input id="vendor-edit-short-address" value="${encodeAttr(v_shortaddr)}" />
+      </label>
+      <label id="vendor-edit-age-label" ${showWhen(catKey === "model")}>
+        Age
+        <input id="vendor-edit-age" type="number" min="0" value="${encodeAttr(v_age)}" />
+      </label>
+      <label id="vendor-edit-gender-label" ${showWhen(catKey === "model")}>
+        Gender
+        <select id="vendor-edit-gender">
+          <option value="">—</option>
+          <option value="male" ${v_gender === "male" ? "selected" : ""}>Male</option>
+          <option value="female" ${v_gender === "female" ? "selected" : ""}>Female</option>
+        </select>
+      </label>
+      <label id="vendor-edit-rental-type-label" ${showWhen(catKey === "rentals")}>
+        Rental type
+        <input id="vendor-edit-rental-type" value="${encodeAttr(v_rental)}" />
+      </label>
+      <label id="vendor-edit-event-opening-label" ${showWhen(catKey === "events")}>
+        Opening
+        <input id="vendor-edit-event-opening" value="${encodeAttr(v_opening)}" />
+      </label>
+      <label id="vendor-edit-event-ceremony-label" ${showWhen(catKey === "events")}>
+        Ceremony
+        <input id="vendor-edit-event-ceremony" value="${encodeAttr(v_ceremony)}" />
+      </label>
+      <label id="vendor-edit-location-type-label" ${showWhen(catKey === "location")}>
+        Location type
+        <input id="vendor-edit-location-type" value="${encodeAttr(v_loctype)}" />
+      </label>
+
+      ${(catKey === "influencer" || catKey === "ugc") ? `
+        <label>Platforms <input id="vendor-edit-platforms" value="${encodeAttr(v_platforms)}" placeholder="Instagram, TikTok…" /></label>
+      ` : ""}
+    </div>
+    <label style="display:block; margin-top:8px">Details (optional) <textarea id="vendor-edit-details" rows="2" style="width:100%; resize:vertical">${escapeHtml(v_details)}</textarea></label>
+  `;
+}
+
+// ── BankDraft helpers ───────────────────────────────────────────────
+
+function bankToDraft(b) {
+  return {
+    id:             b.id,
+    localKey:       `bank:${b.id}`,
+    bank_name:      b.bank_name || "",
+    account_name:   b.account_name || "",
+    iban:           b.iban || "",
+    account_number: b.account_number || "",
+    swift_code:     b.swift_code || "",
+    deleted:        false,
+  };
+}
+
+function emptyBankDraft() {
+  return {
+    id:             null,
+    localKey:       `new-${Math.random().toString(36).slice(2, 10)}`,
+    bank_name:      "",
+    account_name:   "",
+    iban:           "",
+    account_number: "",
+    swift_code:     "",
+    deleted:        false,
+  };
+}
+
+/** Open the editor for a specific vendor (or null = create). */
+function openVendorEditor(vendor) {
+  state.vendorEditorTarget = vendor;
+  state.vendorEditorBanks = vendor
+    ? (vendor.bank_accounts || []).map(bankToDraft)
+    : [];
+  state.vendorEditorTab = { type: "id" };
+  state.vendorEditorError = "";
+  state.vendorEditorOpen = true;
+  renderVendorsView();
+}
+
+function closeVendorEditor() {
+  state.vendorEditorOpen = false;
+  state.vendorEditorTarget = null;
+  state.vendorEditorBanks = [];
+  state.vendorEditorTab = { type: "id" };
+  state.vendorEditorError = "";
+  state.vendorEditorDraft = null;
+  renderVendorsView();
+}
+
+/**
+ * Snapshot the modal's top-field DOM values into state so a re-render
+ * (tab switch, add/remove bank) doesn't lose what the user typed.
+ * Bank tab inputs are already persisted via the input listener.
+ */
+function captureVendorEditorTopFields() {
+  if (!state.vendorEditorOpen) return;
+  const keys = [
+    "category", "name", "id-number", "license", "signatory",
+    "contact-name", "phone", "email", "vat", "details",
+    "location-link", "short-address", "age", "gender",
+    "rental-type", "event-opening", "event-ceremony", "location-type",
+    "platforms",
+  ];
+  const draft = state.vendorEditorDraft || {};
+  for (const k of keys) {
+    const el = document.getElementById(`vendor-edit-${k}`);
+    if (el) draft[k] = el.value;
+  }
+  state.vendorEditorDraft = draft;
+}
+
+/**
+ * Render the Design C modal markup. Returns "" when closed so the
+ * modal lives inside the normal view innerHTML without leaking event
+ * listeners. State changes (open/close/tab switch/bank add/remove)
+ * call renderVendorsView() to repaint.
+ */
+function renderVendorEditorModal() {
+  if (!state.vendorEditorOpen) return "";
+  const vendor = state.vendorEditorTarget;
+  const isEdit = !!vendor;
+  const cat = vendor ? findVendorCategory(vendor.category_id) : null;
+  const banks = state.vendorEditorBanks.filter((b) => !b.deleted);
+  const activeTab = state.vendorEditorTab;
+
+  // Top-section fields. Reuses the same #vendor-edit-* input ids as
+  // the legacy form so readVendorFormPayload("vendor-edit") works,
+  // but excludes the bank inputs — those live inside the bank tabs
+  // and would visually duplicate otherwise.
+  const topFields = renderVendorEditorTopFields(vendor);
+
+  // Active tab label uses category to flip License vs ID.
+  const identifierLabel = cat?.requires_license ? "License" : "ID";
+
+  const tabHeader = `
+    <div style="display:flex; gap:2px; border-bottom:1px solid var(--line); margin-top:12px; flex-wrap:wrap">
+      <button type="button" class="tab-pill ${activeTab.type === "id" ? "is-active" : ""}" data-action="ve-tab" data-tab-type="id">${escapeHtml(identifierLabel)}</button>
+      ${banks.map((b, idx) => `
+        <button type="button" class="tab-pill ${activeTab.type === "bank" && activeTab.localKey === b.localKey ? "is-active" : ""}" data-action="ve-tab" data-tab-type="bank" data-tab-key="${encodeAttr(b.localKey)}">
+          🏦 ${escapeHtml(b.bank_name.trim() || (b.id ? `Bank ${b.id}` : `New bank ${idx + 1}`))}
+        </button>
+      `).join("")}
+      <button type="button" class="tab-pill" data-action="ve-add-bank" style="color:var(--muted)">+ Add bank</button>
+    </div>
+  `;
+
+  let tabBody = "";
+  if (activeTab.type === "id") {
+    tabBody = `
+      <div style="display:flex; flex-direction:column; gap:12px">
+        <div style="border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); font-size:12px">
+          ${identifierLabel} document upload — coming soon in this app.<br>
+          For now manage files from the PM app's vendor editor.
+        </div>
+      </div>
+    `;
+  } else {
+    const b = banks.find((x) => x.localKey === activeTab.localKey);
+    if (b) {
+      tabBody = `
+        <div style="display:flex; flex-direction:column; gap:12px">
+          <div style="border:1px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); font-size:12px">
+            Bank document upload — coming soon in this app.
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+            <label>Bank name <input class="ve-bank-input" data-field="bank_name" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.bank_name)}" /></label>
+            <label>Account name <input class="ve-bank-input" data-field="account_name" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.account_name)}" /></label>
+            <label style="grid-column: 1 / -1">IBAN <input class="ve-bank-input" data-field="iban" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.iban)}" placeholder="SA…" /></label>
+            <label>Account number <input class="ve-bank-input" data-field="account_number" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.account_number)}" /></label>
+            <label>SWIFT <input class="ve-bank-input" data-field="swift_code" data-key="${encodeAttr(b.localKey)}" value="${encodeAttr(b.swift_code)}" /></label>
+          </div>
+          <div style="display:flex; justify-content:flex-end">
+            <button type="button" class="ghost-button" data-action="ve-remove-bank" data-key="${encodeAttr(b.localKey)}" style="color:var(--red); font-size:12px">Remove this bank</button>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  const errBlock = state.vendorEditorError
+    ? `<div class="pill" style="background:#fde2e1; color:#7c1d1c; margin-top:10px">${escapeHtml(state.vendorEditorError)}</div>`
+    : "";
+
+  return `
+    <div class="modal-backdrop" data-action="ve-close-bg">
+      <div class="modal-panel" data-stop-card-click>
+        <header style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--line)">
+          <h3 style="margin:0; font-size:18px">${isEdit ? `Edit ${escapeHtml(vendor.name)}` : "New vendor"}</h3>
+          <button type="button" class="ghost-button" data-action="ve-close" aria-label="Close" style="font-size:18px">×</button>
+        </header>
+        <div style="flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:14px">
+          ${topFields}
+          ${tabHeader}
+          <div style="padding-top:10px">${tabBody}</div>
+          ${errBlock}
+        </div>
+        <footer style="display:flex; justify-content:flex-end; gap:8px; padding:12px 18px; border-top:1px solid var(--line)">
+          <button type="button" class="secondary-button" data-action="ve-close" ${state.vendorEditorSaving ? "disabled" : ""}>Cancel</button>
+          <button type="button" class="primary-button" data-action="ve-save" ${state.vendorEditorSaving ? "disabled" : ""}>
+            ${state.vendorEditorSaving ? "Saving…" : (isEdit ? "Save changes" : "Add vendor")}
+          </button>
+        </footer>
+      </div>
+    </div>
+  `;
+}
+
 function renderVendorsView() {
   updateHeader("Vendors", "Manage vendors, bank accounts, and onboarding");
   const vendorQuery = state.vendorSearch.trim().toLowerCase();
@@ -1222,21 +1589,37 @@ function renderVendorsView() {
   const bankOptions = (vendor?.bank_accounts || []).map((bank) => `
     <option value="${bank.id}" ${String(bank.id) === String(selectedBank?.id) ? "selected" : ""}>${escapeHtml(bank.iban)} / ${escapeHtml(bank.bank_name)}</option>
   `).join("");
-  const vendorCards = filteredVendors.map((item) => `
-    <article class="vendor-card ${String(item.id) === String(vendor?.id) ? "selected-card" : ""}" data-vendor-id="${item.id}">
-      <div>
-        <h3>${escapeHtml(item.name)}</h3>
-        <p>${escapeHtml(item.license_number || "No license")}</p>
-      </div>
-      <span>${item.bank_accounts?.length || 0} bank</span>
-      ${(item.bank_accounts || []).slice(0, 3).map((bank) => `
-        <div class="bank-line">
-          <strong>${escapeHtml(bank.bank_name)}</strong>
-          <small>${escapeHtml(bank.iban)}</small>
+  // Vendor cards are click-to-expand. Click anywhere in the card body
+  // toggles a summary block below; the Edit button opens the modal.
+  const vendorCards = filteredVendors.map((item) => {
+    const cat = findVendorCategory(item.category_id);
+    const idLabel = cat?.requires_license ? "License" : "ID";
+    const idValue = cat?.requires_license
+      ? (item.license_number || item.id_number || "—")
+      : (item.id_number || item.license_number || "—");
+    const isExpanded = String(state.expandedVendorId) === String(item.id);
+    const banks = item.bank_accounts || [];
+    return `
+      <article class="vendor-card ${isExpanded ? "expanded-card" : ""}" data-vendor-id="${item.id}">
+        <header style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start">
+          <div style="min-width:0">
+            <h3 style="margin:0">${escapeHtml(item.name)}${cat ? ` <span class="pill" style="margin-left:6px">${escapeHtml(cat.label)}</span>` : ""}</h3>
+            <p style="margin:4px 0 0; font-size:12px; color:var(--muted)">${idLabel}: ${escapeHtml(idValue)}</p>
+          </div>
+          <div style="display:flex; gap:6px; flex-shrink:0" data-stop-card-click>
+            <button class="secondary-button" type="button" data-action="edit-vendor" data-id="${item.id}" style="padding:4px 10px; font-size:12px">Edit</button>
+          </div>
+        </header>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; margin-top:10px; font-size:12px">
+          <span style="color:var(--muted)">Contact</span><span>${escapeHtml(item.contact_name || "—")}</span>
+          <span style="color:var(--muted)">Phone</span><span>${escapeHtml(item.phone || "—")}</span>
+          <span style="color:var(--muted)">Bank</span><span>${escapeHtml(banks[0]?.bank_name || "—")}</span>
+          <span style="color:var(--muted)">IBAN</span><span style="font-family:monospace">${escapeHtml(banks[0]?.iban || "—")}</span>
         </div>
-      `).join("")}
-    </article>
-  `).join("");
+        ${isExpanded ? renderVendorCardExpansion(item, banks, cat) : ""}
+      </article>
+    `;
+  }).join("");
 
   els.viewRoot.innerHTML = `
     <section class="stats-row">
@@ -1252,54 +1635,22 @@ function renderVendorsView() {
           <div class="toolbar">
             <input id="vendor-search" placeholder="Search name, ID, license, email, IBAN…" value="${encodeAttr(state.vendorSearch)}" />
             <button class="secondary-button" type="button" data-action="load-vendors">Refresh</button>
+            <button class="primary-button" type="button" data-action="open-new-vendor">+ Add Vendor</button>
           </div>
         </div>
         <div class="card-grid">${vendorCards || `<p class="empty-note">No vendors found.</p>`}</div>
       </div>
 
-      <div class="form-stack">
-        <form id="vendor-edit-form" class="side-panel">
-          <h2>Edit Vendor</h2>
-          <label>Vendor <select id="vendor-edit-select" required>${vendorOptions}</select></label>
-          ${renderVendorFormFields("edit", vendor)}
-          <div class="button-row">
-            <button class="primary-button" type="submit" ${vendor ? "" : "disabled"}>Save Vendor</button>
-            <button class="danger-button" type="button" data-action="delete-vendor" ${vendor ? "" : "disabled"}>Delete Vendor</button>
-          </div>
-          <p class="form-hint">Use this screen when vendor master data needs corrections.</p>
-        </form>
-
-        <form id="bank-edit-form" class="side-panel">
-          <h2>Edit Bank Account</h2>
-          <label>IBAN <select id="bank-edit-select" ${selectedBank ? "" : "disabled"}>${bankOptions || `<option value="">No bank accounts</option>`}</select></label>
-          <label>Bank Name <input id="bank-edit-name" required value="${encodeAttr(selectedBank?.bank_name || "")}" /></label>
-          <label>Account Name <input id="bank-edit-account-name" required value="${encodeAttr(selectedBank?.account_name || "")}" /></label>
-          <label>IBAN Value <input id="bank-edit-iban" required value="${encodeAttr(selectedBank?.iban || "")}" /></label>
-          <label>Account Number <input id="bank-edit-account-number" value="${encodeAttr(selectedBank?.account_number || "")}" /></label>
-          <label>SWIFT <input id="bank-edit-swift" value="${encodeAttr(selectedBank?.swift_code || "")}" /></label>
-          <button class="primary-button" type="submit" ${selectedBank ? "" : "disabled"}>Save Bank</button>
-        </form>
-
-        <form id="vendor-form" class="side-panel">
-          <h2>New Vendor</h2>
-          ${renderVendorFormFields("new", null)}
-          <button class="primary-button" type="submit">Create Vendor</button>
-        </form>
-
-        <form id="bank-form" class="side-panel">
-          <h2>Add Bank Account</h2>
-          <label>Vendor <select id="bank-vendor" required>${vendorOptions}</select></label>
-          <label>Bank Name <input id="bank-name" required /></label>
-          <label>Account Name <input id="bank-account-name" required /></label>
-          <label>IBAN <input id="bank-iban" required /></label>
-          <label>Account Number <input id="bank-account-number" /></label>
-          <label>SWIFT <input id="bank-swift" /></label>
-          <button class="primary-button" type="submit" ${state.vendors.length ? "" : "disabled"}>Add Bank</button>
-        </form>
-      </div>
+      <!--
+        The form-stack side panels (Edit Vendor / Edit Bank / New
+        Vendor / Add Bank) were retired with the Design C rebuild.
+        The "+ Add Vendor" button at the top opens the same modal as
+        clicking a vendor's Edit button — one editor for create + edit.
+      -->
     </section>
 
     ${renderPendingPanel("vendors")}
+    ${renderVendorEditorModal()}
   `;
 }
 
@@ -2812,6 +3163,93 @@ async function createVendor(event) {
   showToast("Vendor created");
 }
 
+/**
+ * Save flow for the Design C vendor editor modal.
+ *
+ * Edit mode  → PATCH /api/vendors/{id} with the top-section fields,
+ *              then for each BankDraft:
+ *                deleted + has id  → DELETE  /api/vendors/bank-accounts/{id}
+ *                no id + non-empty → POST    /api/vendors/{id}/bank-accounts
+ *                has id + changed  → PATCH   /api/vendors/bank-accounts/{id}
+ *
+ * Create mode → POST /api/vendors/ (no banks in payload); the user
+ *               re-opens the just-created vendor to add banks.
+ *
+ * Errors are surfaced inside the modal — the modal stays open so the
+ * user can retry without losing typed bank fields.
+ */
+async function saveVendorEditor() {
+  if (state.vendorEditorSaving) return;
+  // Snapshot the live DOM values into the draft so the upcoming
+  // re-render (which switches to a Saving... state) doesn't wipe
+  // unsaved text from the inputs.
+  captureVendorEditorTopFields();
+  state.vendorEditorSaving = true;
+  state.vendorEditorError = "";
+  renderVendorsView();
+
+  try {
+    const payload = readVendorFormPayload("vendor-edit");
+    if (!payload.name) throw new Error("Vendor name is required");
+    if (!payload.category_id) throw new Error("Pick a category");
+    const target = state.vendorEditorTarget;
+
+    let vendorId;
+    if (target) {
+      await api(`/api/vendors/${target.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      vendorId = target.id;
+    } else {
+      const created = await api("/api/vendors/", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      vendorId = created.id;
+    }
+
+    // Bank deltas (edit mode only — create flow defers to the next open).
+    if (target) {
+      for (const b of state.vendorEditorBanks) {
+        if (b.deleted && b.id != null) {
+          await api(`/api/vendors/bank-accounts/${b.id}`, { method: "DELETE" });
+          continue;
+        }
+        const bankPayload = {
+          bank_name: b.bank_name.trim(),
+          account_name: b.account_name.trim(),
+          iban: b.iban.trim(),
+          account_number: b.account_number.trim(),
+          swift_code: b.swift_code.trim(),
+        };
+        const isAllEmpty = Object.values(bankPayload).every((v) => !v);
+        if (b.id == null) {
+          if (isAllEmpty) continue;
+          await api(`/api/vendors/${vendorId}/bank-accounts`, {
+            method: "POST",
+            body: JSON.stringify(bankPayload),
+          });
+        } else {
+          await api(`/api/vendors/bank-accounts/${b.id}`, {
+            method: "PATCH",
+            body: JSON.stringify(bankPayload),
+          });
+        }
+      }
+    }
+
+    await loadVendors();
+    state.vendorEditorSaving = false;
+    closeVendorEditor();
+    showToast(target ? "Vendor saved" : "Vendor created");
+  } catch (err) {
+    state.vendorEditorError = err?.message || String(err);
+    state.vendorEditorSaving = false;
+    renderVendorsView();
+  }
+}
+
 async function updateVendor(event) {
   event.preventDefault();
   const vendorId = getFormValue("#vendor-edit-select");
@@ -3072,6 +3510,16 @@ document.addEventListener("input", (event) => {
     subLicenseHoverIndex = -1;
     renderSubLicenseSuggestions(event.target.value);
   }
+  // Vendor editor bank inputs — write to state on every keystroke so
+  // saves capture in-flight text. We deliberately don't re-render
+  // here, which would yank focus from the input mid-type.
+  if (event.target.classList?.contains("ve-bank-input")) {
+    const key = event.target.dataset.key;
+    const field = event.target.dataset.field;
+    state.vendorEditorBanks = state.vendorEditorBanks.map((b) =>
+      b.localKey === key ? { ...b, [field]: event.target.value } : b
+    );
+  }
   if (event.target.classList.contains("platform-handle")) {
     const raw = event.target.value;
     event.target.value = raw.replace(/^@+/, "");
@@ -3089,6 +3537,16 @@ document.addEventListener("change", async (event) => {
     }
     if (event.target.id === "sub-iban") {
       syncSubtaskBankPreview();
+    }
+    // Vendor editor: bank field updates write straight to state so the
+    // next render reflects the current input. No re-render here — that
+    // would steal focus mid-typing.
+    if (event.target.classList?.contains("ve-bank-input")) {
+      const key = event.target.dataset.key;
+      const field = event.target.dataset.field;
+      state.vendorEditorBanks = state.vendorEditorBanks.map((b) =>
+        b.localKey === key ? { ...b, [field]: event.target.value } : b
+      );
     }
     // Toggle the multi-service free-text box when Ad Type changes.
     // Show it only when the selected option is "Multi Service".
@@ -3108,7 +3566,19 @@ document.addEventListener("change", async (event) => {
       syncVendorCategoryVisibility("vendor");
     }
     if (event.target.id === "vendor-edit-category") {
-      syncVendorCategoryVisibility("vendor-edit");
+      // If the modal is open, we capture current text + re-render so
+      // the ID/License + per-category fields toggle correctly. Outside
+      // the modal (legacy form) fall back to the lightweight visibility
+      // sync that doesn't re-render.
+      if (state.vendorEditorOpen) {
+        captureVendorEditorTopFields();
+        // Override the cached category with the new selection so the
+        // re-render reflects it instead of reverting to the saved value.
+        if (state.vendorEditorDraft) state.vendorEditorDraft.category = event.target.value;
+        renderVendorsView();
+      } else {
+        syncVendorCategoryVisibility("vendor-edit");
+      }
     }
     if (event.target.classList.contains("platform-checkbox")) {
       renderPlatformHandleFields();
@@ -3268,6 +3738,56 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.addEventListener("click", async (event) => {
+  // ── Vendor editor modal handlers ────────────────────────────────
+  const veAction = event.target.closest("[data-action]")?.dataset.action;
+  // Close on overlay click (but not on a click inside the panel).
+  if (event.target.classList?.contains("modal-backdrop") && event.target.dataset.action === "ve-close-bg") {
+    closeVendorEditor();
+    return;
+  }
+  if (veAction === "ve-close") { event.preventDefault(); closeVendorEditor(); return; }
+  if (veAction === "ve-tab") {
+    captureVendorEditorTopFields();
+    const btn = event.target.closest("[data-action='ve-tab']");
+    const tabType = btn?.dataset.tabType;
+    if (tabType === "id") state.vendorEditorTab = { type: "id" };
+    else if (tabType === "bank") state.vendorEditorTab = { type: "bank", localKey: btn.dataset.tabKey };
+    renderVendorsView();
+    return;
+  }
+  if (veAction === "ve-add-bank") {
+    captureVendorEditorTopFields();
+    const draft = emptyBankDraft();
+    state.vendorEditorBanks.push(draft);
+    state.vendorEditorTab = { type: "bank", localKey: draft.localKey };
+    renderVendorsView();
+    return;
+  }
+  if (veAction === "ve-remove-bank") {
+    captureVendorEditorTopFields();
+    const key = event.target.closest("[data-action='ve-remove-bank']")?.dataset.key;
+    state.vendorEditorBanks = state.vendorEditorBanks.map((b) =>
+      b.localKey === key ? { ...b, deleted: true } : b
+    );
+    state.vendorEditorTab = { type: "id" };
+    renderVendorsView();
+    return;
+  }
+  if (veAction === "ve-save") {
+    await saveVendorEditor();
+    return;
+  }
+  if (veAction === "edit-vendor") {
+    const id = event.target.closest("[data-action='edit-vendor']")?.dataset.id;
+    const v = state.vendors.find((x) => String(x.id) === String(id));
+    if (v) openVendorEditor(v);
+    return;
+  }
+  if (veAction === "open-new-vendor") {
+    openVendorEditor(null);
+    return;
+  }
+
   // Vendor license autocomplete: row click picks the vendor.
   const acRow = event.target.closest("#sub-license-suggestions .autocomplete-row");
   if (acRow) {
@@ -3341,9 +3861,12 @@ document.addEventListener("click", async (event) => {
     }
 
     if (vendorCard && !button) {
-      state.selectedVendorId = vendorCard.dataset.vendorId;
-      localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
-      state.selectedBankId = "";
+      // Click anywhere in the card (except an explicit Edit button)
+      // toggles the inline expansion. Edit handler is wired via
+      // data-action="edit-vendor" elsewhere.
+      if (event.target.closest("[data-stop-card-click]")) return;
+      const id = vendorCard.dataset.vendorId;
+      state.expandedVendorId = String(state.expandedVendorId) === String(id) ? null : id;
       renderVendorsView();
       return;
     }
