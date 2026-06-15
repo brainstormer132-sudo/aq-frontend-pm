@@ -1344,10 +1344,20 @@ export interface VendorFileRow {
   mime_type: string;
   uploaded_by: string | null;
   uploaded_at: string;
+  // Migration 032: which "slot" in the Design C modal this file
+  // belongs to. Empty string = legacy / pre-modal uploads. Examples:
+  // 'license', 'id', 'bank:7', 'headshot', 'equipment'.
+  slot: string;
 }
 
 const VENDOR_FILES_BUCKET = 'vendor-files';
 export const VENDOR_FILE_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+
+/** Build the slot key for a specific bank account row. Keep this
+ *  here so every caller agrees on the format. */
+export function bankSlot(bankId: number | string): string {
+  return `bank:${bankId}`;
+}
 
 /** List the files attached to a vendor, newest first. */
 export function useVendorFiles(vendorId: number | null) {
@@ -1378,16 +1388,26 @@ export function useVendorFiles(vendorId: number | null) {
 /**
  * Upload a single file to a vendor.
  *
- * Path layout: `{vendor_id}/{rand}-{sanitized_filename}`. The random
- * prefix prevents collisions when the same filename is uploaded twice;
- * the original name is preserved as a column for display.
+ * Path layout: `{vendor_id}/{slot|_general}/{rand}-{sanitized_filename}`.
+ * The random prefix prevents collisions when the same filename is
+ * uploaded twice; the original name is preserved as a column for
+ * display. Including the slot in the path lets you eyeball storage in
+ * Supabase Studio and tell at a glance what a file is for.
  *
  * On success, returns the created vendor_files row.
  *
  * Throws if the file exceeds VENDOR_FILE_MAX_BYTES (25 MB) — the UI
  * surfaces that as a friendly inline error.
+ *
+ * `slot` is the Design C modal destination this file belongs to
+ * (`'license'`, `'id'`, `bankSlot(bankId)`, `'headshot'`, etc.).
+ * Pass an empty string for "general / no slot" uploads.
  */
-export async function uploadVendorFile(vendorId: number, file: File): Promise<VendorFileRow> {
+export async function uploadVendorFile(
+  vendorId: number,
+  file: File,
+  slot: string = '',
+): Promise<VendorFileRow> {
   if (file.size > VENDOR_FILE_MAX_BYTES) {
     throw new Error(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max is 25 MB.`);
   }
@@ -1399,7 +1419,11 @@ export async function uploadVendorFile(vendorId: number, file: File): Promise<Ve
     .replace(/[\\/:*?"<>|]/g, '_')   // strip OS-illegal chars
     .replace(/\s+/g, '_')
     .slice(0, 120);
-  const storagePath = `${vendorId}/${rand}-${safeName}`;
+  // Slots can contain a colon (bank:7), which is illegal on some
+  // storage backends. Normalize to an underscore so the storage layer
+  // never barfs and we can still rebuild the slot from the DB column.
+  const safeSlot = (slot || '_general').replace(/[\\/:*?"<>|]/g, '_');
+  const storagePath = `${vendorId}/${safeSlot}/${rand}-${safeName}`;
 
   // 1) push the bytes to storage
   const { error: uploadErr } = await supabase
@@ -1425,6 +1449,7 @@ export async function uploadVendorFile(vendorId: number, file: File): Promise<Ve
     file_size: file.size,
     mime_type: file.type || 'application/octet-stream',
     uploaded_by: uploadedBy,
+    slot,
   };
   const { data, error: insertErr } = await supabase
     .from('vendor_files')
@@ -1434,6 +1459,27 @@ export async function uploadVendorFile(vendorId: number, file: File): Promise<Ve
   if (insertErr) throw new Error(`Saved file but couldn't index it: ${insertErr.message}`);
 
   return data as VendorFileRow;
+}
+
+/**
+ * Group a vendor's files by slot. Returns a Map where keys are slot
+ * names ('license', 'bank:7', '') and values are the matching files
+ * sorted newest-first. Used by the Design C modal to populate each
+ * tab independently from a single fetch.
+ */
+export function groupVendorFilesBySlot(files: VendorFileRow[]): Map<string, VendorFileRow[]> {
+  const out = new Map<string, VendorFileRow[]>();
+  for (const f of files) {
+    const key = f.slot ?? '';
+    const bucket = out.get(key);
+    if (bucket) bucket.push(f);
+    else out.set(key, [f]);
+  }
+  // Each bucket newest-first.
+  for (const arr of out.values()) {
+    arr.sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at));
+  }
+  return out;
 }
 
 /**
@@ -2073,6 +2119,80 @@ export async function updateVendorRegistration(
       if (error) throw error;
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Multi-bank CRUD for the Design C modal.
+//
+// The existing updateVendorRegistration only manages a single primary
+// bank row. The new modal lets you keep multiple banks per vendor, so
+// we expose primitives the modal can call when the user adds/removes
+// banks tab-by-tab. Each call is a single REST round-trip; the modal
+// orchestrates batching.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface VendorBankInput {
+  bank_name?: string;
+  account_name?: string;
+  iban?: string;
+  account_number?: string;
+  swift_code?: string;
+}
+
+/** Add a new bank account to a vendor. Returns the created row. */
+export async function addVendorBank(
+  vendorId: number,
+  bank: VendorBankInput,
+): Promise<LegacyBankAccount> {
+  const payload = {
+    vendor_id:      vendorId,
+    bank_name:      bank.bank_name ?? '',
+    account_name:   bank.account_name ?? '',
+    iban:           bank.iban ?? '',
+    account_number: bank.account_number ?? '',
+    swift_code:     bank.swift_code ?? '',
+  };
+  const { data, error } = await supabase
+    .from('bank_accounts')
+    .insert(payload)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as LegacyBankAccount;
+}
+
+/**
+ * Patch fields on a single bank_accounts row. Undefined keys are
+ * skipped — the underlying values stay as-is.
+ */
+export async function updateVendorBank(
+  bankId: number,
+  patch: VendorBankInput,
+): Promise<void> {
+  const update: Record<string, any> = {};
+  for (const k of ['bank_name','account_name','iban','account_number','swift_code'] as const) {
+    if (patch[k] !== undefined) update[k] = patch[k];
+  }
+  if (Object.keys(update).length === 0) return;
+  const { error } = await supabase
+    .from('bank_accounts')
+    .update(update)
+    .eq('id', bankId);
+  if (error) throw error;
+}
+
+/**
+ * Delete a single bank_accounts row. Files in storage that were
+ * attached to that bank (slot = `bank:<id>`) are NOT deleted here;
+ * the modal cleans those up separately via deleteVendorFile so we
+ * don't accidentally torch a file that's been reassigned.
+ */
+export async function deleteVendorBank(bankId: number): Promise<void> {
+  const { error } = await supabase
+    .from('bank_accounts')
+    .delete()
+    .eq('id', bankId);
+  if (error) throw error;
 }
 
 /** Service types attached to a single task (multi). */
