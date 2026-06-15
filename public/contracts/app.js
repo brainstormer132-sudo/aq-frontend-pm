@@ -273,6 +273,35 @@ function setButtonLoading(button, isLoading) {
   }
 }
 
+/**
+ * Render whatever the backend returned in `detail` as a human-readable
+ * string. Handles three shapes:
+ *
+ *   - String  → returned as-is.
+ *   - FastAPI 422 validation array → one line per error:
+ *       "body.iban: field required"
+ *     (the loc array minus its leading "body"/"path"/"query" prefix +
+ *     the msg field).
+ *   - Anything else (plain object) → JSON-stringified so something
+ *     useful shows up in the UI instead of "[object Object]".
+ */
+function formatApiError(detail) {
+  if (detail == null) return "Request failed";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((entry) => {
+      if (!entry || typeof entry !== "object") return String(entry);
+      const loc = Array.isArray(entry.loc) ? entry.loc.slice(1).join(".") : "";
+      const msg = entry.msg || entry.message || "";
+      return loc ? `${loc}: ${msg}` : msg;
+    }).filter(Boolean).join("; ") || JSON.stringify(detail);
+  }
+  if (typeof detail === "object") {
+    return detail.message || detail.detail || JSON.stringify(detail);
+  }
+  return String(detail);
+}
+
 async function api(path, options = {}) {
   const useJson = options.body !== undefined && !(options.body instanceof FormData);
   setBusy(true);
@@ -323,12 +352,12 @@ async function api(path, options = {}) {
       // required") or stale-token messages from the backend itself —
       // showing a generic "log in again" was both misleading and noisy.
       const detail = typeof data === "object"
-        ? (data.detail || JSON.stringify(data))
+        ? (data.detail ?? data)
         : (data || `Request failed with ${response.status}`);
       if (response.status === 401) {
         console.warn("401 from", path, ":", detail);
       }
-      throw new Error(String(detail));
+      throw new Error(formatApiError(detail));
     }
 
     return data;
