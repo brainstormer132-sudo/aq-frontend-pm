@@ -917,6 +917,8 @@ async function renderTasksView() {
         <form id="task-form" class="slide-over-body in-slide-over">
           <input type="hidden" id="task-id" value="${encodeAttr(editingTask?.id || "")}" />
           <label>Brand <input id="task-brand" required value="${encodeAttr(editingTask?.brand || "")}" /></label>
+          <label>Contract Length (days) <input id="task-duration" inputmode="numeric" placeholder="e.g. 30 or 60-90" value="${encodeAttr(editingTask?.duration || "")}" /></label>
+          <p class="form-hint">Fills the {{ duration }} field on every contract for this task. Number of days or a range — leave blank to keep the template default.</p>
           <label>Amount <input id="task-amount" inputmode="decimal" readonly value="${encodeAttr(editingTask?.amount || "0.00")}" /></label>
           <p class="form-hint">Amount is calculated automatically from subtask prices.</p>
           <label>Contract Type <select id="task-type">${templateOptions(activeTaskTemplate)}</select></label>
@@ -2853,6 +2855,7 @@ async function saveTask(event) {
   const taskId = getFormValue("#task-id");
   const body = {
     brand: getFormValue("#task-brand"),
+    duration: getFormValue("#task-duration"),
     contract_type: getFormValue("#task-type"),
     status: getFormValue("#task-status"),
     end_date: getFormValue("#task-end-date"),
