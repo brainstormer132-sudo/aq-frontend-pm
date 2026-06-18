@@ -1,0 +1,445 @@
+/* ============================================================
+   styles-cs.css — Contract Suite redesign (black & white system)
+   ------------------------------------------------------------
+   BATCH 1 (foundation): design tokens, app shell, sidebar, topbar,
+   theme, and the shared primitive classes (cs-*) that each screen
+   adopts as it is migrated.
+
+   Loaded LAST so it wins over styles.css / styles-tasks.css /
+   styles-theme.css. Tokens are namespaced --cs-* so they never
+   collide with the legacy --ink / --panel / --muted tokens that the
+   not-yet-migrated screens still rely on. Those screens keep their
+   current look until their own batch swaps the markup to cs-* classes.
+   ============================================================ */
+
+/* ---- Design tokens -------------------------------------------------- */
+:root,
+html[data-theme="light"] {
+  --cs-bg:#ededeb;       --cs-card:#ffffff;     --cs-card2:#fcfcfa;   --cs-card-bd:#e4e4dd;
+  --cs-field:#fbfbf9;    --cs-field2:#f3f3ee;   --cs-field-bd:#deded6;
+  --cs-soft:#f6f6f2;     --cs-pill:#f0f0ea;     --cs-pill-bd:#e4e4db; --cs-pill-ink:#54544c; --cs-tab-active:#ffffff;
+  --cs-divider:#edede6;  --cs-divider2:#f2f2ec; --cs-track:#ecece4;   --cs-cbox-bd:#c8c8c0;
+  --cs-ink:#14140f;      --cs-ink2:#6b6b63;     --cs-monoink:#3a3a33; --cs-muted:#9a9a90;
+  --cs-solid:#14140f;    --cs-tile:#0c0c0a;     --cs-tile-bd:#0c0c0a;
+  --cs-rowsel:#f4f3ee;   --cs-rowhover:#faf9f6;
+  --cs-warn-bg:#faf5ea;  --cs-warn-bd:#efe2c6;  --cs-danger-bd:#e7c4be; --cs-danger-hover:#fbeae8;
+
+  /* fixed / non-theming */
+  --cs-sidebar:#0c0c0a;
+  --cs-danger:#c2362b;
+  --cs-accent:#b07a23;      /* ochre attention */
+  --cs-accent-ink:#8a6a1e;
+  --cs-online:#3fb950;
+  --cs-scrollbar:#cfcfca;
+}
+
+html[data-theme="dark"] {
+  --cs-bg:#121210;       --cs-card:#1c1c19;     --cs-card2:#191916;   --cs-card-bd:#2c2c27;
+  --cs-field:#232320;    --cs-field2:#262622;   --cs-field-bd:#36362f;
+  --cs-soft:#201f19;     --cs-pill:#2a2a23;     --cs-pill-bd:#36362f; --cs-pill-ink:#c4c4ba; --cs-tab-active:#3a3a33;
+  --cs-divider:#2a2a25;  --cs-divider2:#242420; --cs-track:#36362f;   --cs-cbox-bd:#4a4a42;
+  --cs-ink:#eceae3;      --cs-ink2:#a8a89e;     --cs-monoink:#cecabf; --cs-muted:#86867c;
+  --cs-solid:#33332b;    --cs-tile:#26261f;     --cs-tile-bd:#36362f;
+  --cs-rowsel:#26261f;   --cs-rowhover:#201f1b;
+  --cs-warn-bg:#2c2615;  --cs-warn-bd:#473d22;  --cs-danger-bd:#5a2f2a; --cs-danger-hover:#2c1c1a;
+
+  --cs-scrollbar:#3a3a33;
+}
+
+/* ---- Base ----------------------------------------------------------- */
+body {
+  font-family: 'IBM Plex Sans', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  background: var(--cs-bg);
+  color: var(--cs-ink);
+  -webkit-font-smoothing: antialiased;
+  transition: background .2s ease, color .2s ease;
+}
+
+/* Kill the legacy green radial-gradient backgrounds on both themes so the
+   flat black-and-white surface shows through. */
+html[data-theme="light"] body,
+html[data-theme="dark"] body { background: var(--cs-bg) !important; }
+
+.cs-mono, .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.cs-ar  { font-family: 'IBM Plex Sans Arabic', sans-serif; direction: rtl; unicode-bidi: plaintext; }
+.cs-bidi { unicode-bidi: plaintext; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--cs-scrollbar); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   APP SHELL — sidebar + main
+   ============================================================ */
+.app-shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--cs-bg);
+  transition: grid-template-columns .16s ease;
+}
+.app-shell.sidebar-collapsed { grid-template-columns: 74px minmax(0, 1fr); }
+
+/* ---- Sidebar (always near-black, both themes) ---------------------- */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  color: #fff;
+  background: var(--cs-sidebar) !important;
+  box-shadow: none;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: start;
+  overflow: hidden;
+}
+
+/* collapse toggle chevron — keep it but make it quiet */
+.sidebar-toggle {
+  position: absolute;
+  top: 16px; right: 12px;
+  width: 24px; height: 24px;
+  border: none; border-radius: 7px;
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.6);
+  cursor: pointer; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .12s, transform .16s;
+}
+.sidebar-toggle:hover { background: rgba(255,255,255,.12); color:#fff; }
+.app-shell.sidebar-collapsed .sidebar-toggle { transform: rotate(180deg); }
+
+/* brand / logo block */
+.sidebar .brand {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 0;
+  padding: 22px 18px 18px;
+}
+.sidebar .brand img {
+  width: 40px; height: 40px; flex: none;
+  border-radius: 11px;
+  background: #fff;
+  border: none;
+  object-fit: contain;
+  padding: 6px;
+}
+.sidebar .brand strong { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #fff; }
+.sidebar .brand span {
+  font-size: 11px; color: rgba(255,255,255,.45);
+  letter-spacing: .06em; text-transform: uppercase;
+}
+
+/* nav */
+.sidebar .nav-list { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
+.sidebar .nav-item {
+  display: flex; align-items: center; gap: 13px;
+  width: 100%; min-height: 0;
+  padding: 11px 14px;
+  border: none; border-radius: 9px;
+  background: transparent;
+  color: rgba(255,255,255,.72);
+  font-weight: 500; font-size: 14px;
+  text-align: left; cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.sidebar .nav-item:hover { background: rgba(255,255,255,.07); color: #fff; border: none; }
+.sidebar .nav-item.active {
+  background: #fff !important;
+  color: #0c0c0a !important;
+  font-weight: 600;
+  border: none;
+}
+.sidebar .nav-icon { width: 18px; height: 18px; flex: none; }
+
+/* session / footer */
+.sidebar .session-panel {
+  margin-top: auto;
+  display: flex; flex-direction: column; gap: 0;
+  padding: 0;
+}
+.sidebar .theme-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 6px 12px;
+  padding: 11px 14px;
+  border: none; border-radius: 9px;
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.82);
+  font-family: inherit; font-size: 13.5px; font-weight: 600;
+  cursor: pointer; transition: background .12s;
+}
+.sidebar .theme-toggle:hover { background: rgba(255,255,255,.12); }
+.sidebar .theme-toggle-label { display: flex; align-items: center; gap: 12px; }
+.sidebar .theme-toggle-icon { width: 18px; height: 18px; flex: none; }
+.sidebar .theme-toggle-state { font-size: 12px; color: rgba(255,255,255,.45); }
+
+.sidebar .status-dot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 22px 18px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  color: rgba(255,255,255,.6); font-size: 12px;
+}
+.sidebar .status-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--cs-online); flex: none; }
+.sidebar .status-dot.error::before { background: #ff8a7e; }
+.sidebar .api-url { color: rgba(255,255,255,.32); font-size: 10.5px; word-break: break-all; }
+
+/* collapsed: hide every text label, center icons */
+.app-shell.sidebar-collapsed .sidebar .brand { justify-content: center; padding: 22px 0 18px; }
+.app-shell.sidebar-collapsed .sidebar .brand > div,
+.app-shell.sidebar-collapsed .sidebar .nav-label,
+.app-shell.sidebar-collapsed .sidebar .theme-toggle-label span,
+.app-shell.sidebar-collapsed .sidebar .theme-toggle-state,
+.app-shell.sidebar-collapsed .sidebar .status-dot > div,
+.app-shell.sidebar-collapsed .sidebar .api-url { display: none; }
+.app-shell.sidebar-collapsed .sidebar .nav-item,
+.app-shell.sidebar-collapsed .sidebar .theme-toggle { justify-content: center; }
+.app-shell.sidebar-collapsed .sidebar .status-dot { justify-content: center; padding: 12px 0 18px; }
+
+/* ---- Main / topbar -------------------------------------------------- */
+.content {
+  position: relative;
+  min-width: 0;
+  padding: 30px 40px 56px;
+  max-width: 1320px;
+  margin: 0 auto;
+  width: 100%;
+}
+.topbar {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 24px; margin-bottom: 28px;
+}
+.topbar h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.025em; line-height: 1; color: var(--cs-ink); }
+.eyebrow {
+  margin: 0 0 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px; font-weight: 500; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--cs-muted);
+}
+.view-subtitle { margin: 9px 0 0; font-size: 14px; color: var(--cs-ink2); }
+
+/* ============================================================
+   SHARED PRIMITIVES — adopted by screens as they're migrated
+   ============================================================ */
+
+/* ---- Buttons -------------------------------------------------------- */
+.cs-btn,
+.cs-btn-ghost,
+.cs-btn-danger {
+  font-family: inherit; font-size: 13.5px; font-weight: 600;
+  padding: 10px 18px; border-radius: 9px;
+  cursor: pointer; line-height: 1;
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.cs-btn { background: var(--cs-solid); color: #fff; border: 1px solid var(--cs-solid); }
+.cs-btn:hover { opacity: .92; }
+.cs-btn-ghost { background: var(--cs-card); color: var(--cs-ink); border: 1px solid var(--cs-field-bd); }
+.cs-btn-ghost:hover { background: var(--cs-pill); }
+.cs-btn-danger { background: var(--cs-card); color: var(--cs-danger); border: 1px solid var(--cs-danger-bd); }
+.cs-btn-danger:hover { background: var(--cs-danger-hover); }
+.cs-btn:disabled,
+.cs-btn-ghost:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---- Cards / sections ---------------------------------------------- */
+.cs-card {
+  background: var(--cs-card);
+  border: 1px solid var(--cs-card-bd);
+  border-radius: 14px;
+  padding: 20px 22px;
+}
+.cs-card-flush { background: var(--cs-card); border: 1px solid var(--cs-card-bd); border-radius: 14px; overflow: hidden; }
+.cs-section-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--cs-ink); }
+
+/* ---- KPI strip ------------------------------------------------------ */
+.cs-kpi-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+.cs-kpi-strip.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.cs-kpi {
+  background: var(--cs-card); border: 1px solid var(--cs-card-bd);
+  border-radius: 14px; padding: 18px 20px;
+  cursor: pointer; transition: border-color .12s;
+}
+.cs-kpi:hover { border-color: var(--cs-ink); }
+.cs-kpi.is-tile { background: var(--cs-tile); border-color: var(--cs-tile-bd); color: #fff; cursor: pointer; }
+.cs-kpi-label { font-size: 12px; color: var(--cs-muted); font-weight: 500; letter-spacing: .02em; }
+.cs-kpi.is-tile .cs-kpi-label { color: rgba(255,255,255,.55); }
+.cs-kpi-num { font-family: 'IBM Plex Mono', monospace; font-size: 34px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; line-height: 1; }
+.cs-kpi-sub { font-size: 12px; color: var(--cs-muted); margin-top: 8px; }
+.cs-kpi.is-tile .cs-kpi-sub { color: rgba(255,255,255,.5); }
+
+/* ---- Tables (CSS grid) --------------------------------------------- */
+.cs-thead {
+  display: grid; align-items: center;
+  padding: 0 22px 9px;
+  font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--cs-muted); font-weight: 600;
+  border-bottom: 1px solid var(--cs-divider);
+}
+.cs-row {
+  display: grid; align-items: center;
+  padding: 13px 22px;
+  border-bottom: 1px solid var(--cs-divider2);
+  transition: background .1s;
+}
+.cs-row:hover { background: var(--cs-rowhover); }
+.cs-row.is-selected { background: var(--cs-rowsel); }
+.cs-row .cs-rowact { opacity: 0; transition: opacity .12s; display: inline-flex; gap: 6px; justify-content: flex-end; }
+.cs-row:hover .cs-rowact { opacity: 1; }
+.cs-cell-id { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--cs-monoink); font-weight: 500; }
+.cs-cell-num { font-family: 'IBM Plex Mono', monospace; text-align: right; font-size: 13px; font-weight: 500; }
+.cs-table-note { padding: 13px 22px; font-size: 12px; color: var(--cs-muted); }
+
+/* sortable header cell */
+.cs-sort { cursor: pointer; user-select: none; }
+
+/* ---- Checkbox ------------------------------------------------------- */
+.cs-check {
+  appearance: none; -webkit-appearance: none;
+  width: 17px; height: 17px; flex: none;
+  border: 1px solid var(--cs-cbox-bd); border-radius: 5px;
+  background: var(--cs-field); cursor: pointer; position: relative;
+}
+.cs-check:checked { background: var(--cs-solid); border-color: var(--cs-solid); }
+.cs-check:checked::after {
+  content: "✓"; color: #fff; font-size: 11px;
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+}
+
+/* ---- Pills ---------------------------------------------------------- */
+.cs-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .06em;
+  padding: 4px 10px; border-radius: 6px;
+  background: var(--cs-pill); color: var(--cs-pill-ink); border: 1px solid var(--cs-pill-bd);
+}
+.cs-pill.is-solid { background: var(--cs-solid); color: #fff; border-color: var(--cs-solid); }
+.cs-pill.is-warn { background: var(--cs-warn-bg); color: var(--cs-accent-ink); border-color: var(--cs-warn-bd); }
+.cs-pill.is-warn::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cs-accent); }
+
+/* ---- Bulk-action bar ----------------------------------------------- */
+.cs-bulkbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; margin: 0 0 2px;
+  background: var(--cs-solid); color: #fff;
+  border-radius: 11px;
+}
+.cs-bulkbar .cs-bulk-count { font-size: 13px; font-weight: 600; }
+.cs-bulkbar .cs-bulk-spacer { flex: 1; }
+.cs-bulkbar .cs-bulk-btn {
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 7px 13px; border-radius: 8px; cursor: pointer;
+  background: rgba(255,255,255,.12); color: #fff; border: none;
+}
+.cs-bulkbar .cs-bulk-btn:hover { background: rgba(255,255,255,.2); }
+.cs-bulkbar .cs-bulk-btn.is-danger { color: #ff8a7e; }
+
+/* ---- Form fields ---------------------------------------------------- */
+.cs-label { display: block; font-size: 13px; font-weight: 600; color: var(--cs-ink); margin-bottom: 7px; }
+.cs-input, .cs-select, .cs-textarea {
+  font-family: inherit; font-size: 14px; width: 100%;
+  padding: 11px 14px; border: 1px solid var(--cs-field-bd); border-radius: 9px;
+  background: var(--cs-field); color: var(--cs-ink); outline: none;
+  transition: border-color .12s;
+}
+.cs-input:focus, .cs-select:focus, .cs-textarea:focus { border-color: var(--cs-ink); }
+.cs-textarea { resize: vertical; min-height: 84px; }
+.cs-field-group { margin-bottom: 16px; }
+.cs-form-hint { font-size: 12px; color: var(--cs-muted); margin: 6px 0 0; }
+
+/* search input with leading ring icon */
+.cs-search { position: relative; display: inline-flex; align-items: center; }
+.cs-search .cs-search-ring {
+  position: absolute; left: 13px; width: 13px; height: 13px;
+  border: 2px solid var(--cs-muted); border-radius: 50%; pointer-events: none;
+}
+.cs-search input {
+  font-family: inherit; font-size: 13.5px;
+  padding: 10px 14px 10px 34px; width: 236px;
+  border: 1px solid var(--cs-field-bd); border-radius: 9px;
+  background: var(--cs-card); color: var(--cs-ink); outline: none;
+}
+
+/* ---- Tabs (segmented) ---------------------------------------------- */
+.cs-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--cs-soft); border-radius: 10px; }
+.cs-tab {
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  padding: 8px 16px; border-radius: 7px; border: none; cursor: pointer;
+  background: transparent; color: var(--cs-ink2);
+}
+.cs-tab.active { background: var(--cs-tab-active); color: var(--cs-ink); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+
+/* ---- Modal ---------------------------------------------------------- */
+.cs-scrim {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(18,18,14,.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 44px 20px; overflow-y: auto;
+}
+.cs-modal {
+  background: var(--cs-card); width: 100%; max-width: 540px;
+  border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,.3);
+  margin: auto;
+}
+.cs-modal.is-wide { max-width: 640px; }
+.cs-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px; border-bottom: 1px solid var(--cs-divider);
+}
+.cs-modal-title { font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
+.cs-modal-close {
+  width: 34px; height: 34px; border-radius: 9px;
+  border: 1px solid var(--cs-field-bd); background: var(--cs-card);
+  color: var(--cs-ink2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+}
+.cs-modal-close:hover { background: var(--cs-pill); }
+.cs-modal-body { padding: 22px 24px; }
+.cs-modal-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 24px; border-top: 1px solid var(--cs-divider);
+}
+.cs-modal-foot .cs-foot-spacer { flex: 1; }
+
+/* muted em-dash for empty values */
+.cs-empty { color: var(--cs-muted); }
+
+/* ============================================================
+   LEGACY BRIDGE
+   Re-skins the legacy global controls so not-yet-migrated screens
+   shed the green/gradient look and inherit the B&W palette. These
+   are intentionally light-touch: full markup migration happens in
+   each screen's own batch. Scoped away from the login screen
+   (body.is-auth) so the auth view is untouched.
+   ============================================================ */
+body:not(.is-auth) .primary-button {
+  background: var(--cs-solid) !important;
+  border: 1px solid var(--cs-solid) !important;
+  color: #fff !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+}
+body:not(.is-auth) .primary-button:hover { opacity: .92; }
+
+body:not(.is-auth) .ghost-button,
+body:not(.is-auth) .icon-button {
+  background: var(--cs-card) !important;
+  border: 1px solid var(--cs-field-bd) !important;
+  color: var(--cs-ink) !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+}
+body:not(.is-auth) .ghost-button:hover,
+body:not(.is-auth) .icon-button:hover { background: var(--cs-pill) !important; }
+
+/* Generic surfaces used across legacy screens → flat B&W cards. */
+body:not(.is-auth) .glass-panel,
+body:not(.is-auth) .side-panel,
+body:not(.is-auth) .metric,
+body:not(.is-auth) .vendor-card,
+body:not(.is-auth) .task-group,
+body:not(.is-auth) .template-item {
+  background: var(--cs-card) !important;
+  border: 1px solid var(--cs-card-bd) !important;
+  box-shadow: none !important;
+  color: var(--cs-ink);
+}
