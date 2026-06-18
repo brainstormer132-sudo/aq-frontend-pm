@@ -508,7 +508,7 @@ function renderUser() {
     els.userRole.textContent = "Signed out";
     return;
   }
-  els.userRole.textContent = `${state.user.full_name || state.user.username} / ${state.user.role}`;
+  els.userRole.textContent = `${state.user.full_name || state.user.username} · ${state.user.role}`;
 }
 
 function statusClass(status) {
@@ -721,51 +721,160 @@ function renderCurrentView() {
 }
 
 function renderDashboard() {
-  updateHeader("Operations", "Contract pipeline, payment progress, and generation readiness");
+  updateHeader("Operations", "Contract pipeline, generation readiness, and payment status at a glance.");
+
   const doneSet = new Set(["COMPLETED", "DONE", "DELIVERED", "SIGNED"]);
-  const totalAmount = state.tasks.reduce((sum, task) => sum + (Number(String(task.amount || "0").replaceAll(",", "")) || 0), 0);
-  const active = state.tasks.filter((task) => !doneSet.has(String(task.status).toUpperCase())).length;
-  const completed = state.tasks.length - active;
+  const tasks = state.tasks;
+  const totalTasks = tasks.length;
+  const totalAmount = tasks.reduce((sum, task) => sum + (Number(String(task.amount || "0").replaceAll(",", "")) || 0), 0);
+  const active = tasks.filter((task) => !doneSet.has(String(task.status).toUpperCase())).length;
+  const completed = totalTasks - active;
+  const brandCount = new Set(tasks.map((task) => (task.brand || "").trim().toLowerCase()).filter(Boolean)).size;
+  const activePct = totalTasks ? Math.round((active / totalTasks) * 1000) / 10 : 0;
   const missingTemplates = state.templates.filter((template) => !template.file_exists).length;
 
+  // Generated contracts grouped by task → how many tasks have any output.
+  const genByTask = {};
+  for (const c of state.contracts) {
+    const tid = String(c.task_id || "");
+    if (tid) genByTask[tid] = (genByTask[tid] || 0) + 1;
+  }
+  const contractsGenerated = state.contracts.length;
+  const tasksGenerated = tasks.filter((task) => genByTask[String(task.id)]).length;
+  const tasksAwaiting = totalTasks - tasksGenerated;
+  const unpaidSubtasks = tasks.reduce((sum, task) => sum + Math.max(0, Number(task.subtask_count || 0) - Number(task.paid_count || 0)), 0);
+
+  // Pipeline bar flex weights (avoid 0/0 collapse).
+  const newFlex = active || (totalTasks ? 0 : 1);
+  const doneFlex = completed;
+
+  const cols = "128px 1fr 96px 96px 120px";
+  const recent = tasks.slice(0, 10);
+  const rows = recent.map((task) => {
+    const total = Number(task.subtask_count || 0);
+    const gen = Number(genByTask[String(task.id)] || 0);
+    const pct = total ? Math.min(100, Math.round((gen / total) * 100)) : 0;
+    const st = String(task.status || "NEW").toUpperCase();
+    const solid = doneSet.has(st);
+    return `
+      <div class="cs-row" data-action="open-task" data-id="${encodeAttr(task.id)}" style="grid-template-columns:${cols}; cursor:pointer;">
+        <div class="cs-cell-id">${escapeHtml(task.id)}</div>
+        <div class="cs-bidi" style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:14px;">${escapeHtml(task.brand || "—")}</div>
+        <div class="cs-cell-num">${money(task.amount)}</div>
+        <div style="text-align:center;"><span class="cs-pill ${solid ? "is-solid" : ""}">${escapeHtml(st)}</span></div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+          <span class="cs-mono" style="font-size:12px;color:var(--cs-muted);">${gen} / ${total}</span>
+          <span style="width:34px;height:5px;border-radius:3px;background:var(--cs-track);position:relative;overflow:hidden;"><span style="position:absolute;inset:0;width:${pct}%;background:var(--cs-accent);"></span></span>
+        </div>
+      </div>`;
+  }).join("");
+
   els.viewRoot.innerHTML = `
-    <section class="hero-panel">
-      <div>
-        <p class="eyebrow">AQ Creativity Contract Suite</p>
-        <h2>Live contract operations</h2>
-        <p>Tasks, vendors, template health, contract generation, and audit-ready administration in one workspace.</p>
+    <div class="cs-ops-actions" style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:18px;">
+      <button class="cs-btn" type="button" data-action="go-tasks">New Task</button>
+      <button class="cs-btn-ghost" type="button" data-action="go-contracts">Generate</button>
+    </div>
+
+    <section class="cs-kpi-strip" style="margin-bottom:14px;">
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Total Tasks</div>
+        <div class="cs-kpi-num">${totalTasks.toLocaleString()}</div>
+        <div class="cs-kpi-sub">across ${brandCount} brand${brandCount === 1 ? "" : "s"}</div>
       </div>
-      <div class="hero-actions">
-        <button class="primary-button" type="button" data-action="go-tasks">New Task</button>
-        <button class="secondary-button" type="button" data-action="go-contracts">Generate</button>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Active</div>
+        <div class="cs-kpi-num">${active.toLocaleString()}</div>
+        <div class="cs-kpi-sub">${activePct}% of pipeline</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Completed</div>
+        <div class="cs-kpi-num">${completed.toLocaleString()}</div>
+        <div class="cs-kpi-sub">closed out</div>
+      </div>
+      <div class="cs-kpi is-tile">
+        <div class="cs-kpi-label">Pipeline Value</div>
+        <div style="display:flex;align-items:baseline;gap:6px;margin-top:8px;">
+          <span class="cs-mono" style="font-size:34px;font-weight:600;letter-spacing:-0.02em;line-height:1;">${money(totalAmount)}</span>
+          <span style="font-size:13px;color:rgba(255,255,255,.5);font-weight:500;">SAR</span>
+        </div>
+        <div class="cs-kpi-sub">gross contract amount</div>
       </div>
     </section>
 
-    <section class="stats-row">
-      ${cardMetric("Total Tasks", state.tasks.length)}
-      ${cardMetric("Active", active)}
-      ${cardMetric("Completed", completed)}
-      ${cardMetric("Total Amount", money(totalAmount))}
+    <section class="cs-card" style="margin-bottom:22px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:600;letter-spacing:.01em;">Generation pipeline</div>
+        <div style="font-size:12px;color:var(--cs-muted);">${contractsGenerated} contract${contractsGenerated === 1 ? "" : "s"} generated · <span style="color:var(--cs-accent);font-weight:600;">${tasksAwaiting} task${tasksAwaiting === 1 ? "" : "s"} awaiting generation</span></div>
+      </div>
+      <div style="display:flex;height:10px;border-radius:6px;overflow:hidden;gap:2px;background:var(--cs-track);">
+        <div style="flex:${newFlex};background:var(--cs-solid);"></div>
+        <div style="flex:${doneFlex};background:#b9b9b1;"></div>
+      </div>
+      <div style="display:flex;gap:28px;margin-top:14px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--cs-ink2);"><span style="width:9px;height:9px;border-radius:2px;background:var(--cs-solid);"></span>New&nbsp;<span class="cs-mono" style="font-weight:600;color:var(--cs-ink);">${active}</span></div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--cs-ink2);"><span style="width:9px;height:9px;border-radius:2px;background:#b9b9b1;"></span>Completed&nbsp;<span class="cs-mono" style="font-weight:600;color:var(--cs-ink);">${completed}</span></div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--cs-ink2);"><span style="width:9px;height:9px;border-radius:50%;background:var(--cs-accent);"></span>Unpaid subtasks&nbsp;<span class="cs-mono" style="font-weight:600;color:var(--cs-ink);">${unpaidSubtasks}</span></div>
+      </div>
     </section>
 
-    <section class="dashboard-grid">
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>Recent Tasks</h2>
-          <button class="ghost-light" type="button" data-action="go-tasks">Open</button>
+    <section style="display:grid;grid-template-columns:1fr 312px;gap:22px;align-items:start;">
+      <div class="cs-card-flush">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px 14px;">
+          <div class="cs-section-title">Recent tasks</div>
+          <button class="cs-lnk" type="button" data-action="go-tasks" style="font-size:12.5px;font-weight:600;color:var(--cs-ink2);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;">View all ${totalTasks} →</button>
         </div>
-        ${renderTaskTable(state.tasks.slice(0, 8), true)}
+        <div class="cs-thead" style="grid-template-columns:${cols};">
+          <div>ID</div><div>Brand</div><div style="text-align:right;">Amount</div><div style="text-align:center;">Status</div><div style="text-align:right;">Subtasks</div>
+        </div>
+        ${rows || `<div class="cs-table-note">No tasks yet.</div>`}
+        <div class="cs-table-note">Showing ${recent.length} of ${totalTasks} task${totalTasks === 1 ? "" : "s"}</div>
       </div>
 
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>Readiness</h2>
+      <div style="display:flex;flex-direction:column;gap:22px;">
+        <div class="cs-card">
+          <div class="cs-section-title" style="margin-bottom:16px;">Readiness</div>
+          <div style="display:flex;flex-direction:column;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--cs-divider2);">
+              <span style="font-size:13.5px;color:var(--cs-ink2);">Templates</span>
+              ${missingTemplates
+                ? `<span class="cs-pill is-warn">${missingTemplates} MISSING</span>`
+                : `<span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;"><span style="width:7px;height:7px;border-radius:50%;background:var(--cs-solid);"></span>Ready</span>`}
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--cs-divider2);">
+              <span style="font-size:13.5px;color:var(--cs-ink2);">Approved vendors</span>
+              <span class="cs-mono" style="font-size:14px;font-weight:600;">${state.vendors.length.toLocaleString()}</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--cs-divider2);">
+              <span style="font-size:13.5px;color:var(--cs-ink2);">Archived contracts</span>
+              <span class="cs-mono" style="font-size:14px;font-weight:600;">${contractsGenerated.toLocaleString()}</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;">
+              <span style="font-size:13.5px;color:var(--cs-ink2);">Your role</span>
+              <span class="cs-pill is-solid">${escapeHtml(String(state.user.role || "").toUpperCase())}</span>
+            </div>
+          </div>
         </div>
-        <div class="readiness-list">
-          <div><span>Templates</span>${pill(missingTemplates ? `${missingTemplates} missing` : "Ready", missingTemplates ? "warn" : "done")}</div>
-          <div><span>Vendors</span><strong>${state.vendors.length}</strong></div>
-          <div><span>Archive</span><strong>${state.contracts.length}</strong></div>
-          <div><span>User Role</span>${pill(state.user.role, isAdmin() ? "done" : "")}</div>
+
+        <div class="cs-card">
+          <div class="cs-section-title" style="margin-bottom:6px;">Needs attention</div>
+          <p style="margin:0 0 14px;font-size:12.5px;color:var(--cs-muted);line-height:1.4;">Surfaced from open subtasks.</p>
+          ${tasksAwaiting > 0 ? `
+          <div style="display:flex;align-items:flex-start;gap:11px;padding:12px;border-radius:10px;background:var(--cs-warn-bg);border:1px solid var(--cs-warn-bd);">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--cs-accent);margin-top:5px;flex:none;"></span>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--cs-ink);">${tasksGenerated} of ${totalTasks} tasks generated</div>
+              <div style="font-size:12px;color:var(--cs-accent-ink);margin-top:3px;">${tasksAwaiting} task${tasksAwaiting === 1 ? "" : "s"} queued but no contracts produced yet.</div>
+            </div>
+          </div>` : ""}
+          ${unpaidSubtasks > 0 ? `
+          <div style="display:flex;align-items:flex-start;gap:11px;padding:12px;border-radius:10px;background:var(--cs-warn-bg);border:1px solid var(--cs-warn-bd);margin-top:10px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--cs-accent);margin-top:5px;flex:none;"></span>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--cs-ink);">Vendor payments unpaid</div>
+              <div style="font-size:12px;color:var(--cs-accent-ink);margin-top:3px;">${unpaidSubtasks} subtask${unpaidSubtasks === 1 ? "" : "s"} across tasks still marked unpaid.</div>
+            </div>
+          </div>` : ""}
+          ${tasksAwaiting === 0 && unpaidSubtasks === 0 ? `<div style="font-size:12.5px;color:var(--cs-muted);">Nothing needs attention.</div>` : ""}
         </div>
       </div>
     </section>
@@ -4107,6 +4216,19 @@ document.addEventListener("click", async (event) => {
       state.selectedClientId = clientCard.dataset.clientId;
       localStorage.setItem("aq_selected_client", state.selectedClientId);
       renderClientsView();
+      return;
+    }
+
+    // Operations "Recent tasks" rows are grid divs (not <tr>); open in Tasks.
+    const opsRow = event.target.closest('[data-action="open-task"]');
+    if (opsRow && !button) {
+      const id = opsRow.dataset.id;
+      if (id) {
+        if (String(state.selectedTaskId) !== String(id)) state.selectedSubtaskIds = new Set();
+        state.selectedTaskId = id;
+        localStorage.setItem("aq_selected_task", id);
+      }
+      setView("tasks");
       return;
     }
 

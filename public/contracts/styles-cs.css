@@ -403,6 +403,9 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 /* muted em-dash for empty values */
 .cs-empty { color: var(--cs-muted); }
 
+/* inline link affordance (e.g. "View all →") */
+.cs-lnk:hover { color: var(--cs-ink) !important; }
+
 /* ============================================================
    LEGACY BRIDGE
    Re-skins the legacy global controls so not-yet-migrated screens
