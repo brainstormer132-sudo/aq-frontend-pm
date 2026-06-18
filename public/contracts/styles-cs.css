@@ -161,28 +161,41 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 }
 .sidebar .theme-toggle {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: 6px 12px;
-  padding: 11px 14px;
-  border: none; border-radius: 9px;
+  margin: 4px 12px;
+  padding: 8px 12px;
+  border: none; border-radius: 8px;
   background: rgba(255,255,255,.06);
   color: rgba(255,255,255,.82);
-  font-family: inherit; font-size: 13.5px; font-weight: 600;
+  font-family: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer; transition: background .12s;
 }
 .sidebar .theme-toggle:hover { background: rgba(255,255,255,.12); }
-.sidebar .theme-toggle-label { display: flex; align-items: center; gap: 12px; }
-.sidebar .theme-toggle-icon { width: 18px; height: 18px; flex: none; }
-.sidebar .theme-toggle-state { font-size: 12px; color: rgba(255,255,255,.45); }
+.sidebar .theme-toggle-label { display: flex; align-items: center; gap: 10px; }
+.sidebar .theme-toggle-icon { width: 16px; height: 16px; flex: none; }
+.sidebar .theme-toggle-state { font-size: 11px; color: rgba(255,255,255,.45); }
+
+/* Logout — quiet, compact, matches the dark sidebar (override the white
+   legacy .ghost-button bridge via the higher-specificity id selector). */
+.sidebar #logout-button {
+  margin: 2px 12px 10px; padding: 8px 12px;
+  background: rgba(255,255,255,.06) !important;
+  border: 1px solid rgba(255,255,255,.1) !important;
+  color: rgba(255,255,255,.8) !important;
+  border-radius: 8px !important;
+  font-size: 12.5px; font-weight: 600; box-shadow: none !important;
+}
+.sidebar #logout-button:hover { background: rgba(255,255,255,.12) !important; }
 
 .sidebar .status-dot {
   display: flex; align-items: center; gap: 8px;
-  padding: 12px 22px 18px;
+  padding: 10px 22px 12px;
   border-top: 1px solid rgba(255,255,255,.08);
   color: rgba(255,255,255,.6); font-size: 12px;
 }
 .sidebar .status-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--cs-online); flex: none; }
 .sidebar .status-dot.error::before { background: #ff8a7e; }
-.sidebar .api-url { color: rgba(255,255,255,.32); font-size: 10.5px; word-break: break-all; }
+/* Backend URL hidden per request — kept in DOM since JS writes to it. */
+.sidebar .api-url { display: none; }
 
 /* collapsed: hide every text label, center icons */
 .app-shell.sidebar-collapsed .sidebar .brand { justify-content: center; padding: 22px 0 18px; }
