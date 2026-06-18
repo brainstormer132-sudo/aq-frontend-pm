@@ -1940,38 +1940,66 @@ function renderClientsView() {
   }
   const client = selectedClient();
 
-  const clientCards = filteredClients.map((c) => `
-    <article class="vendor-card ${String(c.id) === String(client?.id) ? "selected-card" : ""}" data-client-id="${c.id}">
-      <div>
-        <h3>${escapeHtml(c.company_name || c.name || "")}</h3>
-        <p>${escapeHtml(c.cr_number || "No CR")}</p>
-      </div>
-      <span>${escapeHtml(c.signatory_name || "")}</span>
-      ${c.city ? `<small>${escapeHtml(c.city)}${c.country ? ", " + escapeHtml(c.country) : ""}</small>` : ""}
-    </article>
-  `).join("");
+  const clientCols = "minmax(0,1.4fr) 150px 120px 160px 150px 96px";
+  const missingCr = state.clients.filter((c) => !c.cr_number).length;
+  const clientRows = filteredClients.map((c) => {
+    const isSel = String(c.id) === String(client?.id);
+    const em = (v) => v ? escapeHtml(v) : `<span class="cs-empty">—</span>`;
+    const loc = [c.city, c.country].filter(Boolean).map(escapeHtml).join(", ");
+    return `
+      <div class="cs-row ${isSel ? "is-selected" : ""}" data-client-row data-id="${c.id}" style="grid-template-columns:${clientCols}; cursor:pointer;">
+        <div class="cs-bidi" style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.company_name || c.name || "—")}</div>
+        <div class="cs-mono" style="font-size:12.5px;${c.cr_number ? "color:var(--cs-monoink);" : "color:var(--cs-accent);"}">${c.cr_number ? escapeHtml(c.cr_number) : "No CR"}</div>
+        <div class="cs-mono" style="font-size:12.5px;color:var(--cs-monoink);">${em(c.vat_number)}</div>
+        <div class="cs-bidi" style="font-size:13px;color:var(--cs-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${em(c.signatory_name)}</div>
+        <div style="font-size:13px;color:var(--cs-ink2);">${loc || `<span class="cs-empty">—</span>`}</div>
+        <div class="cs-rowact">
+          <button class="cs-iconbtn" type="button" data-action="select-client" data-id="${c.id}">Edit</button>
+        </div>
+      </div>`;
+  }).join("");
 
   els.viewRoot.innerHTML = `
-    <section class="stats-row">
-      ${cardMetric("Approved Clients", state.clients.length)}
-      ${cardMetric("Pending Clients", state.pendingClients.length, isAdmin() ? "" : "admin")}
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:18px;">
+      <button class="cs-btn-ghost" type="button" data-action="refresh-clients">Refresh</button>
+    </div>
+
+    <section class="cs-kpi-strip cols-3" style="margin-bottom:22px;">
+      <div class="cs-kpi is-tile">
+        <div class="cs-kpi-label">Approved Clients</div>
+        <div class="cs-kpi-num">${state.clients.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">in the directory</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Pending Clients</div>
+        <div class="cs-kpi-num">${state.pendingClients.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">${isAdmin() ? "awaiting approval" : "admin only"}</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Missing CR</div>
+        <div class="cs-kpi-num" style="color:${missingCr ? "var(--cs-accent)" : "inherit"};">${missingCr.toLocaleString()}</div>
+        <div class="cs-kpi-sub">no commercial registration</div>
+      </div>
     </section>
 
-    <section class="split-workspace">
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>Client Directory</h2>
-          <div class="toolbar">
-            <input id="client-search" placeholder="Search company, CR, VAT, signatory, email…" value="${encodeAttr(state.clientSearch)}" />
-            <button class="secondary-button" type="button" data-action="refresh-clients">Refresh</button>
-          </div>
+    <div class="cs-card-flush" style="margin-bottom:22px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
+        <div>
+          <div class="cs-section-title">Client directory</div>
+          <div style="font-size:12.5px;color:var(--cs-muted);margin-top:3px;">${filteredClients.length} of ${state.clients.length} clients</div>
         </div>
-        <div class="card-grid">${clientCards || `<p class="empty-note">No clients found.</p>`}</div>
+        <div class="cs-search"><span class="cs-search-ring"></span><input id="client-search" placeholder="Search company, CR, VAT, signatory, email…" value="${encodeAttr(state.clientSearch)}" style="width:300px;" /></div>
       </div>
+      <div class="cs-thead" style="grid-template-columns:${clientCols};">
+        <div>Company</div><div>CR Number</div><div>VAT</div><div>Signatory</div><div>Location</div><div></div>
+      </div>
+      ${clientRows || `<div class="cs-table-note">No clients found.</div>`}
+      <div class="cs-table-note">${filteredClients.length} client${filteredClients.length === 1 ? "" : "s"} shown</div>
+    </div>
 
-      <div class="form-stack">
+    <section style="display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start;">
         <form id="client-edit-form" class="side-panel">
-          <h2>${client ? "Edit Client" : "Select a Client"}</h2>
+          <h2>${client ? "Edit client" : "Select a client"}</h2>
           <label>Company Name <input id="client-edit-company" required value="${encodeAttr(client?.company_name || client?.name || "")}" ${client ? "" : "disabled"} /></label>
           <label>CR Number <input id="client-edit-cr" value="${encodeAttr(client?.cr_number || "")}" ${client ? "" : "disabled"} /></label>
           <label>VAT Number <input id="client-edit-vat" value="${encodeAttr(client?.vat_number || "")}" ${client ? "" : "disabled"} /></label>
@@ -2006,7 +2034,6 @@ function renderClientsView() {
           <label>National Address <input id="new-client-national" /></label>
           <button class="primary-button" type="submit">Create Client</button>
         </form>
-      </div>
     </section>
 
     ${renderPendingPanel("clients")}
@@ -2219,24 +2246,36 @@ function renderContractsView() {
   }).join("");
 
   els.viewRoot.innerHTML = `
-    <section class="stats-row">
-      ${cardMetric("Generated", state.contracts.length)}
-      ${cardMetric("Templates", state.templates.length)}
-      ${cardMetric("Tasks", state.tasks.length)}
+    <section class="cs-kpi-strip cols-3" style="margin-bottom:22px;">
+      <div class="cs-kpi is-tile">
+        <div class="cs-kpi-label">Generated</div>
+        <div class="cs-kpi-num">${state.contracts.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">archived contracts</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Templates</div>
+        <div class="cs-kpi-num">${state.templates.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">available slots</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Tasks</div>
+        <div class="cs-kpi-num">${state.tasks.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">total campaigns</div>
+      </div>
     </section>
 
-    <section class="glass-panel">
-      <div class="panel-header">
-        <h2>Archive</h2>
-        <div class="toolbar">
-          <input id="contract-search" placeholder="Search contract id, vendor, license, brand, CR…" value="${encodeAttr(state.contractSearch)}" />
-          <button class="secondary-button" data-action="refresh-contracts" type="button">Refresh</button>
+    <div class="cs-card" style="margin-bottom:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;">
+        <div class="cs-section-title">Archive</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="cs-search"><span class="cs-search-ring"></span><input id="contract-search" placeholder="Search contract id, vendor, license, brand, CR…" value="${encodeAttr(state.contractSearch)}" style="width:320px;" /></div>
+          <button class="cs-btn-ghost" data-action="refresh-contracts" type="button">Refresh</button>
         </div>
       </div>
-      ${state.contracts.length === 0
-        ? `<p class="empty-note">No generated contracts yet.</p>`
-        : (taskCards || `<p class="empty-note">No contracts match your search.</p>`)}
-    </section>
+    </div>
+    ${state.contracts.length === 0
+      ? `<div class="cs-card"><p class="empty-note">No generated contracts yet.</p></div>`
+      : (taskCards || `<div class="cs-card"><p class="empty-note">No contracts match your search.</p></div>`)}
   `;
 }
 
@@ -2273,23 +2312,38 @@ function renderTemplatesView() {
   }).join("");
 
   els.viewRoot.innerHTML = `
-    <section class="stats-row">
-      ${cardMetric("Templates", state.templates.length)}
-      ${cardMetric("Found", state.templates.filter((t) => t.file_exists).length)}
-      ${cardMetric("Missing", state.templates.filter((t) => !t.file_exists).length)}
-      ${cardMetric("Default", state.templates.find((t) => t.is_default)?.display_name || "-")}
+    <section class="cs-kpi-strip" style="margin-bottom:22px;">
+      <div class="cs-kpi is-tile">
+        <div class="cs-kpi-label">Templates</div>
+        <div class="cs-kpi-num">${state.templates.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">slots</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Found</div>
+        <div class="cs-kpi-num">${state.templates.filter((t) => t.file_exists).length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">files present</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Missing</div>
+        <div class="cs-kpi-num" style="color:${state.templates.some((t) => !t.file_exists) ? "var(--cs-accent)" : "inherit"};">${state.templates.filter((t) => !t.file_exists).length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">need upload</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Default</div>
+        <div style="font-size:18px;font-weight:600;margin-top:8px;line-height:1.2;">${escapeHtml(state.templates.find((t) => t.is_default)?.display_name || "—")}</div>
+      </div>
     </section>
 
-    <section class="split-workspace template-workspace">
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>Template Health</h2>
-          <button class="secondary-button" data-action="scan-templates" type="button">Scan</button>
+    <section style="display:grid;grid-template-columns:1fr 372px;gap:22px;align-items:start;">
+      <div class="cs-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div class="cs-section-title">Template health</div>
+          <button class="cs-btn-ghost" data-action="scan-templates" type="button">Scan</button>
         </div>
         <div class="template-list">${templateCards || `<p class="empty-note">No templates found.</p>`}</div>
       </div>
 
-      <div class="form-stack">
+      <div style="display:flex;flex-direction:column;gap:22px;">
         <form id="template-upload-form" class="side-panel">
           <h2>Add / Replace</h2>
           <label>Template Slot <select id="upload-key">${templateOptions(uploadKey)}</select></label>
@@ -2334,43 +2388,58 @@ function renderSettingsView() {
     </tr>
   `).join("");
 
+  const theme = document.documentElement.getAttribute("data-theme") || "light";
   els.viewRoot.innerHTML = `
-    <section class="split-workspace">
-      <form id="profile-form" class="side-panel">
-        <h2>Profile</h2>
-        <label>Full Name <input id="profile-name" value="${encodeAttr(state.user?.full_name || "")}" /></label>
-        <label>Email <input id="profile-email" type="email" value="${encodeAttr(state.user?.email || "")}" /></label>
-        <label>Profile Color <input id="profile-color" type="color" value="${encodeAttr(state.user?.profile_color || "#22c55e")}" /></label>
-        <label>New Password <input id="profile-password" type="password" placeholder="Leave blank" /></label>
-        <button class="primary-button" type="submit">Save Profile</button>
-      </form>
+    <section style="display:grid;grid-template-columns:1fr 384px;gap:22px;align-items:start;">
+      <div style="display:flex;flex-direction:column;gap:22px;">
+        <form id="profile-form" class="side-panel">
+          <h2>Profile</h2>
+          <label>Full Name <input id="profile-name" value="${encodeAttr(state.user?.full_name || "")}" /></label>
+          <label>Email <input id="profile-email" type="email" value="${encodeAttr(state.user?.email || "")}" /></label>
+          <label>Profile Color <input id="profile-color" type="color" value="${encodeAttr(state.user?.profile_color || "#14140f")}" /></label>
+          <label>New Password <input id="profile-password" type="password" placeholder="Leave blank" /></label>
+          <button class="primary-button" type="submit">Save Profile</button>
+        </form>
 
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>App Settings</h2>
-          <button class="secondary-button" data-action="create-backup" type="button" ${isAdmin() ? "" : "disabled"}>Create Backup</button>
+        <div class="cs-card">
+          <div class="cs-section-title" style="margin-bottom:14px;">Users</div>
+          ${isAdmin() ? simpleTable(["Username", "Name", "Email", "Role"], userRows) : `<p class="empty-note">User management requires admin access.</p>`}
         </div>
-        ${simpleTable(["Key", "Value"], settingsRows)}
+
+        ${isAdmin() ? renderInvitesSection() : ""}
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:22px;">
+        <div class="cs-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div class="cs-section-title">App settings</div>
+            <button class="cs-btn-ghost" data-action="create-backup" type="button" ${isAdmin() ? "" : "disabled"}>Create backup</button>
+          </div>
+          ${simpleTable(["Key", "Value"], settingsRows)}
+        </div>
+
+        <div class="cs-card">
+          <div class="cs-section-title" style="margin-bottom:14px;">Backups</div>
+          ${isAdmin() ? simpleTable(["Filename", "Size", "Created"], backupRows) : `<p class="empty-note">Backup management requires admin access.</p>`}
+        </div>
+
+        <div class="cs-card">
+          <div class="cs-section-title" style="margin-bottom:14px;">Appearance</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <span style="font-size:13.5px;color:var(--cs-ink2);">Theme</span>
+            <div class="cs-seg">
+              <button type="button" class="${theme === "light" ? "active" : ""}" data-action="set-theme" data-theme="light">Light</button>
+              <button type="button" class="${theme === "dark" ? "active" : ""}" data-action="set-theme" data-theme="dark">Dark</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="dashboard-grid">
-      <div class="glass-panel">
-        <div class="panel-header"><h2>Users</h2></div>
-        ${isAdmin() ? simpleTable(["Username", "Name", "Email", "Role"], userRows) : `<p class="empty-note">User management requires admin access.</p>`}
-      </div>
-      <div class="glass-panel">
-        <div class="panel-header"><h2>Backups</h2></div>
-        ${isAdmin() ? simpleTable(["Filename", "Size", "Created"], backupRows) : `<p class="empty-note">Backup management requires admin access.</p>`}
-      </div>
-    </section>
-
-    ${isAdmin() ? renderInvitesSection() : ""}
-
-    <section class="glass-panel">
-      <div class="panel-header"><h2>Audit Log</h2></div>
+    <div class="cs-card" style="margin-top:22px;">
+      <div class="cs-section-title" style="margin-bottom:14px;">Audit log</div>
       ${isAdmin() ? simpleTable(["Time", "Actor", "Action", "Entity"], auditRows) : `<p class="empty-note">Audit logs require admin access.</p>`}
-    </section>
+    </div>
   `;
 }
 
@@ -4271,6 +4340,15 @@ document.addEventListener("click", async (event) => {
       return;
     }
 
+    // Clients-view grid rows: select for the edit form.
+    const clientRow = event.target.closest(".cs-row[data-client-row]");
+    if (clientRow && !button) {
+      state.selectedClientId = clientRow.dataset.id;
+      localStorage.setItem("aq_selected_client", state.selectedClientId);
+      renderClientsView();
+      return;
+    }
+
     if (!button) return;
     const action = button.dataset.action;
 
@@ -4287,6 +4365,23 @@ document.addEventListener("click", async (event) => {
 
     if (action === "go-tasks") setView("tasks");
     if (action === "go-contracts") setView("contracts");
+    if (action === "select-client") {
+      if (button.dataset.id) {
+        state.selectedClientId = button.dataset.id;
+        localStorage.setItem("aq_selected_client", state.selectedClientId);
+      }
+      renderClientsView();
+      return;
+    }
+    if (action === "set-theme") {
+      const next = button.dataset.theme === "dark" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("aq_theme", next); } catch (e) {}
+      const lbl = document.getElementById("theme-toggle-state");
+      if (lbl) lbl.textContent = next === "dark" ? "Dark" : "Light";
+      renderSettingsView();
+      return;
+    }
     if (action === "clear-task-form") {
       state.selectedTaskId = "__new__";
       state.selectedSubtaskIds = new Set();

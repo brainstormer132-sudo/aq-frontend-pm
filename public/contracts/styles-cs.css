@@ -514,6 +514,109 @@ body:not(.is-auth) .mini-button {
 body:not(.is-auth) .mini-button:hover { background: var(--cs-pill); }
 body:not(.is-auth) .mini-button.danger-text,
 body:not(.is-auth) .danger-text { color: var(--cs-danger) !important; }
+body:not(.is-auth) .mini-button.danger { color: var(--cs-danger) !important; border-color: var(--cs-danger-bd) !important; }
+
+/* ---- KPI strip 2-up modifier -------------------------------------- */
+.cs-kpi-strip.cols-2 { grid-template-columns: repeat(2, 1fr); }
+
+/* ---- Legacy tables (simpleTable) reskinned to the neutral system --- */
+body:not(.is-auth) .table-wrap { overflow-x: auto; }
+body:not(.is-auth) .table-wrap table { width: 100%; border-collapse: collapse; }
+body:not(.is-auth) .table-wrap th {
+  text-align: left; font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--cs-muted) !important; font-weight: 600;
+  padding: 10px 14px; border-bottom: 1px solid var(--cs-divider) !important;
+  background: transparent !important;
+}
+body:not(.is-auth) .table-wrap td {
+  padding: 11px 14px; font-size: 13px; color: var(--cs-ink);
+  border-bottom: 1px solid var(--cs-divider2) !important;
+}
+body:not(.is-auth) .table-wrap tr:hover td { background: var(--cs-rowhover); }
+body:not(.is-auth) .empty-note { color: var(--cs-muted); font-size: 13px; padding: 12px 2px; }
+
+/* ---- Legacy side-panel forms reskinned to cards ------------------- */
+body:not(.is-auth) .side-panel {
+  background: var(--cs-card) !important;
+  border: 1px solid var(--cs-card-bd) !important;
+  border-radius: 14px !important;
+  padding: 20px 22px !important;
+  box-shadow: none !important;
+  display: flex; flex-direction: column; gap: 12px;
+}
+body:not(.is-auth) .side-panel h2 { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 4px; color: var(--cs-ink); }
+body:not(.is-auth) .side-panel label,
+body:not(.is-auth) #invite-form label,
+body:not(.is-auth) #profile-form label {
+  display: block; font-size: 13px; font-weight: 600; color: var(--cs-ink);
+}
+body:not(.is-auth) .side-panel input,
+body:not(.is-auth) .side-panel select,
+body:not(.is-auth) .side-panel textarea,
+body:not(.is-auth) #invite-form input,
+body:not(.is-auth) #invite-form select {
+  font-family: inherit; font-size: 14px; width: 100%;
+  padding: 10px 13px; margin-top: 5px;
+  border: 1px solid var(--cs-field-bd); border-radius: 9px;
+  background: var(--cs-field); color: var(--cs-ink); outline: none;
+}
+body:not(.is-auth) .side-panel input[type="color"] { padding: 4px; height: 40px; cursor: pointer; }
+body:not(.is-auth) .button-row { display: flex; gap: 10px; margin-top: 6px; }
+
+/* ---- Contracts archive accordion ---------------------------------- */
+body:not(.is-auth) .task-group {
+  background: var(--cs-card) !important;
+  border: 1px solid var(--cs-card-bd) !important;
+  border-radius: 12px !important; overflow: hidden; margin-bottom: 10px;
+}
+body:not(.is-auth) .task-group-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 18px; cursor: pointer;
+}
+body:not(.is-auth) .task-group-header:hover,
+body:not(.is-auth) .task-group.open .task-group-header { background: var(--cs-soft) !important; }
+body:not(.is-auth) .task-group-title { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; }
+body:not(.is-auth) .task-group-caret { color: var(--cs-muted); font-size: 12px; }
+body:not(.is-auth) .task-group-brand { font-size: 12.5px; color: var(--cs-muted); }
+body:not(.is-auth) .task-group-meta { display: flex; align-items: center; gap: 10px; flex: none; }
+body:not(.is-auth) .task-group-count { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--cs-muted); }
+
+/* ---- Templates health list ---------------------------------------- */
+body:not(.is-auth) .template-item {
+  background: var(--cs-card) !important;
+  border: 1px solid var(--cs-card-bd) !important;
+  border-radius: 12px !important; padding: 16px 18px; margin-bottom: 10px;
+}
+body:not(.is-auth) .template-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+body:not(.is-auth) .template-title h3 { margin: 0; font-size: 14px; font-weight: 700; }
+body:not(.is-auth) .template-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+body:not(.is-auth) .template-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 12.5px; margin-bottom: 14px; }
+body:not(.is-auth) .template-details span { display: flex; flex-direction: column; gap: 2px; color: var(--cs-ink); }
+body:not(.is-auth) .template-details strong { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--cs-muted); font-weight: 600; }
+body:not(.is-auth) .template-details code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--cs-monoink); }
+body:not(.is-auth) .template-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---- Pills bridged (legacy .pill / .status-pill) ------------------ */
+body:not(.is-auth) .pill,
+body:not(.is-auth) .status-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .06em;
+  padding: 4px 10px; border-radius: 6px;
+  background: var(--cs-pill) !important; color: var(--cs-pill-ink) !important;
+  border: 1px solid var(--cs-pill-bd) !important;
+}
+body:not(.is-auth) .status-pill.done { background: var(--cs-solid) !important; color: #fff !important; border-color: var(--cs-solid) !important; }
+body:not(.is-auth) .status-pill.warn,
+body:not(.is-auth) .status-pill.hold { background: var(--cs-warn-bg) !important; color: var(--cs-accent-ink) !important; border-color: var(--cs-warn-bd) !important; }
+
+/* ---- Settings → Appearance segmented control ---------------------- */
+.cs-seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--cs-soft); border-radius: 10px; }
+.cs-seg button {
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  padding: 8px 18px; border-radius: 7px; border: none; cursor: pointer;
+  background: transparent; color: var(--cs-ink2);
+}
+.cs-seg button.active { background: var(--cs-tab-active); color: var(--cs-ink); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 
 /* ============================================================
    LEGACY BRIDGE
