@@ -1840,65 +1840,73 @@ function renderVendorsView() {
   const bankOptions = (vendor?.bank_accounts || []).map((bank) => `
     <option value="${bank.id}" ${String(bank.id) === String(selectedBank?.id) ? "selected" : ""}>${escapeHtml(bank.iban)} / ${escapeHtml(bank.bank_name)}</option>
   `).join("");
-  // Vendor cards are click-to-expand. Click anywhere in the card body
-  // toggles a summary block below; the Edit button opens the modal.
-  const vendorCards = filteredVendors.map((item) => {
+  // Directory rendered as a flat grid table (replaced the click-to-expand
+  // cards in the redesign). Edit opens the same modal as before; the banks
+  // live inside that editor, so the row stays a single line.
+  const dirCols = "minmax(0,1.5fr) 150px 130px 150px minmax(0,1fr) 110px 96px";
+  const vendorRows = filteredVendors.map((item) => {
     const cat = findVendorCategory(item.category_id);
-    const idLabel = cat?.requires_license ? "License" : "ID";
     const idValue = cat?.requires_license
-      ? (item.license_number || item.id_number || "—")
-      : (item.id_number || item.license_number || "—");
-    const isExpanded = String(state.expandedVendorId) === String(item.id);
+      ? (item.license_number || item.id_number || "")
+      : (item.id_number || item.license_number || "");
     const banks = item.bank_accounts || [];
+    const em = (v) => v ? escapeHtml(v) : `<span class="cs-empty">—</span>`;
     return `
-      <article class="vendor-card ${isExpanded ? "expanded-card" : ""}" data-vendor-id="${item.id}">
-        <header style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start">
-          <div style="min-width:0">
-            <h3 style="margin:0">${escapeHtml(item.name)}${cat ? ` <span class="pill" style="margin-left:6px">${escapeHtml(cat.label)}</span>` : ""}</h3>
-            <p style="margin:4px 0 0; font-size:12px; color:var(--muted)">${idLabel}: ${escapeHtml(idValue)}</p>
-          </div>
-          <div style="display:flex; gap:6px; flex-shrink:0" data-stop-card-click>
-            <button class="secondary-button" type="button" data-action="edit-vendor" data-id="${item.id}" style="padding:4px 10px; font-size:12px">Edit</button>
-          </div>
-        </header>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; margin-top:10px; font-size:12px">
-          <span style="color:var(--muted)">Contact</span><span>${escapeHtml(item.contact_name || "—")}</span>
-          <span style="color:var(--muted)">Phone</span><span>${escapeHtml(item.phone || "—")}</span>
-          <span style="color:var(--muted)">Bank</span><span>${escapeHtml(banks[0]?.bank_name || "—")}</span>
-          <span style="color:var(--muted)">IBAN</span><span style="font-family:monospace">${escapeHtml(banks[0]?.iban || "—")}</span>
+      <div class="cs-row" style="grid-template-columns:${dirCols};">
+        <div style="min-width:0;">
+          <div class="cs-bidi" style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.name || "—")}</div>
+          <div class="cs-cell-id" style="margin-top:2px;">${escapeHtml(item.id)}</div>
         </div>
-        ${isExpanded ? renderVendorCardExpansion(item, banks, cat) : ""}
-      </article>
-    `;
+        <div class="cs-mono" style="font-size:12.5px;color:var(--cs-monoink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${em(idValue)}</div>
+        <div style="font-size:13px;color:var(--cs-ink2);">${em(item.phone)}</div>
+        <div style="font-size:13px;color:var(--cs-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${em(banks[0]?.bank_name)}</div>
+        <div class="cs-mono" style="font-size:12px;color:var(--cs-monoink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${em(banks[0]?.iban)}</div>
+        <div><span class="cs-pill">APPROVED</span></div>
+        <div class="cs-rowact">
+          <button class="cs-iconbtn" type="button" data-action="edit-vendor" data-id="${item.id}">Edit</button>
+          <button class="cs-iconbtn is-danger" type="button" data-action="delete-vendor" data-id="${item.id}">Delete</button>
+        </div>
+      </div>`;
   }).join("");
 
   els.viewRoot.innerHTML = `
-    <section class="stats-row">
-      ${cardMetric("Approved Vendors", state.vendors.length)}
-      ${cardMetric("Pending Vendors", state.pendingVendors.length, isAdmin() ? "" : "admin")}
-      ${cardMetric("Expiry Alerts", state.expiryAlerts.length, isAdmin() ? "" : "admin")}
-    </section>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:18px;">
+      <button class="cs-btn-ghost" type="button" data-action="load-vendors">Refresh</button>
+      <button class="cs-btn" type="button" data-action="open-new-vendor">+ Add Vendor</button>
+    </div>
 
-    <section class="split-workspace">
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>Vendor Directory</h2>
-          <div class="toolbar">
-            <input id="vendor-search" placeholder="Search name, ID, license, email, IBAN…" value="${encodeAttr(state.vendorSearch)}" />
-            <button class="secondary-button" type="button" data-action="load-vendors">Refresh</button>
-            <button class="primary-button" type="button" data-action="open-new-vendor">+ Add Vendor</button>
-          </div>
-        </div>
-        <div class="card-grid">${vendorCards || `<p class="empty-note">No vendors found.</p>`}</div>
+    <section class="cs-kpi-strip cols-3" style="margin-bottom:22px;">
+      <div class="cs-kpi is-tile">
+        <div class="cs-kpi-label">Approved Vendors</div>
+        <div class="cs-kpi-num">${state.vendors.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">in the directory</div>
       </div>
-
-      <!--
-        The form-stack side panels (Edit Vendor / Edit Bank / New
-        Vendor / Add Bank) were retired with the Design C rebuild.
-        The "+ Add Vendor" button at the top opens the same modal as
-        clicking a vendor's Edit button — one editor for create + edit.
-      -->
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Pending Vendors</div>
+        <div class="cs-kpi-num">${state.pendingVendors.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">${isAdmin() ? "awaiting approval" : "admin only"}</div>
+      </div>
+      <div class="cs-kpi">
+        <div class="cs-kpi-label">Expiry Alerts</div>
+        <div class="cs-kpi-num">${state.expiryAlerts.length.toLocaleString()}</div>
+        <div class="cs-kpi-sub">${isAdmin() ? "licenses expiring" : "admin only"}</div>
+      </div>
     </section>
+
+    <div class="cs-card-flush" style="margin-bottom:22px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
+        <div>
+          <div class="cs-section-title">Vendor directory</div>
+          <div style="font-size:12.5px;color:var(--cs-muted);margin-top:3px;">${filteredVendors.length} of ${state.vendors.length} vendors</div>
+        </div>
+        <div class="cs-search"><span class="cs-search-ring"></span><input id="vendor-search" placeholder="Search name, ID, license, email, IBAN…" value="${encodeAttr(state.vendorSearch)}" style="width:300px;" /></div>
+      </div>
+      <div class="cs-thead" style="grid-template-columns:${dirCols};">
+        <div>Vendor</div><div>License / ID</div><div>Phone</div><div>Bank</div><div>IBAN</div><div>Status</div><div></div>
+      </div>
+      ${vendorRows || `<div class="cs-table-note">No vendors found.</div>`}
+      <div class="cs-table-note">${filteredVendors.length} vendor${filteredVendors.length === 1 ? "" : "s"} shown</div>
+    </div>
 
     ${renderPendingPanel("vendors")}
     ${renderVendorEditorModal()}
@@ -4563,6 +4571,13 @@ document.addEventListener("click", async (event) => {
       showToast("Client deleted");
     }
     if (action === "delete-vendor") {
+      // Directory rows pass the vendor id explicitly; select it first so
+      // deleteSelectedVendor() (which reads state.selectedVendorId) targets
+      // the right row even when the vendor wasn't already selected.
+      if (button.dataset.id) {
+        state.selectedVendorId = button.dataset.id;
+        localStorage.setItem("aq_selected_vendor", state.selectedVendorId);
+      }
       await deleteSelectedVendor();
     }
     if (action === "approve-vendor" || action === "reject-vendor") {

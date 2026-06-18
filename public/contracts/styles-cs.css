@@ -463,6 +463,58 @@ body:not(.is-auth) .platform-picker summary {
 body:not(.is-auth) .platform-options { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 2px 2px; }
 body:not(.is-auth) .platform-handles { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 
+/* ---- Design C vendor editor modal (reskin legacy markup) ----------- */
+body:not(.is-auth) .modal-backdrop {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(18,18,14,.45) !important;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 44px 20px; overflow-y: auto;
+}
+body:not(.is-auth) .modal-panel {
+  background: var(--cs-card) !important;
+  border: 1px solid var(--cs-card-bd) !important;
+  width: 100%; max-width: 640px;
+  border-radius: 16px !important;
+  box-shadow: 0 24px 70px rgba(0,0,0,.3) !important;
+  display: flex; flex-direction: column;
+  max-height: calc(100vh - 88px);
+  margin: auto;
+}
+body:not(.is-auth) .modal-panel > header { border-bottom: 1px solid var(--cs-divider) !important; }
+body:not(.is-auth) .modal-panel > footer { border-top: 1px solid var(--cs-divider) !important; }
+body:not(.is-auth) .modal-panel h3 { color: var(--cs-ink); }
+body:not(.is-auth) .modal-panel label {
+  display: block; font-size: 13px; font-weight: 600; color: var(--cs-ink); margin-bottom: 4px;
+}
+body:not(.is-auth) .modal-panel input,
+body:not(.is-auth) .modal-panel select,
+body:not(.is-auth) .modal-panel textarea {
+  font-family: inherit; font-size: 14px; width: 100%;
+  padding: 10px 13px; border: 1px solid var(--cs-field-bd); border-radius: 9px;
+  background: var(--cs-field); color: var(--cs-ink); outline: none; margin-top: 4px;
+}
+
+/* bank/id tabs inside the editor */
+body:not(.is-auth) .tab-pill {
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  padding: 8px 14px; border: none; border-radius: 8px 8px 0 0;
+  background: transparent; color: var(--cs-ink2); cursor: pointer;
+}
+body:not(.is-auth) .tab-pill:hover { background: var(--cs-rowhover); }
+body:not(.is-auth) .tab-pill.is-active {
+  background: var(--cs-solid) !important; color: #fff !important;
+}
+
+/* ---- Onboarding queue / pending panels (light reskin) -------------- */
+body:not(.is-auth) .mini-button {
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 10px; border-radius: 7px; cursor: pointer;
+  background: var(--cs-card); color: var(--cs-ink); border: 1px solid var(--cs-field-bd);
+}
+body:not(.is-auth) .mini-button:hover { background: var(--cs-pill); }
+body:not(.is-auth) .mini-button.danger-text,
+body:not(.is-auth) .danger-text { color: var(--cs-danger) !important; }
+
 /* ============================================================
    LEGACY BRIDGE
    Re-skins the legacy global controls so not-yet-migrated screens
