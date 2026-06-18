@@ -4602,15 +4602,20 @@ document.addEventListener("click", async (event) => {
     if (action === "download-all-task") {
       const tid = String(button.dataset.taskId);
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
+      // PDF only — skip the DOCX so a "Download all" gives just the PDFs.
+      let pdfCount = 0;
+      let skipped = 0;
       for (const c of list) {
         if (c.pdf_path) {
-          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, prettyContractName(c, "pdf")); }
+          try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, prettyContractName(c, "pdf")); pdfCount++; }
           catch (_) {}
+        } else {
+          skipped++;
         }
-        try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, `${c.contract_id}.docx`); }
-        catch (_) {}
       }
-      showToast(`Downloaded ${list.length} contract${list.length === 1 ? "" : "s"}`);
+      showToast(skipped
+        ? `Downloaded ${pdfCount} PDF${pdfCount === 1 ? "" : "s"} · ${skipped} had no PDF`
+        : `Downloaded ${pdfCount} PDF${pdfCount === 1 ? "" : "s"}`);
     }
     if (action === "delete-contract") {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }

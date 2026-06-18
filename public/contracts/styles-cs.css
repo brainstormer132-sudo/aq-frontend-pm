@@ -269,14 +269,14 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 
 /* ---- Tables (CSS grid) --------------------------------------------- */
 .cs-thead {
-  display: grid; align-items: center;
+  display: grid; align-items: center; column-gap: 18px;
   padding: 0 22px 9px;
   font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
   color: var(--cs-muted); font-weight: 600;
   border-bottom: 1px solid var(--cs-divider);
 }
 .cs-row {
-  display: grid; align-items: center;
+  display: grid; align-items: center; column-gap: 18px;
   padding: 13px 22px;
   border-bottom: 1px solid var(--cs-divider2);
   transition: background .1s;
@@ -428,6 +428,9 @@ body:not(.is-auth) .generate-menu-popup {
   box-shadow: 0 16px 40px rgba(0,0,0,.18) !important;
   display: flex; flex-direction: column; gap: 2px;
 }
+/* The [hidden] attribute must win over the display above, or the menu
+   renders permanently open. */
+body:not(.is-auth) .generate-menu-popup[hidden] { display: none !important; }
 body:not(.is-auth) .generate-menu-item {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   font-family: inherit; font-size: 13px; font-weight: 500; text-align: left;
