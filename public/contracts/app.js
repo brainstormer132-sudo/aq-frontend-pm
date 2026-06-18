@@ -944,42 +944,75 @@ async function renderTasksView() {
   const editorMode = state.taskEditorMode || (task ? "edit" : "new");
   const editingTask = editorMode === "new" ? null : task;
 
-  els.viewRoot.innerHTML = `
-    <section class="tasks-list-full">
-      <div class="glass-panel">
-        <div class="panel-header">
-          <h2>Contract Tasks</h2>
-          <div class="toolbar">
-            <input id="task-search" placeholder="Search brand, vendor, license, CR, client, ID…" value="${encodeAttr(state.search)}" />
-            <label class="compact-label">Show
-              <select id="task-limit">${limitOptions()}</select>
-            </label>
-            <button class="secondary-button" type="button" data-action="duplicate-task" ${task ? "" : "disabled"}>Duplicate</button>
-            <button class="danger-button" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
-            <button class="primary-button" type="button" data-action="open-new-task">+ New Task</button>
-          </div>
+  const doneSet = new Set(["COMPLETED", "DONE", "DELIVERED", "SIGNED"]);
+  const genByTask = {};
+  for (const c of state.contracts) {
+    const tid = String(c.task_id || "");
+    if (tid) genByTask[tid] = (genByTask[tid] || 0) + 1;
+  }
+  const taskCols = "120px 1fr 104px 92px 132px 116px 56px";
+  const taskRows = visibleTasks.map((t) => {
+    const total = Number(t.subtask_count || 0);
+    const gen = Number(genByTask[String(t.id)] || 0);
+    const pct = total ? Math.min(100, Math.round((gen / total) * 100)) : 0;
+    const st = String(t.status || "NEW").toUpperCase();
+    const isSel = String(t.id) === String(state.selectedTaskId);
+    return `
+      <div class="cs-row ${isSel ? "is-selected" : ""}" data-task-row data-id="${encodeAttr(t.id)}" style="grid-template-columns:${taskCols}; cursor:pointer;">
+        <div class="cs-cell-id">${escapeHtml(t.id)}</div>
+        <div class="cs-bidi" style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:14px;">${escapeHtml(t.brand || "—")}</div>
+        <div class="cs-cell-num">${money(t.amount)}</div>
+        <div style="text-align:center;"><span class="cs-pill ${doneSet.has(st) ? "is-solid" : ""}">${escapeHtml(st)}</span></div>
+        <div class="cs-mono" style="font-size:12px;color:var(--cs-monoink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.contract_type || "after_pay")}</div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+          <span class="cs-mono" style="font-size:12px;color:var(--cs-muted);">${gen} / ${total}</span>
+          <span style="width:34px;height:5px;border-radius:3px;background:var(--cs-track);position:relative;overflow:hidden;"><span style="position:absolute;inset:0;width:${pct}%;background:var(--cs-accent);"></span></span>
         </div>
-        ${renderTaskTable(visibleTasks)}
-        <p class="table-note">Showing ${visibleTasks.length} of ${tasks.length} matching tasks. Minimum page size is 5.</p>
-      </div>
-    </section>
+        <div class="cs-rowact"><button class="cs-iconbtn" type="button" data-action="edit-task" data-id="${encodeAttr(t.id)}" title="Edit task">Edit</button></div>
+      </div>`;
+  }).join("");
 
-    <section class="glass-panel subtask-panel">
-      <div class="panel-header">
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div class="mode-tabs" role="tablist">
-            <button type="button" class="mode-tab ${state.clientMode ? "" : "active"}" data-action="set-vendor-mode" role="tab" aria-selected="${state.clientMode ? "false" : "true"}">Vendor subtasks</button>
-            <button type="button" class="mode-tab ${state.clientMode ? "active" : ""}" data-action="set-client-mode" role="tab" aria-selected="${state.clientMode ? "true" : "false"}" ${task ? "" : "disabled"}>Client contract</button>
-          </div>
-          ${task ? `<span style="font-size:13px;color:var(--muted)">${escapeHtml(task.brand)}</span>` : ""}
+  els.viewRoot.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:18px;">
+      <button class="cs-btn" type="button" data-action="open-new-task">+ New Task</button>
+    </div>
+
+    <div class="cs-card-flush" style="margin-bottom:22px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
+        <div>
+          <div class="cs-section-title">Contract tasks</div>
+          <div style="font-size:12.5px;color:var(--cs-muted);margin-top:3px;">${tasks.length} matching · showing ${visibleTasks.length}</div>
         </div>
-        <div class="toolbar">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div class="cs-search"><span class="cs-search-ring"></span><input id="task-search" placeholder="Search brand, vendor, license, ID…" value="${encodeAttr(state.search)}" /></div>
+          <select id="task-limit" class="cs-select" style="width:auto;">${limitOptions()}</select>
+          <button class="cs-btn-ghost" type="button" data-action="duplicate-task" ${task ? "" : "disabled"}>Duplicate</button>
+          <button class="cs-btn-danger" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
+        </div>
+      </div>
+      <div class="cs-thead" style="grid-template-columns:${taskCols};">
+        <div>ID</div><div>Brand</div><div style="text-align:right;">Amount</div><div style="text-align:center;">Status</div><div>Type</div><div style="text-align:right;">Subtasks</div><div></div>
+      </div>
+      ${taskRows || `<div class="cs-table-note">No matching tasks.</div>`}
+      <div class="cs-table-note">Showing ${visibleTasks.length} of ${tasks.length} matching tasks. Minimum page size is 5.</div>
+    </div>
+
+    <div class="cs-card-flush">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;flex-wrap:wrap;border-bottom:1px solid var(--cs-divider);">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <div class="cs-tabs" role="tablist">
+            <button type="button" class="cs-tab ${state.clientMode ? "" : "active"}" data-action="set-vendor-mode" role="tab" aria-selected="${state.clientMode ? "false" : "true"}">Vendor subtasks</button>
+            <button type="button" class="cs-tab ${state.clientMode ? "active" : ""}" data-action="set-client-mode" role="tab" aria-selected="${state.clientMode ? "true" : "false"}" ${task ? "" : "disabled"}>Client contract</button>
+          </div>
+          ${task ? `<span class="cs-mono" style="font-size:12.5px;color:var(--cs-muted);">${escapeHtml(task.id)} · <span class="cs-bidi" style="font-family:'IBM Plex Sans','IBM Plex Sans Arabic',sans-serif;">${escapeHtml(task.brand || "")}</span></span>` : `<span style="font-size:13px;color:var(--cs-muted);">Select a task above</span>`}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
           ${state.clientMode ? `
-            <button class="primary-button" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract">Generate client contract</button>
+            <button class="cs-btn" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract">Generate client contract</button>
           ` : `
-            <button class="secondary-button" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add subtask</button>
-            <div class="generate-menu">
-              <button class="primary-button" type="button" data-action="toggle-generate-menu" ${task && state.subtasks.length ? "" : "disabled"} aria-haspopup="menu" aria-expanded="false">Generate <span class="caret-icon">▾</span></button>
+            <button class="cs-btn-ghost" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add subtask</button>
+            <div class="generate-menu" style="position:relative;">
+              <button class="cs-btn" type="button" data-action="toggle-generate-menu" ${task && state.subtasks.length ? "" : "disabled"} aria-haspopup="menu" aria-expanded="false">Generate ▾</button>
               <div class="generate-menu-popup" id="generate-menu-popup" hidden role="menu">
                 <button type="button" class="generate-menu-item" data-action="generate-all" role="menuitem" ${state.subtasks.length ? "" : "disabled"}>All subtasks <span class="menu-badge">${state.subtasks.length}</span></button>
                 <button type="button" class="generate-menu-item" data-action="generate-selected" role="menuitem" ${selectedCount ? "" : "disabled"}>Selected only <span class="menu-badge">${selectedCount}</span></button>
@@ -990,140 +1023,136 @@ async function renderTasksView() {
           `}
         </div>
       </div>
+
       ${state.clientMode ? `
-        <div class="subtask-grid">
-          <div>${renderSubtaskTable()}</div>
-          <div class="inline-form" style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:10px;padding:1rem">
-            <h3 style="color:#7c3aed">Client Contract Settings</h3>
-            <label>Client
-              <select id="cc-client-select">
-                <option value="">-- select client --</option>
+        <div style="display:grid;grid-template-columns:1fr 320px;gap:0;align-items:start;">
+          <div style="border-right:1px solid var(--cs-divider);">${renderSubtaskTable()}</div>
+          <div style="padding:20px 22px;">
+            <div class="cs-section-title" style="margin-bottom:14px;">Client contract settings</div>
+            <div class="cs-field-group">
+              <label class="cs-label">Client</label>
+              <select id="cc-client-select" class="cs-select">
+                <option value="">— select client —</option>
                 ${state.clients.map((c) => `<option value="${encodeAttr(c.id)}">${escapeHtml(c.company_name || c.name || "")}</option>`).join("")}
               </select>
-            </label>
-            <div id="cc-client-details" style="font-size:0.85em;color:#aaa;line-height:1.7;margin:0.5rem 0"></div>
-            <label>Brand
-              <select id="cc-brand-select"><option value="">-- select client first --</option></select>
-            </label>
-            <label>Total Amount
-              <input id="cc-total-amount" type="text" value="${encodeAttr(task?.amount || "0")}" />
-            </label>
-            <p class="form-hint">Select a client above, then click "Generate client contract" in the toolbar. The influencer table is built from the subtasks listed on the left.</p>
+            </div>
+            <div id="cc-client-details" style="font-size:12.5px;color:var(--cs-muted);line-height:1.7;margin:0 0 14px;"></div>
+            <div class="cs-field-group">
+              <label class="cs-label">Brand</label>
+              <select id="cc-brand-select" class="cs-select"><option value="">— select client first —</option></select>
+            </div>
+            <div class="cs-field-group">
+              <label class="cs-label">Total amount</label>
+              <input id="cc-total-amount" class="cs-input" type="text" value="${encodeAttr(task?.amount || "0")}" />
+            </div>
+            <p class="cs-form-hint">Pick a client, then "Generate client contract" above. The influencer table is built from the subtasks on the left.</p>
           </div>
         </div>
       ` : `
+        ${selectedCount ? `
+        <div class="cs-bulkbar" style="margin:14px 22px 0;">
+          <span class="cs-bulk-count">${selectedCount} selected</span>
+          <button class="cs-bulk-btn" type="button" data-action="generate-selected">Generate</button>
+          <span class="cs-bulk-spacer"></span>
+          <button class="cs-bulk-btn" type="button" data-action="clear-subtask-sel">Clear</button>
+        </div>` : ""}
         ${renderSubtaskTable()}
       `}
-    </section>
-
-    <!-- Slide-over: task editor (new / edit) -->
-    <div class="slide-over-overlay ${editorOpen ? "is-open" : ""}" id="task-editor-overlay" data-dismiss-overlay>
-      <aside class="slide-over-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
-        <header class="slide-over-header">
-          <h2 id="task-editor-title">${editingTask ? "Edit task" : "New task"}</h2>
-          <button type="button" class="slide-over-close" data-action="close-task-editor" aria-label="Close">×</button>
-        </header>
-        <form id="task-form" class="slide-over-body in-slide-over">
-          <input type="hidden" id="task-id" value="${encodeAttr(editingTask?.id || "")}" />
-          <label>Brand <input id="task-brand" required value="${encodeAttr(editingTask?.brand || "")}" /></label>
-          <label>Contract Length (days) <input id="task-duration" inputmode="numeric" placeholder="e.g. 30 or 60-90" value="${encodeAttr(editingTask?.duration || "")}" /></label>
-          <p class="form-hint">Fills the {{ duration }} field on every contract for this task. Number of days or a range — leave blank to keep the template default.</p>
-          <label>Amount <input id="task-amount" inputmode="decimal" readonly value="${encodeAttr(editingTask?.amount || "0.00")}" /></label>
-          <p class="form-hint">Amount is calculated automatically from subtask prices.</p>
-          <label>Contract Type <select id="task-type">${templateOptions(activeTaskTemplate)}</select></label>
-          <label>Status <select id="task-status">${statusOptions(editingTask?.status || "NEW")}</select></label>
-          <label>End Date <input id="task-end-date" type="date" value="${encodeAttr((editingTask?.end_date || "").slice(0, 10))}" /></label>
-          <label>Notes <textarea id="task-notes" rows="4">${escapeHtml(editingTask?.notes || "")}</textarea></label>
-          <div style="display:flex;gap:10px;margin-top:6px">
-            <button class="primary-button" type="submit" style="flex:1">${editingTask ? "Save task" : "Create task"}</button>
-            <button class="secondary-button" type="button" data-action="close-task-editor">Cancel</button>
-          </div>
-        </form>
-      </aside>
     </div>
 
-    <!-- Slide-over: add subtask (vendor mode only) -->
-    ${state.clientMode ? "" : `
-    <div class="slide-over-overlay ${subtaskEditorOpen ? "is-open" : ""}" id="subtask-editor-overlay" data-dismiss-overlay>
-      <aside class="slide-over-panel" role="dialog" aria-modal="true" aria-labelledby="subtask-editor-title">
-        <header class="slide-over-header">
-          <h2 id="subtask-editor-title">Add vendor subtask</h2>
-          <button type="button" class="slide-over-close" data-action="close-add-subtask" aria-label="Close">×</button>
-        </header>
-        <form id="subtask-form" class="slide-over-body in-slide-over">
-          <!--
-            License autocomplete. We bailed on the native HTML5 <datalist>
-            because the browsers ship inconsistent / sluggish UX (delayed
-            popups, prefix-only matching that doesn't search by vendor
-            name). This is a small custom autocomplete: type anything,
-            we filter live across license number, vendor name, and
-            id_number; click a row to pick. The hidden div underneath
-            holds the suggestion rows and is shown only while the user
-            is interacting with the input.
-          -->
-          <label>Vendor (license or name)
-            <div class="autocomplete-wrap">
-              <input id="sub-license" autocomplete="off" placeholder="Type to search vendors…" />
-              <div id="sub-license-suggestions" class="autocomplete-suggestions" hidden></div>
-            </div>
-          </label>
-          <label>Vendor Name <input id="sub-vendor" readonly required placeholder="Autofills from license" /></label>
-          <label>IBAN
-            <select id="sub-iban" disabled>
-              <option value="">Choose vendor license first</option>
-            </select>
-          </label>
-          <div id="sub-bank-preview" class="bank-preview">
-            <strong>Bank information</strong>
-            <span>Choose a vendor license and IBAN.</span>
+    ${editorOpen ? `
+    <div class="cs-scrim" id="task-editor-overlay" data-dismiss-overlay>
+      <div class="cs-modal" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
+        <div class="cs-modal-head">
+          <div class="cs-modal-title" id="task-editor-title">${editingTask ? "Edit task" : "New task"}</div>
+          <button type="button" class="cs-modal-close" data-action="close-task-editor" aria-label="Close">✕</button>
+        </div>
+        <form id="task-form">
+          <div class="cs-modal-body">
+            <input type="hidden" id="task-id" value="${encodeAttr(editingTask?.id || "")}" />
+            <div class="cs-field-group"><label class="cs-label">Brand</label><input id="task-brand" class="cs-input" required value="${encodeAttr(editingTask?.brand || "")}" /></div>
+            <div class="cs-field-group"><label class="cs-label">Contract Length (days)</label><input id="task-duration" class="cs-input" inputmode="numeric" placeholder="e.g. 30 or 60-90" value="${encodeAttr(editingTask?.duration || "")}" /><p class="cs-form-hint">Fills the {{ duration }} field on every contract for this task. Leave blank to keep the template default.</p></div>
+            <div class="cs-field-group"><label class="cs-label">Amount</label><input id="task-amount" class="cs-input" inputmode="decimal" readonly value="${encodeAttr(editingTask?.amount || "0.00")}" /><p class="cs-form-hint">Calculated automatically from subtask prices.</p></div>
+            <div class="cs-field-group"><label class="cs-label">Contract Type</label><select id="task-type" class="cs-select">${templateOptions(activeTaskTemplate)}</select></div>
+            <div class="cs-field-group"><label class="cs-label">Status</label><select id="task-status" class="cs-select">${statusOptions(editingTask?.status || "NEW")}</select></div>
+            <div class="cs-field-group"><label class="cs-label">End Date</label><input id="task-end-date" class="cs-input" type="date" value="${encodeAttr((editingTask?.end_date || "").slice(0, 10))}" /></div>
+            <div class="cs-field-group"><label class="cs-label">Notes</label><textarea id="task-notes" class="cs-textarea" rows="4">${escapeHtml(editingTask?.notes || "")}</textarea></div>
           </div>
-          <div class="field-block">
-            <span class="field-label">Platforms</span>
-            <details class="platform-picker">
-              <summary>Choose platforms</summary>
-              <div class="platform-options">
-                ${PLATFORM_OPTIONS.map((platform) => `
-                  <label class="checkbox-row">
-                    <input type="checkbox" class="platform-checkbox" value="${platform.key}" />
-                    <span>${platform.label}</span>
-                  </label>
-                `).join("")}
+          <div class="cs-modal-foot">
+            ${editingTask ? `<button class="cs-btn-danger" type="button" data-action="delete-task">Delete task</button>` : ""}
+            <span class="cs-foot-spacer"></span>
+            <button class="cs-btn-ghost" type="button" data-action="close-task-editor">Cancel</button>
+            <button class="cs-btn" type="submit">${editingTask ? "Save task" : "Create task"}</button>
+          </div>
+        </form>
+      </div>
+    </div>` : ""}
+
+    ${(subtaskEditorOpen && !state.clientMode) ? `
+    <div class="cs-scrim" id="subtask-editor-overlay" data-dismiss-overlay>
+      <div class="cs-modal is-wide" role="dialog" aria-modal="true" aria-labelledby="subtask-editor-title">
+        <div class="cs-modal-head">
+          <div class="cs-modal-title" id="subtask-editor-title">Add vendor subtask</div>
+          <button type="button" class="cs-modal-close" data-action="close-add-subtask" aria-label="Close">✕</button>
+        </div>
+        <form id="subtask-form">
+          <div class="cs-modal-body">
+            <div class="cs-field-group">
+              <label class="cs-label">Vendor (license or name)</label>
+              <div class="autocomplete-wrap">
+                <input id="sub-license" class="cs-input" autocomplete="off" placeholder="Type to search vendors…" />
+                <div id="sub-license-suggestions" class="autocomplete-suggestions" hidden></div>
               </div>
-            </details>
+            </div>
+            <div class="cs-field-group"><label class="cs-label">Vendor Name</label><input id="sub-vendor" class="cs-input cs-bidi" readonly required placeholder="Autofills from license" /></div>
+            <div class="cs-field-group"><label class="cs-label">IBAN</label><select id="sub-iban" class="cs-select" disabled><option value="">Choose vendor license first</option></select></div>
+            <div id="sub-bank-preview" class="bank-preview" style="background:var(--cs-soft);border:1px solid var(--cs-card-bd);border-radius:9px;padding:10px 12px;margin-bottom:16px;font-size:12.5px;">
+              <strong>Bank information</strong>
+              <span>Choose a vendor license and IBAN.</span>
+            </div>
+            <div class="cs-field-group">
+              <label class="cs-label">Platforms</label>
+              <details class="platform-picker">
+                <summary>Choose platforms</summary>
+                <div class="platform-options">
+                  ${PLATFORM_OPTIONS.map((platform) => `
+                    <label class="checkbox-row">
+                      <input type="checkbox" class="platform-checkbox" value="${platform.key}" />
+                      <span>${platform.label}</span>
+                    </label>
+                  `).join("")}
+                </div>
+              </details>
+            </div>
+            <div id="platform-handles" class="platform-handles">
+              <p class="cs-form-hint">Select a platform to add its handle.</p>
+            </div>
+            <input id="sub-channel" type="hidden" />
+            <input id="sub-platforms" type="hidden" />
+            <div class="cs-field-group">
+              <label class="cs-label">Ad Type</label>
+              <select id="sub-ad-type" class="cs-select">
+                <option>Store Visit</option>
+                <option>Home Ad</option>
+                <option>Multi Service</option>
+              </select>
+            </div>
+            <div class="cs-field-group" id="sub-ad-type-custom-label" style="display:none">
+              <label class="cs-label">Multi-service text</label>
+              <input id="sub-ad-type-custom" class="cs-input" placeholder="What does this multi-service cover?" />
+            </div>
+            <div class="cs-field-group"><label class="cs-label">Qty</label><input id="sub-qty" class="cs-input" value="1" /></div>
+            <div class="cs-field-group"><label class="cs-label">Price</label><input id="sub-price" class="cs-input" value="0" /></div>
+            <div class="cs-field-group"><label class="cs-label">Details</label><textarea id="sub-details" class="cs-textarea" rows="3"></textarea></div>
           </div>
-          <div id="platform-handles" class="platform-handles">
-            <p class="form-hint">Select a platform to add its handle.</p>
-          </div>
-          <input id="sub-channel" type="hidden" />
-          <input id="sub-platforms" type="hidden" />
-          <label>Ad Type
-            <select id="sub-ad-type">
-              <option>Store Visit</option>
-              <option>Home Ad</option>
-              <option>Multi Service</option>
-            </select>
-          </label>
-          <!--
-            Multi-service free-text override. Only shown when the
-            Ad Type dropdown is on "Multi Service" — toggled by the
-            "sub-ad-type" change handler. Whatever the user types
-            here replaces "خدمة متعددة" in the generated contract.
-          -->
-          <label id="sub-ad-type-custom-label" style="display:none">
-            Multi-service text
-            <input id="sub-ad-type-custom" placeholder="What does this multi-service cover?" />
-          </label>
-          <label>Qty <input id="sub-qty" value="1" /></label>
-          <label>Price <input id="sub-price" value="0" /></label>
-          <label>Details <textarea id="sub-details" rows="3"></textarea></label>
-          <div style="display:flex;gap:10px;margin-top:6px">
-            <button class="primary-button" type="submit" style="flex:1" ${task ? "" : "disabled"}>Add Subtask</button>
-            <button class="secondary-button" type="button" data-action="close-add-subtask">Cancel</button>
+          <div class="cs-modal-foot">
+            <span class="cs-foot-spacer"></span>
+            <button class="cs-btn-ghost" type="button" data-action="close-add-subtask">Cancel</button>
+            <button class="cs-btn" type="submit" ${task ? "" : "disabled"}>Add subtask</button>
           </div>
         </form>
-      </aside>
-    </div>
-    `}
+      </div>
+    </div>` : ""}
   `;
 }
 
@@ -1131,45 +1160,36 @@ function renderSubtaskTable() {
   const selected = state.selectedSubtaskIds || (state.selectedSubtaskIds = new Set());
   const allChecked = state.subtasks.length > 0
     && state.subtasks.every((s) => selected.has(String(s.id)));
+  const unpaidCount = state.subtasks.filter((s) => !s.paid_at).length;
+  const cols = "38px 150px 1fr 120px 120px 96px 104px 172px";
 
   const rows = state.subtasks.map((sub) => {
     const checked = selected.has(String(sub.id)) ? "checked" : "";
     return `
-      <tr>
-        <td><input type="checkbox" class="subtask-pick" data-id="${sub.id}" ${checked} /></td>
-        <td>${escapeHtml(sub.lic_id || sub.id)}</td>
-        <td>${escapeHtml(sub.vendor)}</td>
-        <td>${escapeHtml(displayPlatforms(sub.platforms))}</td>
-        <td>${escapeHtml(sub.ad_type)} x ${escapeHtml(sub.qty)}</td>
-        <td>${money(sub.price)}</td>
-        <td>${sub.paid_at ? pill("Paid", "done") : pill("Unpaid", "warn")}</td>
-        <td class="actions-cell">
-          <button class="mini-button" type="button" data-action="generate-one" data-id="${sub.id}" title="Generate contract for just this subtask">Generate</button>
-          <button class="mini-button" type="button" data-action="mark-paid" data-id="${sub.id}">${sub.paid_at ? "Unmark" : "Paid"}</button>
-          <button class="mini-button danger-text" type="button" data-action="delete-subtask" data-id="${sub.id}">Delete</button>
-        </td>
-      </tr>
+      <div class="cs-row" style="grid-template-columns:${cols};">
+        <div><input type="checkbox" class="cs-check subtask-pick" data-id="${sub.id}" ${checked} /></div>
+        <div class="cs-cell-id">${escapeHtml(sub.lic_id || sub.id)}</div>
+        <div class="cs-bidi" style="font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:10px;">${escapeHtml(sub.vendor || "—")}</div>
+        <div style="font-size:13px;color:var(--cs-ink2);">${escapeHtml(displayPlatforms(sub.platforms)) || "<span class='cs-empty'>—</span>"}</div>
+        <div style="font-size:13px;color:var(--cs-ink2);">${escapeHtml(sub.ad_type || "")} ×${escapeHtml(sub.qty || "1")}</div>
+        <div class="cs-cell-num">${money(sub.price)}</div>
+        <div>${sub.paid_at ? `<span class="cs-pill is-solid">PAID</span>` : `<span class="cs-pill is-warn">UNPAID</span>`}</div>
+        <div class="cs-rowact">
+          <button class="cs-iconbtn" type="button" data-action="generate-one" data-id="${sub.id}" title="Generate contract for just this subtask">Generate</button>
+          <button class="cs-iconbtn" type="button" data-action="mark-paid" data-id="${sub.id}">${sub.paid_at ? "Unpay" : "Paid"}</button>
+          <button class="cs-iconbtn is-danger" type="button" data-action="delete-subtask" data-id="${sub.id}">Delete</button>
+        </div>
+      </div>
     `;
   }).join("");
 
   return `
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="subtask-pick-all" ${allChecked ? "checked" : ""} title="Select all" /></th>
-            <th>LIC</th>
-            <th>Vendor</th>
-            <th>Platforms</th>
-            <th>Ad</th>
-            <th>Price</th>
-            <th>Payment</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>${rows || `<tr><td colspan="8">No subtasks for this task</td></tr>`}</tbody>
-      </table>
+    <div class="cs-thead" style="grid-template-columns:${cols};">
+      <div><input type="checkbox" id="subtask-pick-all" class="cs-check" ${allChecked ? "checked" : ""} title="Select all" /></div>
+      <div>License</div><div>Vendor</div><div>Platform</div><div>Ad</div><div style="text-align:right;">Price</div><div>Payment</div><div></div>
     </div>
+    ${rows || `<div class="cs-table-note">No subtasks for this task.</div>`}
+    <div class="cs-table-note">${state.subtasks.length} vendor subtask${state.subtasks.length === 1 ? "" : "s"} · ${unpaidCount} unpaid</div>
   `;
 }
 
@@ -4144,7 +4164,7 @@ document.addEventListener("click", async (event) => {
 
   // Slide-over dismiss: clicking the dark overlay (but not the panel
   // inside) closes whichever editor is open.
-  const overlay = event.target.closest(".slide-over-overlay[data-dismiss-overlay]");
+  const overlay = event.target.closest("[data-dismiss-overlay]");
   if (overlay && event.target === overlay) {
     if (overlay.id === "task-editor-overlay") {
       state.taskEditorOpen = false;
@@ -4229,6 +4249,17 @@ document.addEventListener("click", async (event) => {
         localStorage.setItem("aq_selected_task", id);
       }
       setView("tasks");
+      return;
+    }
+
+    // Tasks-view grid rows (divs, not <tr>): select for the master/detail.
+    const taskRow = event.target.closest(".cs-row[data-task-row]");
+    if (taskRow && !button) {
+      const id = taskRow.dataset.id;
+      if (String(state.selectedTaskId) !== String(id)) state.selectedSubtaskIds = new Set();
+      state.selectedTaskId = id;
+      localStorage.setItem("aq_selected_task", id);
+      await renderTasksView();
       return;
     }
 
@@ -4390,6 +4421,11 @@ document.addEventListener("click", async (event) => {
         return;
       }
       await generateForSubtasks(task.id, null, `Generated ${state.subtasks.length} contract${state.subtasks.length === 1 ? "" : "s"}.`);
+    }
+    if (action === "clear-subtask-sel") {
+      state.selectedSubtaskIds = new Set();
+      await renderTasksView();
+      return;
     }
     if (action === "toggle-client-mode") {
       state.clientMode = !state.clientMode;
