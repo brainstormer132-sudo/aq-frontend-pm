@@ -73,12 +73,12 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
    ============================================================ */
 .app-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 212px minmax(0, 1fr);
   min-height: 100vh;
   background: var(--cs-bg);
   transition: grid-template-columns .16s ease;
 }
-.app-shell.sidebar-collapsed { grid-template-columns: 74px minmax(0, 1fr); }
+.app-shell.sidebar-collapsed { grid-template-columns: 72px minmax(0, 1fr); }
 
 /* ---- Sidebar (always near-black, both themes) ---------------------- */
 .sidebar {
@@ -111,12 +111,16 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 .sidebar-toggle:hover { background: rgba(255,255,255,.12); color:#fff; }
 .app-shell.sidebar-collapsed .sidebar-toggle { transform: rotate(180deg); }
 
-/* brand / logo block */
+/* brand / logo block — now the clickable collapse toggle */
 .sidebar .brand {
   display: flex; align-items: center; gap: 12px;
   min-height: 0;
-  padding: 22px 18px 18px;
+  padding: 20px 16px 16px;
+  width: 100%; border: none; background: none;
+  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
 }
+.sidebar .brand:hover img { box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.sidebar .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .sidebar .brand img {
   width: 40px; height: 40px; flex: none;
   border-radius: 11px;
@@ -132,7 +136,7 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 }
 
 /* nav */
-.sidebar .nav-list { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
+.sidebar .nav-list { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; }
 .sidebar .nav-item {
   display: flex; align-items: center; gap: 13px;
   width: 100%; min-height: 0;
@@ -196,15 +200,16 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 /* Backend URL hidden per request — kept in DOM since JS writes to it. */
 .sidebar .api-url { display: none; }
 
-/* collapsed: hide every text label, center icons */
-.app-shell.sidebar-collapsed .sidebar .brand { justify-content: center; padding: 22px 0 18px; }
-.app-shell.sidebar-collapsed .sidebar .brand > div,
+/* collapsed: hide every text label, center icons, give the icons room */
+.app-shell.sidebar-collapsed .sidebar .brand { justify-content: center; padding: 20px 0 16px; }
+.app-shell.sidebar-collapsed .sidebar .brand-text,
 .app-shell.sidebar-collapsed .sidebar .nav-label,
 .app-shell.sidebar-collapsed .sidebar .theme-toggle-text,
 .app-shell.sidebar-collapsed .sidebar .status-dot > div,
 .app-shell.sidebar-collapsed .sidebar .api-url { display: none; }
-.app-shell.sidebar-collapsed .sidebar .nav-item,
-.app-shell.sidebar-collapsed .sidebar .theme-toggle { justify-content: center; }
+.app-shell.sidebar-collapsed .sidebar .nav-list { gap: 8px; padding: 10px 12px; }
+.app-shell.sidebar-collapsed .sidebar .nav-item { justify-content: center; padding: 12px 0; }
+.app-shell.sidebar-collapsed .sidebar .theme-toggle { justify-content: center; padding: 11px 0; }
 .app-shell.sidebar-collapsed .sidebar .status-dot { justify-content: center; padding: 12px 0 18px; }
 
 /* ---- Main / topbar -------------------------------------------------- */

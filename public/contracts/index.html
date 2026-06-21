@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/contracts/styles-tasks.css?v=20260521-1" />
     <link rel="stylesheet" href="/contracts/styles-theme.css?v=20260521-darkmode" />
     <!-- Redesign (black & white system). Loaded LAST so it wins. Batch 1: foundation. -->
-    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b6-theme" />
+    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b6-sidebar" />
     <script>
       (function () {
         try {
@@ -25,15 +25,13 @@
     <div id="progress-bar" class="progress-bar" aria-hidden="true"></div>
     <main class="app-shell">
       <aside class="sidebar">
-        <button id="sidebar-toggle" class="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
-
-        <div class="brand">
+        <button class="brand" id="sidebar-toggle" type="button" title="Collapse / expand sidebar" aria-label="Collapse / expand sidebar">
           <img src="/contracts/assets/logo.png" alt="" />
-          <div>
+          <span class="brand-text">
             <strong>Contract Suite</strong>
             <span>Internal</span>
-          </div>
-        </div>
+          </span>
+        </button>
 
         <nav class="nav-list" aria-label="Main">
           <button class="nav-item active" type="button" data-view="dashboard" title="Operations">
@@ -261,6 +259,6 @@
         }
       })();
     </script>
-    <script src="/contracts/app.js?v=20260618-redesign-b6-theme"></script>
+    <script src="/contracts/app.js?v=20260618-redesign-b6-sidebar"></script>
   </body>
 </html>
