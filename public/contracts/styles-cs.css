@@ -124,10 +124,12 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 .sidebar .brand img {
   width: 40px; height: 40px; flex: none;
   border-radius: 10px;
-  background: transparent;   /* was #fff — that hid the light/white logo */
+  /* logo.png is a near-black mark, so it needs a light tile to be visible
+     on the black sidebar — in both expanded and collapsed states. */
+  background: #fff;
   border: none;
   object-fit: contain;
-  padding: 0;
+  padding: 5px;
   display: block;
 }
 .sidebar .brand-text strong { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: #fff; text-transform: none; }
