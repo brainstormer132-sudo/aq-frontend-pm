@@ -123,14 +123,15 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 .sidebar .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .sidebar .brand img {
   width: 40px; height: 40px; flex: none;
-  border-radius: 11px;
-  background: #fff;
+  border-radius: 10px;
+  background: transparent;   /* was #fff — that hid the light/white logo */
   border: none;
   object-fit: contain;
-  padding: 6px;
+  padding: 0;
+  display: block;
 }
-.sidebar .brand strong { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: #fff; }
-.sidebar .brand span {
+.sidebar .brand-text strong { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: #fff; text-transform: none; }
+.sidebar .brand-text > span {
   font-size: 11px; color: rgba(255,255,255,.45);
   letter-spacing: .06em; text-transform: uppercase;
 }
