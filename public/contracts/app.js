@@ -2150,6 +2150,23 @@ function renderContractsView() {
   const expanded = state.expandedTasks || (state.expandedTasks = new Set());
   const tasksById = new Map(state.tasks.map((t) => [String(t.id), t]));
 
+  // License → person name lookup, built from the vendor directory. Used so a
+  // contract row shows WHO it was made for (e.g. the influencer / UGC license
+  // holder) rather than a bare "—" when the stored vendor_name is empty.
+  const licenseToName = {};
+  for (const v of state.vendors) {
+    const lic = String(v.license_number || "").trim().toLowerCase();
+    const idn = String(v.id_number || "").trim().toLowerCase();
+    if (lic && !licenseToName[lic]) licenseToName[lic] = v.name;
+    if (idn && !licenseToName[idn]) licenseToName[idn] = v.name;
+  }
+  const nameForContract = (c) =>
+    c.vendor_name
+    || licenseToName[String(c.license_number || "").trim().toLowerCase()]
+    || c.client_name
+    || c.signatory_name
+    || "—";
+
   // Multi-field contract search — applied BEFORE grouping so task groups
   // disappear cleanly when none of their contracts match.
   const contractQuery = (state.contractSearch || "").trim().toLowerCase();
@@ -2169,28 +2186,17 @@ function renderContractsView() {
   const taskCards = Array.from(grouped.entries()).map(([taskId, contracts]) => {
     const isOpen = expanded.has(String(taskId));
     const task = tasksById.get(String(taskId));
-    const headerPerson =
-      contracts[0]?.vendor_name
-      || contracts[0]?.client_name
-      || task?.vendor
-      || "(unnamed)";
-    const headerLicense =
-      contracts[0]?.license_number
-      || task?.license_number
-      || "";
     const headerBrand = task?.brand || contracts[0]?.brand_name || "";
-    const headerLabel = headerLicense
-      ? `${escapeHtml(headerPerson)} — license ${escapeHtml(headerLicense)}`
-      : escapeHtml(headerPerson);
+    // Group header = the date the contracts were generated + the brand name.
+    const headerDate = String(contracts[0]?.generated_at || "").slice(0, 10) || "—";
 
     const adminOnly = isAdmin();
     const contractRows = isOpen ? contracts.map((c) => {
       const hasPdf = Boolean(c.pdf_path);
       const pdfTitle = c.pdf_error ? ` title="PDF unavailable: ${encodeAttr(c.pdf_error)}"` : "";
-      // Show the actual party name on the contract (vendor or client),
-      // not just the bare contract_id. Falls back to "—" if the row
-      // somehow has neither.
-      const contractName = c.vendor_name || c.client_name || c.signatory_name || "—";
+      // Who the contract was made for: stored vendor/client name, else the
+      // license holder's name from the vendor directory (influencer / UGC).
+      const contractName = nameForContract(c);
       return `
         <tr class="archive-row">
           <td>
@@ -2226,8 +2232,8 @@ function renderContractsView() {
         <div class="task-group-header" data-action="toggle-task-group" data-task-id="${encodeAttr(taskId)}">
           <div class="task-group-title">
             <span class="task-group-caret">${isOpen ? "▾" : "▸"}</span>
-            <strong>${headerLabel}</strong>
-            ${headerBrand ? `<span class="task-group-brand">${escapeHtml(headerBrand)}</span>` : ""}
+            <strong class="cs-mono">${escapeHtml(headerDate)}</strong>
+            ${headerBrand ? `<span class="task-group-brand cs-bidi">${escapeHtml(headerBrand)}</span>` : ""}
           </div>
           <div class="task-group-meta">
             <span class="task-group-count">${contracts.length} contract${contracts.length === 1 ? "" : "s"}</span>

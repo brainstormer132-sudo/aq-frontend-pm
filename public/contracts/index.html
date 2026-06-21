@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/contracts/styles-tasks.css?v=20260521-1" />
     <link rel="stylesheet" href="/contracts/styles-theme.css?v=20260521-darkmode" />
     <!-- Redesign (black & white system). Loaded LAST so it wins. Batch 1: foundation. -->
-    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b5-fixes2" />
+    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b6-theme" />
     <script>
       (function () {
         try {
@@ -69,12 +69,9 @@
         <div class="session-panel">
           <span id="api-status" class="status-dot">Checking</span>
           <span id="api-url" class="api-url"></span>
-          <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle theme">
-            <span class="theme-toggle-label">
-              <svg class="theme-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-              <span>Theme</span>
-            </span>
-            <span class="theme-toggle-state" id="theme-toggle-state">Light</span>
+          <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle light / dark theme">
+            <svg class="theme-toggle-icon" id="theme-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13.5A8 8 0 1 1 10.5 4a6.5 6.5 0 0 0 9.5 9.5z"/></svg>
+            <span class="theme-toggle-text" id="theme-toggle-state">Dark mode</span>
           </button>
           <button id="logout-button" class="ghost-button hidden" type="button">Logout</button>
         </div>
@@ -233,7 +230,14 @@
 
         function syncThemeLabel() {
           var t = document.documentElement.getAttribute("data-theme") || "light";
-          if (themeState) themeState.textContent = t === "dark" ? "Dark" : "Light";
+          var toDark = t !== "dark"; // label/icon show the mode the click switches TO
+          if (themeState) themeState.textContent = toDark ? "Dark mode" : "Light mode";
+          var icon = document.getElementById("theme-toggle-icon");
+          if (icon) {
+            icon.innerHTML = toDark
+              ? '<path d="M20 13.5A8 8 0 1 1 10.5 4a6.5 6.5 0 0 0 9.5 9.5z"/>'
+              : '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2 12h2M20 12h2M4.6 19.4l1.4-1.4M18 6l1.4-1.4"/>';
+          }
         }
         syncThemeLabel();
 
@@ -257,6 +261,6 @@
         }
       })();
     </script>
-    <script src="/contracts/app.js?v=20260618-redesign-b5-fixes2"></script>
+    <script src="/contracts/app.js?v=20260618-redesign-b6-theme"></script>
   </body>
 </html>

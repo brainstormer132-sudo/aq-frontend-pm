@@ -160,7 +160,7 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
   padding: 0;
 }
 .sidebar .theme-toggle {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
   margin: 4px 12px;
   padding: 8px 12px;
   border: none; border-radius: 8px;
@@ -170,9 +170,8 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
   cursor: pointer; transition: background .12s;
 }
 .sidebar .theme-toggle:hover { background: rgba(255,255,255,.12); }
-.sidebar .theme-toggle-label { display: flex; align-items: center; gap: 10px; }
 .sidebar .theme-toggle-icon { width: 16px; height: 16px; flex: none; }
-.sidebar .theme-toggle-state { font-size: 11px; color: rgba(255,255,255,.45); }
+.sidebar .theme-toggle-text { font-size: 13px; }
 
 /* Logout — quiet, compact, matches the dark sidebar (override the white
    legacy .ghost-button bridge via the higher-specificity id selector). */
@@ -201,8 +200,7 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 .app-shell.sidebar-collapsed .sidebar .brand { justify-content: center; padding: 22px 0 18px; }
 .app-shell.sidebar-collapsed .sidebar .brand > div,
 .app-shell.sidebar-collapsed .sidebar .nav-label,
-.app-shell.sidebar-collapsed .sidebar .theme-toggle-label span,
-.app-shell.sidebar-collapsed .sidebar .theme-toggle-state,
+.app-shell.sidebar-collapsed .sidebar .theme-toggle-text,
 .app-shell.sidebar-collapsed .sidebar .status-dot > div,
 .app-shell.sidebar-collapsed .sidebar .api-url { display: none; }
 .app-shell.sidebar-collapsed .sidebar .nav-item,
