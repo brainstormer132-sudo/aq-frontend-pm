@@ -137,6 +137,17 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 }
 /* Never let the collapsed state hide or shrink the logo tile. */
 .app-shell.sidebar-collapsed .sidebar .brand img { display: block !important; width: 40px !important; height: 40px !important; }
+
+/* THE FIX: legacy styles-theme.css has
+   `.app-shell.sidebar-collapsed .brand span { display:none !important }`
+   to hide the "Contract Suite / Internal" text on collapse. But the
+   geometric logo mark is built from <span>s, so that rule also hides the
+   logo when the bar is collapsed (clicking the logo => "logo disappears").
+   Re-assert the mark's display so it survives collapse. */
+.sidebar .brand-mark,
+.app-shell.sidebar-collapsed .sidebar .brand-mark { display: inline-flex !important; }
+.sidebar .brand-mark span,
+.app-shell.sidebar-collapsed .sidebar .brand-mark span { display: inline-block !important; }
 .sidebar .brand-text strong { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: #fff; text-transform: none; }
 .sidebar .brand-text > span {
   font-size: 11px; color: rgba(255,255,255,.45);
