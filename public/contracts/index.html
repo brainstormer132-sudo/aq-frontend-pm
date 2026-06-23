@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/contracts/styles-tasks.css?v=20260521-1" />
     <link rel="stylesheet" href="/contracts/styles-theme.css?v=20260521-darkmode" />
     <!-- Redesign (black & white system). Loaded LAST so it wins. Batch 1: foundation. -->
-    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b6-logo5" />
+    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b6-logo6" />
     <script>
       (function () {
         try {
@@ -25,17 +25,15 @@
     <div id="progress-bar" class="progress-bar" aria-hidden="true"></div>
     <main class="app-shell">
       <aside class="sidebar">
-        <button class="brand" id="sidebar-toggle" type="button" title="Collapse / expand sidebar" aria-label="Collapse / expand sidebar">
-          <span class="brand-mark" style="width:40px;height:40px;flex:none;border-radius:10px;background:#fff;display:inline-flex;align-items:center;justify-content:center;">
-            <span style="width:20px;height:20px;border:2.5px solid #0c0c0a;border-radius:50%;position:relative;display:inline-block;">
-              <span style="position:absolute;width:4px;height:4px;background:#0c0c0a;border-radius:50%;bottom:-1px;right:-1px;"></span>
-            </span>
-          </span>
-          <span class="brand-text">
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+
+        <div class="brand">
+          <img src="/contracts/assets/logo.png" alt="" />
+          <div class="brand-text">
             <strong>Contract Suite</strong>
             <span>Internal</span>
-          </span>
-        </button>
+          </div>
+        </div>
 
         <nav class="nav-list" aria-label="Main">
           <button class="nav-item active" type="button" data-view="dashboard" title="Operations">
@@ -263,6 +261,6 @@
         }
       })();
     </script>
-    <script src="/contracts/app.js?v=20260618-redesign-b6-logo5"></script>
+    <script src="/contracts/app.js?v=20260618-redesign-b6-logo6"></script>
   </body>
 </html>

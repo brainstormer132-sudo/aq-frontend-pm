@@ -111,31 +111,27 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 .sidebar-toggle:hover { background: rgba(255,255,255,.12); color:#fff; }
 .app-shell.sidebar-collapsed .sidebar-toggle { transform: rotate(180deg); }
 
-/* brand / logo block — now the clickable collapse toggle */
+/* brand / logo block */
 .sidebar .brand {
   display: flex; align-items: center; gap: 12px;
   min-height: 0;
   padding: 20px 16px 16px;
-  width: 100%; border: none; background: none;
-  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
 }
-.sidebar .brand:hover img { box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
 .sidebar .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .sidebar .brand img {
+  /* logo.png is a WHITE mark on a solid BLACK square — so it shows cleanly
+     on the black sidebar with NO tile (the logo's own black blends in).
+     A white tile would turn it into a black box. */
   width: 40px !important; height: 40px !important; flex: none;
-  border-radius: 10px !important;
-  /* logo.png is a near-black mark, so it needs a light tile to be visible
-     on the black sidebar — in both expanded and collapsed states. The
-     !important guards stop the legacy styles-theme.css collapse rules (and
-     any stale cached CSS) from shrinking or hiding it. */
-  background: #fff !important;
+  border-radius: 8px !important;
+  background: transparent !important;
   border: none !important;
   object-fit: contain;
-  padding: 5px !important;
+  padding: 0 !important;
   display: block !important;
   margin: 0 !important;
 }
-/* Never let the collapsed state hide or shrink the logo tile. */
+/* Keep the logo visible (and full size) when the sidebar is collapsed. */
 .app-shell.sidebar-collapsed .sidebar .brand img { display: block !important; width: 40px !important; height: 40px !important; }
 
 /* THE FIX: legacy styles-theme.css has
