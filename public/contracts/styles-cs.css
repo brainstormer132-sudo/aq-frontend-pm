@@ -279,7 +279,14 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
   border-radius: 14px;
   padding: 20px 22px;
 }
-.cs-card-flush { background: var(--cs-card); border: 1px solid var(--cs-card-bd); border-radius: 14px; overflow: hidden; }
+/* When a grid table is wider than the viewport (narrow / not-fullscreen),
+   scroll it horizontally instead of letting columns collapse and overlap.
+   The minmax() floors on the flexible columns set each table's natural
+   minimum; min-content makes the rows hold that minimum so the card scrolls
+   rather than squashing columns into each other. */
+.cs-card-flush { background: var(--cs-card); border: 1px solid var(--cs-card-bd); border-radius: 14px; overflow-x: auto; }
+.cs-card-flush .cs-thead,
+.cs-card-flush .cs-row { min-width: min-content; }
 .cs-section-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--cs-ink); }
 
 /* ---- KPI strip ------------------------------------------------------ */

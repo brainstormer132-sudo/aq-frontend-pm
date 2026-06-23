@@ -748,7 +748,7 @@ function renderDashboard() {
   const newFlex = active || (totalTasks ? 0 : 1);
   const doneFlex = completed;
 
-  const cols = "128px 1fr 96px 96px 120px";
+  const cols = "128px minmax(140px,1fr) 96px 96px 120px";
   const recent = tasks.slice(0, 10);
   const rows = recent.map((task) => {
     const total = Number(task.subtask_count || 0);
@@ -950,7 +950,7 @@ async function renderTasksView() {
     const tid = String(c.task_id || "");
     if (tid) genByTask[tid] = (genByTask[tid] || 0) + 1;
   }
-  const taskCols = "120px 1fr 104px 92px 132px 116px 56px";
+  const taskCols = "120px minmax(150px,1fr) 104px 92px 132px 116px 56px";
   const taskRows = visibleTasks.map((t) => {
     const total = Number(t.subtask_count || 0);
     const gen = Number(genByTask[String(t.id)] || 0);
@@ -1161,7 +1161,7 @@ function renderSubtaskTable() {
   const allChecked = state.subtasks.length > 0
     && state.subtasks.every((s) => selected.has(String(s.id)));
   const unpaidCount = state.subtasks.filter((s) => !s.paid_at).length;
-  const cols = "38px 150px 1fr 120px 120px 96px 104px 172px";
+  const cols = "38px 150px minmax(150px,1fr) 120px 120px 96px 104px 172px";
 
   const rows = state.subtasks.map((sub) => {
     const checked = selected.has(String(sub.id)) ? "checked" : "";
@@ -1843,7 +1843,7 @@ function renderVendorsView() {
   // Directory rendered as a flat grid table (replaced the click-to-expand
   // cards in the redesign). Edit opens the same modal as before; the banks
   // live inside that editor, so the row stays a single line.
-  const dirCols = "minmax(0,1.5fr) 150px 130px 150px minmax(0,1fr) 110px 96px";
+  const dirCols = "minmax(150px,1.5fr) 150px 130px 150px minmax(140px,1fr) 110px 96px";
   const vendorRows = filteredVendors.map((item) => {
     const cat = findVendorCategory(item.category_id);
     const idValue = cat?.requires_license
@@ -1940,7 +1940,7 @@ function renderClientsView() {
   }
   const client = selectedClient();
 
-  const clientCols = "minmax(0,1.4fr) 150px 120px 160px 150px 96px";
+  const clientCols = "minmax(160px,1.4fr) 150px 120px 160px 150px 96px";
   const missingCr = state.clients.filter((c) => !c.cr_number).length;
   const clientRows = filteredClients.map((c) => {
     const isSel = String(c.id) === String(client?.id);
