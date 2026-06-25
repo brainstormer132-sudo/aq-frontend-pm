@@ -3892,22 +3892,44 @@ els.refreshButton.addEventListener("click", async () => {
   }
 });
 
+// Debounced search: re-render the filtered list only after the user pauses
+// typing (not on every keystroke), then restore focus + caret so typing
+// stays smooth. The input itself updates natively as you type; only the
+// (expensive) list re-render waits. Tune the delay here.
+let _searchRenderTimer = null;
+function debouncedSearchRender(renderFn, inputId) {
+  if (_searchRenderTimer) clearTimeout(_searchRenderTimer);
+  _searchRenderTimer = setTimeout(() => {
+    const restore = () => {
+      const el = document.getElementById(inputId);
+      if (el) {
+        el.focus();
+        const len = el.value.length;
+        try { el.setSelectionRange(len, len); } catch (_) {}
+      }
+    };
+    const result = renderFn();
+    if (result && typeof result.then === "function") result.then(restore);
+    else restore();
+  }, 250);
+}
+
 document.addEventListener("input", (event) => {
   if (event.target.id === "task-search") {
     state.search = event.target.value;
-    renderTasksView();
+    debouncedSearchRender(renderTasksView, "task-search");
   }
   if (event.target.id === "vendor-search") {
     state.vendorSearch = event.target.value;
-    renderVendorsView();
+    debouncedSearchRender(renderVendorsView, "vendor-search");
   }
   if (event.target.id === "client-search") {
     state.clientSearch = event.target.value;
-    renderClientsView();
+    debouncedSearchRender(renderClientsView, "client-search");
   }
   if (event.target.id === "contract-search") {
     state.contractSearch = event.target.value;
-    renderContractsView();
+    debouncedSearchRender(renderContractsView, "contract-search");
   }
   if (event.target.id === "sub-license") {
     syncSubtaskVendorFields();
