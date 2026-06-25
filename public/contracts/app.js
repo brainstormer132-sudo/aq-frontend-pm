@@ -950,7 +950,9 @@ async function renderTasksView() {
     const tid = String(c.task_id || "");
     if (tid) genByTask[tid] = (genByTask[tid] || 0) + 1;
   }
-  const taskCols = "120px minmax(150px,1fr) 104px 92px 132px 116px 56px";
+  const taskSel = state.taskSel || (state.taskSel = new Set());
+  const taskCols = "38px 120px minmax(150px,1fr) 104px 92px 132px 116px 56px";
+  const allTasksChecked = visibleTasks.length > 0 && visibleTasks.every((t) => taskSel.has(String(t.id)));
   const taskRows = visibleTasks.map((t) => {
     const total = Number(t.subtask_count || 0);
     const gen = Number(genByTask[String(t.id)] || 0);
@@ -959,6 +961,7 @@ async function renderTasksView() {
     const isSel = String(t.id) === String(state.selectedTaskId);
     return `
       <div class="cs-row ${isSel ? "is-selected" : ""}" data-task-row data-id="${encodeAttr(t.id)}" style="grid-template-columns:${taskCols}; cursor:pointer;">
+        <div><input type="checkbox" class="cs-check task-pick" data-id="${encodeAttr(t.id)}" ${taskSel.has(String(t.id)) ? "checked" : ""} /></div>
         <div class="cs-cell-id">${escapeHtml(t.id)}</div>
         <div class="cs-bidi" style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:14px;">${escapeHtml(t.brand || "—")}</div>
         <div class="cs-cell-num">${money(t.amount)}</div>
@@ -990,8 +993,15 @@ async function renderTasksView() {
           <button class="cs-btn-danger" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
         </div>
       </div>
+      ${taskSel.size ? `
+      <div class="cs-bulkbar" style="margin:0 22px 14px;">
+        <span class="cs-bulk-count">${taskSel.size} selected</span>
+        <button class="cs-bulk-btn is-danger" type="button" data-action="delete-tasks-bulk">Delete</button>
+        <span class="cs-bulk-spacer"></span>
+        <button class="cs-bulk-btn" type="button" data-action="clear-task-sel">Clear</button>
+      </div>` : ""}
       <div class="cs-thead" style="grid-template-columns:${taskCols};">
-        <div>ID</div><div>Brand</div><div style="text-align:right;">Amount</div><div style="text-align:center;">Status</div><div>Type</div><div style="text-align:right;">Subtasks</div><div></div>
+        <div><input type="checkbox" id="task-pick-all" class="cs-check" ${allTasksChecked ? "checked" : ""} title="Select all" /></div><div>ID</div><div>Brand</div><div style="text-align:right;">Amount</div><div style="text-align:center;">Status</div><div>Type</div><div style="text-align:right;">Subtasks</div><div></div>
       </div>
       ${taskRows || `<div class="cs-table-note">No matching tasks.</div>`}
       <div class="cs-table-note">Showing ${visibleTasks.length} of ${tasks.length} matching tasks. Minimum page size is 5.</div>
@@ -4107,6 +4117,23 @@ document.addEventListener("change", async (event) => {
       // Re-render so individual checkboxes follow.
       renderTasksView();
     }
+    // Task multi-select (batch delete) — per-row checkbox.
+    if (event.target.classList.contains("task-pick")) {
+      const set = state.taskSel || (state.taskSel = new Set());
+      const id = String(event.target.dataset.id || "");
+      if (event.target.checked) set.add(id); else set.delete(id);
+      renderTasksView();   // refresh the bulk bar + select-all state
+    }
+    // Task "select all" toggle — selects every currently visible task row.
+    if (event.target.id === "task-pick-all") {
+      const set = state.taskSel || (state.taskSel = new Set());
+      if (event.target.checked) {
+        document.querySelectorAll(".task-pick").forEach((cb) => set.add(String(cb.dataset.id)));
+      } else {
+        set.clear();
+      }
+      renderTasksView();
+    }
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -4358,8 +4385,9 @@ document.addEventListener("click", async (event) => {
     }
 
     // Tasks-view grid rows (divs, not <tr>): select for the master/detail.
+    // Skip when the click landed on the row's selection checkbox.
     const taskRow = event.target.closest(".cs-row[data-task-row]");
-    if (taskRow && !button) {
+    if (taskRow && !button && !event.target.closest(".task-pick")) {
       const id = taskRow.dataset.id;
       if (String(state.selectedTaskId) !== String(id)) state.selectedSubtaskIds = new Set();
       state.selectedTaskId = id;
@@ -4507,6 +4535,32 @@ document.addEventListener("click", async (event) => {
       await loadTasks();
       await renderTasksView();
       showToast("Task deleted");
+    }
+    if (action === "clear-task-sel") {
+      state.taskSel = new Set();
+      await renderTasksView();
+      return;
+    }
+    if (action === "delete-tasks-bulk") {
+      const ids = Array.from(state.taskSel || []);
+      if (!ids.length) { showToast("No tasks selected", "error"); return; }
+      if (!confirm(`Delete ${ids.length} task${ids.length === 1 ? "" : "s"} and all their subtasks? This cannot be undone.`)) return;
+      let ok = 0;
+      for (const id of ids) {
+        try { await api(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }); ok++; }
+        catch (_) { /* keep going; report total at end */ }
+      }
+      if (ids.includes(String(state.selectedTaskId))) {
+        state.selectedTaskId = "";
+        state.selectedSubtaskIds = new Set();
+      }
+      state.taskSel = new Set();
+      await loadTasks();
+      await renderTasksView();
+      showToast(ok === ids.length
+        ? `Deleted ${ok} task${ok === 1 ? "" : "s"}`
+        : `Deleted ${ok} of ${ids.length} — some failed`);
+      return;
     }
     if (action === "mark-paid") {
       const id = button.dataset.id;
