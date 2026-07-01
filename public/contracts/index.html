@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/contracts/styles-tasks.css?v=20260521-1" />
     <link rel="stylesheet" href="/contracts/styles-theme.css?v=20260521-darkmode" />
     <!-- Redesign (black & white system). Loaded LAST so it wins. Batch 1: foundation. -->
-    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b7-batch" />
+    <link rel="stylesheet" href="/contracts/styles-cs.css?v=20260618-redesign-b7-vendorsearch" />
     <script>
       (function () {
         try {
@@ -84,7 +84,10 @@
             <h1 id="view-title">Tasks</h1>
             <p id="view-subtitle" class="view-subtitle">Contract workspace</p>
           </div>
-          <button id="refresh-button" class="icon-button" type="button" title="Refresh">Refresh</button>
+          <div style="display:flex;gap:10px;align-items:center;flex:none;">
+            <button id="export-button" class="icon-button" type="button" data-action="export-excel" title="Export all data to Excel">Export Excel</button>
+            <button id="refresh-button" class="icon-button" type="button" title="Refresh">Refresh</button>
+          </div>
         </header>
 
         <section id="login-view" class="auth-layout">
@@ -261,6 +264,7 @@
         }
       })();
     </script>
-    <script src="/contracts/app.js?v=20260618-redesign-b7-batch"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="/contracts/app.js?v=20260618-redesign-b7-vendorsearch"></script>
   </body>
 </html>

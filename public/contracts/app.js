@@ -1817,11 +1817,13 @@ function renderVendorsView() {
   const vendorQuery = state.vendorSearch.trim().toLowerCase();
   const filteredVendors = state.vendors.filter((vendor) => {
     if (!vendorQuery) return true;
-    // Multi-field: name, vendor ID, license, email, phone, category,
-    // platforms, plus any bank account IBAN/account_name.
+    // Multi-field: name, vendor ID, license, ID number (non-license
+    // categories like model/props/etc. carry an id_number instead of a
+    // license), signatory/contact, email, phone, plus any bank IBAN/name.
     const fields = [
-      vendor.name, vendor.id, vendor.license_number, vendor.email,
-      vendor.phone, vendor.vendor_category, vendor.platforms,
+      vendor.name, vendor.id, vendor.license_number, vendor.id_number,
+      vendor.signatory_name, vendor.contact_name, vendor.contact_email,
+      vendor.email, vendor.phone, vendor.vat_number, vendor.platforms,
     ];
     if (fields.some((v) => String(v || "").toLowerCase().includes(vendorQuery))) return true;
     return (vendor.bank_accounts || []).some((bank) =>
@@ -2293,6 +2295,100 @@ function renderContractsView() {
       ? `<div class="cs-card"><p class="empty-note">No generated contracts yet.</p></div>`
       : (taskCards || `<div class="cs-card"><p class="empty-note">No contracts match your search.</p></div>`)}
   `;
+}
+
+/**
+ * Export everything to a multi-sheet Excel workbook (Contracts, Tasks,
+ * Vendors, Clients). Uses SheetJS (global XLSX, loaded in index.html) so
+ * Arabic names export cleanly as real .xlsx, not garbled CSV.
+ */
+async function exportAllToExcel() {
+  if (typeof XLSX === "undefined") {
+    showToast("Excel library is still loading — try again in a second.", "error");
+    return;
+  }
+  // Ensure data is loaded even if a view wasn't opened this session.
+  try { if (!state.tasks.length || !state.vendors.length || !state.clients.length) await refreshAll(); } catch (_) {}
+
+  // license/id → vendor name, to fill "who" on contracts with a blank name.
+  const licenseToName = {};
+  for (const v of state.vendors) {
+    const lic = String(v.license_number || "").trim().toLowerCase();
+    const idn = String(v.id_number || "").trim().toLowerCase();
+    if (lic && !licenseToName[lic]) licenseToName[lic] = v.name;
+    if (idn && !licenseToName[idn]) licenseToName[idn] = v.name;
+  }
+  const whoFor = (c) =>
+    c.vendor_name || licenseToName[String(c.license_number || "").trim().toLowerCase()]
+    || c.client_name || c.signatory_name || "";
+
+  const contracts = (state.contracts || []).map((c) => ({
+    "Contract ID": c.contract_id || "",
+    "Name": whoFor(c),
+    "Brand": c.brand_name || "",
+    "Amount": c.amount || "",
+    "Type": c.contract_type || "",
+    "License / ID": c.license_number || "",
+    "Date Created": c.generated_at || "",
+    "Files": c.pdf_path ? "DOCX + PDF" : "DOCX",
+  }));
+
+  const tasks = (state.tasks || []).map((t) => ({
+    "Task ID": t.id || "",
+    "Brand": t.brand || "",
+    "Amount": t.amount || "",
+    "Status": t.status || "",
+    "Type": t.contract_type || "",
+    "Contract Length (days)": t.duration || "",
+    "Due Date": t.end_date || "",
+    "Subtasks": Number(t.subtask_count || 0),
+    "Paid": Number(t.paid_count || 0),
+    "Created": t.created_at || "",
+    "Notes": t.notes || "",
+  }));
+
+  const vendors = (state.vendors || []).map((v) => {
+    const cat = findVendorCategory(v.category_id);
+    const banks = v.bank_accounts || [];
+    return {
+      "Vendor ID": v.id || "",
+      "Name": v.name || "",
+      "Category": cat?.label || "",
+      "License": v.license_number || "",
+      "ID Number": v.id_number || "",
+      "Phone": v.phone || "",
+      "Email": v.email || "",
+      "VAT": v.vat_number || "",
+      "Signatory": v.signatory_name || "",
+      "Contact": v.contact_name || "",
+      "Bank": banks.map((b) => b.bank_name).filter(Boolean).join("; "),
+      "IBAN": banks.map((b) => b.iban).filter(Boolean).join("; "),
+    };
+  });
+
+  const clients = (state.clients || []).map((c) => ({
+    "Client ID": c.id || "",
+    "Company": c.company_name || c.name || "",
+    "CR Number": c.cr_number || "",
+    "VAT": c.vat_number || "",
+    "Signatory": c.signatory_name || "",
+    "Phone": c.contact_phone || c.phone || "",
+    "Email": c.contact_email || c.email || "",
+    "Company Email": c.company_email || "",
+    "City": c.city || "",
+    "Country": c.country || "",
+    "National Address": c.national_address || "",
+  }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(contracts), "Contracts");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tasks), "Tasks");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(vendors), "Vendors");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clients), "Clients");
+
+  const today = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `contract-suite-export-${today}.xlsx`);
+  showToast(`Exported ${contracts.length} contracts, ${tasks.length} tasks, ${vendors.length} vendors, ${clients.length} clients`);
 }
 
 function renderTemplatesView() {
@@ -4419,6 +4515,10 @@ document.addEventListener("click", async (event) => {
       if (popup) popup.hidden = true;
     }
 
+    if (action === "export-excel") {
+      await exportAllToExcel();
+      return;
+    }
     if (action === "go-tasks") setView("tasks");
     if (action === "go-contracts") setView("contracts");
     if (action === "select-client") {
