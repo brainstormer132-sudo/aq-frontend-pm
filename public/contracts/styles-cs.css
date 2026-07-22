@@ -401,17 +401,6 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
 .cs-filter { font-size: 13px !important; padding: 9px 12px !important; }
 select.cs-filter { cursor: pointer; }
 
-/* Tracking-sheet inline-edit cells */
-.track-cell {
-  width: 100%; font-family: inherit; font-size: 12.5px;
-  padding: 6px 8px; border: 1px solid var(--cs-field-bd); border-radius: 7px;
-  background: var(--cs-field); color: var(--cs-ink); outline: none;
-}
-.track-cell:focus { border-color: var(--cs-ink); }
-.track-check { width: 16px; height: 16px; flex: none; cursor: pointer; }
-.track-row { padding: 8px 22px; align-items: center; }
-.track-thead { padding: 12px 22px 9px; }
-
 /* ---- Tabs (segmented) ---------------------------------------------- */
 .cs-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--cs-soft); border-radius: 10px; }
 .cs-tab {

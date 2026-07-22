@@ -1,14 +1,12 @@
 -- ============================================================
--- 035 — Tasks: has_tracking flag
+-- 035 — SUPERSEDED / no-op
 --
--- Tracking sheets are now their own page. A task opts in at
--- creation ("Create tracking sheet"); only tasks with
--- has_tracking = true appear on the Tracking page.
+-- Tracking sheets moved to the PM app. The contract-app tasks.has_tracking
+-- column this migration used to add is no longer used. Left as a no-op to
+-- keep numbering stable. PM-app tracking uses pm_tasks.has_tracking in its
+-- own migration.
 --
--- Default false so existing tasks stay off the page until the
--- owner enables it (Edit task → tick the box). The tracking data
--- itself lives on subtasks (migration 034) and is unaffected.
+-- If you already ran the original 035, the unused column is harmless.
 -- ============================================================
 
-alter table public.tasks
-  add column if not exists has_tracking boolean default false;
+select 1;
