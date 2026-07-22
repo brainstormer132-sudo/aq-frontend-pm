@@ -72,6 +72,9 @@ const PLATFORM_OPTIONS = [
   { key: "kick", label: "كيك" },
 ];
 
+// Tracking-sheet ad lifecycle.
+const AD_STATUSES = ["Not started", "Scheduled", "Shot", "Posted", "Cancelled"];
+
 // ─── Input sanitisation ─────────────────────────────────────────────────────
 // Strip HTML/script tags from any user-supplied string before sending it
 // to the backend. Prevents stored-XSS if a value is later rendered in
@@ -158,6 +161,7 @@ const state = {
   selectedClientId: localStorage.getItem("aq_selected_client") || "",
   clientSearch: "",
   clientMode: false,
+  trackingMode: false,   // task detail: Tracking-sheet tab
   search: "",
   taskLimit: Number(localStorage.getItem("aq_task_limit") || 10),
   vendorSearch: "",
@@ -1085,13 +1089,17 @@ async function renderTasksView() {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;flex-wrap:wrap;border-bottom:1px solid var(--cs-divider);">
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
           <div class="cs-tabs" role="tablist">
-            <button type="button" class="cs-tab ${state.clientMode ? "" : "active"}" data-action="set-vendor-mode" role="tab" aria-selected="${state.clientMode ? "false" : "true"}">Vendor subtasks</button>
-            <button type="button" class="cs-tab ${state.clientMode ? "active" : ""}" data-action="set-client-mode" role="tab" aria-selected="${state.clientMode ? "true" : "false"}" ${task ? "" : "disabled"}>Client contract</button>
+            <button type="button" class="cs-tab ${(!state.clientMode && !state.trackingMode) ? "active" : ""}" data-action="set-vendor-mode" role="tab">Vendor subtasks</button>
+            <button type="button" class="cs-tab ${state.clientMode ? "active" : ""}" data-action="set-client-mode" role="tab" ${task ? "" : "disabled"}>Client contract</button>
+            <button type="button" class="cs-tab ${state.trackingMode ? "active" : ""}" data-action="set-tracking-mode" role="tab" ${task ? "" : "disabled"}>Tracking sheet</button>
           </div>
           ${task ? `<span class="cs-mono" style="font-size:12.5px;color:var(--cs-muted);">${escapeHtml(task.id)} · <span class="cs-bidi" style="font-family:'IBM Plex Sans','IBM Plex Sans Arabic',sans-serif;">${escapeHtml(task.brand || "")}</span></span>` : `<span style="font-size:13px;color:var(--cs-muted);">Select a task above</span>`}
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
-          ${state.clientMode ? `
+          ${state.trackingMode ? `
+            <button class="cs-btn-ghost" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add row</button>
+            <button class="cs-btn" type="button" data-action="export-tracking" ${task && state.subtasks.length ? "" : "disabled"}>Export sheet</button>
+          ` : state.clientMode ? `
             <button class="cs-btn" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract">Generate client contract</button>
           ` : `
             <button class="cs-btn-ghost" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add subtask</button>
@@ -1108,7 +1116,7 @@ async function renderTasksView() {
         </div>
       </div>
 
-      ${state.clientMode ? `
+      ${state.trackingMode ? renderTrackingSheet() : state.clientMode ? `
         <div style="display:grid;grid-template-columns:1fr 320px;gap:0;align-items:start;">
           <div style="border-right:1px solid var(--cs-divider);">${renderSubtaskTable()}</div>
           <div style="padding:20px 22px;">
@@ -1275,6 +1283,64 @@ function renderSubtaskTable() {
     ${rows || `<div class="cs-table-note">No subtasks for this task.</div>`}
     <div class="cs-table-note">${state.subtasks.length} vendor subtask${state.subtasks.length === 1 ? "" : "s"} · ${unpaidCount} unpaid</div>
   `;
+}
+
+/**
+ * Campaign Tracking Sheet — a wide, inline-editable grid, one row per
+ * vendor subtask. Every cell saves on change (PATCH /subtasks/{id}); the
+ * situational columns (guest/time/event/plate for Store Visit, contact
+ * number for Home Ad) render per row based on the subtask's ad type.
+ * Price (incl) auto-fills from Price (excl) at +15% VAT.
+ */
+function renderTrackingSheet() {
+  const subs = state.subtasks || [];
+  const cols = "40px 160px 120px 120px 180px 140px 132px 132px 132px 190px 110px 110px 150px 96px 180px 200px 150px";
+  const heads = ["#", "Influencer", "Platform", "Type of Ad", "Content", "Product", "Shooting", "Posting", "Ad Status", "Ad Link", "Price (excl)", "Price (incl)", "Location", "Time", "Guest", "Event / Plate", "Contact #"];
+
+  const tin = (id, f, v, ph = "") => `<input class="track-cell" data-id="${id}" data-field="${f}" value="${encodeAttr(v || "")}" placeholder="${encodeAttr(ph)}" />`;
+  const tdate = (id, f, v) => `<input type="date" class="track-cell" data-id="${id}" data-field="${f}" value="${encodeAttr((v || "").slice(0, 10))}" />`;
+  const tstatus = (id, v) => `<select class="track-cell" data-id="${id}" data-field="ad_status">${AD_STATUSES.map((o) => `<option ${o === (v || "Not started") ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+  const tcheck = (id, f, v) => `<input type="checkbox" class="track-check" data-id="${id}" data-field="${f}" ${v ? "checked" : ""} />`;
+  const dash = `<span class="cs-empty">—</span>`;
+
+  if (!subs.length) {
+    return `<div class="cs-table-note" style="padding:22px;">No rows yet — add a row (subtask) above, or pick a task that has subtasks.</div>`;
+  }
+
+  const rows = subs.map((s, i) => {
+    const at = String(s.ad_type || "");
+    const isStore = at === "Store Visit";
+    const isHome = at === "Home Ad";
+    const guestCell = isStore
+      ? `<div style="display:flex;align-items:center;gap:6px;">${tcheck(s.id, "has_guest", s.has_guest)}${s.has_guest ? tin(s.id, "guest_name", s.guest_name, "Guest name") : `<span style="font-size:11px;color:var(--cs-muted);">no guest</span>`}</div>`
+      : dash;
+    const eventCell = isStore
+      ? `<div style="display:flex;align-items:center;gap:6px;">${tcheck(s.id, "is_event", s.is_event)}<span style="font-size:11px;color:var(--cs-muted);">event</span>${s.is_event ? tin(s.id, "license_plate_url", s.license_plate_url, "plate photo URL") : ""}</div>`
+      : dash;
+    return `
+      <div class="cs-row track-row" style="grid-template-columns:${cols};">
+        <div class="cs-mono" style="font-size:12px;color:var(--cs-muted);">${i + 1}</div>
+        <div class="cs-bidi" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${encodeAttr(s.vendor || "")}">${escapeHtml(s.vendor || "—")}</div>
+        <div style="font-size:12.5px;color:var(--cs-ink2);">${escapeHtml(displayPlatforms(s.platforms)) || dash}</div>
+        <div style="font-size:12.5px;color:var(--cs-ink2);">${escapeHtml(at) || dash}</div>
+        <div>${tin(s.id, "content", s.content)}</div>
+        <div>${tin(s.id, "product", s.product)}</div>
+        <div>${tdate(s.id, "shooting_date", s.shooting_date)}</div>
+        <div>${tdate(s.id, "posting_date", s.posting_date)}</div>
+        <div>${tstatus(s.id, s.ad_status)}</div>
+        <div>${tin(s.id, "ad_link", s.ad_link, "https://…")}</div>
+        <div>${tin(s.id, "price_excl_tax", s.price_excl_tax, "0")}</div>
+        <div>${tin(s.id, "price_incl_tax", s.price_incl_tax, "0")}</div>
+        <div>${(isStore || isHome) ? tin(s.id, "location", s.location) : dash}</div>
+        <div>${isStore ? tin(s.id, "ad_time", s.ad_time, "HH:MM") : dash}</div>
+        <div>${guestCell}</div>
+        <div>${eventCell}</div>
+        <div>${isHome ? tin(s.id, "contact_number", s.contact_number) : dash}</div>
+      </div>`;
+  }).join("");
+
+  const head = `<div class="cs-thead track-thead" style="grid-template-columns:${cols};">${heads.map((h) => `<div>${escapeHtml(h)}</div>`).join("")}</div>`;
+  return `${head}${rows}<div class="cs-table-note">${subs.length} row${subs.length === 1 ? "" : "s"} · edits save automatically · Price (incl) auto-fills from excl (+15% VAT).</div>`;
 }
 
 /**
@@ -2566,6 +2632,42 @@ async function exportCurrentView() {
 
   XLSX.writeFile(wb, filename);
   showToast(`Exported ${summary}`);
+}
+
+/** Export the selected task's tracking sheet in the master-sheet layout. */
+async function exportTrackingSheet() {
+  if (typeof XLSX === "undefined") { showToast("Excel library is still loading — try again.", "error"); return; }
+  const task = selectedTask();
+  const subs = state.subtasks || [];
+  if (!subs.length) { showToast("No rows to export", "error"); return; }
+  const rows = subs.map((s, i) => ({
+    "#": i + 1,
+    "Influencer Name": s.vendor || "",
+    "Profile Link": s.profile_link || "",
+    "Platform": displayPlatforms(s.platforms) || "",
+    "Type of Ad": s.ad_type || "",
+    "Content": s.content || "",
+    "Product": s.product || "",
+    "Price (excl tax)": s.price_excl_tax || "",
+    "Price (incl tax)": s.price_incl_tax || "",
+    "Shooting Date": s.shooting_date || "",
+    "Posting Date": s.posting_date || "",
+    "Ad Status": s.ad_status || "",
+    "Ad Link": s.ad_link || "",
+    "Location": s.location || "",
+    "Time": s.ad_time || "",
+    "Guest": s.has_guest ? "Yes" : "",
+    "Guest Name": s.guest_name || "",
+    "Event": s.is_event ? "Yes" : "",
+    "License Plate": s.license_plate_url || "",
+    "Contact Number": s.contact_number || "",
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Tracking");
+  const brand = String(task?.brand || "task").replace(/[^\w؀-ۿ -]/g, "").trim() || "task";
+  const today = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `tracking - ${brand} - ${today}.xlsx`);
+  showToast(`Exported ${rows.length} tracking row${rows.length === 1 ? "" : "s"}`);
 }
 
 function renderTemplatesView() {
@@ -4256,6 +4358,35 @@ document.addEventListener("change", async (event) => {
     if (fid === "vendor-complete-filter") { state.vendorCompleteFilter = event.target.value; renderVendorsView(); return; }
     if (fid === "client-cr-filter") { state.clientCrFilter = event.target.value; renderClientsView(); return; }
     if (fid === "contract-files-filter") { state.contractFilesFilter = event.target.value; renderContractsView(); return; }
+    // ── Tracking sheet: inline cell edit (text/date/select) ──
+    if (event.target.classList?.contains("track-cell")) {
+      const id = event.target.dataset.id, field = event.target.dataset.field;
+      const value = event.target.value;
+      const patch = { [field]: value };
+      // Price (incl) = Price (excl) × 1.15 (15% VAT), auto-filled + saved.
+      if (field === "price_excl_tax") {
+        const n = parseFloat(String(value).replace(/,/g, ""));
+        if (Number.isFinite(n)) {
+          patch.price_incl_tax = (n * 1.15).toFixed(2);
+          const inclEl = document.querySelector(`.track-cell[data-id="${id}"][data-field="price_incl_tax"]`);
+          if (inclEl) inclEl.value = patch.price_incl_tax;
+        }
+      }
+      await api(`/api/subtasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+      const sub = state.subtasks.find((s) => String(s.id) === String(id));
+      if (sub) Object.assign(sub, patch);
+      return;
+    }
+    // ── Tracking sheet: checkbox (guest / event) — re-render to reveal fields ──
+    if (event.target.classList?.contains("track-check")) {
+      const id = event.target.dataset.id, field = event.target.dataset.field;
+      const value = event.target.checked;
+      await api(`/api/subtasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ [field]: value }) });
+      const sub = state.subtasks.find((s) => String(s.id) === String(id));
+      if (sub) sub[field] = value;
+      await renderTasksView();
+      return;
+    }
     if (event.target.id === "sub-iban") {
       syncSubtaskBankPreview();
     }
@@ -4777,13 +4908,25 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "set-vendor-mode") {
       state.clientMode = false;
+      state.trackingMode = false;
       await renderTasksView();
       return;
     }
     if (action === "set-client-mode") {
       state.clientMode = true;
+      state.trackingMode = false;
       state.subtaskEditorOpen = false;
       await renderTasksView();
+      return;
+    }
+    if (action === "set-tracking-mode") {
+      state.trackingMode = true;
+      state.clientMode = false;
+      await renderTasksView();
+      return;
+    }
+    if (action === "export-tracking") {
+      await exportTrackingSheet();
       return;
     }
     if (action === "toggle-generate-menu") {
