@@ -677,6 +677,21 @@ export async function updateTaskFields(taskId: string, fields: Partial<PMTask>) 
 
 /** Hard-delete a task. Cascades to subtasks via the FK. */
 export async function deleteTask(taskId: string) {
+  // Capture child subtask ids before the cascade delete removes them, so we
+  // can also clear their inbox notifications.
+  const { data: children } = await supabase
+    .from('pm_tasks')
+    .select('id')
+    .eq('parent_task_id', taskId);
+  const ids = [taskId, ...((children || []).map((c: any) => c.id as string))];
+
+  // Clear inbox items pointing at these tasks (link contains "task=<id>").
+  // A DB trigger (migration 037) also clears every other user's copies;
+  // this makes the deleter's own inbox update without waiting for a poll.
+  for (const id of ids) {
+    await supabase.from('notifications').delete().ilike('link', `%task=${id}%`);
+  }
+
   const { error } = await supabase.from('pm_tasks').delete().eq('id', taskId);
   if (error) throw error;
 }
