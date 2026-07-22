@@ -345,26 +345,37 @@ async function api(path, options = {}) {
       } else {
         // Cold-start path: the free hosting tier (Render) puts the service to
         // sleep when idle, so the first request after a quiet period fails
-        // while the server boots (~30-60s). Retry the SAME URL with backoff —
-        // failed attempts never reached the server, so this won't double-submit.
+        // while the server boots (~30-60s). Wait for it to wake using cheap
+        // health pings, THEN retry the original request once. Polling health
+        // (rather than re-sending the original) avoids hammering heavy
+        // endpoints like PDF generation while the server is still booting.
         showToast("Waking up the server… this can take up to a minute.", "");
-        const delays = [3000, 4000, 6000, 8000, 12000, 15000];
-        let lastError = networkError;
+        const delays = [2000, 3000, 5000, 8000, 12000, 15000, 20000]; // ~65s
+        let awake = false;
         for (const delay of delays) {
           await sleep(delay);
           try {
-            response = await fetch(`${API_BASE}${path}`, buildInit());
-            lastError = null;
-            break;
-          } catch (retryError) {
-            lastError = retryError;
+            const health = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
+            if (health.ok) { awake = true; break; }
+          } catch (_) {
+            // Still booting — keep waiting.
           }
         }
-        if (lastError) {
+        if (awake) {
+          try {
+            response = await fetch(`${API_BASE}${path}`, buildInit());
+          } catch (retryError) {
+            throw new Error(
+              `The server woke up but the request still failed. This can happen when ` +
+              `PDF generation runs out of memory on the free hosting tier — please try ` +
+              `again. (${retryError.message})`,
+            );
+          }
+        } else {
           throw new Error(
             `Cannot reach backend at ${API_BASE}. The server may still be waking up ` +
             `(the free hosting tier sleeps when idle) — please try again in a minute. ` +
-            `(${lastError.message})`,
+            `(${networkError.message})`,
           );
         }
       }
