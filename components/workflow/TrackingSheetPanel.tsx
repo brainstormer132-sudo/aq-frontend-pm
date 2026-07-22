@@ -13,6 +13,7 @@ import {
   type TrackingRowInput,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
+import { exportTrackingXlsx } from '@/lib/tracking-export';
 
 /**
  * Tracking sheet for a single campaign (parent pm_task with has_tracking = true).
@@ -39,14 +40,34 @@ export function TrackingSheetPanel({
   const { rows, loading, refetch } = useTrackingRows(taskId);
   const [editing, setEditing] = useState<TrackingRow | null>(null);
   const [creating, setCreating] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'All' | AdStatus>('All');
+  const [exporting, setExporting] = useState(false);
 
   const canEdit = role !== 'member';
 
+  const filtered = useMemo(
+    () => statusFilter === 'All' ? rows : rows.filter((r) => r.ad_status === statusFilter),
+    [rows, statusFilter],
+  );
+
   const totals = useMemo(() => {
-    const excl = rows.reduce((s, r) => s + Number(r.price_excl || 0), 0);
-    const incl = rows.reduce((s, r) => s + Number(r.price_incl || 0), 0);
+    const excl = filtered.reduce((s, r) => s + Number(r.price_excl || 0), 0);
+    const incl = filtered.reduce((s, r) => s + Number(r.price_incl || 0), 0);
     return { excl, incl };
-  }, [rows]);
+  }, [filtered]);
+
+  const doExport = async () => {
+    if (!filtered.length) return;
+    setExporting(true);
+    try {
+      await exportTrackingXlsx(taskTitle, filtered);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert((e as any)?.message ?? 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const closeModal = () => { setEditing(null); setCreating(false); };
   const afterSave = async () => { await refetch(); closeModal(); };
@@ -83,14 +104,35 @@ export function TrackingSheetPanel({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span className="aq-badge aq-badge-info">Tracking sheet</span>
-              <span className="aq-badge aq-badge-muted">{rows.length} row{rows.length === 1 ? '' : 's'}</span>
+              <span className="aq-badge aq-badge-muted">
+                {statusFilter === 'All'
+                  ? `${rows.length} row${rows.length === 1 ? '' : 's'}`
+                  : `${filtered.length} of ${rows.length}`}
+              </span>
             </div>
             <h2 style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.25 }}>{taskTitle}</h2>
             {brandName && (
               <p style={{ marginTop: 4, fontSize: 13, color: 'var(--aq-text-muted)' }}>{brandName}</p>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <select
+              className="aq-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'All' | AdStatus)}
+              style={{ width: 'auto' }}
+              aria-label="Filter by status"
+            >
+              <option value="All">All statuses</option>
+              {AD_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <button
+              className="aq-btn aq-btn-secondary"
+              onClick={doExport}
+              disabled={exporting || rows.length === 0}
+            >
+              {exporting ? 'Exporting…' : 'Export Excel'}
+            </button>
             {canEdit && (
               <button className="aq-btn aq-btn-primary" onClick={() => setCreating(true)}>
                 + Add vendor
@@ -131,7 +173,15 @@ export function TrackingSheetPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
+                  {filtered.length === 0 && (
+                    <tr>
+                      <Td muted>{/* spacer */}</Td>
+                      <td colSpan={canEdit ? 11 : 10} style={{ padding: '16px 12px', fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                        No rows match “{statusFilter}”.
+                      </td>
+                    </tr>
+                  )}
+                  {filtered.map((r, i) => (
                     <tr
                       key={r.id}
                       onClick={() => canEdit && setEditing(r)}

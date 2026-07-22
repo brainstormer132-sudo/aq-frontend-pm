@@ -268,9 +268,12 @@ export function withVat(priceExcl: number): number {
   return Math.round(priceExcl * (1 + VAT_RATE) * 100) / 100;
 }
 
+/** A tracking-enabled campaign enriched with its sheet's row count + value. */
+export type TrackingCampaign = PMTask & { row_count: number; total_incl: number };
+
 /** Every campaign (top-level pm_task) flagged with a tracking sheet. */
 export function useTrackingCampaigns(workspaceId: string | null) {
-  const [items, setItems] = useState<PMTask[]>([]);
+  const [items, setItems] = useState<TrackingCampaign[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
@@ -284,7 +287,30 @@ export function useTrackingCampaigns(workspaceId: string | null) {
       .is('parent_task_id', null)
       .order('created_at', { ascending: false });
     if (error) logSbError('useTrackingCampaigns', error, { workspaceId });
-    setItems((data || []) as PMTask[]);
+
+    const campaigns = (data || []) as PMTask[];
+
+    // Roll up each campaign's tracking rows (count + total incl. VAT) in one query.
+    const counts: Record<string, { row_count: number; total_incl: number }> = {};
+    if (campaigns.length) {
+      const ids = campaigns.map((c) => c.id);
+      const { data: rowData, error: rowErr } = await supabase
+        .from('tracking_rows')
+        .select('task_id, price_incl')
+        .in('task_id', ids);
+      if (rowErr) logSbError('useTrackingCampaigns rows', rowErr, { workspaceId });
+      for (const r of (rowData || []) as any[]) {
+        const b = counts[r.task_id] ?? (counts[r.task_id] = { row_count: 0, total_incl: 0 });
+        b.row_count += 1;
+        b.total_incl += Number(r.price_incl || 0);
+      }
+    }
+
+    setItems(campaigns.map((c) => ({
+      ...c,
+      row_count: counts[c.id]?.row_count ?? 0,
+      total_incl: counts[c.id]?.total_incl ?? 0,
+    })));
     setLoading(false);
   }, [workspaceId]);
 

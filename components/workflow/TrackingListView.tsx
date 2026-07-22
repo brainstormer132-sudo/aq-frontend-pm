@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useTrackingCampaigns, type PMTask, type WorkspaceRole } from '@/hooks/use-workflow';
+import { useTrackingCampaigns, type TrackingCampaign, type WorkspaceRole } from '@/hooks/use-workflow';
 import { TrackingSheetPanel } from './TrackingSheetPanel';
 
 /**
@@ -18,7 +18,7 @@ export function TrackingListView({
   role: WorkspaceRole | null;
 }) {
   const { items, loading, refetch } = useTrackingCampaigns(workspaceId);
-  const [open, setOpen] = useState<PMTask | null>(null);
+  const [open, setOpen] = useState<TrackingCampaign | null>(null);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -47,6 +47,8 @@ export function TrackingListView({
                 <Th>Campaign</Th>
                 <Th>Brand</Th>
                 <Th>Stage</Th>
+                <Th align="right">Vendors</Th>
+                <Th align="right">Total (incl. VAT)</Th>
                 <Th>Created</Th>
                 <Th align="right"></Th>
               </tr>
@@ -67,6 +69,8 @@ export function TrackingListView({
                       : 'aq-badge-info'
                     }`}>{t.stage.replace('_', ' ')}</span>
                   </Td>
+                  <Td align="right">{t.row_count}</Td>
+                  <Td align="right">{t.total_incl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Td>
                   <Td muted>{(t.created_at || '').slice(0, 10) || '—'}</Td>
                   <Td align="right">
                     <button
