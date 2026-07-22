@@ -103,6 +103,55 @@ export interface PMTask {
   client_payment_amount: number | null;
   /** Manual override. Common values: "Pending", "On Process", "No Contract", "Signed". */
   contract_status: string | null;
+
+  // ── Tracking sheet (migration 036) ───────────────────────────────
+  /** Opt-in per campaign. Set true when "Tracking Sheet" is chosen at triage. */
+  has_tracking: boolean;
+}
+
+// ── Tracking sheet types (migration 036) ────────────────────────────
+
+export type AdStatus = 'Not started' | 'Scheduled' | 'Shot' | 'Posted' | 'Cancelled';
+export const AD_STATUSES: AdStatus[] = ['Not started', 'Scheduled', 'Shot', 'Posted', 'Cancelled'];
+
+/** One row per ad / vendor deliverable in a campaign's tracking sheet. */
+export interface TrackingRow {
+  id: string;
+  task_id: string;
+  position: number;
+
+  // Vendor / influencer
+  influencer_name: string;
+  profile_link: string;
+
+  // Always-needed ad fields
+  platform: string;
+  type_of_ad: string;
+  content: string;
+  product: string;
+  shooting_date: string | null;
+  posting_date: string | null;
+  ad_status: AdStatus;
+  ad_link: string;
+
+  // Pricing
+  price_excl: number;
+  price_incl: number;
+
+  // Situational — Store Visit
+  is_event: boolean;
+  guest: string;
+  location: string;
+  visit_time: string;
+  license_plate_url: string;
+
+  // Situational — Home Ad
+  contact_number: string;
+
+  notes: string;
+
+  created_at: string;
+  updated_at: string;
 }
 
 // ── Operations lookup types (migration 028) ─────────────────────────
@@ -206,6 +255,82 @@ export function useServiceTypes(workspaceId: string | null) {
 
   useEffect(() => { fetch(); }, [fetch]);
   return { serviceTypes, steps, loading, refetch: fetch };
+}
+
+// ============================================================
+// Tracking sheet (migration 036)
+// ============================================================
+
+const VAT_RATE = 0.15;
+
+/** price incl 15% VAT, rounded to 2 dp. */
+export function withVat(priceExcl: number): number {
+  return Math.round(priceExcl * (1 + VAT_RATE) * 100) / 100;
+}
+
+/** All tracking rows for one campaign (parent pm_task), ordered. */
+export function useTrackingRows(taskId: string | null) {
+  const [rows, setRows] = useState<TrackingRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!taskId) { setRows([]); setLoading(false); return; }
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('tracking_rows')
+      .select('*')
+      .eq('task_id', taskId)
+      .order('position', { ascending: true });
+    if (error) logSbError('useTrackingRows', error, { taskId });
+    setRows((data || []) as TrackingRow[]);
+    setLoading(false);
+  }, [taskId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { rows, loading, refetch: fetch };
+}
+
+/** Fields a caller may set on a tracking row (everything except server-managed keys). */
+export type TrackingRowInput = Partial<Omit<TrackingRow, 'id' | 'task_id' | 'created_at' | 'updated_at' | 'price_incl'>>;
+
+/** Insert a new tracking row at the end of the sheet. price_incl is derived. */
+export async function createTrackingRow(taskId: string, input: TrackingRowInput) {
+  // Next position = current max + 1.
+  const { data: existing } = await supabase
+    .from('tracking_rows')
+    .select('position')
+    .eq('task_id', taskId)
+    .order('position', { ascending: false })
+    .limit(1);
+  const nextPos = existing && existing.length ? (existing[0].position ?? 0) + 1 : 0;
+
+  const priceExcl = Number(input.price_excl ?? 0);
+  const payload = {
+    ...input,
+    task_id: taskId,
+    position: input.position ?? nextPos,
+    price_excl: priceExcl,
+    price_incl: withVat(priceExcl),
+  };
+  const { data, error } = await supabase.from('tracking_rows').insert(payload).select().single();
+  if (error) { logSbError('createTrackingRow', error, { taskId }); throw error; }
+  return data as TrackingRow;
+}
+
+/** Patch a tracking row. If price_excl changes, price_incl is recomputed. */
+export async function updateTrackingRow(rowId: string, input: TrackingRowInput) {
+  const payload: Record<string, unknown> = { ...input, updated_at: new Date().toISOString() };
+  if (input.price_excl !== undefined) {
+    payload.price_excl = Number(input.price_excl);
+    payload.price_incl = withVat(Number(input.price_excl));
+  }
+  const { error } = await supabase.from('tracking_rows').update(payload).eq('id', rowId);
+  if (error) { logSbError('updateTrackingRow', error, { rowId }); throw error; }
+}
+
+export async function deleteTrackingRow(rowId: string) {
+  const { error } = await supabase.from('tracking_rows').delete().eq('id', rowId);
+  if (error) { logSbError('deleteTrackingRow', error, { rowId }); throw error; }
 }
 
 /**
@@ -466,6 +591,10 @@ export async function triageMarketingTask(input: {
   const filterByIds = input.selected_step_ids && input.selected_step_ids.length > 0;
   const selectedSet = filterByIds ? new Set(input.selected_step_ids) : null;
 
+  // Track whether the campaign should get a tracking sheet. The seeded
+  // "Tracking Sheet" common subtask (migration 027) is the opt-in signal.
+  let wantsTracking = false;
+
   for (const stId of input.service_type_ids) {
     const { data: steps, error: stepsErr } = await supabase
       .from('service_type_steps')
@@ -480,6 +609,10 @@ export async function triageMarketingTask(input: {
       ? steps.filter((s: any) => selectedSet.has(s.id))
       : steps;
     if (!filteredSteps.length) continue;
+
+    if (filteredSteps.some((s: any) => (s.title ?? '').trim().toLowerCase() === 'tracking sheet')) {
+      wantsTracking = true;
+    }
 
     const { data: stMeta } = await supabase
       .from('service_types')
@@ -502,6 +635,14 @@ export async function triageMarketingTask(input: {
     const { error: insertErr } = await supabase.from('pm_tasks').insert(rows);
     if (insertErr) throw insertErr;
   }
+
+  // 4. Flag (or unflag) the campaign for a tracking sheet based on whether the
+  //    "Tracking Sheet" subtask was chosen. This is what makes the sheet "show up".
+  const { error: trackErr } = await supabase
+    .from('pm_tasks')
+    .update({ has_tracking: wantsTracking })
+    .eq('id', input.task_id);
+  if (trackErr) throw trackErr;
 }
 
 /** Member / key account: update a task (status / completed / etc). */

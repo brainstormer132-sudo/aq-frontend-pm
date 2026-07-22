@@ -13,6 +13,7 @@ import {
 } from '@/hooks/use-workflow';
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
+import { TrackingSheetPanel } from './TrackingSheetPanel';
 
 /**
  * Slide-over panel that shows a single task — header, fields, subtasks list,
@@ -67,6 +68,7 @@ export function TaskDetailPanel({
   const [error, setError] = useState('');
   const [commentText, setCommentText] = useState('');
   const [requestOpen, setRequestOpen] = useState(false);
+  const [trackingOpen, setTrackingOpen] = useState(false);
 
   // Inline-editable fields. Initialized from `task` and synced when it changes.
   const [budgetDraft, setBudgetDraft] = useState<string>('');
@@ -380,6 +382,11 @@ export function TaskDetailPanel({
                 )}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
+                {!isSubtaskView && task.has_tracking && (
+                  <button className="aq-btn aq-btn-secondary" onClick={() => setTrackingOpen(true)}>
+                    Tracking sheet
+                  </button>
+                )}
                 {!isSubtaskView && canRequestContract && (
                   <button className="aq-btn aq-btn-secondary" onClick={() => setRequestOpen(true)}>
                     Request contract
@@ -808,6 +815,16 @@ export function TaskDetailPanel({
                 currentUserId={currentUserId}
                 onClose={() => setRequestOpen(false)}
                 onCreated={() => { setRequestOpen(false); onChanged?.(); }}
+              />
+            )}
+
+            {trackingOpen && (
+              <TrackingSheetPanel
+                taskId={task.id}
+                taskTitle={task.task_name || task.title}
+                brandName={task.brand_name}
+                role={role}
+                onClose={() => setTrackingOpen(false)}
               />
             )}
           </>
