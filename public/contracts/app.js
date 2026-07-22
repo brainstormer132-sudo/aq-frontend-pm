@@ -161,7 +161,9 @@ const state = {
   selectedClientId: localStorage.getItem("aq_selected_client") || "",
   clientSearch: "",
   clientMode: false,
-  trackingMode: false,   // task detail: Tracking-sheet tab
+  trackingMode: false,   // (legacy) unused since tracking moved to its own page
+  trackingRowOpen: false,   // tracking add/edit popup
+  trackingRowTarget: null,  // subtask being edited, or null for a new row
   search: "",
   taskLimit: Number(localStorage.getItem("aq_task_limit") || 10),
   vendorSearch: "",
@@ -764,6 +766,7 @@ function renderCurrentView() {
   const renderers = {
     dashboard: renderDashboard,
     tasks: renderTasksView,
+    tracking: renderTrackingView,
     vendors: renderVendorsView,
     clients: renderClientsView,
     contracts: renderContractsView,
@@ -1089,17 +1092,13 @@ async function renderTasksView() {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;flex-wrap:wrap;border-bottom:1px solid var(--cs-divider);">
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
           <div class="cs-tabs" role="tablist">
-            <button type="button" class="cs-tab ${(!state.clientMode && !state.trackingMode) ? "active" : ""}" data-action="set-vendor-mode" role="tab">Vendor subtasks</button>
+            <button type="button" class="cs-tab ${state.clientMode ? "" : "active"}" data-action="set-vendor-mode" role="tab">Vendor subtasks</button>
             <button type="button" class="cs-tab ${state.clientMode ? "active" : ""}" data-action="set-client-mode" role="tab" ${task ? "" : "disabled"}>Client contract</button>
-            <button type="button" class="cs-tab ${state.trackingMode ? "active" : ""}" data-action="set-tracking-mode" role="tab" ${task ? "" : "disabled"}>Tracking sheet</button>
           </div>
           ${task ? `<span class="cs-mono" style="font-size:12.5px;color:var(--cs-muted);">${escapeHtml(task.id)} · <span class="cs-bidi" style="font-family:'IBM Plex Sans','IBM Plex Sans Arabic',sans-serif;">${escapeHtml(task.brand || "")}</span></span>` : `<span style="font-size:13px;color:var(--cs-muted);">Select a task above</span>`}
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
-          ${state.trackingMode ? `
-            <button class="cs-btn-ghost" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add row</button>
-            <button class="cs-btn" type="button" data-action="export-tracking" ${task && state.subtasks.length ? "" : "disabled"}>Export sheet</button>
-          ` : state.clientMode ? `
+          ${state.clientMode ? `
             <button class="cs-btn" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract">Generate client contract</button>
           ` : `
             <button class="cs-btn-ghost" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add subtask</button>
@@ -1116,7 +1115,7 @@ async function renderTasksView() {
         </div>
       </div>
 
-      ${state.trackingMode ? renderTrackingSheet() : state.clientMode ? `
+      ${state.clientMode ? `
         <div style="display:grid;grid-template-columns:1fr 320px;gap:0;align-items:start;">
           <div style="border-right:1px solid var(--cs-divider);">${renderSubtaskTable()}</div>
           <div style="padding:20px 22px;">
@@ -1169,6 +1168,11 @@ async function renderTasksView() {
             <div class="cs-field-group"><label class="cs-label">Status</label><select id="task-status" class="cs-select">${statusOptions(editingTask?.status || "NEW")}</select></div>
             <div class="cs-field-group"><label class="cs-label">End Date</label><input id="task-end-date" class="cs-input" type="date" value="${encodeAttr((editingTask?.end_date || "").slice(0, 10))}" /></div>
             <div class="cs-field-group"><label class="cs-label">Notes</label><textarea id="task-notes" class="cs-textarea" rows="4">${escapeHtml(editingTask?.notes || "")}</textarea></div>
+            <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--cs-ink);cursor:pointer;margin-top:2px;">
+              <input type="checkbox" id="task-has-tracking" class="cs-check" ${editingTask ? (editingTask.has_tracking ? "checked" : "") : "checked"} />
+              Create tracking sheet
+            </label>
+            <p class="cs-form-hint">Adds this campaign to the Tracking page for logging each ad's content, dates, status and link.</p>
           </div>
           <div class="cs-modal-foot">
             ${editingTask ? `<button class="cs-btn-danger" type="button" data-action="delete-task">Delete task</button>` : ""}
@@ -1286,6 +1290,54 @@ function renderSubtaskTable() {
 }
 
 /**
+ * Tracking page (its own view). Pick a tracking-enabled task and edit its
+ * sheet full-width. Only tasks created with "Create tracking sheet" (or
+ * later enabled) appear in the picker.
+ */
+async function renderTrackingView() {
+  updateHeader("Tracking", "Campaign tracking sheets — one editable row per ad.");
+  const trackingTasks = state.tasks.filter((t) => t.has_tracking);
+
+  if (!trackingTasks.length) {
+    els.viewRoot.innerHTML = `
+      <div class="cs-card"><p class="empty-note">No tracking sheets yet. Create a task with <strong>“Create tracking sheet”</strong> ticked (or edit an existing task and enable it), and it'll appear here.</p></div>`;
+    return;
+  }
+
+  // Keep the current selection valid within the tracking-enabled tasks.
+  if (!trackingTasks.find((t) => String(t.id) === String(state.selectedTaskId))) {
+    state.selectedTaskId = trackingTasks[0].id;
+    localStorage.setItem("aq_selected_task", state.selectedTaskId);
+  }
+  await loadSelectedSubtasks().catch(() => []);
+  const task = trackingTasks.find((t) => String(t.id) === String(state.selectedTaskId)) || null;
+
+  els.viewRoot.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:13px;color:var(--cs-ink2);">Campaign</span>
+        <select id="tracking-task-select" class="cs-select" style="width:auto;min-width:240px;">
+          ${trackingTasks.map((t) => `<option value="${encodeAttr(t.id)}" ${String(t.id) === String(state.selectedTaskId) ? "selected" : ""}>${escapeHtml(t.id)} · ${escapeHtml(t.brand || "")}</option>`).join("")}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="cs-btn-ghost" type="button" data-action="open-task" data-id="${encodeAttr(task?.id || "")}" ${task ? "" : "disabled"}>Open in Tasks</button>
+        <button class="cs-btn-ghost" type="button" data-action="export-tracking" ${task && state.subtasks.length ? "" : "disabled"}>Export sheet</button>
+        <button class="cs-btn" type="button" data-action="open-tracking-row" ${task ? "" : "disabled"}>+ Add row</button>
+      </div>
+    </div>
+    <div class="cs-card-flush">
+      <div style="padding:18px 22px;border-bottom:1px solid var(--cs-divider);">
+        <div class="cs-section-title cs-bidi">${task ? escapeHtml(task.brand || task.id) : "Tracking sheet"} — tracking sheet</div>
+        <div style="font-size:12.5px;color:var(--cs-muted);margin-top:3px;">${task ? escapeHtml(task.id) : ""} · one row per ad · click a row to edit, or “+ Add row”.</div>
+      </div>
+      ${renderTrackingSheet()}
+    </div>
+    ${renderTrackingRowModal()}
+  `;
+}
+
+/**
  * Campaign Tracking Sheet — a wide, inline-editable grid, one row per
  * vendor subtask. Every cell saves on change (PATCH /subtasks/{id}); the
  * situational columns (guest/time/event/plate for Store Visit, contact
@@ -1294,53 +1346,118 @@ function renderSubtaskTable() {
  */
 function renderTrackingSheet() {
   const subs = state.subtasks || [];
-  const cols = "40px 160px 120px 120px 180px 140px 132px 132px 132px 190px 110px 110px 150px 96px 180px 200px 150px";
-  const heads = ["#", "Influencer", "Platform", "Type of Ad", "Content", "Product", "Shooting", "Posting", "Ad Status", "Ad Link", "Price (excl)", "Price (incl)", "Location", "Time", "Guest", "Event / Plate", "Contact #"];
-
-  const tin = (id, f, v, ph = "") => `<input class="track-cell" data-id="${id}" data-field="${f}" value="${encodeAttr(v || "")}" placeholder="${encodeAttr(ph)}" />`;
-  const tdate = (id, f, v) => `<input type="date" class="track-cell" data-id="${id}" data-field="${f}" value="${encodeAttr((v || "").slice(0, 10))}" />`;
-  const tstatus = (id, v) => `<select class="track-cell" data-id="${id}" data-field="ad_status">${AD_STATUSES.map((o) => `<option ${o === (v || "Not started") ? "selected" : ""}>${o}</option>`).join("")}</select>`;
-  const tcheck = (id, f, v) => `<input type="checkbox" class="track-check" data-id="${id}" data-field="${f}" ${v ? "checked" : ""} />`;
+  const cols = "40px 170px 120px 118px 200px 150px 118px 118px 118px 90px 108px 108px 200px";
+  const heads = ["#", "Influencer", "Platform", "Type of Ad", "Content", "Product", "Shooting", "Posting", "Status", "Link", "Price (excl)", "Price (incl)", "Situational"];
   const dash = `<span class="cs-empty">—</span>`;
+  const statusPill = (v) => {
+    const s = v || "Not started";
+    const cls = s === "Posted" ? "is-solid" : s === "Cancelled" ? "is-warn" : "";
+    return `<span class="cs-pill ${cls}">${escapeHtml(s)}</span>`;
+  };
 
   if (!subs.length) {
-    return `<div class="cs-table-note" style="padding:22px;">No rows yet — add a row (subtask) above, or pick a task that has subtasks.</div>`;
+    return `<div class="cs-table-note" style="padding:22px;">No rows yet — click <strong>+ Add row</strong> above to add and track an ad.</div>`;
   }
 
   const rows = subs.map((s, i) => {
     const at = String(s.ad_type || "");
     const isStore = at === "Store Visit";
     const isHome = at === "Home Ad";
-    const guestCell = isStore
-      ? `<div style="display:flex;align-items:center;gap:6px;">${tcheck(s.id, "has_guest", s.has_guest)}${s.has_guest ? tin(s.id, "guest_name", s.guest_name, "Guest name") : `<span style="font-size:11px;color:var(--cs-muted);">no guest</span>`}</div>`
-      : dash;
-    const eventCell = isStore
-      ? `<div style="display:flex;align-items:center;gap:6px;">${tcheck(s.id, "is_event", s.is_event)}<span style="font-size:11px;color:var(--cs-muted);">event</span>${s.is_event ? tin(s.id, "license_plate_url", s.license_plate_url, "plate photo URL") : ""}</div>`
-      : dash;
+    let situ = "";
+    if (isStore) situ = [s.location, s.ad_time, s.has_guest ? ("Guest: " + (s.guest_name || "yes")) : "", s.is_event ? "Event" : ""].filter(Boolean).join(" · ");
+    else if (isHome) situ = [s.location, s.contact_number].filter(Boolean).join(" · ");
     return `
-      <div class="cs-row track-row" style="grid-template-columns:${cols};">
+      <div class="cs-row track-view-row" data-action="edit-tracking-row" data-id="${encodeAttr(s.id)}" style="grid-template-columns:${cols}; cursor:pointer;">
         <div class="cs-mono" style="font-size:12px;color:var(--cs-muted);">${i + 1}</div>
-        <div class="cs-bidi" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${encodeAttr(s.vendor || "")}">${escapeHtml(s.vendor || "—")}</div>
-        <div style="font-size:12.5px;color:var(--cs-ink2);">${escapeHtml(displayPlatforms(s.platforms)) || dash}</div>
+        <div class="cs-bidi" style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.vendor || "—")}</div>
+        <div style="font-size:12.5px;color:var(--cs-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(displayPlatforms(s.platforms)) || dash}</div>
         <div style="font-size:12.5px;color:var(--cs-ink2);">${escapeHtml(at) || dash}</div>
-        <div>${tin(s.id, "content", s.content)}</div>
-        <div>${tin(s.id, "product", s.product)}</div>
-        <div>${tdate(s.id, "shooting_date", s.shooting_date)}</div>
-        <div>${tdate(s.id, "posting_date", s.posting_date)}</div>
-        <div>${tstatus(s.id, s.ad_status)}</div>
-        <div>${tin(s.id, "ad_link", s.ad_link, "https://…")}</div>
-        <div>${tin(s.id, "price_excl_tax", s.price_excl_tax, "0")}</div>
-        <div>${tin(s.id, "price_incl_tax", s.price_incl_tax, "0")}</div>
-        <div>${(isStore || isHome) ? tin(s.id, "location", s.location) : dash}</div>
-        <div>${isStore ? tin(s.id, "ad_time", s.ad_time, "HH:MM") : dash}</div>
-        <div>${guestCell}</div>
-        <div>${eventCell}</div>
-        <div>${isHome ? tin(s.id, "contact_number", s.contact_number) : dash}</div>
+        <div class="cs-bidi" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.content) || dash}</div>
+        <div class="cs-bidi" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.product) || dash}</div>
+        <div style="font-size:12px;color:var(--cs-ink2);">${escapeHtml(s.shooting_date) || dash}</div>
+        <div style="font-size:12px;color:var(--cs-ink2);">${escapeHtml(s.posting_date) || dash}</div>
+        <div>${statusPill(s.ad_status)}</div>
+        <div style="font-size:12px;color:var(--cs-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.ad_link ? "↗ link" : dash}</div>
+        <div class="cs-cell-num" style="text-align:left;">${escapeHtml(s.price_excl_tax) || dash}</div>
+        <div class="cs-cell-num" style="text-align:left;">${escapeHtml(s.price_incl_tax) || dash}</div>
+        <div class="cs-bidi" style="font-size:12px;color:var(--cs-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${encodeAttr(situ)}">${escapeHtml(situ) || dash}</div>
       </div>`;
   }).join("");
 
-  const head = `<div class="cs-thead track-thead" style="grid-template-columns:${cols};">${heads.map((h) => `<div>${escapeHtml(h)}</div>`).join("")}</div>`;
-  return `${head}${rows}<div class="cs-table-note">${subs.length} row${subs.length === 1 ? "" : "s"} · edits save automatically · Price (incl) auto-fills from excl (+15% VAT).</div>`;
+  const head = `<div class="cs-thead" style="grid-template-columns:${cols};">${heads.map((h) => `<div>${escapeHtml(h)}</div>`).join("")}</div>`;
+  return `${head}${rows}<div class="cs-table-note">${subs.length} row${subs.length === 1 ? "" : "s"} · click a row to edit.</div>`;
+}
+
+/**
+ * The tracking add/edit popup. One form with every field; the situational
+ * sections (Store visit / Home ad) show based on the selected Ad type. Save
+ * creates (POST) or updates (PATCH) a subtask.
+ */
+function renderTrackingRowModal() {
+  if (!state.trackingRowOpen) return "";
+  const s = state.trackingRowTarget;   // subtask being edited, or null for new
+  const isEdit = !!s;
+  const g = (k, d = "") => (s && s[k] != null && s[k] !== "") ? s[k] : d;
+  const at = String(g("ad_type", "Store Visit"));
+  const platformKey = String(g("platforms", "")).split(",")[0].trim();
+  const platOpts = [["", "—"], ...PLATFORM_OPTIONS.map((p) => [p.key, p.label])];
+  const adTypeOpts = ["Store Visit", "Home Ad", "Multi Service"];
+
+  return `
+  <div class="cs-scrim" id="tracking-row-overlay" data-dismiss-overlay>
+    <div class="cs-modal is-wide" role="dialog" aria-modal="true">
+      <div class="cs-modal-head">
+        <div class="cs-modal-title">${isEdit ? "Edit tracking row" : "Add tracking row"}</div>
+        <button type="button" class="cs-modal-close" data-action="close-tracking-row" aria-label="Close">✕</button>
+      </div>
+      <div class="cs-modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div class="cs-field-group"><label class="cs-label">Influencer name</label><input id="track-vendor" class="cs-input cs-bidi" value="${encodeAttr(g("vendor"))}" /></div>
+          <div class="cs-field-group"><label class="cs-label">Profile link</label><input id="track-profile" class="cs-input" value="${encodeAttr(g("profile_link"))}" placeholder="https://…" /></div>
+          <div class="cs-field-group"><label class="cs-label">Platform</label><select id="track-platform" class="cs-select">${platOpts.map(([v, l]) => `<option value="${encodeAttr(v)}" ${v === platformKey ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}</select></div>
+          <div class="cs-field-group"><label class="cs-label">Type of ad</label><select id="track-ad-type" class="cs-select">${adTypeOpts.map((o) => `<option ${o === at ? "selected" : ""}>${o}</option>`).join("")}</select></div>
+          <div class="cs-field-group" style="grid-column:1/-1;"><label class="cs-label">Content</label><input id="track-content" class="cs-input cs-bidi" value="${encodeAttr(g("content"))}" /></div>
+          <div class="cs-field-group"><label class="cs-label">Product</label><input id="track-product" class="cs-input cs-bidi" value="${encodeAttr(g("product"))}" /></div>
+          <div class="cs-field-group"><label class="cs-label">Ad status</label><select id="track-status" class="cs-select">${AD_STATUSES.map((o) => `<option ${o === g("ad_status", "Not started") ? "selected" : ""}>${o}</option>`).join("")}</select></div>
+          <div class="cs-field-group"><label class="cs-label">Price (excl tax)</label><input id="track-price-excl" class="cs-input" value="${encodeAttr(g("price_excl_tax"))}" placeholder="0" /></div>
+          <div class="cs-field-group"><label class="cs-label">Price (incl 15% VAT)</label><input id="track-price-incl" class="cs-input" value="${encodeAttr(g("price_incl_tax"))}" placeholder="0" /></div>
+          <div class="cs-field-group"><label class="cs-label">Shooting date</label><input id="track-shooting" type="date" class="cs-input" value="${encodeAttr(String(g("shooting_date")).slice(0, 10))}" /></div>
+          <div class="cs-field-group"><label class="cs-label">Posting date</label><input id="track-posting" type="date" class="cs-input" value="${encodeAttr(String(g("posting_date")).slice(0, 10))}" /></div>
+          <div class="cs-field-group" style="grid-column:1/-1;"><label class="cs-label">Ad link</label><input id="track-link" class="cs-input" value="${encodeAttr(g("ad_link"))}" placeholder="https://…" /></div>
+          <div class="cs-field-group" style="grid-column:1/-1;"><label class="cs-label">Location</label><input id="track-location" class="cs-input cs-bidi" value="${encodeAttr(g("location"))}" /></div>
+        </div>
+
+        <div id="track-store-fields" style="${at === "Store Visit" ? "" : "display:none"};border-top:1px solid var(--cs-divider);margin-top:6px;padding-top:14px;">
+          <div class="cs-section-title" style="font-size:13px;margin-bottom:10px;">Store visit</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="cs-field-group"><label class="cs-label">Time</label><input id="track-time" class="cs-input" value="${encodeAttr(g("ad_time"))}" placeholder="HH:MM" /></div>
+            <div></div>
+            <div class="cs-field-group" style="grid-column:1/-1;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;"><input type="checkbox" id="track-has-guest" class="cs-check" ${g("has_guest") ? "checked" : ""}/> Guest present</label>
+              <div id="track-guest-name-wrap" style="${g("has_guest") ? "" : "display:none"};margin-top:8px;"><input id="track-guest-name" class="cs-input cs-bidi" value="${encodeAttr(g("guest_name"))}" placeholder="Guest name" /></div>
+            </div>
+            <div class="cs-field-group" style="grid-column:1/-1;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;"><input type="checkbox" id="track-is-event" class="cs-check" ${g("is_event") ? "checked" : ""}/> This is an event — license plate photo required</label>
+              <div id="track-plate-wrap" style="${g("is_event") ? "" : "display:none"};margin-top:8px;"><input id="track-plate" class="cs-input" value="${encodeAttr(g("license_plate_url"))}" placeholder="License plate photo URL" /></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="track-home-fields" style="${at === "Home Ad" ? "" : "display:none"};border-top:1px solid var(--cs-divider);margin-top:6px;padding-top:14px;">
+          <div class="cs-section-title" style="font-size:13px;margin-bottom:10px;">Home ad</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="cs-field-group"><label class="cs-label">Contact number</label><input id="track-contact" class="cs-input" value="${encodeAttr(g("contact_number"))}" /></div>
+          </div>
+        </div>
+      </div>
+      <div class="cs-modal-foot">
+        ${isEdit ? `<button class="cs-btn-danger" type="button" data-action="delete-tracking-row" data-id="${encodeAttr(s.id)}">Delete row</button>` : ""}
+        <span class="cs-foot-spacer"></span>
+        <button class="cs-btn-ghost" type="button" data-action="close-tracking-row">Cancel</button>
+        <button class="cs-btn" type="button" data-action="save-tracking-row">${isEdit ? "Save row" : "Add row"}</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /**
@@ -3457,6 +3574,7 @@ async function saveTask(event) {
     status: getFormValue("#task-status"),
     end_date: getFormValue("#task-end-date"),
     notes: getFormValue("#task-notes"),
+    has_tracking: document.querySelector("#task-has-tracking")?.checked ?? false,
   };
 
   if (taskId) {
@@ -4300,6 +4418,13 @@ function debouncedSearchRender(renderFn, inputId) {
 }
 
 document.addEventListener("input", (event) => {
+  // Tracking popup: Price (incl) auto-fills from Price (excl) at +15% VAT.
+  if (event.target.id === "track-price-excl") {
+    const n = parseFloat(String(event.target.value).replace(/,/g, ""));
+    const inclEl = document.getElementById("track-price-incl");
+    if (inclEl) inclEl.value = Number.isFinite(n) ? (n * 1.15).toFixed(2) : "";
+    return;
+  }
   if (event.target.id === "task-search") {
     state.search = event.target.value;
     debouncedSearchRender(renderTasksView, "task-search");
@@ -4358,33 +4483,30 @@ document.addEventListener("change", async (event) => {
     if (fid === "vendor-complete-filter") { state.vendorCompleteFilter = event.target.value; renderVendorsView(); return; }
     if (fid === "client-cr-filter") { state.clientCrFilter = event.target.value; renderClientsView(); return; }
     if (fid === "contract-files-filter") { state.contractFilesFilter = event.target.value; renderContractsView(); return; }
-    // ── Tracking sheet: inline cell edit (text/date/select) ──
-    if (event.target.classList?.contains("track-cell")) {
-      const id = event.target.dataset.id, field = event.target.dataset.field;
-      const value = event.target.value;
-      const patch = { [field]: value };
-      // Price (incl) = Price (excl) × 1.15 (15% VAT), auto-filled + saved.
-      if (field === "price_excl_tax") {
-        const n = parseFloat(String(value).replace(/,/g, ""));
-        if (Number.isFinite(n)) {
-          patch.price_incl_tax = (n * 1.15).toFixed(2);
-          const inclEl = document.querySelector(`.track-cell[data-id="${id}"][data-field="price_incl_tax"]`);
-          if (inclEl) inclEl.value = patch.price_incl_tax;
-        }
-      }
-      await api(`/api/subtasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
-      const sub = state.subtasks.find((s) => String(s.id) === String(id));
-      if (sub) Object.assign(sub, patch);
+    if (fid === "tracking-task-select") {
+      state.selectedTaskId = event.target.value;
+      localStorage.setItem("aq_selected_task", state.selectedTaskId);
+      state.subtasks = [];
+      await renderTrackingView();
       return;
     }
-    // ── Tracking sheet: checkbox (guest / event) — re-render to reveal fields ──
-    if (event.target.classList?.contains("track-check")) {
-      const id = event.target.dataset.id, field = event.target.dataset.field;
-      const value = event.target.checked;
-      await api(`/api/subtasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ [field]: value }) });
-      const sub = state.subtasks.find((s) => String(s.id) === String(id));
-      if (sub) sub[field] = value;
-      await renderTasksView();
+    // ── Tracking popup: ad type toggles the situational sections ──
+    if (event.target.id === "track-ad-type") {
+      const v = event.target.value;
+      const st = document.getElementById("track-store-fields");
+      const hm = document.getElementById("track-home-fields");
+      if (st) st.style.display = v === "Store Visit" ? "" : "none";
+      if (hm) hm.style.display = v === "Home Ad" ? "" : "none";
+      return;
+    }
+    if (event.target.id === "track-has-guest") {
+      const w = document.getElementById("track-guest-name-wrap");
+      if (w) w.style.display = event.target.checked ? "" : "none";
+      return;
+    }
+    if (event.target.id === "track-is-event") {
+      const w = document.getElementById("track-plate-wrap");
+      if (w) w.style.display = event.target.checked ? "" : "none";
       return;
     }
     if (event.target.id === "sub-iban") {
@@ -4718,6 +4840,10 @@ document.addEventListener("click", async (event) => {
     } else if (overlay.id === "subtask-editor-overlay") {
       state.subtaskEditorOpen = false;
       await renderTasksView();
+    } else if (overlay.id === "tracking-row-overlay") {
+      state.trackingRowOpen = false;
+      state.trackingRowTarget = null;
+      await renderTrackingView();
     }
     return;
   }
@@ -4816,6 +4942,16 @@ document.addEventListener("click", async (event) => {
       state.selectedClientId = clientRow.dataset.id;
       localStorage.setItem("aq_selected_client", state.selectedClientId);
       renderClientsView();
+      return;
+    }
+
+    // Tracking rows (read-only grid): click opens the edit popup.
+    const trackRow = event.target.closest(".track-view-row");
+    if (trackRow && !button) {
+      const id = trackRow.dataset.id;
+      state.trackingRowTarget = state.subtasks.find((s) => String(s.id) === String(id)) || null;
+      state.trackingRowOpen = true;
+      await renderTrackingView();
       return;
     }
 
@@ -4919,14 +5055,71 @@ document.addEventListener("click", async (event) => {
       await renderTasksView();
       return;
     }
-    if (action === "set-tracking-mode") {
-      state.trackingMode = true;
-      state.clientMode = false;
-      await renderTasksView();
-      return;
-    }
     if (action === "export-tracking") {
       await exportTrackingSheet();
+      return;
+    }
+    if (action === "open-tracking-row") {
+      state.trackingRowTarget = null;
+      state.trackingRowOpen = true;
+      await renderTrackingView();
+      return;
+    }
+    if (action === "close-tracking-row") {
+      state.trackingRowOpen = false;
+      state.trackingRowTarget = null;
+      await renderTrackingView();
+      return;
+    }
+    if (action === "delete-tracking-row") {
+      const id = button.dataset.id;
+      if (id) await api(`/api/subtasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.trackingRowOpen = false;
+      state.trackingRowTarget = null;
+      state.subtasks = [];
+      await loadSelectedSubtasks().catch(() => []);
+      await renderTrackingView();
+      showToast("Row deleted");
+      return;
+    }
+    if (action === "save-tracking-row") {
+      const task = selectedTask();
+      if (!task) throw new Error("Pick a campaign first");
+      const gv = (sel) => (document.querySelector(sel)?.value || "").trim();
+      const gc = (sel) => !!document.querySelector(sel)?.checked;
+      const payload = {
+        vendor: gv("#track-vendor"),
+        profile_link: gv("#track-profile"),
+        platforms: gv("#track-platform"),
+        ad_type: gv("#track-ad-type") || "Store Visit",
+        content: gv("#track-content"),
+        product: gv("#track-product"),
+        ad_status: gv("#track-status") || "Not started",
+        price_excl_tax: gv("#track-price-excl"),
+        price_incl_tax: gv("#track-price-incl"),
+        shooting_date: gv("#track-shooting"),
+        posting_date: gv("#track-posting"),
+        ad_link: gv("#track-link"),
+        location: gv("#track-location"),
+        ad_time: gv("#track-time"),
+        has_guest: gc("#track-has-guest"),
+        guest_name: gv("#track-guest-name"),
+        is_event: gc("#track-is-event"),
+        license_plate_url: gv("#track-plate"),
+        contact_number: gv("#track-contact"),
+      };
+      const target = state.trackingRowTarget;
+      if (target) {
+        await api(`/api/subtasks/${target.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      } else {
+        await api("/api/subtasks/", { method: "POST", body: JSON.stringify({ task_id: task.id, ...payload }) });
+      }
+      state.trackingRowOpen = false;
+      state.trackingRowTarget = null;
+      state.subtasks = [];
+      await loadSelectedSubtasks().catch(() => []);
+      await renderTrackingView();
+      showToast(target ? "Row updated" : "Row added");
       return;
     }
     if (action === "toggle-generate-menu") {
