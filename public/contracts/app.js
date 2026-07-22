@@ -311,6 +311,8 @@ function formatApiError(detail) {
   return String(detail);
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function api(path, options = {}) {
   const useJson = options.body !== undefined && !(options.body instanceof FormData);
   setBusy(true);
@@ -341,10 +343,30 @@ async function api(path, options = {}) {
           );
         }
       } else {
-        throw new Error(
-          `Cannot reach backend at ${API_BASE}. Is uvicorn running on port 8000? ` +
-          `(${networkError.message})`,
-        );
+        // Cold-start path: the free hosting tier (Render) puts the service to
+        // sleep when idle, so the first request after a quiet period fails
+        // while the server boots (~30-60s). Retry the SAME URL with backoff —
+        // failed attempts never reached the server, so this won't double-submit.
+        showToast("Waking up the server… this can take up to a minute.", "");
+        const delays = [3000, 4000, 6000, 8000, 12000, 15000];
+        let lastError = networkError;
+        for (const delay of delays) {
+          await sleep(delay);
+          try {
+            response = await fetch(`${API_BASE}${path}`, buildInit());
+            lastError = null;
+            break;
+          } catch (retryError) {
+            lastError = retryError;
+          }
+        }
+        if (lastError) {
+          throw new Error(
+            `Cannot reach backend at ${API_BASE}. The server may still be waking up ` +
+            `(the free hosting tier sleeps when idle) — please try again in a minute. ` +
+            `(${lastError.message})`,
+          );
+        }
       }
     }
 
