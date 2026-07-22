@@ -211,6 +211,17 @@ export function TaskDetailPanel({
     finally { setBusy(false); }
   };
 
+  const handleToggleTracking = async (next: boolean) => {
+    if (!task) return;
+    setBusy(true); setError('');
+    try {
+      await updateTaskFields(task.id, { has_tracking: next } as any);
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  };
+
   const handleSaveBudget = async () => {
     if (!task) return;
     const raw = budgetDraft.trim().replace(/,/g, '');
@@ -441,6 +452,31 @@ export function TaskDetailPanel({
                     style={{ padding: '2px 8px', fontSize: 11 }}
                   >dismiss</button>
                 </div>
+              )}
+
+              {/* Tracking sheet toggle — parent campaigns only */}
+              {!isSubtaskView && canEditBudget && (
+                <section className="aq-card" style={{
+                  padding: 18, display: 'flex', alignItems: 'center',
+                  justifyContent: 'space-between', gap: 12,
+                }}>
+                  <div>
+                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>Tracking sheet</h3>
+                    <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+                      {task.has_tracking
+                        ? 'This campaign has a tracking sheet. Open it from the “Tracking sheet” button above or the Tracking Sheets sidebar.'
+                        : 'Turn on to add a tracking sheet for this campaign.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`aq-btn ${task.has_tracking ? 'aq-btn-secondary' : 'aq-btn-primary'}`}
+                    disabled={busy}
+                    onClick={() => handleToggleTracking(!task.has_tracking)}
+                  >
+                    {task.has_tracking ? 'Disable' : 'Enable tracking sheet'}
+                  </button>
+                </section>
               )}
 
               {/* Fields */}
