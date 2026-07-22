@@ -3519,11 +3519,14 @@ async function generateForSubtasks(taskId, subtaskIds, successMessage) {
   state.selectedSubtaskIds = new Set();        // wipe the checkboxes
   const pdfCount = generated.filter((item) => item.pdf_path).length;
   const failed = generated.filter((item) => !item.pdf_path);
+  const pdfDisabled = failed.length > 0 && failed.every((item) => /disabled/i.test(item.pdf_error || ""));
   // Switch to the Contracts view so the user sees what they just made.
   setView("contracts");
   renderContractsView();
   if (failed.length === 0) {
     showToast(`${successMessage} (${pdfCount} PDFs)`);
+  } else if (pdfDisabled) {
+    showToast(`${successMessage} — Word document${generated.length === 1 ? "" : "s"} ready.`);
   } else {
     showToast(`${successMessage} ${failed.length} PDF conversion${failed.length === 1 ? "" : "s"} failed — DOCX still saved. Click Regenerate on the contract row to retry.`, "warn");
   }
@@ -3787,8 +3790,13 @@ async function generateContracts(event) {
   renderContractsView();
   const pdfCount = generated.filter((item) => item.pdf_path).length;
   const failed = generated.filter((item) => !item.pdf_path);
+  const pdfDisabled = failed.length > 0 && failed.every((item) => /disabled/i.test(item.pdf_error || ""));
   if (failed.length === 0) {
     showToast(`Generated ${generated.length} DOCX and ${pdfCount} PDF`);
+  } else if (pdfDisabled) {
+    // PDF conversion is turned off on this server (memory-safe mode) — the
+    // Word docs generated fine, so this is a success, not an error.
+    showToast(`Generated ${generated.length} Word document${generated.length === 1 ? "" : "s"}`);
   } else {
     const firstReason = failed[0].pdf_error || "see uvicorn logs";
     showToast(
@@ -5012,20 +5020,23 @@ document.addEventListener("click", async (event) => {
     if (action === "download-all-task") {
       const tid = String(button.dataset.taskId);
       const list = state.contracts.filter((c) => String(c.task_id) === tid);
-      // PDF only — skip the DOCX so a "Download all" gives just the PDFs.
+      // Prefer PDF, but fall back to the Word doc when there's no PDF (e.g.
+      // PDF generation is disabled on the server) so "Download all" still works.
       let pdfCount = 0;
-      let skipped = 0;
+      let docxCount = 0;
       for (const c of list) {
         if (c.pdf_path) {
           try { await downloadFile(`/api/contracts/download/pdf/${c.contract_id}`, prettyContractName(c, "pdf")); pdfCount++; }
           catch (_) {}
         } else {
-          skipped++;
+          try { await downloadFile(`/api/contracts/download/docx/${c.contract_id}`, prettyContractName(c, "docx")); docxCount++; }
+          catch (_) {}
         }
       }
-      showToast(skipped
-        ? `Downloaded ${pdfCount} PDF${pdfCount === 1 ? "" : "s"} · ${skipped} had no PDF`
-        : `Downloaded ${pdfCount} PDF${pdfCount === 1 ? "" : "s"}`);
+      const parts = [];
+      if (pdfCount) parts.push(`${pdfCount} PDF${pdfCount === 1 ? "" : "s"}`);
+      if (docxCount) parts.push(`${docxCount} Word doc${docxCount === 1 ? "" : "s"}`);
+      showToast(parts.length ? `Downloaded ${parts.join(" · ")}` : "Nothing to download");
     }
     if (action === "delete-contract") {
       if (!isAdmin()) { showToast("Admin only", "error"); return; }
