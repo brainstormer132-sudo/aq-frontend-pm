@@ -397,6 +397,10 @@ html[data-theme="dark"] body { background: var(--cs-bg) !important; }
   background: var(--cs-card); color: var(--cs-ink); outline: none;
 }
 
+/* quick-filter dropdowns in a toolbar */
+.cs-filter { font-size: 13px !important; padding: 9px 12px !important; }
+select.cs-filter { cursor: pointer; }
+
 /* ---- Tabs (segmented) ---------------------------------------------- */
 .cs-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--cs-soft); border-radius: 10px; }
 .cs-tab {

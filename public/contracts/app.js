@@ -192,6 +192,15 @@ const state = {
   vendorEditorFiles: [],
   /** vendor.id whose card is currently expanded inline (or null). */
   expandedVendorId: null,
+  // ── Quick filters (per view; "" = All). Client-side, stack with search. ──
+  taskStatusFilter: "",
+  taskGenFilter: "",        // ""|"yes"|"no"
+  taskPaidFilter: "",       // ""|"paid"|"unpaid"|"none"
+  vendorTypeFilter: "",     // "" | category_id
+  vendorLicenseFilter: "",  // ""|"expired"|"expiring"|"valid"|"none"
+  vendorCompleteFilter: "", // ""|"complete"|"incomplete"
+  clientCrFilter: "",       // ""|"has"|"missing"
+  contractFilesFilter: "",  // ""|"both"|"docx"
 };
 
 const els = {
@@ -552,6 +561,47 @@ function statusOptions(selected = "NEW") {
   return STATUSES.map((value) => `
     <option value="${value}" ${value === selected ? "selected" : ""}>${value}</option>
   `).join("");
+}
+
+// ── Quick-filter helpers ─────────────────────────────────────────────
+/** A compact toolbar <select> for a quick filter. options = [[value,label],…] */
+function filterSelect(id, value, options) {
+  return `<select id="${id}" class="cs-select cs-filter" style="width:auto;">${
+    options.map(([v, l]) => `<option value="${encodeAttr(v)}" ${String(v) === String(value) ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")
+  }</select>`;
+}
+
+/** Clear-filters chip, shown only when the current view has an active filter. */
+function clearFiltersChip(active) {
+  return active ? `<button type="button" class="cs-btn-ghost cs-filter" data-action="clear-filters" style="padding:8px 12px;">Clear filters</button>` : "";
+}
+
+/** license_number(lowercased) → "expired"|"expiring", from the admin alerts. */
+function expiryByLicense() {
+  const m = {};
+  for (const a of state.expiryAlerts || []) {
+    const lic = String(a.license_number || "").trim().toLowerCase();
+    if (lic) m[lic] = a.urgency === "expired" ? "expired" : "expiring";
+  }
+  return m;
+}
+
+/** "expired"|"expiring"|"valid"|"none" for a vendor, given the expiry map. */
+function vendorLicenseStatus(v, expMap) {
+  const lic = String(v.license_number || "").trim().toLowerCase();
+  if (!lic) return "none";
+  return expMap[lic] || "valid";
+}
+
+/** Complete = name + required identifier (license/ID) + ≥1 bank with an IBAN. */
+function vendorIsComplete(v) {
+  const cat = findVendorCategory(v.category_id);
+  const hasName = !!String(v.name || "").trim();
+  const hasId = cat?.requires_license
+    ? !!String(v.license_number || "").trim()
+    : !!String(v.id_number || v.license_number || "").trim();
+  const hasBank = (v.bank_accounts || []).some((b) => String(b.iban || "").trim());
+  return hasName && hasId && hasBank;
 }
 
 function setView(view) {
@@ -926,15 +976,35 @@ async function renderTasksView() {
     ? task.contract_type
     : defaultTemplateKey();
   const query = state.search.trim().toLowerCase();
+  // Generated-contract count per task (drives the "Generated" filter + column).
+  const genByTaskId = {};
+  for (const c of state.contracts) {
+    const tid = String(c.task_id || "");
+    if (tid) genByTaskId[tid] = (genByTaskId[tid] || 0) + 1;
+  }
   const tasks = state.tasks.filter((item) => {
-    if (!query) return true;
-    // Multi-field: match on brand, task id, vendor name, license, client name,
-    // CR, contract id — anything a user might know off the top of their head.
-    return [
+    // Search — match on brand, id, vendor, license, client, CR, contract id…
+    if (query && ![
       item.brand, item.id, item.vendor, item.license_number,
       item.client_name, item.cr_number, item.contract_id,
       item.signatory_name, item.email,
-    ].some((v) => String(v || "").toLowerCase().includes(query));
+    ].some((v) => String(v || "").toLowerCase().includes(query))) return false;
+    // Status filter
+    if (state.taskStatusFilter && String(item.status || "").toUpperCase() !== state.taskStatusFilter) return false;
+    // Generated filter
+    if (state.taskGenFilter) {
+      const gen = genByTaskId[String(item.id)] || 0;
+      if (state.taskGenFilter === "yes" && gen === 0) return false;
+      if (state.taskGenFilter === "no" && gen > 0) return false;
+    }
+    // Payment filter (rolled up from subtasks)
+    if (state.taskPaidFilter) {
+      const total = Number(item.subtask_count || 0), paid = Number(item.paid_count || 0);
+      if (state.taskPaidFilter === "none" && total !== 0) return false;
+      if (state.taskPaidFilter === "paid" && !(total > 0 && paid >= total)) return false;
+      if (state.taskPaidFilter === "unpaid" && !(total > 0 && paid < total)) return false;
+    }
+    return true;
   });
   const visibleTasks = state.taskLimit ? tasks.slice(0, Math.max(5, state.taskLimit)) : tasks;
 
@@ -988,6 +1058,10 @@ async function renderTasksView() {
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
           <div class="cs-search"><span class="cs-search-ring"></span><input id="task-search" placeholder="Search brand, vendor, license, ID…" value="${encodeAttr(state.search)}" /></div>
+          ${filterSelect("task-status-filter", state.taskStatusFilter, [["", "All statuses"], ...STATUSES.map((s) => [s, s])])}
+          ${filterSelect("task-gen-filter", state.taskGenFilter, [["", "Generated: all"], ["yes", "Generated"], ["no", "Not generated"]])}
+          ${filterSelect("task-paid-filter", state.taskPaidFilter, [["", "Payment: all"], ["paid", "Fully paid"], ["unpaid", "Has unpaid"], ["none", "No subtasks"]])}
+          ${clearFiltersChip(state.taskStatusFilter || state.taskGenFilter || state.taskPaidFilter)}
           <select id="task-limit" class="cs-select" style="width:auto;">${limitOptions()}</select>
           <button class="cs-btn-ghost" type="button" data-action="duplicate-task" ${task ? "" : "disabled"}>Duplicate</button>
           <button class="cs-btn-danger" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
@@ -1815,22 +1889,34 @@ function renderVendorEditorModal() {
 function renderVendorsView() {
   updateHeader("Vendors", "Manage vendors, bank accounts, and onboarding");
   const vendorQuery = state.vendorSearch.trim().toLowerCase();
+  const vExp = expiryByLicense();
   const filteredVendors = state.vendors.filter((vendor) => {
-    if (!vendorQuery) return true;
-    // Multi-field: name, vendor ID, license, ID number (non-license
-    // categories like model/props/etc. carry an id_number instead of a
-    // license), signatory/contact, email, phone, plus any bank IBAN/name.
-    const fields = [
-      vendor.name, vendor.id, vendor.license_number, vendor.id_number,
-      vendor.signatory_name, vendor.contact_name, vendor.contact_email,
-      vendor.email, vendor.phone, vendor.vat_number, vendor.platforms,
-    ];
-    if (fields.some((v) => String(v || "").toLowerCase().includes(vendorQuery))) return true;
-    return (vendor.bank_accounts || []).some((bank) =>
-      String(bank.iban || "").toLowerCase().includes(vendorQuery)
-      || String(bank.account_name || "").toLowerCase().includes(vendorQuery)
-      || String(bank.account_number || "").toLowerCase().includes(vendorQuery)
-    );
+    // Search — name, ID, license, id_number, signatory/contact, email,
+    // phone, VAT, platforms, plus any bank IBAN/name/number.
+    if (vendorQuery) {
+      const fields = [
+        vendor.name, vendor.id, vendor.license_number, vendor.id_number,
+        vendor.signatory_name, vendor.contact_name, vendor.contact_email,
+        vendor.email, vendor.phone, vendor.vat_number, vendor.platforms,
+      ];
+      const inFields = fields.some((v) => String(v || "").toLowerCase().includes(vendorQuery))
+        || (vendor.bank_accounts || []).some((bank) =>
+          String(bank.iban || "").toLowerCase().includes(vendorQuery)
+          || String(bank.account_name || "").toLowerCase().includes(vendorQuery)
+          || String(bank.account_number || "").toLowerCase().includes(vendorQuery));
+      if (!inFields) return false;
+    }
+    // Type (category) filter
+    if (state.vendorTypeFilter && String(vendor.category_id || "") !== String(state.vendorTypeFilter)) return false;
+    // License status filter (expired / expiring / valid / none)
+    if (state.vendorLicenseFilter && vendorLicenseStatus(vendor, vExp) !== state.vendorLicenseFilter) return false;
+    // Completeness filter
+    if (state.vendorCompleteFilter) {
+      const complete = vendorIsComplete(vendor);
+      if (state.vendorCompleteFilter === "complete" && !complete) return false;
+      if (state.vendorCompleteFilter === "incomplete" && complete) return false;
+    }
+    return true;
   });
   // Right-side detail panel stays blank until the user explicitly picks a
   // vendor. If a stale localStorage id no longer matches any vendor (e.g.,
@@ -1906,12 +1992,18 @@ function renderVendorsView() {
     </section>
 
     <div class="cs-card-flush" style="margin-bottom:22px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
         <div>
           <div class="cs-section-title">Vendor directory</div>
           <div style="font-size:12.5px;color:var(--cs-muted);margin-top:3px;">${filteredVendors.length} of ${state.vendors.length} vendors</div>
         </div>
-        <div class="cs-search"><span class="cs-search-ring"></span><input id="vendor-search" placeholder="Search name, ID, license, email, IBAN…" value="${encodeAttr(state.vendorSearch)}" style="width:300px;" /></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+          <div class="cs-search"><span class="cs-search-ring"></span><input id="vendor-search" placeholder="Search name, ID, license, email, IBAN…" value="${encodeAttr(state.vendorSearch)}" style="width:260px;" /></div>
+          ${filterSelect("vendor-type-filter", state.vendorTypeFilter, [["", "All types"], ...(state.vendorCategories || []).map((c) => [c.id, c.label])])}
+          ${filterSelect("vendor-license-filter", state.vendorLicenseFilter, [["", "License: all"], ["expired", "Expired"], ["expiring", "Expiring soon"], ["valid", "Valid"], ["none", "No license"]])}
+          ${filterSelect("vendor-complete-filter", state.vendorCompleteFilter, [["", "Info: all"], ["complete", "Complete"], ["incomplete", "Incomplete"]])}
+          ${clearFiltersChip(state.vendorTypeFilter || state.vendorLicenseFilter || state.vendorCompleteFilter)}
+        </div>
       </div>
       <div class="cs-thead" style="grid-template-columns:${dirCols};">
         <div>Vendor</div><div>License / ID</div><div>Phone</div><div>Bank</div><div>IBAN</div><div>Status</div><div></div>
@@ -1937,12 +2029,18 @@ function renderClientsView() {
   // ── Client directory data ──
   const clientQuery = state.clientSearch.trim().toLowerCase();
   const filteredClients = state.clients.filter((c) => {
-    if (!clientQuery) return true;
-    return [
+    if (clientQuery && ![
       c.company_name, c.name, c.id, c.cr_number, c.vat_number,
       c.signatory_name, c.contact_name, c.contact_email, c.company_email,
       c.contact_phone, c.phone, c.city, c.country,
-    ].some((v) => String(v || "").toLowerCase().includes(clientQuery));
+    ].some((v) => String(v || "").toLowerCase().includes(clientQuery))) return false;
+    // CR filter
+    if (state.clientCrFilter) {
+      const hasCr = !!String(c.cr_number || "").trim();
+      if (state.clientCrFilter === "has" && !hasCr) return false;
+      if (state.clientCrFilter === "missing" && hasCr) return false;
+    }
+    return true;
   });
 
   if (state.selectedClientId
@@ -1995,12 +2093,16 @@ function renderClientsView() {
     </section>
 
     <div class="cs-card-flush" style="margin-bottom:22px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 22px 16px;flex-wrap:wrap;">
         <div>
           <div class="cs-section-title">Client directory</div>
           <div style="font-size:12.5px;color:var(--cs-muted);margin-top:3px;">${filteredClients.length} of ${state.clients.length} clients</div>
         </div>
-        <div class="cs-search"><span class="cs-search-ring"></span><input id="client-search" placeholder="Search company, CR, VAT, signatory, email…" value="${encodeAttr(state.clientSearch)}" style="width:300px;" /></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+          <div class="cs-search"><span class="cs-search-ring"></span><input id="client-search" placeholder="Search company, CR, VAT, signatory, email…" value="${encodeAttr(state.clientSearch)}" style="width:280px;" /></div>
+          ${filterSelect("client-cr-filter", state.clientCrFilter, [["", "CR: all"], ["has", "Has CR"], ["missing", "Missing CR"]])}
+          ${clearFiltersChip(state.clientCrFilter)}
+        </div>
       </div>
       <div class="cs-thead" style="grid-template-columns:${clientCols};">
         <div>Company</div><div>CR Number</div><div>VAT</div><div>Signatory</div><div>Location</div><div></div>
@@ -2182,11 +2284,17 @@ function renderContractsView() {
   // Multi-field contract search — applied BEFORE grouping so task groups
   // disappear cleanly when none of their contracts match.
   const contractQuery = (state.contractSearch || "").trim().toLowerCase();
-  const matchingContracts = !contractQuery ? state.contracts : state.contracts.filter((c) => [
-    c.contract_id, c.vendor_name, c.client_name, c.signatory_name,
-    c.brand_name, c.license_number, c.contract_type, c.task_id,
-    c.iban, c.account_name, c.cr_number,
-  ].some((v) => String(v || "").toLowerCase().includes(contractQuery)));
+  const matchingContracts = state.contracts.filter((c) => {
+    if (contractQuery && ![
+      c.contract_id, c.vendor_name, c.client_name, c.signatory_name,
+      c.brand_name, c.license_number, c.contract_type, c.task_id,
+      c.iban, c.account_name, c.cr_number,
+    ].some((v) => String(v || "").toLowerCase().includes(contractQuery))) return false;
+    // Files filter
+    if (state.contractFilesFilter === "both" && !c.pdf_path) return false;
+    if (state.contractFilesFilter === "docx" && c.pdf_path) return false;
+    return true;
+  });
 
   const grouped = new Map();
   matchingContracts.forEach((c) => {
@@ -2285,8 +2393,10 @@ function renderContractsView() {
     <div class="cs-card" style="margin-bottom:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;">
         <div class="cs-section-title">Archive</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div class="cs-search"><span class="cs-search-ring"></span><input id="contract-search" placeholder="Search contract id, vendor, license, brand, CR…" value="${encodeAttr(state.contractSearch)}" style="width:320px;" /></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+          <div class="cs-search"><span class="cs-search-ring"></span><input id="contract-search" placeholder="Search contract id, vendor, license, brand, CR…" value="${encodeAttr(state.contractSearch)}" style="width:300px;" /></div>
+          ${filterSelect("contract-files-filter", state.contractFilesFilter, [["", "Files: all"], ["both", "DOCX + PDF"], ["docx", "DOCX only"]])}
+          ${clearFiltersChip(state.contractFilesFilter)}
           <button class="cs-btn-ghost" data-action="refresh-contracts" type="button">Refresh</button>
         </div>
       </div>
@@ -4136,6 +4246,16 @@ document.addEventListener("change", async (event) => {
       localStorage.setItem("aq_task_limit", String(state.taskLimit));
       await renderTasksView();
     }
+    // ── Quick filters (per view) ──
+    const fid = event.target.id;
+    if (fid === "task-status-filter") { state.taskStatusFilter = event.target.value; await renderTasksView(); return; }
+    if (fid === "task-gen-filter") { state.taskGenFilter = event.target.value; await renderTasksView(); return; }
+    if (fid === "task-paid-filter") { state.taskPaidFilter = event.target.value; await renderTasksView(); return; }
+    if (fid === "vendor-type-filter") { state.vendorTypeFilter = event.target.value; renderVendorsView(); return; }
+    if (fid === "vendor-license-filter") { state.vendorLicenseFilter = event.target.value; renderVendorsView(); return; }
+    if (fid === "vendor-complete-filter") { state.vendorCompleteFilter = event.target.value; renderVendorsView(); return; }
+    if (fid === "client-cr-filter") { state.clientCrFilter = event.target.value; renderClientsView(); return; }
+    if (fid === "contract-files-filter") { state.contractFilesFilter = event.target.value; renderContractsView(); return; }
     if (event.target.id === "sub-iban") {
       syncSubtaskBankPreview();
     }
@@ -4584,6 +4704,13 @@ document.addEventListener("click", async (event) => {
 
     if (action === "export-excel") {
       await exportCurrentView();
+      return;
+    }
+    if (action === "clear-filters") {
+      if (state.view === "tasks") { state.taskStatusFilter = ""; state.taskGenFilter = ""; state.taskPaidFilter = ""; await renderTasksView(); }
+      else if (state.view === "vendors") { state.vendorTypeFilter = ""; state.vendorLicenseFilter = ""; state.vendorCompleteFilter = ""; renderVendorsView(); }
+      else if (state.view === "clients") { state.clientCrFilter = ""; renderClientsView(); }
+      else if (state.view === "contracts") { state.contractFilesFilter = ""; renderContractsView(); }
       return;
     }
     if (action === "go-tasks") setView("tasks");
