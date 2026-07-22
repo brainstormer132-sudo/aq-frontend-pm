@@ -21,6 +21,7 @@ import { TeamSettingsPanel } from '@/components/workflow/TeamSettingsPanel';
 import { ContractsView } from '@/components/workflow/ContractsView';
 import { ClientsView } from '@/components/workflow/ClientsView';
 import { VendorsView } from '@/components/workflow/VendorsView';
+import { TrackingListView } from '@/components/workflow/TrackingListView';
 
 const supabase = createClient();
 
@@ -312,6 +313,7 @@ export default function WorkflowPage() {
 
         {view === 'clients'  && <ClientsView role={role} />}
         {view === 'vendors'  && <VendorsView role={role} userName={user.full_name} />}
+        {view === 'tracking' && <TrackingListView workspaceId={workspace.id} role={role} />}
 
         {view === 'team' && <TeamPanel profiles={profiles} />}
 
@@ -471,6 +473,7 @@ function viewTitle(v: View) {
     : v === 'contracts'? 'Contract Requests'
     : v === 'clients'  ? 'Clients'
     : v === 'vendors'  ? 'Vendors'
+    : v === 'tracking' ? 'Tracking Sheets'
     : v === 'team'     ? 'Team'
     : 'Settings';
 }
@@ -485,6 +488,7 @@ function viewSubtitle(v: View) {
     : v === 'contracts' ? 'Vendor and client contract requests submitted from tasks.'
     : v === 'clients'   ? 'Add and search approved clients used by projects and contracts.'
     : v === 'vendors'   ? 'Add vendors, bank details, and review pending registration requests.'
+    : v === 'tracking'  ? 'Campaigns with a tracking sheet — open one to add and track vendors.'
     : v === 'team'      ? 'People in this workspace and their roles.'
     : 'Configuration and admin tools.';
 }

@@ -3,7 +3,7 @@
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks' | 'crm'
-          | 'clients' | 'vendors' | 'contracts'
+          | 'clients' | 'vendors' | 'tracking' | 'contracts'
           | 'team' | 'settings';
 
 interface NavItem {
@@ -36,6 +36,9 @@ const NAV: NavItem[] = [
   { id: 'crm',             label: 'CRM',             icon: 'users',     visibleTo: ['owner','admin','marketing','sales','key_account'] },
   { id: 'clients',         label: 'Clients',         icon: 'building',  visibleTo: ['owner','admin','marketing','sales'] },
   { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'] },
+  // Tracking Sheets — every campaign flagged with a tracking sheet (chosen at
+  // triage via the "Tracking Sheet" subtask). Opens the ad/vendor grid.
+  { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account'] },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'] },
 ];
@@ -183,7 +186,7 @@ export function WorkflowSidebar({
 
 export type { View };
 
-type IconName = 'home' | 'plus' | 'inbox' | 'list' | 'check' | 'file' | 'building' | 'briefcase' | 'users' | 'settings';
+type IconName = 'home' | 'plus' | 'inbox' | 'list' | 'check' | 'file' | 'building' | 'briefcase' | 'grid' | 'users' | 'settings';
 
 function NavIcon({ name }: { name: IconName }) {
   const common = {
@@ -221,6 +224,9 @@ function NavIcon({ name }: { name: IconName }) {
   );
   if (name === 'briefcase') return (
     <svg {...common}><path d="M10 6V5a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1" /><path d="M3 7h18v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 12h18" /></svg>
+  );
+  if (name === 'grid') return (
+    <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" /></svg>
   );
   if (name === 'users') return (
     <svg {...common}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>

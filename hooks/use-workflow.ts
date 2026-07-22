@@ -268,6 +268,30 @@ export function withVat(priceExcl: number): number {
   return Math.round(priceExcl * (1 + VAT_RATE) * 100) / 100;
 }
 
+/** Every campaign (top-level pm_task) flagged with a tracking sheet. */
+export function useTrackingCampaigns(workspaceId: string | null) {
+  const [items, setItems] = useState<PMTask[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('pm_tasks')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .eq('has_tracking', true)
+      .is('parent_task_id', null)
+      .order('created_at', { ascending: false });
+    if (error) logSbError('useTrackingCampaigns', error, { workspaceId });
+    setItems((data || []) as PMTask[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
 /** All tracking rows for one campaign (parent pm_task), ordered. */
 export function useTrackingRows(taskId: string | null) {
   const [rows, setRows] = useState<TrackingRow[]>([]);
