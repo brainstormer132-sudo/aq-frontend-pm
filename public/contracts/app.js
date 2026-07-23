@@ -12,7 +12,7 @@
 // authenticated" even when the client sends a valid Bearer token.
 // Calling Render directly works because the backend's CORS config
 // explicitly allows the Vercel origin + Authorization header.
-const PROXIED_API_BASE = "https://aq-backend-p5zd.onrender.com";
+const PROXIED_API_BASE = "https://aq-backend-pp7m.onrender.com";
 
 // Scrub any stale override that earlier troubleshooting may have stored
 // (e.g. localhost ports, stale Vercel paths). The default above is the

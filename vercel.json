@@ -4,11 +4,11 @@
   "rewrites": [
     {
       "source": "/contracts/api/:path*",
-      "destination": "https://aq-backend-p5zd.onrender.com/api/:path*"
+      "destination": "https://aq-backend-pp7m.onrender.com/api/:path*"
     },
     {
       "source": "/contracts/health",
-      "destination": "https://aq-backend-p5zd.onrender.com/api/health"
+      "destination": "https://aq-backend-pp7m.onrender.com/api/health"
     },
     {
       "source": "/portals",
