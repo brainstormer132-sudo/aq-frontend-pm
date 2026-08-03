@@ -1681,7 +1681,7 @@ function renderVendorFileUploader(slot, title) {
   const files = isCreate ? [] : vendorEditorFilesInSlot(slot);
 
   const fileRows = files.map((f) => `
-    <li style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 8px; background:var(--panel-strong); border:1px solid var(--line); border-radius:6px">${f.preview_url ? `<img src="${encodeAttr(f.preview_url)}" data-action="ve-download-file" data-file-id="${encodeAttr(f.id)}" style="width:100%;max-height:360px;object-fit:contain;border-radius:8px;cursor:pointer;margin-bottom:4px" title="Open image" />` : ""}
+    <li style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 8px; background:var(--panel-strong); border:1px solid var(--line); border-radius:6px">${f.preview_url ? (/\.pdf$/i.test(f.file_name||"") ? '<embed src="'+encodeAttr(f.preview_url)+'" type="application/pdf" style="width:100%;height:460px;border:1px solid var(--line);border-radius:8px;margin-bottom:4px" />' : `<img src="${encodeAttr(f.preview_url)}" data-action="ve-download-file" data-file-id="${encodeAttr(f.id)}" style="width:100%;max-height:360px;object-fit:contain;border-radius:8px;cursor:pointer;margin-bottom:4px" title="Open image" />`) : ""}
       <div style="flex:1; min-width:0">
         <div style="font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(f.file_name)}</div>
         <div style="font-size:10px; color:var(--muted)">${(f.file_size / 1024).toFixed(0)} KB · ${new Date(f.uploaded_at).toLocaleString()}</div>
@@ -1769,7 +1769,7 @@ function openVendorEditor(vendor) {
 async function loadVendorEditorFiles(vendorId) {
   try {
     const files = await api(`/api/vendors/${vendorId}/files`, { body: undefined });
-    for (const _f of (Array.isArray(files) ? files : [])) { if (/\.(jpe?g|png|gif|webp|bmp)$/i.test(_f.file_name || "")) { try { const _d = await api(`/api/vendors/files/${encodeURIComponent(_f.id)}/download`, { body: undefined }); if (_d && _d.url) _f.preview_url = _d.url; } catch (_e) {} } }
+    for (const _f of (Array.isArray(files) ? files : [])) { if (/\.(jpe?g|png|gif|webp|bmp|pdf)$/i.test(_f.file_name || "")) { try { const _d = await api(`/api/vendors/files/${encodeURIComponent(_f.id)}/download`, { body: undefined }); if (_d && _d.url) _f.preview_url = _d.url; } catch (_e) {} } }
     if (state.vendorEditorOpen && state.vendorEditorTarget?.id === vendorId) {
       state.vendorEditorFiles = Array.isArray(files) ? files : [];
       renderVendorsView();
