@@ -1769,7 +1769,7 @@ function openVendorEditor(vendor) {
 async function loadVendorEditorFiles(vendorId) {
   try {
     const files = await api(`/api/vendors/${vendorId}/files`, { body: undefined });
-    for (const _f of (Array.isArray(files) ? files : [])) { if (/\.(jpe?g|png|gif|webp|bmp|pdf)$/i.test(_f.file_name || "")) { try { const _d = await api(`/api/vendors/files/${encodeURIComponent(_f.id)}/download`, { body: undefined }); if (_d && _d.url) _f.preview_url = _d.url; } catch (_e) {} } }
+    for (const _f of (Array.isArray(files) ? files : [])) { if (/\.(jpe?g|png|gif|webp|bmp|pdf)$/i.test(_f.file_name || "")) { try { const _d = await api(`/api/vendors/files/${encodeURIComponent(_f.id)}/download`, { body: undefined }); if (_d && _d.url) _f.preview_url = _d.url.replace(/[?&]download=[^&]*/, ""); } catch (_e) {} } }
     if (state.vendorEditorOpen && state.vendorEditorTarget?.id === vendorId) {
       state.vendorEditorFiles = Array.isArray(files) ? files : [];
       renderVendorsView();
