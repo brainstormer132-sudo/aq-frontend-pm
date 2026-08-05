@@ -113,6 +113,10 @@ export function TaskDetailPanel({
   // if they're not actually allowed).
   const canComment = true;
   const canAttach  = true;
+  // Request-kind subtasks (quotation / invoice / contract): who can send a
+  // request vs. who can mark it fulfilled (Ops/admin/marketing).
+  const canRequest = Boolean(isPrivileged || isAssignee);
+  const canFulfill = Boolean(role && ['owner','admin','operations','marketing'].includes(role));
 
   const profileById = useMemo(() => {
     const m = new Map(profiles.map((p) => [p.id, p]));
@@ -317,6 +321,9 @@ export function TaskDetailPanel({
   if (!isOpen) return null;
 
   const isSubtaskView = Boolean(task?.parent_task_id);
+  const kind = task?.subtask_kind ?? null;
+  // Purpose-built subtasks that replace the generic fields with a lean layout.
+  const isRequestKind = isSubtaskView && !!kind && ['quotation', 'invoice', 'contract'].includes(kind);
 
   return (
     <div
@@ -479,7 +486,21 @@ export function TaskDetailPanel({
                 </section>
               )}
 
-              {/* Fields */}
+              {/* Purpose-built request subtask (quotation / invoice / contract).
+                  Shows only what that subtask needs — no duplicated parent fields. */}
+              {isRequestKind && (
+                <RequestCard
+                  task={task}
+                  kind={kind!}
+                  canRequest={canRequest}
+                  canFulfill={canFulfill}
+                  currentUserId={currentUserId}
+                  onChanged={async () => { await refetchTask(); onChanged?.(); }}
+                />
+              )}
+
+              {/* Fields — hidden on request subtasks (their fields live in the card above) */}
+              {!isRequestKind && (
               <section className="aq-card" style={{ padding: 18 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Details</h3>
                 <FieldRow label="Brand"        value={task.brand_name ?? '—'} />
@@ -611,11 +632,14 @@ export function TaskDetailPanel({
                   </div>
                 )}
               </section>
+              )}
 
               {/* ── Operations panel (migration 028) ───────────────────────
                   Per-vendor financial fields on subtasks; per-campaign
                   quotation / invoice / payment / contract on parents. Same
-                  edit permissions as the Budget field above. */}
+                  edit permissions as the Budget field above. Hidden on
+                  request subtasks (quotation/invoice/contract). */}
+              {!isRequestKind && (
               <OperationsPanel
                 task={task}
                 isSubtaskView={isSubtaskView}
@@ -624,6 +648,7 @@ export function TaskDetailPanel({
                 clientCategories={clientCategories}
                 onChanged={async () => { await refetchTask(); onChanged?.(); }}
               />
+              )}
 
               {/* Multi-assignee panel — parent only.
                   Subtasks have a single "doer" picker above. */}
@@ -879,6 +904,138 @@ function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
       <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>{label}</span>
       <span style={{ color: 'var(--aq-text)' }}>{value}</span>
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   RequestCard
+   Lean layout for "request-only" subtasks: quotation, invoice, contract.
+   - Quotation / Invoice: a number field + a Request button + file upload
+     (uploads go through the shared Files section below the card).
+   - Contract: request only (no number).
+   The Request button flips request_status not_requested → requested →
+   fulfilled. A DB trigger notifies Ops/admin when it becomes "requested".
+   ───────────────────────────────────────────────────────────────────── */
+function RequestCard({
+  task, kind, canRequest, canFulfill, currentUserId, onChanged,
+}: {
+  task: PMTask;
+  kind: string;
+  canRequest: boolean;
+  canFulfill: boolean;
+  currentUserId: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(task.request_note ?? '');
+  useEffect(() => { setNote(task.request_note ?? ''); }, [task.id]);
+
+  const status = task.request_status ?? 'not_requested';
+  const label = kind === 'quotation' ? 'Quotation' : kind === 'invoice' ? 'Invoice' : 'Contract';
+  const numberField: 'quotation_no' | 'invoice_no' | null =
+    kind === 'quotation' ? 'quotation_no' : kind === 'invoice' ? 'invoice_no' : null;
+  const numberValue = numberField ? ((task as any)[numberField] ?? '') : '';
+
+  const setStatus = async (next: string) => {
+    setBusy(true);
+    try {
+      const patch: any = { request_status: next };
+      if (next === 'requested') {
+        patch.requested_at = new Date().toISOString();
+        patch.requested_by = currentUserId;
+      }
+      if (note.trim() !== (task.request_note ?? '')) patch.request_note = note.trim() || null;
+      await updateTaskFields(task.id, patch);
+      await onChanged();
+    } catch (e: any) { window.alert(`Failed: ${e?.message ?? e}`); }
+    finally { setBusy(false); }
+  };
+
+  const saveNumber = async (v: string) => {
+    if (!numberField) return;
+    try {
+      await updateTaskFields(task.id, { [numberField]: v.trim() || null } as any);
+      await onChanged();
+    } catch (e: any) { window.alert(`Save failed: ${e?.message ?? e}`); }
+  };
+
+  const canEditFields = canRequest || canFulfill;
+
+  return (
+    <section className="aq-card" style={{ padding: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{label} request</h3>
+        <span className={`aq-badge ${
+          status === 'fulfilled' ? 'aq-badge-success'
+          : status === 'requested' ? 'aq-badge-warning'
+          : 'aq-badge-muted'
+        }`}>
+          {status === 'fulfilled' ? 'Fulfilled' : status === 'requested' ? 'Requested' : 'Not requested'}
+        </span>
+      </div>
+
+      {numberField && (
+        <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 12, padding: '6px 0', fontSize: 13, alignItems: 'center' }}>
+          <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>{label} #</span>
+          {canEditFields
+            ? <TextInput
+                defaultValue={String(numberValue)}
+                placeholder={kind === 'quotation' ? 'QT-2026-…' : 'INV-…'}
+                onCommit={saveNumber}
+                style={{ maxWidth: 240 }}
+              />
+            : <span>{numberValue || '—'}</span>}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 12, padding: '6px 0', fontSize: 13, alignItems: 'start' }}>
+        <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>Note</span>
+        {canEditFields
+          ? <textarea
+              className="aq-textarea"
+              style={{ minHeight: 52 }}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Optional note for the team handling this request"
+            />
+          : <span style={{ whiteSpace: 'pre-wrap' }}>{task.request_note || '—'}</span>}
+      </div>
+
+      {task.requested_at && (
+        <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+          Requested {new Date(task.requested_at).toLocaleString()}
+        </p>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+        {status === 'not_requested' && canRequest && (
+          <button type="button" className="aq-btn aq-btn-primary" disabled={busy} onClick={() => setStatus('requested')}>
+            Send {label.toLowerCase()} request
+          </button>
+        )}
+        {status === 'requested' && canFulfill && (
+          <button type="button" className="aq-btn aq-btn-primary" disabled={busy} onClick={() => setStatus('fulfilled')}>
+            Mark fulfilled
+          </button>
+        )}
+        {status === 'requested' && canRequest && (
+          <button type="button" className="aq-btn aq-btn-ghost" disabled={busy} onClick={() => setStatus('not_requested')}>
+            Cancel request
+          </button>
+        )}
+        {status === 'fulfilled' && canEditFields && (
+          <button type="button" className="aq-btn aq-btn-ghost" disabled={busy} onClick={() => setStatus('requested')}>
+            Reopen
+          </button>
+        )}
+      </div>
+
+      <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 12 }}>
+        {kind === 'contract'
+          ? 'Request only — the signed contract is handled by the operations team.'
+          : `Upload the ${label.toLowerCase()} file in the Files section below.`}
+      </p>
+    </section>
   );
 }
 
