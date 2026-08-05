@@ -107,6 +107,17 @@ export interface PMTask {
   // ── Tracking sheet (migration 036) ───────────────────────────────
   /** Opt-in per campaign. Set true when "Tracking Sheet" is chosen at triage. */
   has_tracking: boolean;
+
+  // ── Typed subtasks + request tracking (migration 038) ─────────────
+  /** Identifies a subtask's purpose so it can show its own fields.
+   *  e.g. 'quotation' | 'invoice' | 'contract' | 'payment' | 'tracking'
+   *  | 'ad' | null (generic). Null on parents. */
+  subtask_kind: string | null;
+  /** 'not_requested' | 'requested' | 'fulfilled' */
+  request_status: string | null;
+  requested_at: string | null;
+  requested_by: string | null;
+  request_note: string | null;
 }
 
 // ── Tracking sheet types (migration 036) ────────────────────────────
