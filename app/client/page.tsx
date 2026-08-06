@@ -7,6 +7,7 @@ import { PortalOverview } from '@/components/portal/PortalOverview';
 import { PortalDocuments } from '@/components/portal/PortalDocuments';
 import { PortalProfile } from '@/components/portal/PortalProfile';
 import { PortalHelp } from '@/components/portal/PortalHelp';
+import { PortalCampaigns } from '@/components/portal/PortalCampaigns';
 
 /**
  * Client portal entry. Declares which views render in the sidebar and
@@ -35,6 +36,12 @@ export default function ClientPortalPage() {
         icon: <Icon.Doc />,
         count: contractCount,
         render: () => <PortalDocuments me={me} />,
+      },
+      {
+        id: 'campaigns',
+        label: 'Campaign tracking',
+        icon: <Icon.Doc />,
+        render: () => <PortalCampaigns me={me} />,
       },
       {
         id: 'profile',
