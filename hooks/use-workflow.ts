@@ -141,6 +141,43 @@ export interface PMTask {
   request_note: string | null;
 }
 
+// ── Shared reference-data cache ─────────────────────────────────────
+//
+// Clients and vendors are workspace-wide reference lists — hundreds of rows
+// that change rarely. Every hook mount used to refetch the whole table, so
+// opening a task panel that renders a client picker, a brand picker and a
+// vendor picker pulled the same rows three times.
+//
+// This is a module-level cache with in-flight de-duplication: concurrent
+// mounts share one request, and a result is reused for TTL milliseconds.
+// refetch() always bypasses it, so a save-then-refresh still shows the change.
+
+interface CacheEntry<T> { at: number; data: T; inflight: Promise<T> | null }
+const REF_CACHE = new Map<string, CacheEntry<any>>();
+/** Reference data is stale-tolerant; 60s is far longer than a click-through. */
+const REF_CACHE_TTL_MS = 60_000;
+
+async function cachedFetch<T>(key: string, loader: () => Promise<T>, force = false): Promise<T> {
+  const now = Date.now();
+  const hit = REF_CACHE.get(key) as CacheEntry<T> | undefined;
+  if (!force && hit) {
+    // A request already in flight: join it rather than starting a second.
+    if (hit.inflight) return hit.inflight;
+    if (now - hit.at < REF_CACHE_TTL_MS) return hit.data;
+  }
+  const inflight = loader().then(
+    (data) => { REF_CACHE.set(key, { at: Date.now(), data, inflight: null }); return data; },
+    (err) => { REF_CACHE.delete(key); throw err; },
+  );
+  REF_CACHE.set(key, { at: hit?.at ?? 0, data: hit?.data as T, inflight });
+  return inflight;
+}
+
+/** Drop cached reference data — call after creating a client or vendor. */
+export function invalidateRefCache(key?: string) {
+  if (key) REF_CACHE.delete(key); else REF_CACHE.clear();
+}
+
 // ── Parent task vocabularies (migration 042) ────────────────────────
 // Kept as const arrays so the UI dropdowns and the DB can't drift apart.
 
@@ -2041,20 +2078,27 @@ export function useLegacyVendors() {
   const [banks, setBanks] = useState<LegacyBankAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
-    const [{ data: v, error: vE }, { data: b, error: bE }] = await Promise.all([
-      supabase.from('vendors').select('*').order('name', { ascending: true }),
-      supabase.from('bank_accounts').select('*'),
-    ]);
-    if (vE) logSbError('useLegacyVendors vendors', vE);
-    if (bE) logSbError('useLegacyVendors banks', bE);
-    setVendors((v || []) as LegacyVendor[]);
-    setBanks((b || []) as LegacyBankAccount[]);
+  const fetch = useCallback(async (force = false) => {
+    const both = await cachedFetch<{ vendors: LegacyVendor[]; banks: LegacyBankAccount[] }>(
+      'legacy-vendors',
+      async () => {
+        const [{ data: v, error: vE }, { data: b, error: bE }] = await Promise.all([
+          supabase.from('vendors').select('*').order('name', { ascending: true }),
+          supabase.from('bank_accounts').select('*'),
+        ]);
+        if (vE) logSbError('useLegacyVendors vendors', vE);
+        if (bE) logSbError('useLegacyVendors banks', bE);
+        return { vendors: (v || []) as LegacyVendor[], banks: (b || []) as LegacyBankAccount[] };
+      },
+      force,
+    );
+    setVendors(both.vendors);
+    setBanks(both.banks);
     setLoading(false);
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { vendors, banks, loading, refetch: fetch };
+  return { vendors, banks, loading, refetch: () => fetch(true) };
 }
 
 // ============================================================
@@ -2091,18 +2135,21 @@ export function useClients() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('clients')
-      .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id')
-      .order('company_name', { ascending: true });
-    if (error) logSbError('useClients', error);
-    setClients((data || []) as ClientRow[]);
+  const fetch = useCallback(async (force = false) => {
+    const rows = await cachedFetch<ClientRow[]>('clients', async () => {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id')
+        .order('company_name', { ascending: true });
+      if (error) { logSbError('useClients', error); return []; }
+      return (data || []) as ClientRow[];
+    }, force);
+    setClients(rows);
     setLoading(false);
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { clients, loading, refetch: fetch };
+  return { clients, loading, refetch: () => fetch(true) };
 }
 
 export function useClientBrands(clientId: string | null) {
