@@ -9,7 +9,9 @@ import {
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
   autoCreateContractRequestForSubtask,
-  type Profile, type WorkspaceRole,
+  createSubtask, removeSubtask,
+  SUBTASK_KINDS, SUBTASK_KIND_LABELS, isRequestSubtaskKind,
+  type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
@@ -69,6 +71,10 @@ export function TaskDetailPanel({
   const [commentText, setCommentText] = useState('');
   const [requestOpen, setRequestOpen] = useState(false);
   const [trackingOpen, setTrackingOpen] = useState(false);
+  // "+ Add subtask" on the parent (Phase 2).
+  const [addKind, setAddKind] = useState<SubtaskKind | ''>('');
+  const [addingSubtask, setAddingSubtask] = useState(false);
+  const [removingSubtaskId, setRemovingSubtaskId] = useState<string | null>(null);
 
   // Inline-editable fields. Initialized from `task` and synced when it changes.
   const [budgetDraft, setBudgetDraft] = useState<string>('');
@@ -136,6 +142,13 @@ export function TaskDetailPanel({
   const parentBudget = Number(task?.budget) || 0;
   const variance = parentBudget - subtaskBudgetSum;
 
+  // Kinds already present on this parent. Everything except 'ad' is a
+  // singleton — one quotation, one invoice, one contract per campaign.
+  const existingSubtaskKinds = useMemo(
+    () => new Set(subtasks.map((s) => s.subtask_kind).filter(Boolean) as string[]),
+    [subtasks],
+  );
+
   const handleAddComment = async () => {
     if (!task || !commentText.trim()) return;
     setBusy(true); setError('');
@@ -192,6 +205,43 @@ export function TaskDetailPanel({
     try { await deleteComment(id); await refetchComments(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(false); }
+  };
+
+  // ── Phase 2: add / remove a single subtask on the parent ────────────
+  const handleAddSubtask = async () => {
+    if (!task || !addKind) return;
+    if (!task.workspace_id) { setError('Cannot add a subtask — task has no workspace.'); return; }
+    setAddingSubtask(true); setError('');
+    try {
+      await createSubtask({
+        parent_task_id: task.id,
+        workspace_id: task.workspace_id,
+        creator_id: currentUserId,
+        kind: addKind,
+        title: SUBTASK_KIND_LABELS[addKind],
+        priority: task.priority,
+      });
+      setAddKind('');
+      await refetchSubs();
+      await refetchTask();   // has_tracking may have flipped
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setAddingSubtask(false); }
+  };
+
+  const handleRemoveSubtask = async (sub: { id: string; title: string }) => {
+    const ok = window.confirm(
+      `Remove "${sub.title}"?\n\nIts files, comments and budget go with it. This cannot be undone.`
+    );
+    if (!ok) return;
+    setRemovingSubtaskId(sub.id); setError('');
+    try {
+      await removeSubtask(sub.id);
+      await refetchSubs();
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setRemovingSubtaskId(null); }
   };
 
   const handleDeleteTask = async () => {
@@ -323,7 +373,7 @@ export function TaskDetailPanel({
   const isSubtaskView = Boolean(task?.parent_task_id);
   const kind = task?.subtask_kind ?? null;
   // Purpose-built subtasks that replace the generic fields with a lean layout.
-  const isRequestKind = isSubtaskView && !!kind && ['quotation', 'invoice', 'contract'].includes(kind);
+  const isRequestKind = isSubtaskView && isRequestSubtaskKind(kind);
 
   return (
     <div
@@ -664,74 +714,148 @@ export function TaskDetailPanel({
 
               {/* Subtasks list — clickable rows, no checklist.
                   Only shown on the parent (subtasks don't currently have grandchildren). */}
-              {!isSubtaskView && subtasks.length > 0 && (
+              {!isSubtaskView && (
                 <section className="aq-card" style={{ padding: 18 }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12,
                     gap: 12, flexWrap: 'wrap',
                   }}>
                     <h3 style={{ fontSize: 14, fontWeight: 700 }}>
-                      Subtasks ({subtasks.filter((s) => s.status === 'done').length} of {subtasks.length} done)
+                      {subtasks.length === 0
+                        ? 'Subtasks'
+                        : `Subtasks (${subtasks.filter((s) => s.status === 'done').length} of ${subtasks.length} done)`}
                     </h3>
-                    <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                      Distributed: <strong style={{ color: 'var(--aq-text)' }}>SAR {subtaskBudgetSum.toLocaleString()}</strong>
-                      {parentBudget > 0 && (
-                        <> of SAR {parentBudget.toLocaleString()} ·{' '}
-                          <span style={{
-                            color: variance < 0 ? 'var(--aq-error)' : variance > 0 ? 'var(--aq-warning, #b45309)' : 'var(--aq-text-muted)',
-                          }}>
-                            {variance === 0 ? 'fully allocated'
-                              : variance > 0 ? `SAR ${variance.toLocaleString()} unallocated`
-                              : `SAR ${Math.abs(variance).toLocaleString()} over budget`}
-                          </span>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {subtasks.map((s) => {
-                      const done = s.status === 'done';
-                      const sa = s.assignee_id ? profileById.get(s.assignee_id) : null;
-                      return (
-                        <li key={s.id}>
-                          <button
-                            type="button"
-                            onClick={() => setCurrentTaskId(s.id)}
-                            style={{
-                              width: '100%', textAlign: 'left',
-                              display: 'flex', alignItems: 'center', gap: 10,
-                              padding: '10px 12px', borderRadius: 'var(--aq-radius)',
-                              background: done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
-                              border: '1px solid var(--aq-border-light)',
-                              cursor: 'pointer',
-                            }}
-                          >
+                    {subtasks.length > 0 && (
+                      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                        Distributed: <strong style={{ color: 'var(--aq-text)' }}>SAR {subtaskBudgetSum.toLocaleString()}</strong>
+                        {parentBudget > 0 && (
+                          <> of SAR {parentBudget.toLocaleString()} ·{' '}
                             <span style={{
-                              flex: 1, fontSize: 14,
-                              textDecoration: done ? 'line-through' : 'none',
-                              color: done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
-                              fontWeight: 600,
-                            }}>{s.title}</span>
-                            {s.budget != null && (
+                              color: variance < 0 ? 'var(--aq-error)' : variance > 0 ? 'var(--aq-warning, #b45309)' : 'var(--aq-text-muted)',
+                            }}>
+                              {variance === 0 ? 'fully allocated'
+                                : variance > 0 ? `SAR ${variance.toLocaleString()} unallocated`
+                                : `SAR ${Math.abs(variance).toLocaleString()} over budget`}
+                            </span>
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Add a single subtask without re-triaging the campaign. */}
+                  {canEditBudget && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                      marginBottom: 12, paddingBottom: 12,
+                      borderBottom: '1px solid var(--aq-border-light)',
+                    }}>
+                      <select
+                        className="aq-input"
+                        value={addKind}
+                        disabled={addingSubtask}
+                        onChange={(e) => setAddKind(e.target.value as SubtaskKind | '')}
+                        style={{ width: 'auto', minWidth: 200, padding: '6px 10px', fontSize: 13 }}
+                        aria-label="Subtask type to add"
+                      >
+                        <option value="">Add a subtask…</option>
+                        {SUBTASK_KINDS.map((k) => (
+                          <option
+                            key={k}
+                            value={k}
+                            disabled={k !== 'ad' && existingSubtaskKinds.has(k)}
+                          >
+                            {SUBTASK_KIND_LABELS[k]}
+                            {k !== 'ad' && existingSubtaskKinds.has(k) ? ' — already added' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-primary"
+                        disabled={!addKind || addingSubtask}
+                        onClick={handleAddSubtask}
+                        style={{ padding: '6px 12px', fontSize: 13 }}
+                      >{addingSubtask ? 'Adding…' : '+ Add subtask'}</button>
+                    </div>
+                  )}
+
+                  {subtasks.length === 0 && (
+                    <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                      {canEditBudget
+                        ? 'No subtasks yet. Pick a type above to add one, or triage the campaign to spawn the full set.'
+                        : 'No subtasks yet.'}
+                    </p>
+                  )}
+
+                  {subtasks.length > 0 && (
+                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {subtasks.map((s) => {
+                        const done = s.status === 'done';
+                        const sa = s.assignee_id ? profileById.get(s.assignee_id) : null;
+                        const removing = removingSubtaskId === s.id;
+                        return (
+                          <li key={s.id} style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            borderRadius: 'var(--aq-radius)',
+                            background: done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
+                            border: '1px solid var(--aq-border-light)',
+                            opacity: removing ? 0.5 : 1,
+                          }}>
+                            <button
+                              type="button"
+                              onClick={() => setCurrentTaskId(s.id)}
+                              style={{
+                                flex: 1, minWidth: 0, textAlign: 'left',
+                                display: 'flex', alignItems: 'center', gap: 10,
+                                padding: '10px 12px',
+                                background: 'transparent', border: 'none',
+                                font: 'inherit', color: 'inherit',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <span style={{
+                                flex: 1, minWidth: 0, fontSize: 14,
+                                textDecoration: done ? 'line-through' : 'none',
+                                color: done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
+                                fontWeight: 600,
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}>{s.title}</span>
+                              {s.budget != null && (
+                                <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                                  SAR {Number(s.budget).toLocaleString()}
+                                </span>
+                              )}
                               <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-                                SAR {Number(s.budget).toLocaleString()}
+                                {sa?.full_name ?? 'Unassigned'}
                               </span>
+                              <span className={`aq-badge ${done ? 'aq-badge-success' : 'aq-badge-muted'}`}>
+                                {done ? 'done' : s.status}
+                              </span>
+                              <span aria-hidden style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>›</span>
+                            </button>
+                            {canEditBudget && (
+                              <button
+                                type="button"
+                                className="aq-btn aq-btn-ghost"
+                                disabled={removing || addingSubtask}
+                                onClick={() => handleRemoveSubtask({ id: s.id, title: s.title })}
+                                style={{ padding: '4px 8px', fontSize: 12, marginRight: 6 }}
+                                aria-label={`Remove subtask ${s.title}`}
+                                title="Remove subtask"
+                              >{removing ? '…' : '✕'}</button>
                             )}
-                            <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-                              {sa?.full_name ?? 'Unassigned'}
-                            </span>
-                            <span className={`aq-badge ${done ? 'aq-badge-success' : 'aq-badge-muted'}`}>
-                              {done ? 'done' : s.status}
-                            </span>
-                            <span aria-hidden style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>›</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  <p style={{ marginTop: 10, fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                    Click a subtask to open it — each has its own files, comments, budget, and assignee.
-                  </p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  {subtasks.length > 0 && (
+                    <p style={{ marginTop: 10, fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                      Click a subtask to open it — each has its own files, comments, budget, and assignee.
+                    </p>
+                  )}
                 </section>
               )}
 
