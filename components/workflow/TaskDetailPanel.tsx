@@ -15,8 +15,8 @@ import {
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
   autoCreateContractRequestForSubtask,
-  createSubtask, removeSubtask, ensureAdSubtasks,
-  adSubtaskTitle, isAutoAdTitle,
+  createSubtask, removeSubtask, ensureVendorSubtasks,
+  vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   SUBTASK_KINDS, SUBTASK_KIND_LABELS, isRequestSubtaskKind,
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
@@ -184,13 +184,6 @@ export function TaskDetailPanel({
   const parentBudget = Number(task?.budget) || 0;
   const variance = parentBudget - subtaskBudgetSum;
 
-  // Kinds already present on this parent. Everything except 'ad' is a
-  // singleton — one quotation, one invoice, one contract per campaign.
-  const existingSubtaskKinds = useMemo(
-    () => new Set(subtasks.map((s) => s.subtask_kind).filter(Boolean) as string[]),
-    [subtasks],
-  );
-
   const handleAddComment = async () => {
     if (!task || !commentText.trim()) return;
     setBusy(true); setError('');
@@ -333,8 +326,8 @@ export function TaskDetailPanel({
   };
 
   // ── Phase 5: Package Ad — run window + how many ads ─────────────────
-  const adSubtasks = useMemo(
-    () => subtasks.filter((s) => s.subtask_kind === 'ad'),
+  const vendorSubtasks = useMemo(
+    () => subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind)),
     [subtasks],
   );
   const isPackageAd = useMemo(
@@ -366,9 +359,9 @@ export function TaskDetailPanel({
     setPackageSaving(true); setError('');
     try {
       await updateTaskFields(task.id, { ad_quantity: n || null });
-      // Tops up to n; never deletes, because an existing ad may already carry
-      // a vendor, a budget and a fired contract request.
-      const created = await ensureAdSubtasks({
+      // Tops up to n; never deletes, because an existing vendor subtask may
+      // already carry a vendor, a budget and a fired contract request.
+      const created = await ensureVendorSubtasks({
         parent_task_id: task.id,
         workspace_id: task.workspace_id,
         creator_id: currentUserId,
@@ -378,25 +371,32 @@ export function TaskDetailPanel({
       await refetchTask();
       await refetchSubs();
       onChanged?.();
-      if (created === 0 && n < adSubtasks.length) {
-        setError(`Saved. There are still ${adSubtasks.length} ad subtasks — remove the extra ones by hand if that's intended.`);
+      if (created === 0 && n < vendorSubtasks.length) {
+        setError(`Saved. There are still ${vendorSubtasks.length} vendor subtasks — remove the extra ones by hand if that's intended.`);
       }
     } catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setPackageSaving(false); }
   };
 
   // ── Phase 2: add / remove a single subtask on the parent ────────────
-  const handleAddSubtask = async () => {
-    if (!task || !addKind) return;
+  const handleAddSubtask = async (kindOverride?: SubtaskKind) => {
+    const kind = kindOverride ?? addKind;
+    if (!task || !kind) return;
     if (!task.workspace_id) { setError('Cannot add a subtask — task has no workspace.'); return; }
     setAddingSubtask(true); setError('');
     try {
+      // Number vendors the same way ensureVendorSubtasks does, so a hand-added
+      // one and a package-spawned one read as the same sequence.
+      const label = SUBTASK_KIND_LABELS[kind];
+      const title = kind === 'vendor'
+        ? `${label} ${vendorSubtasks.length + 1}`
+        : label;
       await createSubtask({
         parent_task_id: task.id,
         workspace_id: task.workspace_id,
         creator_id: currentUserId,
-        kind: addKind,
-        title: SUBTASK_KIND_LABELS[addKind],
+        kind,
+        title,
         priority: task.priority,
       });
       setAddKind('');
@@ -528,16 +528,16 @@ export function TaskDetailPanel({
       const numericId = newId ? Number(newId) : null;
       const patch: Record<string, unknown> = { vendor_id: numericId };
 
-      // Phase 5: an ad subtask is named "{brand} — {vendor}". Do it in the
+      // Phase 5: a vendor subtask is named "{brand} — {vendor}". Do it in the
       // SAME update as vendor_id so the rename lands before the auto-fire
       // effect below creates the contract request — that request copies the
       // title into its `details`, so renaming afterwards would be too late.
       // A title somebody typed by hand is never overwritten.
-      if (task.subtask_kind === 'ad' && numericId != null) {
+      if (isVendorSubtaskKind(task.subtask_kind) && numericId != null) {
         const vendorName = vendors.find((v) => v.id === numericId)?.name ?? null;
         const brand = parentTask?.brand_name ?? task.brand_name ?? null;
-        if (isAutoAdTitle(task.title, brand)) {
-          patch.title = adSubtaskTitle(brand, vendorName);
+        if (isAutoVendorTitle(task.title, brand)) {
+          patch.title = vendorSubtaskTitle(brand, vendorName);
         }
       }
 
@@ -1122,8 +1122,8 @@ export function TaskDetailPanel({
               {/* ── Package Ad (Phase 5) ────────────────────────────────
                   Run window for the whole package + how many ads it was sold
                   as. Per-ad dates stay in the tracking sheet; per-ad vendor and
-                  price stay on each ad subtask. Marketing's half. */}
-              {!isSubtaskView && (isPackageAd || adSubtasks.length > 0) && (
+                  price stay on each vendor subtask. Marketing's half. */}
+              {!isSubtaskView && (isPackageAd || vendorSubtasks.length > 0) && (
                 <section className="aq-card" style={{ padding: 18 }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
@@ -1131,9 +1131,9 @@ export function TaskDetailPanel({
                   }}>
                     <h3 style={{ fontSize: 14, fontWeight: 700 }}>📦 Package</h3>
                     <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                      {adSubtasks.length} ad{adSubtasks.length === 1 ? '' : 's'}
-                      {task.ad_quantity != null ? ` of ${task.ad_quantity} sold` : ''}
-                      {task.ad_quantity != null && adSubtasks.length !== task.ad_quantity && (
+                      {vendorSubtasks.length} vendor{vendorSubtasks.length === 1 ? '' : 's'}
+                      {task.ad_quantity != null ? ` of ${task.ad_quantity} ad${task.ad_quantity === 1 ? '' : 's'} sold` : ''}
+                      {task.ad_quantity != null && vendorSubtasks.length !== task.ad_quantity && (
                         <strong style={{ color: 'var(--aq-warning, #b45309)' }}> · mismatch</strong>
                       )}
                     </span>
@@ -1199,9 +1199,9 @@ export function TaskDetailPanel({
 
                   {canEditMarketing && (
                     <p style={{ marginTop: 10, fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                      Saving tops the campaign up to that many ad subtasks. Lowering the number never
-                      deletes anything — remove ads individually below, since one may already have a
-                      vendor and a contract request against it.
+                      Saving tops the campaign up to that many vendor subtasks. Lowering the number
+                      never deletes anything — remove them individually below, since one may already
+                      have a vendor and a contract request against it.
                     </p>
                   )}
                 </section>
@@ -1245,40 +1245,52 @@ export function TaskDetailPanel({
                       marginBottom: 12, paddingBottom: 12,
                       borderBottom: '1px solid var(--aq-border-light)',
                     }}>
-                      <select
-                        className="aq-input"
-                        value={addKind}
-                        disabled={addingSubtask}
-                        onChange={(e) => setAddKind(e.target.value as SubtaskKind | '')}
-                        style={{ width: 'auto', minWidth: 200, padding: '6px 10px', fontSize: 13 }}
-                        aria-label="Subtask type to add"
-                      >
-                        <option value="">Add a subtask…</option>
-                        {SUBTASK_KINDS.map((k) => (
-                          <option
-                            key={k}
-                            value={k}
-                            disabled={k !== 'ad' && existingSubtaskKinds.has(k)}
+                      {/* One kind left. Quotation, invoice, contracts/vendoring
+                          and payment confirmation live on the parent task now,
+                          and the tracking sheet is the button above — so the
+                          picker collapses to a single button. If a second kind
+                          is ever added back, restore the <select> here. */}
+                      {SUBTASK_KINDS.length === 1 ? (
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-primary"
+                          disabled={addingSubtask}
+                          onClick={() => handleAddSubtask(SUBTASK_KINDS[0])}
+                          style={{ padding: '6px 12px', fontSize: 13 }}
+                        >
+                          {addingSubtask ? 'Adding…' : `+ Add ${SUBTASK_KIND_LABELS[SUBTASK_KINDS[0]].toLowerCase()}`}
+                        </button>
+                      ) : (
+                        <>
+                          <select
+                            className="aq-input"
+                            value={addKind}
+                            disabled={addingSubtask}
+                            onChange={(e) => setAddKind(e.target.value as SubtaskKind | '')}
+                            style={{ width: 'auto', minWidth: 200, padding: '6px 10px', fontSize: 13 }}
+                            aria-label="Subtask type to add"
                           >
-                            {SUBTASK_KIND_LABELS[k]}
-                            {k !== 'ad' && existingSubtaskKinds.has(k) ? ' — already added' : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-primary"
-                        disabled={!addKind || addingSubtask}
-                        onClick={handleAddSubtask}
-                        style={{ padding: '6px 12px', fontSize: 13 }}
-                      >{addingSubtask ? 'Adding…' : '+ Add subtask'}</button>
+                            <option value="">Add a subtask…</option>
+                            {SUBTASK_KINDS.map((k) => (
+                              <option key={k} value={k}>{SUBTASK_KIND_LABELS[k]}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="aq-btn aq-btn-primary"
+                            disabled={!addKind || addingSubtask}
+                            onClick={() => handleAddSubtask()}
+                            style={{ padding: '6px 12px', fontSize: 13 }}
+                          >{addingSubtask ? 'Adding…' : '+ Add subtask'}</button>
+                        </>
+                      )}
                     </div>
                   )}
 
                   {subtasks.length === 0 && (
                     <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
                       {canEditMarketing
-                        ? 'No subtasks yet. Pick a type above to add one, or triage the campaign to spawn the full set.'
+                        ? 'No vendors yet. Add one above, or set the ad quantity on the package to spawn them.'
                         : 'No subtasks yet.'}
                     </p>
                   )}

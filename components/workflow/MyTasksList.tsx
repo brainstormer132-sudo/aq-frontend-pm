@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { updateTaskFields, type PMTask } from '@/hooks/use-workflow';
+import { updateTaskFields, isRequestSubtaskKind, type PMTask } from '@/hooks/use-workflow';
 
 const supabase = createClient();
 
@@ -196,8 +196,8 @@ export function MyTasksList({
   // each keystroke in the search box.
   const renderTaskRow = (t: PMTask, context: boolean, child = false) => {
     const done = t.status === 'done';
-    const isRequest = Boolean(t.subtask_kind) &&
-      ['quotation', 'invoice', 'contract'].includes(String(t.subtask_kind));
+    // Shared with the detail panel so the two can't drift apart.
+    const isRequest = isRequestSubtaskKind(t.subtask_kind);
     return (
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
