@@ -107,8 +107,11 @@ export interface PMTask {
   contract_status: string | null;
 
   // ── Tracking sheet (migration 036) ───────────────────────────────
-  /** Opt-in per campaign. Set true when "Tracking Sheet" is chosen at triage. */
+  /** Opt-in per campaign, toggled by a button on the parent (044). */
   has_tracking: boolean;
+  /** When the client-facing copy of the sheet was last published (045). */
+  tracking_published_at: string | null;
+  tracking_published_by: string | null;
 
   // ── Parent task redesign (migration 042) — parent rows only ──────
   /** Platforms the campaign runs on. Names, matching task_platforms. */
@@ -884,6 +887,53 @@ export async function createSubtask(input: {
   }
 
   return data as PMTask;
+}
+
+// ── Tracking sheet publishing (migration 045) ───────────────────────
+//
+// Two sheets: the working one in tracking_rows, and a published snapshot in
+// tracking_rows_published that the client sees through the external portal.
+// Both mutators go through SECURITY DEFINER functions so the replace-all
+// happens in one transaction — a client can never catch a half-written sheet.
+
+/** Copy the working sheet to the client-facing one. Returns rows published. */
+export async function publishTrackingSheet(taskId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('publish_tracking_sheet', { p_task_id: taskId });
+  if (error) { logSbError('publishTrackingSheet', error, { taskId }); throw error; }
+  return Number(data ?? 0);
+}
+
+/** Withdraw the client-facing copy entirely. */
+export async function unpublishTrackingSheet(taskId: string): Promise<void> {
+  const { error } = await supabase.rpc('unpublish_tracking_sheet', { p_task_id: taskId });
+  if (error) { logSbError('unpublishTrackingSheet', error, { taskId }); throw error; }
+}
+
+/** The published snapshot for a campaign — what the client currently sees. */
+export function usePublishedTrackingRows(taskId: string | null) {
+  const [rows, setRows] = useState<TrackingRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!taskId) { setRows([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('tracking_rows_published')
+      .select('*')
+      .eq('task_id', taskId)
+      .order('position', { ascending: true });
+    if (error) logSbError('usePublishedTrackingRows', error, { taskId });
+    setRows((data || []) as TrackingRow[]);
+    setLoading(false);
+  }, [taskId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { rows, loading, refetch: fetch };
+}
+
+/** Categories whose work the client tracks. Mirrors vendor_is_trackable() in 045. */
+const TRACKABLE_VENDOR_CATEGORIES = ['influencer', 'ugc', 'ugc creator', 'user generated content'];
+export function isTrackableVendorCategory(category: string | null | undefined): boolean {
+  return TRACKABLE_VENDOR_CATEGORIES.includes((category ?? '').trim().toLowerCase());
 }
 
 // ── Campaign money rollup (migration 042) ───────────────────────────
