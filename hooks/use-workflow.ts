@@ -51,6 +51,8 @@ export interface PMTask {
   workspace_id: string | null;
   project_id: string | null;
   parent_task_id: string | null;
+  /** Sort order among siblings. Set on subtasks; null on parents. */
+  position: number | null;
   task_name: string | null;
   brand_name: string | null;
   legacy_client_id: string | null;
@@ -119,6 +121,29 @@ export interface PMTask {
   requested_by: string | null;
   request_note: string | null;
 }
+
+// ── Typed subtasks (migration 038) ──────────────────────────────────
+
+/** The kinds a subtask can be. `null` = a generic template-spawned step. */
+export const SUBTASK_KINDS = ['quotation', 'invoice', 'contract', 'payment', 'tracking', 'ad'] as const;
+export type SubtaskKind = typeof SUBTASK_KINDS[number];
+
+/** Kinds that render the lean RequestCard instead of the generic details form. */
+export const REQUEST_SUBTASK_KINDS: SubtaskKind[] = ['quotation', 'invoice', 'contract'];
+
+export function isRequestSubtaskKind(kind: string | null | undefined): boolean {
+  return !!kind && (REQUEST_SUBTASK_KINDS as string[]).includes(kind);
+}
+
+/** Default title used when a subtask of this kind is added by hand. */
+export const SUBTASK_KIND_LABELS: Record<SubtaskKind, string> = {
+  quotation: 'Quotation',
+  invoice: 'Invoice',
+  contract: 'Contracts / Vendoring',
+  payment: 'Payment Confirmation',
+  tracking: 'Tracking Sheet',
+  ad: 'Ad',
+};
 
 // ── Tracking sheet types (migration 036) ────────────────────────────
 
@@ -704,6 +729,92 @@ export async function triageMarketingTask(input: {
     .update({ has_tracking: wantsTracking })
     .eq('id', input.task_id);
   if (trackErr) throw trackErr;
+}
+
+/**
+ * Add a single subtask to a parent, outside the triage template flow.
+ *
+ * Triage bulk-inserts every step of the chosen service types; this is the
+ * per-campaign escape hatch (Phase 2) so a parent can gain or lose one
+ * subtask without re-triaging. Appends at the end of the sibling order.
+ */
+export async function createSubtask(input: {
+  parent_task_id: string;
+  workspace_id: string;
+  creator_id: string;
+  /** null = a plain subtask with no special rendering. */
+  kind: SubtaskKind | null;
+  title: string;
+  priority?: TaskPriority;
+  description?: string | null;
+}) {
+  const title = input.title.trim();
+  if (!title) throw new Error('Give the subtask a name.');
+
+  // Next position = current max among siblings + 1. Matches createTrackingRow.
+  const { data: existing } = await supabase
+    .from('pm_tasks')
+    .select('position')
+    .eq('parent_task_id', input.parent_task_id)
+    .order('position', { ascending: false })
+    .limit(1);
+  const nextPos = existing && existing.length ? ((existing[0] as any).position ?? 0) + 1 : 0;
+
+  const { data, error } = await supabase
+    .from('pm_tasks')
+    .insert({
+      workspace_id: input.workspace_id,
+      parent_task_id: input.parent_task_id,
+      title,
+      description: input.description ?? null,
+      position: nextPos,
+      stage: 'in_progress' as TaskStage,
+      status: 'todo',
+      priority: input.priority ?? 'medium',
+      creator_id: input.creator_id,
+      subtask_kind: input.kind,
+      // Column is NOT NULL DEFAULT 'not_requested' (migration 038) — set it
+      // explicitly so the row reads the same whether or not the default fires.
+      request_status: 'not_requested',
+    })
+    .select()
+    .single();
+  if (error) { logSbError('createSubtask', error, { parent: input.parent_task_id }); throw error; }
+
+  // A hand-added Tracking Sheet subtask should switch the sheet on for the
+  // campaign, the same way choosing it at triage does.
+  if (input.kind === 'tracking') {
+    await supabase.from('pm_tasks').update({ has_tracking: true }).eq('id', input.parent_task_id);
+  }
+
+  return data as PMTask;
+}
+
+/**
+ * Remove one subtask. Wraps deleteTask so the parent's has_tracking flag stays
+ * honest when the last tracking subtask goes away.
+ */
+export async function removeSubtask(subtaskId: string) {
+  const { data: row } = await supabase
+    .from('pm_tasks')
+    .select('parent_task_id, subtask_kind')
+    .eq('id', subtaskId)
+    .maybeSingle();
+
+  await deleteTask(subtaskId);
+
+  const parentId = (row as any)?.parent_task_id as string | null | undefined;
+  if (parentId && (row as any)?.subtask_kind === 'tracking') {
+    const { data: siblings } = await supabase
+      .from('pm_tasks')
+      .select('id')
+      .eq('parent_task_id', parentId)
+      .eq('subtask_kind', 'tracking')
+      .limit(1);
+    if (!siblings || !siblings.length) {
+      await supabase.from('pm_tasks').update({ has_tracking: false }).eq('id', parentId);
+    }
+  }
 }
 
 /** Member / key account: update a task (status / completed / etc). */
