@@ -131,7 +131,8 @@ create policy "tracking_published_client_read" on public.tracking_rows_published
         from public.pm_tasks t
         join public.external_users eu on eu.client_id = t.client_id
        where t.id = tracking_rows_published.task_id
-         and eu.user_id = auth.uid()
+         -- 021 names this auth_user_id, not user_id.
+         and eu.auth_user_id = auth.uid()
          and eu.role = 'client'
     )
   );
