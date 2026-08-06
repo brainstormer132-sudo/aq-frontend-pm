@@ -930,6 +930,52 @@ export function usePublishedTrackingRows(taskId: string | null) {
   return { rows, loading, refetch: fetch };
 }
 
+/**
+ * Give an influencer/UGC vendor a row on the campaign's tracking sheet.
+ *
+ * Called when a vendor is picked on a subtask. Idempotent by vendor name —
+ * re-picking the same vendor, or changing an unrelated field, will not add a
+ * second row. Returns true only when a row was actually created.
+ *
+ * Deliberately quiet: a tracking sheet is a nicety, and a failure here must
+ * never block the vendor assignment or the contract request that follows it.
+ */
+export async function ensureTrackingRowForVendor(input: {
+  parent_task_id: string;
+  vendor_name: string;
+  platform?: string | null;
+  price_excl?: number | null;
+}): Promise<boolean> {
+  const name = (input.vendor_name ?? '').trim();
+  if (!name) return false;
+  try {
+    const { data: existing } = await supabase
+      .from('tracking_rows')
+      .select('id, position, influencer_name')
+      .eq('task_id', input.parent_task_id);
+
+    const already = (existing ?? []).some(
+      (r: any) => (r.influencer_name ?? '').trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (already) return false;
+
+    const nextPos = (existing ?? []).reduce(
+      (max: number, r: any) => Math.max(max, Number(r.position) || 0), -1) + 1;
+
+    const price = Number(input.price_excl);
+    await createTrackingRow(input.parent_task_id, {
+      position: nextPos,
+      influencer_name: name,
+      platform: input.platform ?? '',
+      price_excl: Number.isFinite(price) && input.price_excl != null ? price : 0,
+    });
+    return true;
+  } catch (e) {
+    logSbError('ensureTrackingRowForVendor', e as any, { parent: input.parent_task_id, name });
+    return false;
+  }
+}
+
 /** Categories whose work the client tracks. Mirrors vendor_is_trackable() in 045. */
 const TRACKABLE_VENDOR_CATEGORIES = ['influencer', 'ugc', 'ugc creator', 'user generated content'];
 export function isTrackableVendorCategory(category: string | null | undefined): boolean {
