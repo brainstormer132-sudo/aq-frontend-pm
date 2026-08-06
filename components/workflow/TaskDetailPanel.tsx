@@ -5,6 +5,7 @@ import {
   useTask, useTaskSubtasks, useTaskComments, useTaskAttachments, useTaskServiceTypes,
   useLegacyVendors,
   useTaskSources, useClientCategories,
+  useClients, useClientBrands,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
@@ -16,6 +17,14 @@ import {
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 import { TrackingSheetPanel } from './TrackingSheetPanel';
+
+// Same 140px/1fr grid FieldRow uses, so editable sales rows line up with the
+// read-only rows above and below them.
+const SALES_ROW: React.CSSProperties = {
+  display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
+  padding: '6px 0', fontSize: 13, alignItems: 'center',
+};
+const SALES_LABEL: React.CSSProperties = { color: 'var(--aq-text-muted)', fontWeight: 600 };
 
 /**
  * Slide-over panel that shows a single task — header, fields, subtasks list,
@@ -66,6 +75,10 @@ export function TaskDetailPanel({
   const { items: taskSources } = useTaskSources(task?.workspace_id ?? null);
   const { items: clientCategories } = useClientCategories(task?.workspace_id ?? null);
 
+  // Client + brand pickers for the sales half of a parent campaign (Phase 4).
+  const { clients } = useClients();
+  const { brands } = useClientBrands(task?.client_id ?? null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [commentText, setCommentText] = useState('');
@@ -105,16 +118,30 @@ export function TaskDetailPanel({
   const isKeyAcct    = task?.key_account_id === currentUserId;
   const isAssignee   = task?.assignee_id === currentUserId;
   const isPrivileged = role && ['owner','admin','marketing'].includes(role);
-  const canEdit      = Boolean(isPrivileged || (role === 'sales' && isCreator && task?.stage === 'draft'));
+  const isAdminish   = Boolean(role && ['owner','admin'].includes(role));
+
+  // ── Phase 4: the parent is split down the middle ────────────────────
+  //   SALES half  — task name, client, brand, sales closer, description.
+  //   MARKETING half — everything else: priority, service types, key
+  //     account, stage, operations columns, tracking, collaborators.
+  //   BUDGET is shared: sales opens the number, and it stays editable on
+  //     the parent for both halves.
+  // Mirrored in Postgres by trg_enforce_task_field_ownership (migration
+  // 039) — change one and you must change the other.
+  const canEditSales     = Boolean(isAdminish || (role === 'sales' && isCreator));
+  const canEditMarketing = Boolean(isAdminish || role === 'marketing' || role === 'key_account' || isKeyAcct);
+  // The split applies to parents only; a subtask is marketing's throughout.
+  const canEditBudget    = task?.parent_task_id
+    ? canEditMarketing
+    : Boolean(canEditSales || canEditMarketing);
+  const canEditAssignee  = canEditMarketing;
+
+  const canEdit      = Boolean(canEditSales || canEditMarketing);
   const canDelete    = Boolean(isPrivileged || (role === 'sales' && isCreator));
   const canMarkDone  = Boolean(isKeyAcct || isPrivileged);
   const canRequestContract = Boolean(
     role && ['owner','admin','marketing','sales','key_account'].includes(role)
   );
-  // Budget + subtask assignee can always be edited by privileged roles, plus
-  // by the key account on this task. Sales (as creator) keeps draft-edit rights.
-  const canEditBudget   = Boolean(isPrivileged || isKeyAcct || (role === 'sales' && isCreator && task?.stage === 'draft'));
-  const canEditAssignee = canEditBudget;
   // Everyone with workspace access can comment/attach (RLS will reject
   // if they're not actually allowed).
   const canComment = true;
@@ -205,6 +232,42 @@ export function TaskDetailPanel({
     try { await deleteComment(id); await refetchComments(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(false); }
+  };
+
+  // ── Phase 4: the sales half of a parent campaign ────────────────────
+  const [salesSaving, setSalesSaving] = useState(false);
+  const [descDraft, setDescDraft] = useState('');
+  useEffect(() => { setDescDraft(task?.description ?? ''); }, [task?.id, task?.description]);
+
+  const patchSalesFields = async (fields: Partial<PMTask>) => {
+    if (!task) return;
+    setSalesSaving(true); setError('');
+    try {
+      await updateTaskFields(task.id, fields);
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setSalesSaving(false); }
+  };
+
+  // Changing the client invalidates the brand — clear both brand columns so
+  // the row can't end up pointing at a brand belonging to another client.
+  const handleChangeClient = async (clientId: string) => {
+    const c = clients.find((x) => x.id === clientId);
+    await patchSalesFields({
+      client_id: clientId || null,
+      legacy_client_id: c ? (c.cr_number || c.id) : null,
+      brand_id: null,
+      brand_name: null,
+    });
+  };
+
+  const handleChangeBrand = async (brandId: string) => {
+    const b = brands.find((x) => x.id === brandId);
+    await patchSalesFields({
+      brand_id: brandId || null,
+      brand_name: b?.brand_name ?? null,
+    });
   };
 
   // ── Phase 2: add / remove a single subtask on the parent ────────────
@@ -482,7 +545,7 @@ export function TaskDetailPanel({
                 }}>{error}</div>
               )}
 
-              {!canEdit && role === 'member' && (
+              {!canEdit && (
                 <div className="aq-badge aq-badge-info" style={{ alignSelf: 'flex-start' }}>
                   Read-only — you can comment and upload files
                 </div>
@@ -512,7 +575,7 @@ export function TaskDetailPanel({
               )}
 
               {/* Tracking sheet toggle — parent campaigns only */}
-              {!isSubtaskView && canEditBudget && (
+              {!isSubtaskView && canEditMarketing && (
                 <section className="aq-card" style={{
                   padding: 18, display: 'flex', alignItems: 'center',
                   justifyContent: 'space-between', gap: 12,
@@ -553,9 +616,81 @@ export function TaskDetailPanel({
               {!isRequestKind && (
               <section className="aq-card" style={{ padding: 18 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Details</h3>
-                <FieldRow label="Brand"        value={task.brand_name ?? '—'} />
-                <FieldRow label="Client"       value={task.legacy_client_id ?? '—'} />
-                <FieldRow label="Sales closer" value={closer?.full_name ?? '—'} />
+                {/* The sales half of a parent campaign. Sales (and admin) fill
+                    these in directly here — the same fields are not repeated on
+                    any subtask, so there's no double entry. */}
+                {!isSubtaskView && canEditSales ? (
+                  <>
+                    <div style={SALES_ROW}>
+                      <span style={SALES_LABEL}>Task name</span>
+                      <TextInput
+                        defaultValue={task.task_name ?? task.title ?? ''}
+                        placeholder="Campaign name"
+                        style={{ maxWidth: 360 }}
+                        onCommit={(v) => {
+                          const name = v.trim();
+                          if (!name || name === (task.task_name ?? task.title)) return;
+                          patchSalesFields({ task_name: name, title: name });
+                        }}
+                      />
+                    </div>
+                    <div style={SALES_ROW}>
+                      <span style={SALES_LABEL}>Client</span>
+                      <select
+                        className="aq-input"
+                        style={{ maxWidth: 360 }}
+                        value={task.client_id ?? ''}
+                        disabled={salesSaving}
+                        onChange={(e) => handleChangeClient(e.target.value)}
+                      >
+                        <option value="">— No client —</option>
+                        {clients.map((c) => (
+                          <option key={c.id} value={c.id}>{c.company_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={SALES_ROW}>
+                      <span style={SALES_LABEL}>Brand</span>
+                      <select
+                        className="aq-input"
+                        style={{ maxWidth: 360 }}
+                        value={task.brand_id ?? ''}
+                        disabled={salesSaving || !task.client_id}
+                        onChange={(e) => handleChangeBrand(e.target.value)}
+                      >
+                        <option value="">
+                          {task.client_id ? '— No brand —' : '— Pick a client first —'}
+                        </option>
+                        {brands.map((b) => (
+                          <option key={b.id} value={b.id}>{b.brand_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={SALES_ROW}>
+                      <span style={SALES_LABEL}>Sales closer</span>
+                      <select
+                        className="aq-input"
+                        style={{ maxWidth: 360 }}
+                        value={task.sales_closer_id ?? ''}
+                        disabled={salesSaving}
+                        onChange={(e) => patchSalesFields({ sales_closer_id: e.target.value || null })}
+                      >
+                        <option value="">— Unassigned —</option>
+                        {profiles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.full_name}{p.role ? ` (${p.role})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <FieldRow label="Brand"        value={task.brand_name ?? '—'} />
+                    <FieldRow label="Client"       value={task.legacy_client_id ?? '—'} />
+                    <FieldRow label="Sales closer" value={closer?.full_name ?? '—'} />
+                  </>
+                )}
                 <FieldRow label="Key account (owner)" value={ka?.full_name ?? '—'} />
                 <FieldRow label="Priority"     value={task.priority} />
                 <FieldRow label="Service types" value={
@@ -673,14 +808,36 @@ export function TaskDetailPanel({
                   </div>
                 )}
 
-                {task.description && (
+                {/* Description is sales's on a parent; read-only everywhere else. */}
+                {!isSubtaskView && canEditSales ? (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--aq-border-light)' }}>
+                    <div className="aq-label">Description / brief</div>
+                    <textarea
+                      className="aq-textarea"
+                      rows={4}
+                      style={{ marginTop: 4, width: '100%' }}
+                      value={descDraft}
+                      placeholder="What did the client actually ask for?"
+                      onChange={(e) => setDescDraft(e.target.value)}
+                    />
+                    <div style={{ marginTop: 6 }}>
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-secondary"
+                        disabled={salesSaving || descDraft === (task.description ?? '')}
+                        onClick={() => patchSalesFields({ description: descDraft.trim() || null })}
+                        style={{ padding: '4px 12px', fontSize: 12 }}
+                      >{salesSaving ? 'Saving…' : 'Save description'}</button>
+                    </div>
+                  </div>
+                ) : task.description ? (
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--aq-border-light)' }}>
                     <div className="aq-label">Description</div>
                     <p style={{ marginTop: 4, fontSize: 14, color: 'var(--aq-text-secondary)', whiteSpace: 'pre-wrap' }}>
                       {task.description}
                     </p>
                   </div>
-                )}
+                ) : null}
               </section>
               )}
 
@@ -693,7 +850,7 @@ export function TaskDetailPanel({
               <OperationsPanel
                 task={task}
                 isSubtaskView={isSubtaskView}
-                canEdit={canEditBudget}
+                canEdit={canEditMarketing}
                 taskSources={taskSources}
                 clientCategories={clientCategories}
                 onChanged={async () => { await refetchTask(); onChanged?.(); }}
@@ -708,7 +865,7 @@ export function TaskDetailPanel({
                   currentUserId={currentUserId}
                   role={role}
                   profiles={profiles}
-                  canEdit={Boolean(isPrivileged || isKeyAcct)}
+                  canEdit={canEditMarketing}
                 />
               )}
 
@@ -744,7 +901,7 @@ export function TaskDetailPanel({
                   </div>
 
                   {/* Add a single subtask without re-triaging the campaign. */}
-                  {canEditBudget && (
+                  {canEditMarketing && (
                     <div style={{
                       display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
                       marginBottom: 12, paddingBottom: 12,
@@ -782,7 +939,7 @@ export function TaskDetailPanel({
 
                   {subtasks.length === 0 && (
                     <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
-                      {canEditBudget
+                      {canEditMarketing
                         ? 'No subtasks yet. Pick a type above to add one, or triage the campaign to spawn the full set.'
                         : 'No subtasks yet.'}
                     </p>
@@ -834,7 +991,7 @@ export function TaskDetailPanel({
                               </span>
                               <span aria-hidden style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>›</span>
                             </button>
-                            {canEditBudget && (
+                            {canEditMarketing && (
                               <button
                                 type="button"
                                 className="aq-btn aq-btn-ghost"
