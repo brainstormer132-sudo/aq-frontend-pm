@@ -110,6 +110,13 @@ export interface PMTask {
   /** Opt-in per campaign. Set true when "Tracking Sheet" is chosen at triage. */
   has_tracking: boolean;
 
+  // ── Package Ad (migration 040) — parent rows only ─────────────────
+  /** Run window for the whole package. Per-ad dates live on tracking rows. */
+  package_start_date: string | null;
+  package_end_date: string | null;
+  /** How many ads the package is sold as. Setting it spawns that many ad subtasks. */
+  ad_quantity: number | null;
+
   // ── Typed subtasks + request tracking (migration 038) ─────────────
   /** Identifies a subtask's purpose so it can show its own fields.
    *  e.g. 'quotation' | 'invoice' | 'contract' | 'payment' | 'tracking'
@@ -788,6 +795,90 @@ export async function createSubtask(input: {
   }
 
   return data as PMTask;
+}
+
+// ── Package Ad naming (Phase 5) ─────────────────────────────────────
+
+/** The name an ad subtask gets once its vendor is known: "{brand} — {vendor}". */
+export function adSubtaskTitle(brandName: string | null, vendorName: string | null): string {
+  const brand = (brandName ?? '').trim();
+  const vendor = (vendorName ?? '').trim();
+  if (brand && vendor) return `${brand} — ${vendor}`;
+  if (vendor) return vendor;
+  if (brand) return `${brand} — Ad`;
+  return SUBTASK_KIND_LABELS.ad;
+}
+
+/**
+ * Whether an ad subtask's title is still machine-generated and therefore safe
+ * to overwrite. A name somebody typed by hand is left alone.
+ *
+ * Auto titles are: "Ad", "Ad 3", or anything previously auto-named for this
+ * brand ("{brand} — …").
+ */
+export function isAutoAdTitle(title: string | null, brandName: string | null): boolean {
+  const t = (title ?? '').trim();
+  if (!t) return true;
+  if (t === SUBTASK_KIND_LABELS.ad) return true;
+  if (/^Ad \d+$/i.test(t)) return true;
+  const brand = (brandName ?? '').trim();
+  if (brand && t.startsWith(`${brand} —`)) return true;
+  return false;
+}
+
+/**
+ * Top the parent up to `targetCount` ad subtasks, appending at the end of the
+ * sibling order. Never deletes: lowering the quantity leaves existing ads
+ * alone, because they may already carry a vendor, a budget and a contract
+ * request. Returns how many were created.
+ */
+export async function ensureAdSubtasks(input: {
+  parent_task_id: string;
+  workspace_id: string;
+  creator_id: string;
+  target_count: number;
+  brand_name?: string | null;
+  priority?: TaskPriority;
+}): Promise<number> {
+  const target = Math.floor(Number(input.target_count));
+  if (!Number.isFinite(target) || target <= 0) return 0;
+
+  const { data: existing, error: exErr } = await supabase
+    .from('pm_tasks')
+    .select('id, position')
+    .eq('parent_task_id', input.parent_task_id)
+    .eq('subtask_kind', 'ad');
+  if (exErr) { logSbError('ensureAdSubtasks:count', exErr, { parent: input.parent_task_id }); throw exErr; }
+
+  const have = existing?.length ?? 0;
+  const missing = target - have;
+  if (missing <= 0) return 0;
+
+  const { data: last } = await supabase
+    .from('pm_tasks')
+    .select('position')
+    .eq('parent_task_id', input.parent_task_id)
+    .order('position', { ascending: false })
+    .limit(1);
+  let nextPos = last && last.length ? ((last[0] as any).position ?? 0) + 1 : 0;
+
+  const rows = Array.from({ length: missing }, (_, i) => ({
+    workspace_id: input.workspace_id,
+    parent_task_id: input.parent_task_id,
+    // Numbered from the existing count so re-topping-up doesn't reuse labels.
+    title: `${SUBTASK_KIND_LABELS.ad} ${have + i + 1}`,
+    position: nextPos++,
+    stage: 'in_progress' as TaskStage,
+    status: 'todo',
+    priority: input.priority ?? 'medium',
+    creator_id: input.creator_id,
+    subtask_kind: 'ad',
+    request_status: 'not_requested',
+  }));
+
+  const { error } = await supabase.from('pm_tasks').insert(rows);
+  if (error) { logSbError('ensureAdSubtasks:insert', error, { parent: input.parent_task_id }); throw error; }
+  return missing;
 }
 
 /**
