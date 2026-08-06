@@ -783,10 +783,6 @@ export async function triageMarketingTask(input: {
   const filterByIds = input.selected_step_ids && input.selected_step_ids.length > 0;
   const selectedSet = filterByIds ? new Set(input.selected_step_ids) : null;
 
-  // Track whether the campaign should get a tracking sheet. The seeded
-  // "Tracking Sheet" common subtask (migration 027) is the opt-in signal.
-  let wantsTracking = false;
-
   for (const stId of input.service_type_ids) {
     const { data: steps, error: stepsErr } = await supabase
       .from('service_type_steps')
@@ -801,10 +797,6 @@ export async function triageMarketingTask(input: {
       ? steps.filter((s: any) => selectedSet.has(s.id))
       : steps;
     if (!filteredSteps.length) continue;
-
-    if (filteredSteps.some((s: any) => (s.title ?? '').trim().toLowerCase() === 'tracking sheet')) {
-      wantsTracking = true;
-    }
 
     const { data: stMeta } = await supabase
       .from('service_types')
@@ -828,13 +820,11 @@ export async function triageMarketingTask(input: {
     if (insertErr) throw insertErr;
   }
 
-  // 4. Flag (or unflag) the campaign for a tracking sheet based on whether the
-  //    "Tracking Sheet" subtask was chosen. This is what makes the sheet "show up".
-  const { error: trackErr } = await supabase
-    .from('pm_tasks')
-    .update({ has_tracking: wantsTracking })
-    .eq('id', input.task_id);
-  if (trackErr) throw trackErr;
+  // has_tracking is deliberately NOT touched here. It used to be derived from
+  // whether the "Tracking Sheet" common step was picked at triage, but that
+  // step was removed in migration 044 — the sheet is now switched on with a
+  // button on the parent. Writing it here would clear the flag on every
+  // re-triage and silently switch off a sheet someone had turned on.
 }
 
 /**
