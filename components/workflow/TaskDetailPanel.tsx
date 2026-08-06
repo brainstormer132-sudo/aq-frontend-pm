@@ -9,6 +9,7 @@ import {
   useContractRequests, type ContractKind,
   useTaskPlatforms, rollupCampaignMoney,
   publishTrackingSheet, unpublishTrackingSheet,
+  ensureTrackingRowForVendor, isTrackableVendorCategory,
   TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
@@ -541,6 +542,25 @@ export function TaskDetailPanel({
       }
 
       await updateTaskFields(task.id, patch as any);
+
+      // An influencer or UGC vendor gets a row on the campaign's tracking
+      // sheet automatically — that sheet exists to track exactly this work.
+      // Other vendor types (printing, production, billboard) don't belong
+      // there. Best-effort: ensureTrackingRowForVendor swallows its own
+      // errors, because a tracking row must never block the vendor
+      // assignment or the contract request that follows it.
+      if (numericId != null && parentTask?.has_tracking) {
+        const v = vendors.find((x) => x.id === numericId);
+        if (v && isTrackableVendorCategory((v as any).vendor_category)) {
+          await ensureTrackingRowForVendor({
+            parent_task_id: parentTask.id,
+            vendor_name: v.name,
+            platform: task.platform,
+            price_excl: task.price,
+          });
+        }
+      }
+
       await refetchTask();
       // Auto-fire happens after the next refetch when state has the new vendor_id.
     } catch (e: any) { setError(e?.message ?? String(e)); }
