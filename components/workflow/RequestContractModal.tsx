@@ -17,14 +17,16 @@ import {
  * registration to use, then add the task-specific commercial fields.
  */
 export function RequestContractModal({
-  task, currentUserId, onClose, onCreated,
+  task, currentUserId, onClose, onCreated, defaultKind = 'vendor',
 }: {
   task: PMTask;
   currentUserId: string;
   onClose: () => void;
   onCreated?: () => void;
+  /** Which side of the toggle to open on. The user can still switch. */
+  defaultKind?: ContractKind;
 }) {
-  const [kind, setKind] = useState<ContractKind>('vendor');
+  const [kind, setKind] = useState<ContractKind>(defaultKind);
   const [brand, setBrand] = useState(task.brand_name ?? '');
   const [amount, setAmount] = useState<string>(task.budget != null ? String(task.budget) : '');
   const [pendingVendorId, setPendingVendorId] = useState<number | ''>('');
