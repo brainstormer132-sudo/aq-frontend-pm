@@ -9,9 +9,9 @@
 --
 -- Run in Supabase: Dashboard → SQL Editor → paste → Run. Idempotent.
 --
--- Pairs with the use-workflow.ts change that starts writing
--- status='pending' instead of 'todo'. Run this and deploy that
--- together; see section 6.
+-- ⚠️ RUN 043 PART 1 BEFORE THIS FILE. The deployed app already writes
+-- status='pending', which the task_status enum rejects until 043
+-- PART 1 adds it — task creation is broken until then.
 -- ============================================================
 
 -- ─── 1. New parent columns ───────────────────────────────────────
@@ -163,20 +163,11 @@ update public.pm_tasks
    end
  where contract_status is not null and trim(contract_status) <> '';
 
--- ─── 6. Task status vocabulary ───────────────────────────────────
--- todo → pending. New set: pending | on_hold | done | cancelled.
---
--- Safe to run before the app deploys: nothing in the codebase filters ON
--- 'todo' (only `= 'done'` and `<> 'done'`), so the worst case in the gap
--- is that newly created tasks read 'todo' until the new build is live.
---
--- NO check constraint yet, deliberately: use-workflow.ts still inserts
--- 'todo' until the paired deploy lands, and a constraint would break task
--- creation outright. Add it in a later migration once that's shipped.
-
-update public.pm_tasks set status = 'pending' where status = 'todo';
-
-alter table public.pm_tasks alter column status set default 'pending';
+-- ─── 6. Task status vocabulary — MOVED TO 043 ────────────────────
+-- pm_tasks.status is an ENUM (task_status), not text, so 'todo' →
+-- 'pending' cannot be done here: Postgres refuses to use a new enum
+-- value in the same transaction that adds it. See 043, which must be
+-- run in two parts.
 
 -- ─── 7. Field ownership — the new columns are marketing's ────────
 -- Restates enforce_task_field_ownership() from 039/040 with the Package Ad
