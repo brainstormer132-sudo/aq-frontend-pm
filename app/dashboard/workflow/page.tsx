@@ -25,6 +25,9 @@ import { TrackingListView } from '@/components/workflow/TrackingListView';
 
 const supabase = createClient();
 
+/** Guards the ?task= deep link so junk in the URL can't reach the panel. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function ensureProfile(user: { id: string; email?: string | null; user_metadata?: any }) {
   const fullName = user.user_metadata?.full_name || user.email || 'User';
   const { error } = await supabase
@@ -76,6 +79,15 @@ export default function WorkflowPage() {
         return;
       }
       const params = new URLSearchParams(window.location.search);
+
+      // Deep link: /dashboard/workflow?task=<uuid> opens that task in the
+      // slide-over panel. This is the link format the DB notification
+      // triggers write (migrations 037 / 038), so an Ops user notified of a
+      // quotation request can actually click through to it. Read it BEFORE
+      // the invite branch below, which replaceState's the query string away.
+      const taskParam = params.get('task');
+      if (taskParam && UUID_RE.test(taskParam)) setOpenTaskId(taskParam);
+
       const inviteToken = params.get('invite') || localStorage.getItem('aq_pending_invite');
       if (inviteToken) {
         const { error: claimError } = await supabase.rpc('claim_workspace_invite', { invite_token: inviteToken });
@@ -126,6 +138,22 @@ export default function WorkflowPage() {
     setView('dashboard');
     setInitialViewSet(true);
   }, [role, initialViewSet]);
+
+  // Keep the URL in step with the open panel, so a task can be linked to and
+  // a refresh doesn't reopen something the user already closed. Gated on
+  // `booting` — otherwise this would strip ?task= off the URL before the
+  // (async) boot effect has had a chance to read it.
+  useEffect(() => {
+    if (booting || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (openTaskId) params.set('task', openTaskId);
+    else params.delete('task');
+    const qs = params.toString();
+    const next = `${window.location.pathname}${qs ? `?${qs}` : ''}`;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.replaceState({}, '', next);
+    }
+  }, [openTaskId, booting]);
 
   // Auto-dismiss toast.
   useEffect(() => {
