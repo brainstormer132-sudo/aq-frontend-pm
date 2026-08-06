@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { type PortalMe } from '@/lib/portal-api';
+
+type ClientMe = Extract<PortalMe, { role: 'client' }>;
 import { Icon } from './PortalUI';
 
 const supabase = createClient();
@@ -44,7 +46,7 @@ interface PublishedRow {
   ad_link: string | null;
 }
 
-export function PortalCampaigns({ me }: { me: PortalMe }) {
+export function PortalCampaigns({ me }: { me: ClientMe }) {
   const [campaigns, setCampaigns] = useState<PublishedCampaign[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [rows, setRows] = useState<PublishedRow[] | null>(null);
@@ -53,27 +55,33 @@ export function PortalCampaigns({ me }: { me: PortalMe }) {
   const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
-    supabase.rpc('client_published_campaigns').then(({ data, error: e }: { data: any; error: any }) => {
+    let cancelled = false;
+    (async () => {
+      const { data, error: e } = await supabase.rpc('client_published_campaigns');
+      if (cancelled) return;
       if (e) { setError(e.message); setCampaigns([]); return; }
       const list = (data || []) as PublishedCampaign[];
       setCampaigns(list);
-      if (list.length && !activeId) setActiveId(list[0].task_id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      if (list.length) setActiveId((cur) => cur ?? list[0].task_id);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!activeId) { setRows([]); return; }
+    let cancelled = false;
     setRows(null);
-    supabase
-      .from('tracking_rows_published')
-      .select('id, position, influencer_name, profile_link, platform, type_of_ad, content, product, shooting_date, posting_date, ad_status, ad_link')
-      .eq('task_id', activeId)
-      .order('position', { ascending: true })
-      .then(({ data, error: e }: { data: any; error: any }) => {
-        if (e) { setError(e.message); setRows([]); return; }
-        setRows((data || []) as PublishedRow[]);
-      });
+    (async () => {
+      const { data, error: e } = await supabase
+        .from('tracking_rows_published')
+        .select('id, position, influencer_name, profile_link, platform, type_of_ad, content, product, shooting_date, posting_date, ad_status, ad_link')
+        .eq('task_id', activeId)
+        .order('position', { ascending: true });
+      if (cancelled) return;
+      if (e) { setError(e.message); setRows([]); return; }
+      setRows((data || []) as PublishedRow[]);
+    })();
+    return () => { cancelled = true; };
   }, [activeId]);
 
   const active = campaigns?.find((c) => c.task_id === activeId) ?? null;
@@ -101,7 +109,7 @@ export function PortalCampaigns({ me }: { me: PortalMe }) {
           <h2>Campaign tracking</h2>
           <p>
             Live progress on your campaigns, as shared by AQ Creativity
-            {(me.profile as any)?.company_name ? ` with ${me.profile.company_name}` : ''}.
+            {me.profile?.company_name ? ` with ${me.profile.company_name}` : ''}.
           </p>
         </div>
       </div>
