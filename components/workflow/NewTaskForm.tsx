@@ -8,6 +8,7 @@ import {
   type Profile,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
+import { SearchablePicker } from './SearchablePicker';
 
 /**
  * Sales create-task screen. Open boxes for sales fields; greyed-out
@@ -139,52 +140,45 @@ export function NewTaskForm({
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Client *">
-              <select
-                className="aq-select"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                required
+              {/* Type-ahead rather than a <select>: this list runs to several
+                  hundred rows, with near-duplicate company names that are only
+                  told apart by their CR number — hence the hint line. */}
+              <SearchablePicker
+                options={clients.map((c) => ({
+                  value: c.id,
+                  label: c.company_name,
+                  hint: c.cr_number ? `CR ${c.cr_number}` : null,
+                  keywords: c.vat_number,
+                }))}
+                value={clientId || null}
+                onChange={(v) => setClientId(v ?? '')}
                 disabled={clientsLoading}
-              >
-                <option value="">
-                  {clientsLoading
-                    ? 'Loading clients…'
-                    : clients.length === 0
-                      ? 'No clients yet — add one under Vendors & Clients'
-                      : '— Select client —'}
-                </option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.company_name}
-                    {c.cr_number ? ` · CR ${c.cr_number}` : ''}
-                  </option>
-                ))}
-              </select>
+                maxWidth="100%"
+                placeholder={clientsLoading
+                  ? 'Loading clients…'
+                  : clients.length === 0
+                    ? 'No clients yet — add one under Clients'
+                    : 'Search clients…'}
+                emptyLabel="— No client —"
+              />
             </Field>
 
             <Field label="Brand *">
-              <select
-                className="aq-select"
-                value={brandId}
-                onChange={(e) => setBrandId(e.target.value)}
-                required
+              <SearchablePicker
+                options={brands.map((b) => ({ value: b.id, label: b.brand_name }))}
+                value={brandId || null}
+                onChange={(v) => setBrandId(v ?? '')}
                 disabled={!clientId || brandsLoading}
-              >
-                <option value="">
-                  {!clientId
-                    ? 'Pick a client first'
-                    : brandsLoading
-                      ? 'Loading brands…'
-                      : brands.length === 0
-                        ? 'No brands for this client'
-                        : '— Select brand —'}
-                </option>
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.brand_name}
-                  </option>
-                ))}
-              </select>
+                maxWidth="100%"
+                placeholder={!clientId
+                  ? 'Pick a client first'
+                  : brandsLoading
+                    ? 'Loading brands…'
+                    : brands.length === 0
+                      ? 'No brands for this client'
+                      : 'Search brands…'}
+                emptyLabel="— No brand —"
+              />
             </Field>
           </div>
 
