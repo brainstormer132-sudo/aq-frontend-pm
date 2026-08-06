@@ -8,6 +8,7 @@ import {
   useClients, useClientBrands,
   useContractRequests, type ContractKind,
   useTaskPlatforms, rollupCampaignMoney,
+  publishTrackingSheet, unpublishTrackingSheet,
   TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
@@ -298,6 +299,37 @@ export function TaskDetailPanel({
   // cancelled request is a dead end, so raising another is the right move.
   const canRaiseClientContract = !latestClientContract
     || ['rejected', 'cancelled'].includes(String(latestClientContract.status));
+
+  // ── Publish the tracking sheet to the client (migration 045) ────────
+  const [publishing, setPublishing] = useState(false);
+  const [publishNote, setPublishNote] = useState<string | null>(null);
+
+  const handlePublishTracking = async () => {
+    if (!task) return;
+    setPublishing(true); setError(''); setPublishNote(null);
+    try {
+      const n = await publishTrackingSheet(task.id);
+      setPublishNote(n === 0
+        ? 'Published — but the sheet is empty, so the client sees nothing yet.'
+        : `Published ${n} row${n === 1 ? '' : 's'} to the client.`);
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setPublishing(false); }
+  };
+
+  const handleUnpublishTracking = async () => {
+    if (!task) return;
+    if (!window.confirm('Withdraw the client-facing sheet? They will see nothing until you publish again.')) return;
+    setPublishing(true); setError(''); setPublishNote(null);
+    try {
+      await unpublishTrackingSheet(task.id);
+      setPublishNote('Withdrawn — the client no longer sees this sheet.');
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setPublishing(false); }
+  };
 
   // ── Phase 5: Package Ad — run window + how many ads ─────────────────
   const adSubtasks = useMemo(
@@ -680,20 +712,50 @@ export function TaskDetailPanel({
                   <div>
                     <h3 style={{ fontSize: 14, fontWeight: 700 }}>Tracking sheet</h3>
                     <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-                      {task.has_tracking
-                        ? 'This campaign has a tracking sheet. Open it from the “Tracking sheet” button above or the Tracking Sheets sidebar.'
-                        : 'Turn on to add a tracking sheet for this campaign.'}
+                      {!task.has_tracking
+                        ? 'Turn on to add a tracking sheet for this campaign.'
+                        : task.tracking_published_at
+                          ? `The client can see this sheet as it was on ${new Date(task.tracking_published_at).toLocaleString()}. Your edits since then are private until you press Update.`
+                          : 'Working sheet only — the client cannot see it yet. Publishing sends a copy to their portal.'}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    className={`aq-btn ${task.has_tracking ? 'aq-btn-secondary' : 'aq-btn-primary'}`}
-                    disabled={busy}
-                    onClick={() => handleToggleTracking(!task.has_tracking)}
-                  >
-                    {task.has_tracking ? 'Disable' : 'Enable tracking sheet'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {task.has_tracking && (
+                      <>
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-primary"
+                          disabled={publishing || busy}
+                          onClick={handlePublishTracking}
+                          title="Copy the working sheet to the client-facing one"
+                        >{publishing ? 'Publishing…' : task.tracking_published_at ? 'Update client sheet' : 'Publish to client'}</button>
+                        {task.tracking_published_at && (
+                          <button
+                            type="button"
+                            className="aq-btn aq-btn-ghost"
+                            disabled={publishing || busy}
+                            onClick={handleUnpublishTracking}
+                            style={{ padding: '6px 10px', fontSize: 12 }}
+                          >Withdraw</button>
+                        )}
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className={`aq-btn ${task.has_tracking ? 'aq-btn-secondary' : 'aq-btn-primary'}`}
+                      disabled={busy || publishing}
+                      onClick={() => handleToggleTracking(!task.has_tracking)}
+                    >
+                      {task.has_tracking ? 'Disable' : 'Enable tracking sheet'}
+                    </button>
+                  </div>
                 </section>
+              )}
+
+              {publishNote && (
+                <div className="aq-badge aq-badge-info" style={{ alignSelf: 'flex-start' }}>
+                  {publishNote}
+                </div>
               )}
 
               {/* Purpose-built request subtask (quotation / invoice / contract).
