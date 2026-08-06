@@ -7,6 +7,8 @@ import {
   useTaskSources, useClientCategories,
   useClients, useClientBrands,
   useContractRequests, type ContractKind,
+  useTaskPlatforms, rollupCampaignMoney,
+  TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
@@ -19,6 +21,7 @@ import {
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 import { TrackingSheetPanel } from './TrackingSheetPanel';
+import { SearchablePicker } from './SearchablePicker';
 
 // Same 140px/1fr grid FieldRow uses, so editable sales rows line up with the
 // read-only rows above and below them.
@@ -76,6 +79,7 @@ export function TaskDetailPanel({
   // in which case the inputs gracefully degrade to "—".
   const { items: taskSources } = useTaskSources(task?.workspace_id ?? null);
   const { items: clientCategories } = useClientCategories(task?.workspace_id ?? null);
+  const { items: taskPlatforms } = useTaskPlatforms(task?.workspace_id ?? null);
 
   // Client + brand pickers for the sales half of a parent campaign (Phase 4).
   const { clients } = useClients();
@@ -268,6 +272,10 @@ export function TaskDetailPanel({
       legacy_client_id: c ? (c.cr_number || c.id) : null,
       brand_id: null,
       brand_name: null,
+      // The category belongs to the client, so it follows the client rather
+      // than being picked again on every campaign. Only overwritten when the
+      // client actually carries one — never blanks a manual choice.
+      ...(c?.client_category_id ? { client_category_id: c.client_category_id } : {}),
     });
   };
 
@@ -725,35 +733,30 @@ export function TaskDetailPanel({
                     </div>
                     <div style={SALES_ROW}>
                       <span style={SALES_LABEL}>Client</span>
-                      <select
-                        className="aq-input"
-                        style={{ maxWidth: 360 }}
-                        value={task.client_id ?? ''}
+                      <SearchablePicker
+                        options={clients.map((c) => ({
+                          value: c.id,
+                          label: c.company_name,
+                          hint: c.cr_number ? `CR ${c.cr_number}` : null,
+                          keywords: c.vat_number,
+                        }))}
+                        value={task.client_id}
+                        onChange={(v) => handleChangeClient(v ?? '')}
                         disabled={salesSaving}
-                        onChange={(e) => handleChangeClient(e.target.value)}
-                      >
-                        <option value="">— No client —</option>
-                        {clients.map((c) => (
-                          <option key={c.id} value={c.id}>{c.company_name}</option>
-                        ))}
-                      </select>
+                        placeholder="Search clients…"
+                        emptyLabel="— No client —"
+                      />
                     </div>
                     <div style={SALES_ROW}>
                       <span style={SALES_LABEL}>Brand</span>
-                      <select
-                        className="aq-input"
-                        style={{ maxWidth: 360 }}
-                        value={task.brand_id ?? ''}
+                      <SearchablePicker
+                        options={brands.map((b) => ({ value: b.id, label: b.brand_name }))}
+                        value={task.brand_id}
+                        onChange={(v) => handleChangeBrand(v ?? '')}
                         disabled={salesSaving || !task.client_id}
-                        onChange={(e) => handleChangeBrand(e.target.value)}
-                      >
-                        <option value="">
-                          {task.client_id ? '— No brand —' : '— Pick a client first —'}
-                        </option>
-                        {brands.map((b) => (
-                          <option key={b.id} value={b.id}>{b.brand_name}</option>
-                        ))}
-                      </select>
+                        placeholder={task.client_id ? 'Search brands…' : 'Pick a client first'}
+                        emptyLabel="— No brand —"
+                      />
                     </div>
                     <div style={SALES_ROW}>
                       <span style={SALES_LABEL}>Sales closer</span>
@@ -942,6 +945,8 @@ export function TaskDetailPanel({
                 canEdit={canEditMarketing}
                 taskSources={taskSources}
                 clientCategories={clientCategories}
+                taskPlatforms={taskPlatforms}
+                subtasks={subtasks}
                 onChanged={async () => { await refetchTask(); onChanged?.(); }}
               />
               )}
@@ -1586,13 +1591,16 @@ function RequestCard({
 import type { PMTask, TaskSource, ClientCategory } from '@/hooks/use-workflow';
 
 function OperationsPanel({
-  task, isSubtaskView, canEdit, taskSources, clientCategories, onChanged,
+  task, isSubtaskView, canEdit, taskSources, clientCategories, taskPlatforms, subtasks, onChanged,
 }: {
   task: PMTask;
   isSubtaskView: boolean;
   canEdit: boolean;
   taskSources: TaskSource[];
   clientCategories: ClientCategory[];
+  taskPlatforms: TaskSource[];
+  /** Vendor lines — the campaign money block is rolled up from these. */
+  subtasks: PMTask[];
   onChanged: () => Promise<void>;
 }) {
   // Generic field saver — writes `{ [field]: value }` to pm_tasks and
@@ -1609,6 +1617,9 @@ function OperationsPanel({
       window.alert(`Save failed: ${e?.message ?? e}`);
     }
   };
+
+  const money = rollupCampaignMoney(subtasks);
+  const budgetNum = Number(task.budget) || 0;
 
   const numberOrNull = (raw: string): number | null => {
     const trimmed = raw.trim().replace(/,/g, '');
@@ -1762,15 +1773,100 @@ function OperationsPanel({
           : <span>{clientCategories.find((c) => c.id === task.client_category_id)?.name || '—'}</span>}
       </Row>
 
-      <Row label="Quotation #">
+      <Row label="Platform">
+        {canEdit ? (
+          <MultiSelect
+            options={taskPlatforms.map((p) => p.name)}
+            selected={task.platforms ?? []}
+            onChange={(next) => save('platforms', next)}
+          />
+        ) : (
+          <span>{(task.platforms ?? []).join(', ') || '—'}</span>
+        )}
+      </Row>
+
+      <Row label="Ad type">
+        {canEdit ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select
+              className="aq-input"
+              style={{ maxWidth: 200 }}
+              value={task.ad_type ?? ''}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                // Switching away from Multi Service clears the detail, so a
+                // stale description can't linger on a Home Ad.
+                if (v !== AD_TYPE_NEEDS_DETAIL && task.ad_type_custom) {
+                  updateTaskFields(task.id, { ad_type: v, ad_type_custom: null } as any)
+                    .then(onChanged)
+                    .catch((err: any) => window.alert(`Save failed: ${err?.message ?? err}`));
+                } else {
+                  save('ad_type', v);
+                }
+              }}
+            >
+              <option value="">— None —</option>
+              {AD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            {task.ad_type === AD_TYPE_NEEDS_DETAIL && (
+              <TextInput
+                defaultValue={task.ad_type_custom ?? ''}
+                placeholder="Which services? (required)"
+                onCommit={(v) => save('ad_type_custom', v.trim() || null)}
+                style={{ maxWidth: 280 }}
+              />
+            )}
+          </div>
+        ) : (
+          <span>
+            {task.ad_type
+              ? task.ad_type + (task.ad_type_custom ? ` — ${task.ad_type_custom}` : '')
+              : '—'}
+          </span>
+        )}
+      </Row>
+      {canEdit && task.ad_type === AD_TYPE_NEEDS_DETAIL && !task.ad_type_custom && (
+        <Row label="">
+          <span style={{ fontSize: 12, color: 'var(--aq-warning, #b45309)' }}>
+            Multi Service needs the services written out.
+          </span>
+        </Row>
+      )}
+
+      <Row label="Approval stage">
         {canEdit
-          ? <TextInput
-              defaultValue={task.quotation_no ?? ''}
-              placeholder="QT-2026-…"
-              onCommit={(v) => save('quotation_no', v.trim() || null)}
+          ? <select
+              className="aq-input"
               style={{ maxWidth: 240 }}
-            />
-          : <span>{task.quotation_no || '—'}</span>}
+              value={task.approval_stage ?? ''}
+              onChange={(e) => save('approval_stage', e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              {APPROVAL_STAGES.map((a) => <option key={a} value={a}>{labelFor(a)}</option>)}
+            </select>
+          : <span>{labelFor(task.approval_stage)}</span>}
+      </Row>
+
+      <Row label="Task status">
+        {canEdit
+          ? <select
+              className="aq-input"
+              style={{ maxWidth: 240 }}
+              value={task.status ?? ''}
+              onChange={(e) => save('status', e.target.value || null)}
+            >
+              {TASK_STATUSES.map((st) => <option key={st} value={st}>{labelFor(st)}</option>)}
+            </select>
+          : <span>{labelFor(task.status)}</span>}
+      </Row>
+
+      <Row label="Quotation #">
+        <StringList
+          values={task.quotation_numbers ?? []}
+          canEdit={canEdit}
+          placeholder="QT-2026-…"
+          onChange={(next) => save('quotation_numbers', next)}
+        />
       </Row>
 
       <Row label="Quo. breakdown">
@@ -1789,14 +1885,12 @@ function OperationsPanel({
       </Row>
 
       <Row label="Invoice #">
-        {canEdit
-          ? <TextInput
-              defaultValue={task.invoice_no ?? ''}
-              placeholder="INV-…"
-              onCommit={(v) => save('invoice_no', v.trim() || null)}
-              style={{ maxWidth: 240 }}
-            />
-          : <span>{task.invoice_no || '—'}</span>}
+        <StringList
+          values={task.invoice_numbers ?? []}
+          canEdit={canEdit}
+          placeholder="INV-…"
+          onChange={(next) => save('invoice_numbers', next)}
+        />
       </Row>
 
       <Row label="Client payment">
@@ -1836,6 +1930,60 @@ function OperationsPanel({
         )}
       </Row>
 
+      {/* Rolled up from the vendor subtasks — never stored, so it can't drift
+          from the lines it came from. See rollupCampaignMoney(). */}
+      <Row label="Breakdown">
+        <span>
+          {money.vendorCount === 0
+            ? <span style={{ color: 'var(--aq-text-muted)' }}>No vendor lines yet</span>
+            : <>
+                {fmtMoney(money.breakdown)}
+                <span style={{ color: 'var(--aq-text-muted)' }}>
+                  {' '}from {money.vendorCount} vendor{money.vendorCount === 1 ? '' : ' lines'}
+                </span>
+              </>}
+        </span>
+      </Row>
+
+      <Row label="Net">
+        <span>{money.vendorCount === 0 ? '—' : fmtMoney(money.net)}</span>
+      </Row>
+
+      <Row label="AQ Gross">
+        <span style={{
+          fontWeight: 700,
+          color: money.aqGross < 0 ? 'var(--aq-error)' : 'var(--aq-text)',
+        }}>
+          {money.vendorCount === 0 ? '—' : fmtMoney(money.aqGross)}
+          {money.aqGross < 0 && (
+            <span style={{ fontWeight: 400, fontSize: 12, marginLeft: 6 }}>
+              vendors cost more than the lines bill
+            </span>
+          )}
+        </span>
+      </Row>
+
+      {budgetNum > 0 && money.vendorCount > 0 && Math.abs(budgetNum - money.breakdown) > 0.005 && (
+        <Row label="">
+          <span style={{ fontSize: 12, color: 'var(--aq-warning, #b45309)' }}>
+            Breakdown doesn&apos;t match the {fmtMoney(budgetNum)} budget
+            ({money.breakdown > budgetNum ? 'over' : 'under'} by {fmtMoney(Math.abs(budgetNum - money.breakdown))}).
+          </span>
+        </Row>
+      )}
+
+      <Row label="Net payment date">
+        {canEdit
+          ? <input
+              type="date"
+              className="aq-input"
+              style={{ maxWidth: 200 }}
+              defaultValue={task.net_payment_date ?? ''}
+              onChange={(e) => save('net_payment_date', e.target.value || null)}
+            />
+          : <span>{task.net_payment_date || '—'}</span>}
+      </Row>
+
       <Row label="Contract status">
         {canEdit
           ? <select
@@ -1845,14 +1993,121 @@ function OperationsPanel({
               onChange={(e) => save('contract_status', e.target.value || null)}
             >
               <option value="">— None —</option>
-              <option value="Pending">Pending</option>
-              <option value="On Process">On Process</option>
-              <option value="No Contract">No Contract</option>
-              <option value="Signed">Signed</option>
+              {CONTRACT_STATUSES.map((c) => <option key={c} value={c}>{labelFor(c)}</option>)}
             </select>
-          : <span>{task.contract_status || '—'}</span>}
+          : <span>{labelFor(task.contract_status)}</span>}
       </Row>
     </section>
+  );
+}
+
+/**
+ * A repeatable list of plain text values, stored as a Postgres text[].
+ *
+ * Quotation and invoice numbers are "always at least one, sometimes more".
+ * Each row commits on blur, so there's no Save button and no draft state to
+ * get out of sync with the row. Empty strings are stripped before saving, so
+ * an abandoned blank row never reaches the database.
+ */
+function StringList({
+  values, canEdit, placeholder, onChange,
+}: {
+  values: string[];
+  canEdit: boolean;
+  placeholder?: string;
+  onChange: (next: string[]) => void;
+}) {
+  // Local draft so "+ Add another" can show an empty box without writing an
+  // empty string to the database. Only non-empty values are ever saved.
+  const [draft, setDraft] = useState<string[]>(values.length ? values : ['']);
+  useEffect(() => {
+    setDraft(values.length ? values : ['']);
+  }, [values.join('\u0000')]);
+
+  if (!canEdit) {
+    return <span>{values.filter(Boolean).join(', ') || '—'}</span>;
+  }
+
+  const push = (next: string[]) => {
+    setDraft(next.length ? next : ['']);
+    onChange(next.map((v) => v.trim()).filter(Boolean));
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {draft.map((v, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <TextInput
+            defaultValue={v}
+            placeholder={placeholder}
+            onCommit={(raw) => { const n = [...draft]; n[i] = raw; push(n); }}
+            style={{ maxWidth: 240 }}
+          />
+          {draft.length > 1 && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-ghost"
+              style={{ padding: '4px 8px', fontSize: 12 }}
+              aria-label="Remove"
+              onClick={() => push(draft.filter((_, j) => j !== i))}
+            >✕</button>
+          )}
+        </div>
+      ))}
+      <button
+        type="button"
+        className="aq-btn aq-btn-ghost"
+        style={{ alignSelf: 'flex-start', padding: '2px 6px', fontSize: 12 }}
+        // Only offer another box once the last one has something in it —
+        // otherwise you can stack up blank rows that save to nothing.
+        disabled={draft[draft.length - 1].trim() === ''}
+        onClick={() => setDraft([...draft, ''])}
+      >+ Add another</button>
+    </div>
+  );
+}
+
+/** Checkbox group for a text[] column — a campaign can run on several platforms. */
+function MultiSelect({
+  options, selected, onChange,
+}: {
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  if (options.length === 0) {
+    return <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+      No platforms configured — add them in Settings.
+    </span>;
+  }
+  const toggle = (name: string) => {
+    onChange(selected.includes(name)
+      ? selected.filter((x) => x !== name)
+      : [...selected, name]);
+  };
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {options.map((name) => {
+        const on = selected.includes(name);
+        return (
+          <button
+            key={name}
+            type="button"
+            onClick={() => toggle(name)}
+            aria-pressed={on}
+            style={{
+              padding: '4px 10px', fontSize: 12, cursor: 'pointer',
+              borderRadius: 9999,
+              border: `1px solid ${on ? 'var(--aq-accent)' : 'var(--aq-border-light)'}`,
+              background: on ? 'var(--aq-accent-light)' : 'transparent',
+              color: 'var(--aq-text)',
+              fontWeight: on ? 700 : 400,
+              fontFamily: 'inherit',
+            }}
+          >{name}</button>
+        );
+      })}
+    </div>
   );
 }
 
