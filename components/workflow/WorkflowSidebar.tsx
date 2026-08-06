@@ -21,7 +21,10 @@ const NAV: NavItem[] = [
   // marketing-triage queue (different concept) is reached via the dashboard
   // "Pending triage" stat card.
   { id: 'inbox',     label: 'Inbox',      icon: 'inbox',    visibleTo: [] },
-  { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account'] },
+  // Operations is included: quotation/invoice/contract requests (migration 038)
+  // notify Ops, and All Tasks is how they browse to the campaign that owns the
+  // subtask they were pinged about.
+  { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account','operations'] },
   { id: 'my-tasks',  label: 'My Tasks',   icon: 'check',    visibleTo: [] },
   // Marketing Triage — tasks waiting for priority/service-type/key-account.
   // Marketing/admin/owner only. The dashboard "Pending triage" stat card
@@ -38,7 +41,7 @@ const NAV: NavItem[] = [
   { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'] },
   // Tracking Sheets — every campaign flagged with a tracking sheet (chosen at
   // triage via the "Tracking Sheet" subtask). Opens the ad/vendor grid.
-  { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account'] },
+  { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account','operations'] },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'] },
 ];
@@ -139,7 +142,10 @@ export function WorkflowSidebar({
                 <NavIcon name={n.icon} />
               </span>
               <span style={{ flex: 1 }}>{n.label}</span>
-              {n.id === 'inbox' && pendingCount && pendingCount > 0 ? (
+              {/* pendingCount is the marketing TRIAGE backlog, so it belongs on
+                  Marketing Inbox — it used to sit on the personal Inbox, where
+                  every role saw a number that had nothing to do with them. */}
+              {n.id === 'marketing-triage' && pendingCount && pendingCount > 0 ? (
                 <span style={{
                   background: 'var(--aq-accent)', color: '#fff',
                   fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 9999,
