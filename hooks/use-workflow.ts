@@ -110,6 +110,18 @@ export interface PMTask {
   /** Opt-in per campaign. Set true when "Tracking Sheet" is chosen at triage. */
   has_tracking: boolean;
 
+  // ── Parent task redesign (migration 042) — parent rows only ──────
+  /** Platforms the campaign runs on. Names, matching task_platforms. */
+  platforms: string[];
+  /** Free text required when ad_type is 'Multi Service'. */
+  ad_type_custom: string | null;
+  /** 'ready_for_review' | 'changes_needed' | 'approved' | 'hold' | 'cancelled' */
+  approval_stage: string | null;
+  /** Repeatable text boxes. At least one of each in the UI. */
+  quotation_numbers: string[];
+  invoice_numbers: string[];
+  net_payment_date: string | null;
+
   // ── Package Ad (migration 040) — parent rows only ─────────────────
   /** Run window for the whole package. Per-ad dates live on tracking rows. */
   package_start_date: string | null;
@@ -127,6 +139,35 @@ export interface PMTask {
   requested_at: string | null;
   requested_by: string | null;
   request_note: string | null;
+}
+
+// ── Parent task vocabularies (migration 042) ────────────────────────
+// Kept as const arrays so the UI dropdowns and the DB can't drift apart.
+
+/** Task status. 'todo' was renamed to 'pending' in migration 042. */
+export const TASK_STATUSES = ['pending', 'on_hold', 'done', 'cancelled'] as const;
+export type TaskStatus = typeof TASK_STATUSES[number];
+
+export const APPROVAL_STAGES = ['ready_for_review', 'changes_needed', 'approved', 'hold', 'cancelled'] as const;
+export type ApprovalStage = typeof APPROVAL_STAGES[number];
+
+/** Multi Service additionally requires ad_type_custom. */
+export const AD_TYPES = ['Home Ad', 'Store Visit', 'Multi Service'] as const;
+export type AdType = typeof AD_TYPES[number];
+export const AD_TYPE_NEEDS_DETAIL = 'Multi Service';
+
+export const CONTRACT_STATUSES = ['no_contract', 'po', 'pending', 'on_process', 'done', 'signed_attached'] as const;
+export type ContractStatus = typeof CONTRACT_STATUSES[number];
+
+/** Human labels for the snake_case values stored in the database. */
+export const LABELS: Record<string, string> = {
+  pending: 'Pending', on_hold: 'On hold', done: 'Done', cancelled: 'Cancelled',
+  ready_for_review: 'Ready for review', changes_needed: 'Changes needed', approved: 'Approved', hold: 'Hold',
+  no_contract: 'No contract', po: 'PO', on_process: 'On process', signed_attached: 'Signed & attached',
+};
+export function labelFor(value: string | null | undefined): string {
+  if (!value) return '—';
+  return LABELS[value] ?? value;
 }
 
 // ── Typed subtasks (migration 038) ──────────────────────────────────
@@ -450,6 +491,27 @@ export function useTaskSources(workspaceId: string | null) {
   return { items, loading, refetch: fetch };
 }
 
+/** Platform options for the campaign multi-select (migration 042). */
+export function useTaskPlatforms(workspaceId: string | null) {
+  const [items, setItems] = useState<TaskSource[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('task_platforms')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('position', { ascending: true });
+    if (error) logSbError('useTaskPlatforms', error, { workspaceId });
+    setItems((data || []) as TaskSource[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
 export function useClientCategories(workspaceId: string | null) {
   const [items, setItems] = useState<ClientCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -631,7 +693,7 @@ export async function createSalesTask(input: {
       description: input.details ?? null,
       creator_id: input.creator_id,
       stage: 'pending_marketing',
-      status: 'todo',
+      status: 'pending',
     })
     .select()
     .single();
@@ -721,7 +783,7 @@ export async function triageMarketingTask(input: {
       description: s.description ?? null,
       position: s.position,
       stage: 'in_progress' as TaskStage,
-      status: 'todo',
+      status: 'pending',
       priority: input.priority,
       creator_id: input.creator_id,
     }));
@@ -776,7 +838,7 @@ export async function createSubtask(input: {
       description: input.description ?? null,
       position: nextPos,
       stage: 'in_progress' as TaskStage,
-      status: 'todo',
+      status: 'pending',
       priority: input.priority ?? 'medium',
       creator_id: input.creator_id,
       subtask_kind: input.kind,
@@ -795,6 +857,38 @@ export async function createSubtask(input: {
   }
 
   return data as PMTask;
+}
+
+// ── Campaign money rollup (migration 042) ───────────────────────────
+
+export interface CampaignMoney {
+  /** Sum of every subtask's price — the "with breakdown" total. */
+  breakdown: number;
+  /** Sum of every subtask's net_amount — what the vendors actually take. */
+  net: number;
+  /** breakdown - net. Matches what aq_gross means per subtask. */
+  aqGross: number;
+  /** How many subtasks carried a price or a net, so the UI can say "from N vendors". */
+  vendorCount: number;
+}
+
+/**
+ * Roll the per-vendor figures up to the campaign. Pure function over the
+ * subtasks already loaded by useTaskSubtasks — no extra query, and it
+ * recomputes the moment a vendor line changes.
+ */
+export function rollupCampaignMoney(subtasks: PMTask[]): CampaignMoney {
+  let breakdown = 0, net = 0, vendorCount = 0;
+  for (const s of subtasks) {
+    const p = Number(s.price);
+    const n = Number(s.net_amount);
+    const hasP = Number.isFinite(p) && s.price != null;
+    const hasN = Number.isFinite(n) && s.net_amount != null;
+    if (hasP) breakdown += p;
+    if (hasN) net += n;
+    if (hasP || hasN) vendorCount += 1;
+  }
+  return { breakdown, net, aqGross: breakdown - net, vendorCount };
 }
 
 // ── Package Ad naming (Phase 5) ─────────────────────────────────────
@@ -869,7 +963,7 @@ export async function ensureAdSubtasks(input: {
     title: `${SUBTASK_KIND_LABELS.ad} ${have + i + 1}`,
     position: nextPos++,
     stage: 'in_progress' as TaskStage,
-    status: 'todo',
+    status: 'pending',
     priority: input.priority ?? 'medium',
     creator_id: input.creator_id,
     subtask_kind: 'ad',
@@ -1972,6 +2066,8 @@ export function useLegacyVendors() {
 export interface ClientRow {
   id: string;
   company_name: string;
+  /** Auto-fills pm_tasks.client_category_id when this client is picked (042). */
+  client_category_id: string | null;
   cr_number: string | null;
   vat_number: string | null;
   signatory_name: string | null;
@@ -1998,7 +2094,7 @@ export function useClients() {
   const fetch = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id')
+      .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id')
       .order('company_name', { ascending: true });
     if (error) logSbError('useClients', error);
     setClients((data || []) as ClientRow[]);
