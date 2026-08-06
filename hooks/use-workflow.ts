@@ -129,13 +129,14 @@ export interface PMTask {
   /** Run window for the whole package. Per-ad dates live on tracking rows. */
   package_start_date: string | null;
   package_end_date: string | null;
-  /** How many ads the package is sold as. Setting it spawns that many ad subtasks. */
+  /** How many ads the package is sold as. Setting it spawns that many vendor subtasks. */
   ad_quantity: number | null;
 
   // ── Typed subtasks + request tracking (migration 038) ─────────────
   /** Identifies a subtask's purpose so it can show its own fields.
-   *  e.g. 'quotation' | 'invoice' | 'contract' | 'payment' | 'tracking'
-   *  | 'ad' | null (generic). Null on parents. */
+   *  'vendor' | null (generic) on anything created now. Rows made before the
+   *  redesign may still read 'quotation' | 'invoice' | 'contract' | 'payment'
+   *  | 'tracking' | 'ad'. Null on parents. */
   subtask_kind: string | null;
   /** 'not_requested' | 'requested' | 'fulfilled' */
   request_status: string | null;
@@ -212,26 +213,66 @@ export function labelFor(value: string | null | undefined): string {
 
 // ── Typed subtasks (migration 038) ──────────────────────────────────
 
-/** The kinds a subtask can be. `null` = a generic template-spawned step. */
-export const SUBTASK_KINDS = ['quotation', 'invoice', 'contract', 'payment', 'tracking', 'ad'] as const;
+/**
+ * The kinds a subtask can be CREATED as. `null` = a generic template-spawned step.
+ *
+ * There is exactly one. Quotation, invoice, contracts/vendoring and payment
+ * confirmation all moved onto the parent task (migrations 042/044), and the
+ * tracking sheet became a button on the parent rather than a step. What is
+ * left is the thing a subtask is actually for: one vendor on the campaign.
+ *
+ * Legacy rows still carry the retired values — see LEGACY_SUBTASK_KIND_LABELS.
+ */
+export const SUBTASK_KINDS = ['vendor'] as const;
 export type SubtaskKind = typeof SUBTASK_KINDS[number];
-
-/** Kinds that render the lean RequestCard instead of the generic details form. */
-export const REQUEST_SUBTASK_KINDS: SubtaskKind[] = ['quotation', 'invoice', 'contract'];
-
-export function isRequestSubtaskKind(kind: string | null | undefined): boolean {
-  return !!kind && (REQUEST_SUBTASK_KINDS as string[]).includes(kind);
-}
 
 /** Default title used when a subtask of this kind is added by hand. */
 export const SUBTASK_KIND_LABELS: Record<SubtaskKind, string> = {
+  vendor: 'Vendor',
+};
+
+/**
+ * Kinds retired from the picker. Migration 047 renames 'ad' → 'vendor', but
+ * the rest may still sit on rows created before the redesign, so the UI has
+ * to be able to name them. Nothing new is ever created with these.
+ */
+export const LEGACY_SUBTASK_KIND_LABELS: Record<string, string> = {
   quotation: 'Quotation',
   invoice: 'Invoice',
   contract: 'Contracts / Vendoring',
   payment: 'Payment Confirmation',
   tracking: 'Tracking Sheet',
-  ad: 'Ad',
+  ad: 'Vendor',
 };
+
+/** Display name for any subtask_kind, current or retired. */
+export function subtaskKindLabel(kind: string | null | undefined): string {
+  if (!kind) return '';
+  return (SUBTASK_KIND_LABELS as Record<string, string>)[kind]
+    ?? LEGACY_SUBTASK_KIND_LABELS[kind]
+    ?? kind;
+}
+
+/**
+ * Values that mean "this subtask is a vendor". 'ad' is the pre-047 spelling;
+ * it is matched everywhere so a database that has not been migrated yet still
+ * renames, rolls up and counts its vendors correctly.
+ */
+export const VENDOR_SUBTASK_KINDS = ['vendor', 'ad'] as const;
+
+export function isVendorSubtaskKind(kind: string | null | undefined): boolean {
+  return !!kind && (VENDOR_SUBTASK_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * Kinds that render the lean RequestCard instead of the generic details form.
+ * Retired from the picker, but old rows must still render properly.
+ */
+export const REQUEST_SUBTASK_KINDS: string[] = ['quotation', 'invoice', 'contract'];
+
+export function isRequestSubtaskKind(kind: string | null | undefined): boolean {
+  return !!kind && REQUEST_SUBTASK_KINDS.includes(kind);
+}
 
 // ── Tracking sheet types (migration 036) ────────────────────────────
 
@@ -880,11 +921,9 @@ export async function createSubtask(input: {
     .single();
   if (error) { logSbError('createSubtask', error, { parent: input.parent_task_id }); throw error; }
 
-  // A hand-added Tracking Sheet subtask should switch the sheet on for the
-  // campaign, the same way choosing it at triage does.
-  if (input.kind === 'tracking') {
-    await supabase.from('pm_tasks').update({ has_tracking: true }).eq('id', input.parent_task_id);
-  }
+  // has_tracking is deliberately NOT touched here any more. The tracking
+  // sheet is a toggle on the parent task now, not a subtask kind, so a
+  // subtask must never switch it on or off behind the user's back.
 
   return data as PMTask;
 }
@@ -1016,40 +1055,42 @@ export function rollupCampaignMoney(subtasks: PMTask[]): CampaignMoney {
 
 // ── Package Ad naming (Phase 5) ─────────────────────────────────────
 
-/** The name an ad subtask gets once its vendor is known: "{brand} — {vendor}". */
-export function adSubtaskTitle(brandName: string | null, vendorName: string | null): string {
+/** The name a vendor subtask gets once its vendor is known: "{brand} — {vendor}". */
+export function vendorSubtaskTitle(brandName: string | null, vendorName: string | null): string {
   const brand = (brandName ?? '').trim();
   const vendor = (vendorName ?? '').trim();
   if (brand && vendor) return `${brand} — ${vendor}`;
   if (vendor) return vendor;
-  if (brand) return `${brand} — Ad`;
-  return SUBTASK_KIND_LABELS.ad;
+  if (brand) return `${brand} — ${SUBTASK_KIND_LABELS.vendor}`;
+  return SUBTASK_KIND_LABELS.vendor;
 }
 
 /**
- * Whether an ad subtask's title is still machine-generated and therefore safe
- * to overwrite. A name somebody typed by hand is left alone.
+ * Whether a vendor subtask's title is still machine-generated and therefore
+ * safe to overwrite. A name somebody typed by hand is left alone.
  *
- * Auto titles are: "Ad", "Ad 3", or anything previously auto-named for this
- * brand ("{brand} — …").
+ * Auto titles are: "Vendor", "Vendor 3", or anything previously auto-named
+ * for this brand ("{brand} — …"). The pre-047 spellings "Ad" / "Ad 3" /
+ * "{brand} — Ad" count too, so renaming still works on rows created before
+ * the rename and on a database where migration 047 has not run yet.
  */
-export function isAutoAdTitle(title: string | null, brandName: string | null): boolean {
+export function isAutoVendorTitle(title: string | null, brandName: string | null): boolean {
   const t = (title ?? '').trim();
   if (!t) return true;
-  if (t === SUBTASK_KIND_LABELS.ad) return true;
-  if (/^Ad \d+$/i.test(t)) return true;
+  if (t === SUBTASK_KIND_LABELS.vendor || t === 'Ad') return true;
+  if (/^(?:Vendor|Ad) \d+$/i.test(t)) return true;
   const brand = (brandName ?? '').trim();
   if (brand && t.startsWith(`${brand} —`)) return true;
   return false;
 }
 
 /**
- * Top the parent up to `targetCount` ad subtasks, appending at the end of the
- * sibling order. Never deletes: lowering the quantity leaves existing ads
+ * Top the parent up to `targetCount` vendor subtasks, appending at the end of
+ * the sibling order. Never deletes: lowering the quantity leaves existing ones
  * alone, because they may already carry a vendor, a budget and a contract
  * request. Returns how many were created.
  */
-export async function ensureAdSubtasks(input: {
+export async function ensureVendorSubtasks(input: {
   parent_task_id: string;
   workspace_id: string;
   creator_id: string;
@@ -1064,8 +1105,9 @@ export async function ensureAdSubtasks(input: {
     .from('pm_tasks')
     .select('id, position')
     .eq('parent_task_id', input.parent_task_id)
-    .eq('subtask_kind', 'ad');
-  if (exErr) { logSbError('ensureAdSubtasks:count', exErr, { parent: input.parent_task_id }); throw exErr; }
+    // Both spellings: a workspace that has not run 047 yet still counts right.
+    .in('subtask_kind', VENDOR_SUBTASK_KINDS as unknown as string[]);
+  if (exErr) { logSbError('ensureVendorSubtasks:count', exErr, { parent: input.parent_task_id }); throw exErr; }
 
   const have = existing?.length ?? 0;
   const missing = target - have;
@@ -1083,46 +1125,32 @@ export async function ensureAdSubtasks(input: {
     workspace_id: input.workspace_id,
     parent_task_id: input.parent_task_id,
     // Numbered from the existing count so re-topping-up doesn't reuse labels.
-    title: `${SUBTASK_KIND_LABELS.ad} ${have + i + 1}`,
+    title: `${SUBTASK_KIND_LABELS.vendor} ${have + i + 1}`,
     position: nextPos++,
     stage: 'in_progress' as TaskStage,
     status: 'pending',
     priority: input.priority ?? 'medium',
     creator_id: input.creator_id,
-    subtask_kind: 'ad',
+    subtask_kind: 'vendor',
     request_status: 'not_requested',
   }));
 
   const { error } = await supabase.from('pm_tasks').insert(rows);
-  if (error) { logSbError('ensureAdSubtasks:insert', error, { parent: input.parent_task_id }); throw error; }
+  if (error) { logSbError('ensureVendorSubtasks:insert', error, { parent: input.parent_task_id }); throw error; }
   return missing;
 }
 
 /**
- * Remove one subtask. Wraps deleteTask so the parent's has_tracking flag stays
- * honest when the last tracking subtask goes away.
+ * Remove one subtask.
+ *
+ * This used to clear the parent's has_tracking flag when the last subtask of
+ * kind 'tracking' was deleted. That is now actively wrong: the tracking sheet
+ * is enabled by a button on the parent, so deleting a leftover pre-redesign
+ * "Tracking Sheet" subtask would silently switch off a sheet that may already
+ * be published to the client. Deleting a subtask deletes a subtask, nothing more.
  */
 export async function removeSubtask(subtaskId: string) {
-  const { data: row } = await supabase
-    .from('pm_tasks')
-    .select('parent_task_id, subtask_kind')
-    .eq('id', subtaskId)
-    .maybeSingle();
-
   await deleteTask(subtaskId);
-
-  const parentId = (row as any)?.parent_task_id as string | null | undefined;
-  if (parentId && (row as any)?.subtask_kind === 'tracking') {
-    const { data: siblings } = await supabase
-      .from('pm_tasks')
-      .select('id')
-      .eq('parent_task_id', parentId)
-      .eq('subtask_kind', 'tracking')
-      .limit(1);
-    if (!siblings || !siblings.length) {
-      await supabase.from('pm_tasks').update({ has_tracking: false }).eq('id', parentId);
-    }
-  }
 }
 
 /** Member / key account: update a task (status / completed / etc). */
