@@ -10,7 +10,8 @@ import {
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
   autoCreateContractRequestForSubtask,
-  createSubtask, removeSubtask,
+  createSubtask, removeSubtask, ensureAdSubtasks,
+  adSubtaskTitle, isAutoAdTitle,
   SUBTASK_KINDS, SUBTASK_KIND_LABELS, isRequestSubtaskKind,
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
@@ -270,6 +271,59 @@ export function TaskDetailPanel({
     });
   };
 
+  // ── Phase 5: Package Ad — run window + how many ads ─────────────────
+  const adSubtasks = useMemo(
+    () => subtasks.filter((s) => s.subtask_kind === 'ad'),
+    [subtasks],
+  );
+  const isPackageAd = useMemo(
+    () => taskServiceTypes.some((s) => (s.name ?? '').trim().toLowerCase() === 'package ad'),
+    [taskServiceTypes],
+  );
+  const [qtyDraft, setQtyDraft] = useState('');
+  const [packageSaving, setPackageSaving] = useState(false);
+  useEffect(() => {
+    setQtyDraft(task?.ad_quantity != null ? String(task.ad_quantity) : '');
+  }, [task?.id, task?.ad_quantity]);
+
+  const patchPackageFields = async (fields: Partial<PMTask>) => {
+    if (!task) return;
+    setPackageSaving(true); setError('');
+    try {
+      await updateTaskFields(task.id, fields);
+      await refetchTask();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setPackageSaving(false); }
+  };
+
+  const handleSaveQuantity = async () => {
+    if (!task) return;
+    const n = Math.floor(Number(qtyDraft));
+    if (!Number.isFinite(n) || n < 0) { setError('Quantity must be a whole number.'); return; }
+    if (!task.workspace_id) { setError('Cannot add ads — task has no workspace.'); return; }
+    setPackageSaving(true); setError('');
+    try {
+      await updateTaskFields(task.id, { ad_quantity: n || null });
+      // Tops up to n; never deletes, because an existing ad may already carry
+      // a vendor, a budget and a fired contract request.
+      const created = await ensureAdSubtasks({
+        parent_task_id: task.id,
+        workspace_id: task.workspace_id,
+        creator_id: currentUserId,
+        target_count: n,
+        priority: task.priority,
+      });
+      await refetchTask();
+      await refetchSubs();
+      onChanged?.();
+      if (created === 0 && n < adSubtasks.length) {
+        setError(`Saved. There are still ${adSubtasks.length} ad subtasks — remove the extra ones by hand if that's intended.`);
+      }
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setPackageSaving(false); }
+  };
+
   // ── Phase 2: add / remove a single subtask on the parent ────────────
   const handleAddSubtask = async () => {
     if (!task || !addKind) return;
@@ -411,7 +465,22 @@ export function TaskDetailPanel({
     setVendorSaving(true); setError('');
     try {
       const numericId = newId ? Number(newId) : null;
-      await updateTaskFields(task.id, { vendor_id: numericId } as any);
+      const patch: Record<string, unknown> = { vendor_id: numericId };
+
+      // Phase 5: an ad subtask is named "{brand} — {vendor}". Do it in the
+      // SAME update as vendor_id so the rename lands before the auto-fire
+      // effect below creates the contract request — that request copies the
+      // title into its `details`, so renaming afterwards would be too late.
+      // A title somebody typed by hand is never overwritten.
+      if (task.subtask_kind === 'ad' && numericId != null) {
+        const vendorName = vendors.find((v) => v.id === numericId)?.name ?? null;
+        const brand = parentTask?.brand_name ?? task.brand_name ?? null;
+        if (isAutoAdTitle(task.title, brand)) {
+          patch.title = adSubtaskTitle(brand, vendorName);
+        }
+      }
+
+      await updateTaskFields(task.id, patch as any);
       await refetchTask();
       // Auto-fire happens after the next refetch when state has the new vendor_id.
     } catch (e: any) { setError(e?.message ?? String(e)); }
@@ -867,6 +936,94 @@ export function TaskDetailPanel({
                   profiles={profiles}
                   canEdit={canEditMarketing}
                 />
+              )}
+
+              {/* ── Package Ad (Phase 5) ────────────────────────────────
+                  Run window for the whole package + how many ads it was sold
+                  as. Per-ad dates stay in the tracking sheet; per-ad vendor and
+                  price stay on each ad subtask. Marketing's half. */}
+              {!isSubtaskView && (isPackageAd || adSubtasks.length > 0) && (
+                <section className="aq-card" style={{ padding: 18 }}>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                    marginBottom: 12, gap: 12, flexWrap: 'wrap',
+                  }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>📦 Package</h3>
+                    <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                      {adSubtasks.length} ad{adSubtasks.length === 1 ? '' : 's'}
+                      {task.ad_quantity != null ? ` of ${task.ad_quantity} sold` : ''}
+                      {task.ad_quantity != null && adSubtasks.length !== task.ad_quantity && (
+                        <strong style={{ color: 'var(--aq-warning, #b45309)' }}> · mismatch</strong>
+                      )}
+                    </span>
+                  </div>
+
+                  <div style={SALES_ROW}>
+                    <span style={SALES_LABEL}>Runs from</span>
+                    {canEditMarketing ? (
+                      <input
+                        className="aq-input"
+                        type="date"
+                        style={{ maxWidth: 200 }}
+                        value={task.package_start_date ?? ''}
+                        disabled={packageSaving}
+                        onChange={(e) => patchPackageFields({ package_start_date: e.target.value || null })}
+                      />
+                    ) : (
+                      <span>{task.package_start_date ?? '—'}</span>
+                    )}
+                  </div>
+
+                  <div style={SALES_ROW}>
+                    <span style={SALES_LABEL}>Runs to</span>
+                    {canEditMarketing ? (
+                      <input
+                        className="aq-input"
+                        type="date"
+                        style={{ maxWidth: 200 }}
+                        value={task.package_end_date ?? ''}
+                        min={task.package_start_date ?? undefined}
+                        disabled={packageSaving}
+                        onChange={(e) => patchPackageFields({ package_end_date: e.target.value || null })}
+                      />
+                    ) : (
+                      <span>{task.package_end_date ?? '—'}</span>
+                    )}
+                  </div>
+
+                  <div style={SALES_ROW}>
+                    <span style={SALES_LABEL}>Number of ads</span>
+                    {canEditMarketing ? (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input
+                          className="aq-input"
+                          style={{ maxWidth: 100 }}
+                          inputMode="numeric"
+                          value={qtyDraft}
+                          placeholder="0"
+                          disabled={packageSaving}
+                          onChange={(e) => setQtyDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                        />
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-secondary"
+                          disabled={packageSaving || qtyDraft.trim() === (task.ad_quantity != null ? String(task.ad_quantity) : '')}
+                          onClick={handleSaveQuantity}
+                        >{packageSaving ? 'Saving…' : 'Save & create ads'}</button>
+                      </div>
+                    ) : (
+                      <span>{task.ad_quantity ?? '—'}</span>
+                    )}
+                  </div>
+
+                  {canEditMarketing && (
+                    <p style={{ marginTop: 10, fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                      Saving tops the campaign up to that many ad subtasks. Lowering the number never
+                      deletes anything — remove ads individually below, since one may already have a
+                      vendor and a contract request against it.
+                    </p>
+                  )}
+                </section>
               )}
 
               {/* Subtasks list — clickable rows, no checklist.
