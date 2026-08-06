@@ -1,0 +1,63 @@
+# Keeps the FastAPI backend awake during working hours.
+#
+# Render's Free instance type spins a service down after 15 minutes with no
+# inbound traffic; the next request then waits ~30-60s while it boots. That
+# cold start is what makes contract generation and vendor file previews feel
+# broken. This pings the health endpoint often enough that the service never
+# goes idle while anyone is actually working.
+#
+# Why this lives in the FRONTEND repo, not aq-backend:
+#   1. aq-frontend-pm is public, so Actions minutes are unlimited. aq-backend
+#      is private, where the free allowance is 2000 min/month — a pinger on
+#      this cadence would eat ~1500 of it and starve everything else.
+#   2. GitHub disables scheduled workflows in a repo after 60 days without
+#      activity. This repo is committed to constantly; aq-backend is not.
+#
+# Deliberately NOT 24/7: 750 free instance-hours per Render workspace per
+# month, and a calendar month is ~730 hours. Round-the-clock warming spends
+# essentially the entire allowance, and going over suspends every free
+# service until the next month. Working hours costs ~300 hours instead.
+#
+# The first request of the morning still pays one cold start. That is the
+# deal being made here.
+
+name: keep-backend-warm
+
+on:
+  schedule:
+    # 04:00-17:59 UTC = 07:00-20:59 Riyadh, Sunday-Thursday.
+    # GitHub cron is UTC only and has no timezone option.
+    - cron: '*/10 4-17 * * 0-4'
+  workflow_dispatch:        # run by hand after a deploy
+
+concurrency:
+  group: keep-backend-warm
+  cancel-in-progress: true  # pinging is idempotent; never queue a backlog
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Ping the backend health endpoint
+        env:
+          # The LIVE service. Do not point this at aq-backend-p5zd or
+          # aq-backend-pp7m — both are retired, and warming a dead host while
+          # the real one sleeps is exactly the bug this replaces.
+          URL: https://aq-backend-1.onrender.com/api/health
+        run: |
+          set -u
+          code=000
+          # Three pings ~3 min apart. GitHub's scheduler is routinely late by
+          # 5-15 min, so one ping per run would leave gaps wider than Render's
+          # 15-minute idle window. Spreading them keeps the real gap ~4 min.
+          for i in 1 2 3; do
+            code=$(curl -sS -o /tmp/body -w '%{http_code}' \
+                        --max-time 120 --retry 2 --retry-delay 10 \
+                        "$URL" || echo 000)
+            echo "ping $i -> HTTP $code $(head -c 200 /tmp/body 2>/dev/null)"
+            [ "$i" -lt 3 ] && sleep 180
+          done
+          # Only the last ping decides the run, so a single blip mid-deploy
+          # doesn't spam failure mail.
+          test "$code" = "200"
