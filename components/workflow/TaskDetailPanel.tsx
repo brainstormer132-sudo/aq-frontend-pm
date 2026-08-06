@@ -6,6 +6,7 @@ import {
   useLegacyVendors,
   useTaskSources, useClientCategories,
   useClients, useClientBrands,
+  useContractRequests, type ContractKind,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
@@ -80,10 +81,17 @@ export function TaskDetailPanel({
   const { clients } = useClients();
   const { brands } = useClientBrands(task?.client_id ?? null);
 
+  // Contract requests raised against THIS task (Phase 6). The parent card
+  // reads the client ones; vendor requests are auto-fired from subtasks.
+  const { items: contractRequests, refetch: refetchContractRequests } =
+    useContractRequests(task?.workspace_id ?? null, task?.id ?? null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [commentText, setCommentText] = useState('');
   const [requestOpen, setRequestOpen] = useState(false);
+  // Which side the contract modal opens on — the client card sets 'client'.
+  const [requestKind, setRequestKind] = useState<ContractKind>('vendor');
   const [trackingOpen, setTrackingOpen] = useState(false);
   // "+ Add subtask" on the parent (Phase 2).
   const [addKind, setAddKind] = useState<SubtaskKind | ''>('');
@@ -270,6 +278,18 @@ export function TaskDetailPanel({
       brand_name: b?.brand_name ?? null,
     });
   };
+
+  // ── Phase 6: the campaign's contract with the CLIENT ────────────────
+  // Ordered newest-first by the hook, so [0] is the live one.
+  const clientContractRequests = useMemo(
+    () => contractRequests.filter((r) => r.request_kind === 'client'),
+    [contractRequests],
+  );
+  const latestClientContract = clientContractRequests[0] ?? null;
+  // Only offer a fresh request when there isn't one in flight. A rejected or
+  // cancelled request is a dead end, so raising another is the right move.
+  const canRaiseClientContract = !latestClientContract
+    || ['rejected', 'cancelled'].includes(String(latestClientContract.status));
 
   // ── Phase 5: Package Ad — run window + how many ads ─────────────────
   const adSubtasks = useMemo(
@@ -588,7 +608,7 @@ export function TaskDetailPanel({
                   </button>
                 )}
                 {!isSubtaskView && canRequestContract && (
-                  <button className="aq-btn aq-btn-secondary" onClick={() => setRequestOpen(true)}>
+                  <button className="aq-btn aq-btn-secondary" onClick={() => { setRequestKind('vendor'); setRequestOpen(true); }}>
                     Request contract
                   </button>
                 )}
@@ -936,6 +956,80 @@ export function TaskDetailPanel({
                   profiles={profiles}
                   canEdit={canEditMarketing}
                 />
+              )}
+
+              {/* ── Client contract (Phase 6) ───────────────────────────
+                  The campaign's contract with the CLIENT. Vendor contracts
+                  are a per-subtask thing and auto-fire when a vendor + budget
+                  are set, so they deliberately don't appear here. */}
+              {!isSubtaskView && (
+                <section className="aq-card" style={{ padding: 18 }}>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                    marginBottom: 12, gap: 12, flexWrap: 'wrap',
+                  }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>Client contract</h3>
+                    <span className={`aq-badge ${
+                      !latestClientContract ? 'aq-badge-muted'
+                      : latestClientContract.status === 'generated' ? 'aq-badge-success'
+                      : latestClientContract.status === 'approved' ? 'aq-badge-info'
+                      : latestClientContract.status === 'pending' ? 'aq-badge-warning'
+                      : 'aq-badge-muted'
+                    }`}>
+                      {latestClientContract ? latestClientContract.status : 'not requested'}
+                    </span>
+                  </div>
+
+                  {latestClientContract ? (
+                    <>
+                      <FieldRow
+                        label="Requested"
+                        value={new Date(latestClientContract.created_at).toLocaleString()}
+                      />
+                      <FieldRow label="Client" value={latestClientContract.client_name ?? '—'} />
+                      <FieldRow
+                        label="Amount"
+                        value={latestClientContract.amount != null
+                          ? `SAR ${Number(latestClientContract.amount).toLocaleString()}`
+                          : '—'}
+                      />
+                      {latestClientContract.generated_contract_id && (
+                        <FieldRow label="Contract" value={latestClientContract.generated_contract_id} />
+                      )}
+                      {latestClientContract.notes && (
+                        <FieldRow label="Notes" value={latestClientContract.notes} />
+                      )}
+                      {clientContractRequests.length > 1 && (
+                        <p style={{ marginTop: 8, fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                          {clientContractRequests.length} client contract requests on this campaign —
+                          the newest is shown. The rest are in the Contracts view.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                      No client contract has been requested for this campaign yet.
+                    </p>
+                  )}
+
+                  <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {canRequestContract && canRaiseClientContract && (
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-primary"
+                        onClick={() => { setRequestKind('client'); setRequestOpen(true); }}
+                        style={{ padding: '6px 12px', fontSize: 13 }}
+                      >
+                        {latestClientContract ? 'Request again' : 'Request client contract'}
+                      </button>
+                    )}
+                    {latestClientContract && !canRaiseClientContract && (
+                      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                        Legal has it. Approval and generation happen in the Contracts view.
+                      </span>
+                    )}
+                  </div>
+                </section>
               )}
 
               {/* ── Package Ad (Phase 5) ────────────────────────────────
@@ -1313,7 +1407,12 @@ export function TaskDetailPanel({
                 task={task}
                 currentUserId={currentUserId}
                 onClose={() => setRequestOpen(false)}
-                onCreated={() => { setRequestOpen(false); onChanged?.(); }}
+                defaultKind={requestKind}
+                onCreated={async () => {
+                  setRequestOpen(false);
+                  await refetchContractRequests();
+                  onChanged?.();
+                }}
               />
             )}
 
