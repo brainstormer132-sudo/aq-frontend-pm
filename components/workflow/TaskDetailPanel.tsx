@@ -27,6 +27,7 @@ import {
 } from '@/hooks/use-workflow';
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
+import { AddVendorsModal } from './AddVendorsModal';
 import { TrackingSheetPanel } from './TrackingSheetPanel';
 import { SearchablePicker } from './SearchablePicker';
 
@@ -106,8 +107,7 @@ export function TaskDetailPanel({
   const [trackingOpen, setTrackingOpen] = useState(false);
   // "+ Add subtask" on the parent (Phase 2).
   const [addKind, setAddKind] = useState<SubtaskKind | ''>('');
-  /** Kept as a string so the field can be cleared while typing. */
-  const [addVendorCount, setAddVendorCount] = useState('1');
+  const [addVendorsOpen, setAddVendorsOpen] = useState(false);
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [removingSubtaskId, setRemovingSubtaskId] = useState<string | null>(null);
 
@@ -438,20 +438,11 @@ export function TaskDetailPanel({
     setAddingSubtask(true); setError('');
     try {
       if (kind === 'vendor') {
-        // Bulk path. ensureVendorSubtasks tops up TO a target, so the target
-        // is what we already have plus what was asked for — otherwise asking
-        // for 3 when 2 exist would create only 1.
-        const asked = Math.floor(Number(addVendorCount));
-        const n = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 50) : 1;
-        await ensureVendorSubtasks({
-          parent_task_id: task.id,
-          workspace_id: task.workspace_id,
-          creator_id: currentUserId,
-          target_count: vendorSubtasks.length + n,
-          brand_name: task.brand_name,
-          priority: task.priority,
-        });
-        setAddVendorCount('1');
+        // Vendors go through the popup — a batch of 50 shares an ad type,
+        // a platform and a price, and setting those once is the whole point.
+        setAddVendorsOpen(true);
+        setAddingSubtask(false);
+        return;
       } else {
         await createSubtask({
           parent_task_id: task.id,
@@ -1488,25 +1479,6 @@ export function TaskDetailPanel({
                         })}
                       </select>
 
-                      {/* How many vendors to add at once. Package Ads are sold
-                          in tens, and clicking Add ten times is not a workflow. */}
-                      {addKind === 'vendor' && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-                          <span style={{ color: 'var(--aq-text-muted)' }}>How many</span>
-                          <input
-                            className="aq-input"
-                            type="number"
-                            min={1}
-                            max={50}
-                            value={addVendorCount}
-                            disabled={addingSubtask}
-                            onChange={(e) => setAddVendorCount(e.target.value)}
-                            style={{ width: 72, padding: '6px 8px', fontSize: 13 }}
-                            aria-label="How many vendors to add"
-                          />
-                        </label>
-                      )}
-
                       <button
                         type="button"
                         className="aq-btn aq-btn-primary"
@@ -1515,9 +1487,8 @@ export function TaskDetailPanel({
                         style={{ padding: '6px 12px', fontSize: 13 }}
                       >
                         {addingSubtask ? 'Adding…'
-                          : addKind === 'vendor'
-                            ? `+ Add ${Math.max(1, Math.floor(Number(addVendorCount) || 1))} vendor${Math.max(1, Math.floor(Number(addVendorCount) || 1)) === 1 ? '' : 's'}`
-                            : '+ Add subtask'}
+                          : addKind === 'vendor' ? '+ Add vendors…'
+                          : '+ Add subtask'}
                       </button>
                     </div>
                   )}
@@ -1757,6 +1728,35 @@ export function TaskDetailPanel({
                 brandName={task.brand_name}
                 role={role}
                 onClose={() => setTrackingOpen(false)}
+              />
+            )}
+
+            {addVendorsOpen && task.workspace_id && (
+              <AddVendorsModal
+                open={addVendorsOpen}
+                onClose={() => setAddVendorsOpen(false)}
+                parentTaskId={task.id}
+                workspaceId={task.workspace_id}
+                currentUserId={currentUserId}
+                brandName={task.brand_name}
+                priority={task.priority}
+                existingVendorCount={vendorSubtasks.length}
+                taskPlatforms={taskPlatforms}
+                onCreated={async (count, trackable) => {
+                  // Influencer / UGC batches need the sheet on, otherwise
+                  // ensureTrackingRowForVendor no-ops when the vendors are
+                  // assigned and the rows never appear.
+                  if (trackable && !task.has_tracking) {
+                    try {
+                      await updateTaskFields(task.id, { has_tracking: true } as any);
+                    } catch { /* the vendors matter more than the sheet flag */ }
+                  }
+                  setAddKind('');
+                  await refetchSubs();
+                  await refetchTask();
+                  onChanged?.();
+                  setPublishNote(`${count} vendor${count === 1 ? '' : 's'} added.`);
+                }}
               />
             )}
           </>
