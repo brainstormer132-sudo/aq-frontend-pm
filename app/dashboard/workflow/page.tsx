@@ -5,7 +5,9 @@ import { createClient } from '@/lib/supabase-browser';
 import { withBase } from '@/lib/paths';
 import {
   useMyRole, useServiceTypes, useWorkspaceProfiles, useWorkflowTasks,
+  displayName, needsRealName,
 } from '@/hooks/use-workflow';
+import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
 import { MarketingInbox } from '@/components/workflow/MarketingInbox';
@@ -99,10 +101,22 @@ export default function WorkflowPage() {
         localStorage.removeItem('aq_pending_invite');
         window.history.replaceState({}, '', withBase('/dashboard/workflow'));
       }
+      // Read the name from the PROFILE, not from auth metadata.
+      //
+      // This used to fall back to `u.email`, which is how several people
+      // ended up displayed to their colleagues as an email address: the
+      // fallback got written into profiles.full_name at signup and every
+      // view then rendered it faithfully. An address is not a name — if
+      // there isn't one, say so and prompt for it (SetYourNameCard).
+      const { data: myProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', u.id)
+        .maybeSingle();
       setUser({
         id: u.id,
         email: u.email ?? '',
-        full_name: u.user_metadata?.full_name || u.email || 'User',
+        full_name: displayName(myProfile as any),
       });
       const { data: memberships, error: mErr } = await supabase
         .from('workspace_members')
@@ -266,6 +280,18 @@ export default function WorkflowPage() {
           </div>
         </header>
 
+        {/* Only while this person still has no real name of their own.
+            Saving it updates every view that renders them. */}
+        {needsRealName({ full_name: user.full_name }) && (
+          <SetYourNameCard
+            userId={user.id}
+            onSaved={(name) => {
+              setUser((u) => (u ? { ...u, full_name: name } : u));
+              refetchProfiles?.();
+            }}
+          />
+        )}
+
         {view === 'dashboard' && (
           <WorkflowDashboard
             workspaceId={workspace.id}
@@ -296,7 +322,7 @@ export default function WorkflowPage() {
           <CrmView
             workspaceId={workspace.id}
             currentUserId={user.id}
-            currentUserName={user.full_name || user.email || ''}
+            currentUserName={user.full_name}
           />
         )}
 
