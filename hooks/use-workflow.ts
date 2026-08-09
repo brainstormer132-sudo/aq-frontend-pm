@@ -262,6 +262,45 @@ export const SUBTASK_KIND_LABELS: Record<SubtaskKind, string> = {
 };
 
 /**
+ * Kinds offered on every campaign, whatever its service type.
+ *
+ * Vendor because that is what a subtask fundamentally is here, and
+ * Analysis Report because it is one of the things Siraj marked "always
+ * required" — the completeness panel nags every campaign that hasn't got
+ * one, so every campaign has to be able to add one. Nagging someone for
+ * something the picker won't offer them is the worst of both.
+ *
+ * Everything else is earned from the service type's catalogue.
+ */
+export const ALWAYS_OFFERED_SUBTASK_KINDS: SubtaskKind[] = ['vendor', 'analysis_report'];
+
+/**
+ * What the "+ Add subtask" picker should offer for one campaign.
+ *
+ * The always-offered pair, plus whatever this campaign's service types
+ * define in `service_type_steps`. Previously it offered all six on every
+ * campaign, so an Ad Hook was invited to add a Blueprint Mapping / 3D
+ * subtask — the same over-reach 050 fixed in the triage list, in a second
+ * place nobody had looked.
+ *
+ * Returned in SUBTASK_KINDS order so the list doesn't reshuffle itself
+ * between campaigns.
+ */
+export function offeredSubtaskKinds(
+  serviceTypeIds: string[],
+  steps: { service_type_id: string; title: string }[],
+): SubtaskKind[] {
+  const allowed = new Set<string>(ALWAYS_OFFERED_SUBTASK_KINDS);
+  const ids = new Set(serviceTypeIds);
+  for (const s of steps) {
+    if (!ids.has(s.service_type_id)) continue;
+    const kind = subtaskKindFromStepTitle(s.title);
+    if (kind) allowed.add(kind);
+  }
+  return SUBTASK_KINDS.filter((k) => allowed.has(k));
+}
+
+/**
  * Kinds that carry nothing but status, due date and attached-or-not.
  * Siraj was explicit: "we don't need anything for them except status
  * due date and a attached or not". Resist adding fields here.
