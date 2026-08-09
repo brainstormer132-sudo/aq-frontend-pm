@@ -18,12 +18,13 @@ import {
   createSubtask, removeSubtask,
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
-  displayName, parseCommentSegments,
+  displayName, parseCommentSegments, offeredSubtaskKinds,
+  type ServiceTypeStep,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
   campaignCompletenessWarnings,
   useDocumentRequests, requestCampaignDocument, cancelDocumentRequest,
-  SUBTASK_KINDS, SUBTASK_KIND_LABELS, isRequestSubtaskKind,
+  SUBTASK_KIND_LABELS, isRequestSubtaskKind,
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
 import { TaskAssignees } from './TaskAssignees';
@@ -57,12 +58,14 @@ const SALES_LABEL: React.CSSProperties = { color: 'var(--aq-text-muted)', fontWe
  * set, so all the existing hooks just work on them.
  */
 export function TaskDetailPanel({
-  taskId, currentUserId, role, profiles, onClose, onChanged,
+  taskId, currentUserId, role, profiles, serviceTypeSteps = [], onClose, onChanged,
 }: {
   taskId: string | null;
   currentUserId: string;
   role: WorkspaceRole | null;
   profiles: (Profile & { role: WorkspaceRole })[];
+  /** The whole workspace catalogue; the picker filters it to this campaign. */
+  serviceTypeSteps?: ServiceTypeStep[];
   onClose: () => void;
   onChanged?: () => void;
 }) {
@@ -389,6 +392,16 @@ export function TaskDetailPanel({
   const existingSubtaskKinds = useMemo(
     () => new Set(subtasks.map((s) => s.subtask_kind).filter(Boolean) as string[]),
     [subtasks],
+  );
+
+  /**
+   * What this campaign may add. Vendor and Analysis Report always, plus
+   * whatever its own service types define — so an Ad Hook is no longer
+   * offered a Blueprint Mapping / 3D subtask it will never use.
+   */
+  const offeredKinds = useMemo(
+    () => offeredSubtaskKinds(taskServiceTypes.map((s) => s.id), serviceTypeSteps),
+    [taskServiceTypes, serviceTypeSteps],
   );
   const isPackageAd = useMemo(
     () => taskServiceTypes.some((s) => (s.name ?? '').trim().toLowerCase() === 'package ad'),
@@ -1422,7 +1435,7 @@ export function TaskDetailPanel({
                         aria-label="Subtask type to add"
                       >
                         <option value="">Add a subtask…</option>
-                        {SUBTASK_KINDS.map((k) => {
+                        {offeredKinds.map((k) => {
                           // Vendor is the only kind you can have several of.
                           const taken = isSingletonSubtaskKind(k) && existingSubtaskKinds.has(k);
                           return (
