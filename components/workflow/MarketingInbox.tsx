@@ -17,11 +17,14 @@ const COMMON_STEP_THRESHOLD = 100;
  * account, then reviews subtask checkboxes before submitting.
  *
  * Subtask behavior:
- *   - Type-specific subtasks (position < 100) are checked by default
- *   - Common subtasks (position >= 101: Tracking Sheet, Quotation,
- *     Payment Confirmation, Invoice, Contracts/Vendoring) are
- *     pre-checked but removable
- *   - Users can toggle any subtask on/off before triaging
+ * - NOTHING is pre-selected. Triaging with zero subtasks is a valid,
+ *   supported outcome — the campaign is created bare and subtasks are
+ *   added later from the parent's "+ Add subtask" picker.
+ * - Every offered step is opt-in, whether type-specific (position < 100)
+ *   or common (position >= 101).
+ *
+ * This used to auto-tick every step, which meant the fastest path
+ * through triage created the largest pile of subtasks nobody asked for.
  */
 export function MarketingInbox({
   tasks, serviceTypes, steps, profiles, currentUserId, workspaceId,
@@ -66,11 +69,17 @@ export function MarketingInbox({
       });
   }, [serviceTypeIds, steps, serviceTypes]);
 
-  // When service types change, auto-select ALL steps (both type-specific
-  // and common). Users can then uncheck the ones they don't need.
+  // When the service types change, drop any selection that no longer
+  // belongs to them — but never ADD anything. Nothing is pre-ticked, so
+  // a campaign triaged without touching this list gets no subtasks.
   useEffect(() => {
-    const ids = new Set(availableSteps.map((s) => s.id));
-    setSelectedStepIds(ids);
+    const valid = new Set(availableSteps.map((s) => s.id));
+    setSelectedStepIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (valid.has(id)) next.add(id);
+      // Preserve identity when nothing changed, so this can't loop.
+      return next.size === prev.size ? prev : next;
+    });
   }, [availableSteps]);
 
   // Deduplicated common steps across selected service types (to avoid
@@ -148,8 +157,9 @@ export function MarketingInbox({
   const handleTriage = async () => {
     if (!activeTaskId) return;
     if (!serviceTypeIds.length) { setError('Pick at least one service type.'); return; }
-    if (!keyAccountId)          { setError('Assign a key account.');           return; }
-    if (!selectedStepIds.size)  { setError('Select at least one subtask.');    return; }
+    if (!keyAccountId) { setError('Assign a key account.'); return; }
+    // No subtask check on purpose: zero is allowed and passed through as an
+    // explicit empty array, which triageMarketingTask reads as "spawn none".
     setSubmitting(true);
     setError('');
     try {
@@ -266,7 +276,8 @@ export function MarketingInbox({
           <header>
             <h2 style={{ fontSize: 18, fontWeight: 700 }}>Triage · {activeTask.task_name || activeTask.title}</h2>
             <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-              Set priority, choose service types, pick subtasks, then assign a key account.
+              Set priority, choose service types, then assign a key account.
+              Subtasks are optional — add them here or later from the campaign.
             </p>
           </header>
 
@@ -319,7 +330,7 @@ export function MarketingInbox({
             </div>
           </div>
 
-          {/* Subtask checkboxes */}
+          {/* Subtask checkboxes — all opt-in */}
           {availableSteps.length > 0 && (
             <div style={{
               padding: 14, background: 'var(--aq-bg-sunken)',
@@ -327,13 +338,20 @@ export function MarketingInbox({
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <div className="aq-label" style={{ margin: 0 }}>
-                  Subtasks ({selectedStepIds.size} / {availableSteps.length} selected)
+                  Subtasks ({selectedStepIds.size} / {availableSteps.length} selected) — optional
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button type="button" className="aq-btn aq-btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={selectAllSteps}>All</button>
                   <button type="button" className="aq-btn aq-btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={deselectAllSteps}>None</button>
                 </div>
               </div>
+
+              {selectedStepIds.size === 0 && (
+                <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginBottom: 8 }}>
+                  None selected — the campaign will be created with no subtasks.
+                  You can add them from the campaign at any time.
+                </p>
+              )}
 
               {/* Type-specific subtasks grouped by service type */}
               {serviceTypeIds.map((stId) => {
@@ -420,7 +438,7 @@ export function MarketingInbox({
             <button
               className="aq-btn aq-btn-primary"
               onClick={handleTriage}
-              disabled={submitting || !serviceTypeIds.length || !keyAccountId || !selectedStepIds.size}
+              disabled={submitting || !serviceTypeIds.length || !keyAccountId}
             >{submitting ? 'Triaging…' : 'Send to key account'}</button>
             <button
               type="button"

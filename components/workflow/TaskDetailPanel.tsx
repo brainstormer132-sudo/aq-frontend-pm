@@ -17,6 +17,11 @@ import {
   autoCreateContractRequestForSubtask,
   createSubtask, removeSubtask, ensureVendorSubtasks,
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
+  isSingletonSubtaskKind, isSimpleDeliverableKind,
+  COMPLEXITIES, MEDIA_TYPES,
+  analysisReportInherited, effectiveAnalysisPlatforms,
+  campaignCompletenessWarnings,
+  useDocumentRequests, requestCampaignDocument, cancelDocumentRequest,
   SUBTASK_KINDS, SUBTASK_KIND_LABELS, isRequestSubtaskKind,
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
@@ -101,6 +106,8 @@ export function TaskDetailPanel({
   const [trackingOpen, setTrackingOpen] = useState(false);
   // "+ Add subtask" on the parent (Phase 2).
   const [addKind, setAddKind] = useState<SubtaskKind | ''>('');
+  /** Kept as a string so the field can be cleared while typing. */
+  const [addVendorCount, setAddVendorCount] = useState('1');
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [removingSubtaskId, setRemovingSubtaskId] = useState<string | null>(null);
 
@@ -294,6 +301,45 @@ export function TaskDetailPanel({
   const canRaiseClientContract = !latestClientContract
     || ['rejected', 'cancelled'].includes(String(latestClientContract.status));
 
+  // ── Quotation / invoice requests (migration 048) ────────────────────
+  // These sit on the PARENT, next to the client contract, because that is
+  // where the quotation and invoice numbers already live. Vendor contracts
+  // stay on the vendor subtask — that's where the vendor is.
+  const { items: docRequests, refetch: refetchDocRequests } =
+    useDocumentRequests(task && !task.parent_task_id ? task.id : null);
+  const [docBusy, setDocBusy] = useState<'quotation' | 'invoice' | null>(null);
+
+  const openDocRequest = (kind: 'quotation' | 'invoice') =>
+    docRequests.find((r) => r.doc_kind === kind && r.status === 'pending') ?? null;
+
+  const handleRequestDocument = async (kind: 'quotation' | 'invoice') => {
+    if (!task) return;
+    setDocBusy(kind); setError('');
+    try {
+      await requestCampaignDocument({ parent: task, kind, requestedBy: currentUserId });
+      await refetchDocRequests();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setDocBusy(null); }
+  };
+
+  const handleCancelDocRequest = async (id: string, kind: 'quotation' | 'invoice') => {
+    setDocBusy(kind); setError('');
+    try {
+      await cancelDocumentRequest(id);
+      await refetchDocRequests();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setDocBusy(null); }
+  };
+
+  // ── Warn, don't block (Siraj's call) ────────────────────────────────
+  // Proof of posting, the analysis report and the insight are "always
+  // required" — surfaced here so nobody forgets, but nothing refuses a save.
+  const completeness = useMemo(
+    () => (task && !task.parent_task_id ? campaignCompletenessWarnings(task, subtasks) : []),
+    [task, subtasks],
+  );
+
   // ── Publish the tracking sheet to the client (migration 045) ────────
   const [publishing, setPublishing] = useState(false);
   const [publishNote, setPublishNote] = useState<string | null>(null);
@@ -328,6 +374,12 @@ export function TaskDetailPanel({
   // ── Phase 5: Package Ad — run window + how many ads ─────────────────
   const vendorSubtasks = useMemo(
     () => subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind)),
+    [subtasks],
+  );
+
+  /** Kinds already on this parent, so singletons can be greyed out. */
+  const existingSubtaskKinds = useMemo(
+    () => new Set(subtasks.map((s) => s.subtask_kind).filter(Boolean) as string[]),
     [subtasks],
   );
   const isPackageAd = useMemo(
@@ -385,20 +437,31 @@ export function TaskDetailPanel({
     if (!task.workspace_id) { setError('Cannot add a subtask — task has no workspace.'); return; }
     setAddingSubtask(true); setError('');
     try {
-      // Number vendors the same way ensureVendorSubtasks does, so a hand-added
-      // one and a package-spawned one read as the same sequence.
-      const label = SUBTASK_KIND_LABELS[kind];
-      const title = kind === 'vendor'
-        ? `${label} ${vendorSubtasks.length + 1}`
-        : label;
-      await createSubtask({
-        parent_task_id: task.id,
-        workspace_id: task.workspace_id,
-        creator_id: currentUserId,
-        kind,
-        title,
-        priority: task.priority,
-      });
+      if (kind === 'vendor') {
+        // Bulk path. ensureVendorSubtasks tops up TO a target, so the target
+        // is what we already have plus what was asked for — otherwise asking
+        // for 3 when 2 exist would create only 1.
+        const asked = Math.floor(Number(addVendorCount));
+        const n = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 50) : 1;
+        await ensureVendorSubtasks({
+          parent_task_id: task.id,
+          workspace_id: task.workspace_id,
+          creator_id: currentUserId,
+          target_count: vendorSubtasks.length + n,
+          brand_name: task.brand_name,
+          priority: task.priority,
+        });
+        setAddVendorCount('1');
+      } else {
+        await createSubtask({
+          parent_task_id: task.id,
+          workspace_id: task.workspace_id,
+          creator_id: currentUserId,
+          kind,
+          title: SUBTASK_KIND_LABELS[kind],
+          priority: task.priority,
+        });
+      }
       setAddKind('');
       await refetchSubs();
       await refetchTask();   // has_tracking may have flipped
@@ -778,6 +841,33 @@ export function TaskDetailPanel({
                 </div>
               )}
 
+              {/* Still-missing checklist. Warns, never blocks — the campaign
+                  can be marked done regardless. Siraj's call: a hard block
+                  strands work when a client is slow to send an asset. */}
+              {completeness.length > 0 && (
+                <section
+                  className="aq-card"
+                  style={{
+                    padding: '12px 16px',
+                    borderLeft: '3px solid var(--aq-warning, #b45309)',
+                  }}
+                >
+                  <div style={{
+                    fontSize: 13, fontWeight: 700,
+                    color: 'var(--aq-warning, #b45309)', marginBottom: 6,
+                  }}>
+                    Still outstanding
+                  </div>
+                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {completeness.map((w) => (
+                      <li key={w.key} style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
+                        · {w.message}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
               {/* Purpose-built request subtask (quotation / invoice / contract).
                   Shows only what that subtask needs — no duplicated parent fields. */}
               {isRequestKind && (
@@ -1029,6 +1119,7 @@ export function TaskDetailPanel({
                 clientCategories={clientCategories}
                 taskPlatforms={taskPlatforms}
                 subtasks={subtasks}
+                parentTask={parentTask}
                 onChanged={async () => { await refetchTask(); onChanged?.(); }}
               />
               )}
@@ -1115,6 +1206,138 @@ export function TaskDetailPanel({
                         Legal has it. Approval and generation happen in the Contracts view.
                       </span>
                     )}
+                  </div>
+
+                  {/* ── Quotation / invoice ────────────────────────────
+                      Raised against the campaign, not a subtask. Ops reads
+                      the client, brand and amount live off this task when
+                      they open the link, so nothing here goes stale. */}
+                  <div style={{
+                    marginTop: 14, paddingTop: 14,
+                    borderTop: '1px solid var(--aq-border-light)',
+                  }}>
+                    <div className="aq-label" style={{ marginBottom: 8 }}>Quotation &amp; invoice</div>
+
+                    {(['quotation', 'invoice'] as const).map((kind) => {
+                      const open = openDocRequest(kind);
+                      const issued = docRequests.filter(
+                        (r) => r.doc_kind === kind && r.status === 'issued',
+                      );
+                      return (
+                        <div
+                          key={kind}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            flexWrap: 'wrap', padding: '4px 0', fontSize: 13,
+                          }}
+                        >
+                          <span style={{ width: 90, color: 'var(--aq-text-muted)', fontWeight: 600 }}>
+                            {kind === 'quotation' ? 'Quotation' : 'Invoice'}
+                          </span>
+
+                          {open ? (
+                            <>
+                              <span className="aq-badge aq-badge-warning">requested</span>
+                              <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                                {new Date(open.requested_at).toLocaleDateString()}
+                              </span>
+                              {canEditMarketing && (
+                                <button
+                                  type="button"
+                                  className="aq-btn aq-btn-ghost"
+                                  disabled={docBusy === kind}
+                                  onClick={() => handleCancelDocRequest(open.id, kind)}
+                                  style={{ padding: '2px 8px', fontSize: 12 }}
+                                >Cancel</button>
+                              )}
+                            </>
+                          ) : canEditMarketing ? (
+                            <button
+                              type="button"
+                              className="aq-btn aq-btn-secondary"
+                              disabled={docBusy === kind}
+                              onClick={() => handleRequestDocument(kind)}
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                            >
+                              {docBusy === kind ? 'Sending…' : `Request ${kind}`}
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                              not requested
+                            </span>
+                          )}
+
+                          {issued.length > 0 && (
+                            <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                              · issued {issued.map((r) => r.document_number).filter(Boolean).join(', ') || `${issued.length}×`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* ── Proof of posting (migration 048) ────────────────────
+                  Lives on the campaign, not a subtask — one campaign, one
+                  proof. Required in the sense that it's chased, not in the
+                  sense that anything refuses to save without it. */}
+              {!isSubtaskView && (
+                <section className="aq-card" style={{ padding: 18 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Proof of posting</h3>
+
+                  <div style={SALES_ROW}>
+                    <span style={SALES_LABEL}>Attached</span>
+                    <label style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      cursor: canEditMarketing ? 'pointer' : 'default', fontSize: 13,
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={!!task.proof_of_posting_attached}
+                        disabled={!canEditMarketing}
+                        onChange={async (e) => {
+                          try {
+                            await updateTaskFields(task.id, {
+                              proof_of_posting_attached: e.target.checked,
+                            } as any);
+                            await refetchTask();
+                            onChanged?.();
+                          } catch (err: any) { setError(err?.message ?? String(err)); }
+                        }}
+                        style={{ width: 15, height: 15 }}
+                      />
+                      <span style={{
+                        fontWeight: 600,
+                        color: task.proof_of_posting_attached
+                          ? 'var(--aq-success, #15803d)' : 'var(--aq-text-muted)',
+                      }}>
+                        {task.proof_of_posting_attached ? 'Attached' : 'Not attached'}
+                      </span>
+                    </label>
+                  </div>
+
+                  <div style={SALES_ROW}>
+                    <span style={SALES_LABEL}>File link</span>
+                    {canEditMarketing ? (
+                      <input
+                        className="aq-input"
+                        defaultValue={task.proof_of_posting_link ?? ''}
+                        placeholder="https://drive.google.com/…"
+                        onBlur={async (e) => {
+                          const v = e.target.value.trim() || null;
+                          if (v === (task.proof_of_posting_link ?? null)) return;
+                          try {
+                            await updateTaskFields(task.id, { proof_of_posting_link: v } as any);
+                            await refetchTask();
+                            onChanged?.();
+                          } catch (err: any) { setError(err?.message ?? String(err)); }
+                        }}
+                      />
+                    ) : task.proof_of_posting_link ? (
+                      <a href={task.proof_of_posting_link} target="_blank" rel="noopener noreferrer">Open</a>
+                    ) : <span style={{ fontSize: 13 }}>—</span>}
                   </div>
                 </section>
               )}
@@ -1245,45 +1468,57 @@ export function TaskDetailPanel({
                       marginBottom: 12, paddingBottom: 12,
                       borderBottom: '1px solid var(--aq-border-light)',
                     }}>
-                      {/* One kind left. Quotation, invoice, contracts/vendoring
-                          and payment confirmation live on the parent task now,
-                          and the tracking sheet is the button above — so the
-                          picker collapses to a single button. If a second kind
-                          is ever added back, restore the <select> here. */}
-                      {SUBTASK_KINDS.length === 1 ? (
-                        <button
-                          type="button"
-                          className="aq-btn aq-btn-primary"
-                          disabled={addingSubtask}
-                          onClick={() => handleAddSubtask(SUBTASK_KINDS[0])}
-                          style={{ padding: '6px 12px', fontSize: 13 }}
-                        >
-                          {addingSubtask ? 'Adding…' : `+ Add ${SUBTASK_KIND_LABELS[SUBTASK_KINDS[0]].toLowerCase()}`}
-                        </button>
-                      ) : (
-                        <>
-                          <select
+                      <select
+                        className="aq-input"
+                        value={addKind}
+                        disabled={addingSubtask}
+                        onChange={(e) => setAddKind(e.target.value as SubtaskKind | '')}
+                        style={{ width: 'auto', minWidth: 200, padding: '6px 10px', fontSize: 13 }}
+                        aria-label="Subtask type to add"
+                      >
+                        <option value="">Add a subtask…</option>
+                        {SUBTASK_KINDS.map((k) => {
+                          // Vendor is the only kind you can have several of.
+                          const taken = isSingletonSubtaskKind(k) && existingSubtaskKinds.has(k);
+                          return (
+                            <option key={k} value={k} disabled={taken}>
+                              {SUBTASK_KIND_LABELS[k]}{taken ? ' — already added' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+
+                      {/* How many vendors to add at once. Package Ads are sold
+                          in tens, and clicking Add ten times is not a workflow. */}
+                      {addKind === 'vendor' && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                          <span style={{ color: 'var(--aq-text-muted)' }}>How many</span>
+                          <input
                             className="aq-input"
-                            value={addKind}
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={addVendorCount}
                             disabled={addingSubtask}
-                            onChange={(e) => setAddKind(e.target.value as SubtaskKind | '')}
-                            style={{ width: 'auto', minWidth: 200, padding: '6px 10px', fontSize: 13 }}
-                            aria-label="Subtask type to add"
-                          >
-                            <option value="">Add a subtask…</option>
-                            {SUBTASK_KINDS.map((k) => (
-                              <option key={k} value={k}>{SUBTASK_KIND_LABELS[k]}</option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            className="aq-btn aq-btn-primary"
-                            disabled={!addKind || addingSubtask}
-                            onClick={() => handleAddSubtask()}
-                            style={{ padding: '6px 12px', fontSize: 13 }}
-                          >{addingSubtask ? 'Adding…' : '+ Add subtask'}</button>
-                        </>
+                            onChange={(e) => setAddVendorCount(e.target.value)}
+                            style={{ width: 72, padding: '6px 8px', fontSize: 13 }}
+                            aria-label="How many vendors to add"
+                          />
+                        </label>
                       )}
+
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-primary"
+                        disabled={!addKind || addingSubtask}
+                        onClick={() => handleAddSubtask()}
+                        style={{ padding: '6px 12px', fontSize: 13 }}
+                      >
+                        {addingSubtask ? 'Adding…'
+                          : addKind === 'vendor'
+                            ? `+ Add ${Math.max(1, Math.floor(Number(addVendorCount) || 1))} vendor${Math.max(1, Math.floor(Number(addVendorCount) || 1)) === 1 ? '' : 's'}`
+                            : '+ Add subtask'}
+                      </button>
                     </div>
                   )}
 
@@ -1685,7 +1920,8 @@ function RequestCard({
 import type { PMTask, TaskSource, ClientCategory } from '@/hooks/use-workflow';
 
 function OperationsPanel({
-  task, isSubtaskView, canEdit, taskSources, clientCategories, taskPlatforms, subtasks, onChanged,
+  task, isSubtaskView, canEdit, taskSources, clientCategories, taskPlatforms, subtasks,
+  parentTask, onChanged,
 }: {
   task: PMTask;
   isSubtaskView: boolean;
@@ -1695,6 +1931,8 @@ function OperationsPanel({
   taskPlatforms: TaskSource[];
   /** Vendor lines — the campaign money block is rolled up from these. */
   subtasks: PMTask[];
+  /** Null on a parent row. The analysis report reads brand/name/platforms off it. */
+  parentTask: PMTask | null;
   onChanged: () => Promise<void>;
 }) {
   // Generic field saver — writes `{ [field]: value }` to pm_tasks and
@@ -1739,6 +1977,201 @@ function OperationsPanel({
 
   const fmtMoney = (n: number | null | undefined) =>
     n == null ? '—' : `SAR ${Number(n).toLocaleString()}`;
+
+  /** "Attached or not" — the same control on four different cards. */
+  const Attached = ({
+    value, onToggle, yes = 'Attached', no = 'Not attached',
+  }: { value: boolean; onToggle: (v: boolean) => void; yes?: string; no?: string }) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canEdit ? 'pointer' : 'default' }}>
+      <input
+        type="checkbox"
+        checked={!!value}
+        disabled={!canEdit}
+        onChange={(e) => onToggle(e.target.checked)}
+        style={{ width: 15, height: 15 }}
+      />
+      <span style={{
+        fontWeight: 600,
+        color: value ? 'var(--aq-success, #15803d)' : 'var(--aq-text-muted)',
+      }}>{value ? yes : no}</span>
+    </label>
+  );
+
+  const subKind = task.subtask_kind;
+
+  // ── ANALYSIS REPORT (subtask) ─────────────────────────────────────
+  // Brand, campaign name and platforms are read through to the parent
+  // rather than copied, so renaming the campaign renames it here too.
+  if (isSubtaskView && subKind === 'analysis_report') {
+    const inherited = analysisReportInherited(parentTask);
+    const platforms = effectiveAnalysisPlatforms(task, parentTask);
+    return (
+      <section className="aq-card" style={{ padding: 18 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Analysis Report</h3>
+
+        <Row label="Priority">
+          {/* Deliberately NOT inherited from the parent — Siraj's call. A
+              report on an urgent campaign is not automatically urgent. */}
+          {canEdit
+            ? <select
+                className="aq-select"
+                style={{ maxWidth: 200 }}
+                value={task.priority}
+                onChange={(e) => save('priority', e.target.value)}
+              >
+                {(['urgent','high','medium','low','none'] as const).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            : <span>{task.priority}</span>}
+        </Row>
+
+        <Row label="Complexity">
+          {canEdit
+            ? <select
+                className="aq-select"
+                style={{ maxWidth: 200 }}
+                value={task.complexity ?? ''}
+                onChange={(e) => save('complexity', e.target.value || null)}
+              >
+                <option value="">—</option>
+                {COMPLEXITIES.map((c) => (
+                  <option key={c} value={c}>{c[0].toUpperCase() + c.slice(1)}</option>
+                ))}
+              </select>
+            : <span>{task.complexity ?? '—'}</span>}
+        </Row>
+
+        <Row label="Approval status">
+          {canEdit
+            ? <select
+                className="aq-select"
+                style={{ maxWidth: 220 }}
+                value={task.approval_stage ?? ''}
+                onChange={(e) => save('approval_stage', e.target.value || null)}
+              >
+                <option value="">—</option>
+                {APPROVAL_STAGES.map((a) => <option key={a} value={a}>{labelFor(a)}</option>)}
+              </select>
+            : <span>{labelFor(task.approval_stage)}</span>}
+        </Row>
+
+        <Row label="Brand">
+          <span style={{ color: 'var(--aq-text-muted)' }}>
+            {inherited.brandName || '—'}
+            <span style={{ marginLeft: 8, fontSize: 11 }}>from the campaign</span>
+          </span>
+        </Row>
+
+        <Row label="Campaign name">
+          <span style={{ color: 'var(--aq-text-muted)' }}>
+            {inherited.campaignName || '—'}
+            <span style={{ marginLeft: 8, fontSize: 11 }}>from the campaign</span>
+          </span>
+        </Row>
+
+        <Row label="Brand logo">
+          <Attached
+            value={task.brand_logo_attached}
+            onToggle={(v) => save('brand_logo_attached', v)}
+          />
+        </Row>
+
+        <Row label="Campaign platform">
+          {/* Starts as the campaign's list; narrow or extend it here. */}
+          {canEdit
+            ? <MultiSelect
+                options={taskPlatforms.map((p) => p.name)}
+                selected={platforms}
+                onChange={(next) => save('platforms', next)}
+              />
+            : <span>{platforms.length ? platforms.join(', ') : '—'}</span>}
+        </Row>
+        {canEdit && (task.platforms ?? []).length === 0 && platforms.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', paddingLeft: 172, marginTop: -4 }}>
+            Inherited from the campaign. Changing it here overrides it for this report only.
+          </div>
+        )}
+
+        <Row label="Media type">
+          {canEdit
+            ? <select
+                className="aq-select"
+                style={{ maxWidth: 220 }}
+                value={task.media_type ?? ''}
+                onChange={(e) => save('media_type', e.target.value || null)}
+              >
+                <option value="">—</option>
+                {MEDIA_TYPES.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            : <span>{task.media_type ?? '—'}</span>}
+        </Row>
+
+        <Row label="Keyword data (Excel)">
+          <Attached
+            value={task.keyword_excel_attached}
+            onToggle={(v) => save('keyword_excel_attached', v)}
+          />
+        </Row>
+
+        <Row label="Data issues">
+          {canEdit
+            ? <TextInput
+                defaultValue={task.data_issue_note ?? ''}
+                placeholder="Missing data or adjustment needed"
+                onCommit={(v) => save('data_issue_note', v.trim() || null)}
+              />
+            : <span>{task.data_issue_note || '—'}</span>}
+        </Row>
+      </section>
+    );
+  }
+
+  // ── SIMPLE DELIVERABLES (subtask) ─────────────────────────────────
+  // Campaign design, marketing strategy, visuals, blueprint / 3D.
+  // Status, due date, attached-or-not. Nothing else, on purpose —
+  // adding a field here is a decision, not a tidy-up.
+  if (isSubtaskView && isSimpleDeliverableKind(subKind)) {
+    return (
+      <section className="aq-card" style={{ padding: 18 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+          {SUBTASK_KIND_LABELS[subKind as SubtaskKind] ?? 'Deliverable'}
+        </h3>
+
+        <Row label="Status">
+          {canEdit
+            ? <select
+                className="aq-select"
+                style={{ maxWidth: 200 }}
+                value={task.status}
+                onChange={(e) => save('status', e.target.value)}
+              >
+                {TASK_STATUSES.map((s) => <option key={s} value={s}>{labelFor(s)}</option>)}
+              </select>
+            : <span>{labelFor(task.status)}</span>}
+        </Row>
+
+        <Row label="Due date">
+          {canEdit
+            ? <input
+                type="date"
+                className="aq-input"
+                style={{ maxWidth: 200 }}
+                defaultValue={task.due_date ?? ''}
+                onChange={(e) => save('due_date', e.target.value || null)}
+              />
+            : <span>{task.due_date || '—'}</span>}
+        </Row>
+
+        <Row label="File">
+          <Attached
+            value={task.deliverable_attached}
+            onToggle={(v) => save('deliverable_attached', v)}
+          />
+        </Row>
+      </section>
+    );
+  }
 
   // PER-VENDOR (subtask) fields ───────────────────────────────────────
   if (isSubtaskView) {
@@ -1830,6 +2263,35 @@ function OperationsPanel({
               />
             : <span>{task.vendor_payment_date || '—'}</span>}
         </Row>
+
+        {/* ── Insight ────────────────────────────────────────────────
+            Not a subtask of its own — it belongs to the vendor whose
+            work it analyses, so it rides here as a link plus a flag. */}
+        <div style={{
+          marginTop: 12, paddingTop: 12,
+          borderTop: '1px solid var(--aq-border-light)',
+        }}>
+          <div className="aq-label" style={{ marginBottom: 4 }}>Insight</div>
+
+          <Row label="File link">
+            {canEdit
+              ? <TextInput
+                  defaultValue={task.insight_link ?? ''}
+                  placeholder="https://drive.google.com/…"
+                  onCommit={(v) => save('insight_link', v.trim() || null)}
+                />
+              : task.insight_link
+                ? <a href={task.insight_link} target="_blank" rel="noopener noreferrer">Open</a>
+                : <span>—</span>}
+          </Row>
+
+          <Row label="Insight file">
+            <Attached
+              value={task.insight_attached}
+              onToggle={(v) => save('insight_attached', v)}
+            />
+          </Row>
+        </div>
       </section>
     );
   }
