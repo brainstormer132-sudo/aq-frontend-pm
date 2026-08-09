@@ -385,6 +385,7 @@ export default function WorkflowPage() {
           currentUserId={user.id}
           role={role}
           profiles={profiles}
+          serviceTypeSteps={steps}
           onClose={() => setOpenTaskId(null)}
           onChanged={() => { refetchPending(); refetchAll(); setRefreshTick((n) => n + 1); }}
         />
