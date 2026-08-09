@@ -15,7 +15,7 @@ import {
   getAttachmentDownloadUrl, deleteAttachment,
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
   autoCreateContractRequestForSubtask,
-  createSubtask, removeSubtask, ensureVendorSubtasks,
+  createSubtask, removeSubtask,
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
   displayName, parseCommentSegments,
@@ -394,11 +394,7 @@ export function TaskDetailPanel({
     () => taskServiceTypes.some((s) => (s.name ?? '').trim().toLowerCase() === 'package ad'),
     [taskServiceTypes],
   );
-  const [qtyDraft, setQtyDraft] = useState('');
   const [packageSaving, setPackageSaving] = useState(false);
-  useEffect(() => {
-    setQtyDraft(task?.ad_quantity != null ? String(task.ad_quantity) : '');
-  }, [task?.id, task?.ad_quantity]);
 
   const patchPackageFields = async (fields: Partial<PMTask>) => {
     if (!task) return;
@@ -411,32 +407,10 @@ export function TaskDetailPanel({
     finally { setPackageSaving(false); }
   };
 
-  const handleSaveQuantity = async () => {
-    if (!task) return;
-    const n = Math.floor(Number(qtyDraft));
-    if (!Number.isFinite(n) || n < 0) { setError('Quantity must be a whole number.'); return; }
-    if (!task.workspace_id) { setError('Cannot add ads — task has no workspace.'); return; }
-    setPackageSaving(true); setError('');
-    try {
-      await updateTaskFields(task.id, { ad_quantity: n || null });
-      // Tops up to n; never deletes, because an existing vendor subtask may
-      // already carry a vendor, a budget and a fired contract request.
-      const created = await ensureVendorSubtasks({
-        parent_task_id: task.id,
-        workspace_id: task.workspace_id,
-        creator_id: currentUserId,
-        target_count: n,
-        priority: task.priority,
-      });
-      await refetchTask();
-      await refetchSubs();
-      onChanged?.();
-      if (created === 0 && n < vendorSubtasks.length) {
-        setError(`Saved. There are still ${vendorSubtasks.length} vendor subtasks — remove the extra ones by hand if that's intended.`);
-      }
-    } catch (e: any) { setError(e?.message ?? String(e)); }
-    finally { setPackageSaving(false); }
-  };
+  // handleSaveQuantity lived here — it wrote ad_quantity and topped the
+  // campaign up to that many vendor subtasks. Gone with the field: the Add
+  // vendors popup creates them with an ad type, a platform and a price,
+  // which a bare count never could.
 
   // ── Phase 2: add / remove a single subtask on the parent ────────────
   const handleAddSubtask = async (kindOverride?: SubtaskKind) => {
@@ -1341,9 +1315,9 @@ export function TaskDetailPanel({
                 </section>
               )}
 
-              {/* ── Package Ad (Phase 5) ────────────────────────────────
-                  Run window for the whole package + how many ads it was sold
-                  as. Per-ad dates stay in the tracking sheet; per-ad vendor and
+              {/* ── Package (Phase 5) ───────────────────────────────────
+                  The run window for the whole package, and nothing else.
+                  Per-ad dates stay in the tracking sheet; per-ad vendor and
                   price stay on each vendor subtask. Marketing's half. */}
               {!isSubtaskView && (isPackageAd || vendorSubtasks.length > 0) && (
                 <section className="aq-card" style={{ padding: 18 }}>
@@ -1352,12 +1326,11 @@ export function TaskDetailPanel({
                     marginBottom: 12, gap: 12, flexWrap: 'wrap',
                   }}>
                     <h3 style={{ fontSize: 14, fontWeight: 700 }}>📦 Package</h3>
+                    {/* Just the count. The "of N ads sold" comparison went with
+                        the quantity field — nothing sets that number any more,
+                        so a mismatch warning against it would be noise. */}
                     <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
                       {vendorSubtasks.length} vendor{vendorSubtasks.length === 1 ? '' : 's'}
-                      {task.ad_quantity != null ? ` of ${task.ad_quantity} ad${task.ad_quantity === 1 ? '' : 's'} sold` : ''}
-                      {task.ad_quantity != null && vendorSubtasks.length !== task.ad_quantity && (
-                        <strong style={{ color: 'var(--aq-warning, #b45309)' }}> · mismatch</strong>
-                      )}
                     </span>
                   </div>
 
@@ -1394,38 +1367,11 @@ export function TaskDetailPanel({
                     )}
                   </div>
 
-                  <div style={SALES_ROW}>
-                    <span style={SALES_LABEL}>Number of ads</span>
-                    {canEditMarketing ? (
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <input
-                          className="aq-input"
-                          style={{ maxWidth: 100 }}
-                          inputMode="numeric"
-                          value={qtyDraft}
-                          placeholder="0"
-                          disabled={packageSaving}
-                          onChange={(e) => setQtyDraft(e.target.value.replace(/[^0-9]/g, ''))}
-                        />
-                        <button
-                          type="button"
-                          className="aq-btn aq-btn-secondary"
-                          disabled={packageSaving || qtyDraft.trim() === (task.ad_quantity != null ? String(task.ad_quantity) : '')}
-                          onClick={handleSaveQuantity}
-                        >{packageSaving ? 'Saving…' : 'Save & create ads'}</button>
-                      </div>
-                    ) : (
-                      <span>{task.ad_quantity ?? '—'}</span>
-                    )}
-                  </div>
-
-                  {canEditMarketing && (
-                    <p style={{ marginTop: 10, fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                      Saving tops the campaign up to that many vendor subtasks. Lowering the number
-                      never deletes anything — remove them individually below, since one may already
-                      have a vendor and a contract request against it.
-                    </p>
-                  )}
+                  {/* "Number of ads" + "Save & create ads" used to live here.
+                      Removed: the Add vendors popup does that job properly —
+                      it sets ad type, platform and price for the batch, which
+                      a bare number never could. Two ways to create the same
+                      rows is one too many. */}
                 </section>
               )}
 
