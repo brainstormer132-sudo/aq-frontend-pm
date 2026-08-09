@@ -132,6 +132,24 @@ export interface PMTask {
   /** How many ads the package is sold as. Setting it spawns that many vendor subtasks. */
   ad_quantity: number | null;
 
+  // ── Per-kind subtask fields (migration 048) ──────────────────────
+  /** Analysis report: 'low' | 'medium' | 'high'. */
+  complexity: string | null;
+  /** Analysis report: one of MEDIA_TYPES. */
+  media_type: string | null;
+  brand_logo_attached: boolean;
+  keyword_excel_attached: boolean;
+  /** Analysis report: "missing data or adjustment needed". */
+  data_issue_note: string | null;
+  /** Insight rides on the vendor subtask rather than being its own subtask. */
+  insight_link: string | null;
+  insight_attached: boolean;
+  /** Campaign design / marketing strategy / visuals / blueprint 3D. */
+  deliverable_attached: boolean;
+  /** Proof of posting — parent rows only. */
+  proof_of_posting_attached: boolean;
+  proof_of_posting_link: string | null;
+
   // ── Typed subtasks + request tracking (migration 038) ─────────────
   /** Identifies a subtask's purpose so it can show its own fields.
    *  'vendor' | null (generic) on anything created now. Rows made before the
@@ -223,13 +241,83 @@ export function labelFor(value: string | null | undefined): string {
  *
  * Legacy rows still carry the retired values — see LEGACY_SUBTASK_KIND_LABELS.
  */
-export const SUBTASK_KINDS = ['vendor'] as const;
+export const SUBTASK_KINDS = [
+  'vendor',
+  'analysis_report',
+  'campaign_design',
+  'marketing_strategy',
+  'visuals',
+  'blueprint_3d',
+] as const;
 export type SubtaskKind = typeof SUBTASK_KINDS[number];
 
 /** Default title used when a subtask of this kind is added by hand. */
 export const SUBTASK_KIND_LABELS: Record<SubtaskKind, string> = {
   vendor: 'Vendor',
+  analysis_report: 'Analysis Report',
+  campaign_design: 'Campaign Design',
+  marketing_strategy: 'Marketing Strategy',
+  visuals: 'Visuals',
+  blueprint_3d: 'Blueprint Mapping / 3D',
 };
+
+/**
+ * Kinds that carry nothing but status, due date and attached-or-not.
+ * Siraj was explicit: "we don't need anything for them except status
+ * due date and a attached or not". Resist adding fields here.
+ */
+export const SIMPLE_DELIVERABLE_KINDS = [
+  'campaign_design', 'marketing_strategy', 'visuals', 'blueprint_3d',
+] as const;
+
+export function isSimpleDeliverableKind(kind: string | null | undefined): boolean {
+  return !!kind && (SIMPLE_DELIVERABLE_KINDS as readonly string[]).includes(kind);
+}
+
+/** Vendor is the only kind you can have several of on one campaign. */
+export function isSingletonSubtaskKind(kind: string | null | undefined): boolean {
+  return !!kind && !isVendorSubtaskKind(kind);
+}
+
+/**
+ * Map a catalog step's title onto a subtask kind.
+ *
+ * Triage bulk-inserts rows from `service_type_steps`, which stores a title
+ * and nothing else — so without this, a triage-spawned "Analysis Report"
+ * would render the plain generic form while a hand-added one rendered the
+ * real thing. Matching on the title is the only signal the catalog gives us.
+ *
+ * Returns null for anything unrecognised, which is the correct outcome: an
+ * unknown step is a generic subtask.
+ */
+export function subtaskKindFromStepTitle(title: string | null | undefined): SubtaskKind | null {
+  const t = (title ?? '').trim().toLowerCase();
+  if (!t) return null;
+  // Triage prefixes titles with "{icon} {service type} — ", so match the tail.
+  const tail = t.includes('—') ? t.slice(t.lastIndexOf('—') + 1).trim() : t;
+  switch (tail) {
+    case 'analysis report':          return 'analysis_report';
+    case 'campaign design':          return 'campaign_design';
+    case 'marketing strategy':       return 'marketing_strategy';
+    case 'visuals':                  return 'visuals';
+    case 'blueprint mapping / 3d':
+    case 'blueprint mapping/3d':
+    case 'blueprint mapping':
+    case '3d':                       return 'blueprint_3d';
+    case 'vendor':                   return 'vendor';
+    default:                         return null;
+  }
+}
+
+/** Analysis report: how hard the work is. Not the same as priority. */
+export const COMPLEXITIES = ['low', 'medium', 'high'] as const;
+export type Complexity = typeof COMPLEXITIES[number];
+
+/** Analysis report: what was actually made. */
+export const MEDIA_TYPES = [
+  'Home Ad', 'Store Visit', 'IG Reel', 'IG Post', 'IG Story', 'TikTok Video',
+] as const;
+export type MediaType = typeof MEDIA_TYPES[number];
 
 /**
  * Kinds retired from the picker. Migration 047 renames 'ad' → 'vendor', but
@@ -824,8 +912,15 @@ export async function triageMarketingTask(input: {
   // 3. For each service type, fetch its steps and spawn child tasks. Prefix each
   //    title with the service-type label so the inbox shows "Campaign — Visuals".
   //    If selected_step_ids is provided, only spawn those specific steps.
-  const filterByIds = input.selected_step_ids && input.selected_step_ids.length > 0;
-  const selectedSet = filterByIds ? new Set(input.selected_step_ids) : null;
+  //
+  //    An EMPTY array means "spawn nothing", and is not the same as the key
+  //    being absent. This used to be `length > 0`, so deselecting every
+  //    subtask in triage fell through to the else branch and spawned the
+  //    entire catalog — the exact opposite of what the user asked for.
+  //    Only null/undefined now means "all steps".
+  const selectedSet = input.selected_step_ids != null
+    ? new Set(input.selected_step_ids)
+    : null;
 
   for (const stId of input.service_type_ids) {
     const { data: steps, error: stepsErr } = await supabase
@@ -859,6 +954,10 @@ export async function triageMarketingTask(input: {
       status: 'pending',
       priority: input.priority,
       creator_id: input.creator_id,
+      // Match the step to a typed form. Inferred from the UNPREFIXED title,
+      // because `prefix` is cosmetic and varies per service type.
+      subtask_kind: subtaskKindFromStepTitle(s.title),
+      request_status: 'not_requested',
     }));
     const { error: insertErr } = await supabase.from('pm_tasks').insert(rows);
     if (insertErr) throw insertErr;
@@ -1138,6 +1237,235 @@ export async function ensureVendorSubtasks(input: {
   const { error } = await supabase.from('pm_tasks').insert(rows);
   if (error) { logSbError('ensureVendorSubtasks:insert', error, { parent: input.parent_task_id }); throw error; }
   return missing;
+}
+
+// ── Analysis report: what's inherited vs. what's typed ──────────────
+//
+// Brand, campaign name and platforms are NOT stored on the subtask. They
+// are read through to the parent, so renaming the campaign renames it
+// everywhere and there is never a stale copy to reconcile.
+//
+// Priority is the exception Siraj called out explicitly — "priority not
+// auto added from parent task" — so it stays whatever the subtask says.
+
+export interface AnalysisReportInherited {
+  brandName: string | null;
+  campaignName: string | null;
+  platforms: string[];
+}
+
+export function analysisReportInherited(parent: PMTask | null): AnalysisReportInherited {
+  return {
+    brandName: parent?.brand_name ?? null,
+    campaignName: parent?.task_name ?? parent?.title ?? null,
+    platforms: parent?.platforms ?? [],
+  };
+}
+
+/**
+ * The platforms an analysis report actually covers.
+ *
+ * Starts as the parent's list, but the subtask may narrow or extend it —
+ * `platforms` on the child row is the override. A child row that has
+ * never been touched has an empty array, which reads as "same as parent"
+ * rather than "no platforms", because an empty override is indistinguishable
+ * from an untouched one and defaulting to nothing would silently blank the
+ * inherited list the first time somebody opened the form.
+ */
+export function effectiveAnalysisPlatforms(subtask: PMTask | null, parent: PMTask | null): string[] {
+  const own = subtask?.platforms ?? [];
+  if (own.length > 0) return own;
+  return parent?.platforms ?? [];
+}
+
+// ── Completeness: warn, never block ─────────────────────────────────
+//
+// Proof of posting, the analysis report and the insight are "always
+// required" — but required as in "somebody should chase this", not as in
+// "the database refuses the row". Siraj chose warn-don't-block, so this
+// returns strings for the UI and nothing enforces anything.
+
+export interface CompletenessWarning {
+  key: 'proof_of_posting' | 'analysis_report' | 'insight';
+  message: string;
+}
+
+export function campaignCompletenessWarnings(
+  parent: PMTask | null,
+  subtasks: PMTask[],
+): CompletenessWarning[] {
+  if (!parent) return [];
+  const out: CompletenessWarning[] = [];
+
+  if (!parent.proof_of_posting_attached && !(parent.proof_of_posting_link ?? '').trim()) {
+    out.push({ key: 'proof_of_posting', message: 'Proof of posting has not been added.' });
+  }
+
+  const analysis = subtasks.filter((s) => s.subtask_kind === 'analysis_report');
+  if (analysis.length === 0) {
+    out.push({ key: 'analysis_report', message: 'No analysis report subtask on this campaign.' });
+  } else if (!analysis.some((s) => s.status === 'done')) {
+    out.push({ key: 'analysis_report', message: 'The analysis report is not finished.' });
+  }
+
+  // Insight lives on the vendor subtask. Only complain once we have vendors
+  // to hang it off — a campaign with no vendors yet isn't missing anything.
+  const vendors = subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind));
+  if (vendors.length > 0) {
+    const without = vendors.filter(
+      (s) => !s.insight_attached && !(s.insight_link ?? '').trim(),
+    );
+    if (without.length > 0) {
+      out.push({
+        key: 'insight',
+        message: without.length === vendors.length
+          ? 'No insight added on any vendor yet.'
+          : `Insight missing on ${without.length} of ${vendors.length} vendors.`,
+      });
+    }
+  }
+
+  return out;
+}
+
+// ── Quotation / invoice requests (migration 048) ────────────────────
+
+export type DocumentRequestKind = 'quotation' | 'invoice';
+export type DocumentRequestStatus = 'pending' | 'issued' | 'cancelled';
+
+export interface DocumentRequest {
+  id: string;
+  workspace_id: string;
+  pm_task_id: string;
+  doc_kind: DocumentRequestKind;
+  status: DocumentRequestStatus;
+  note: string | null;
+  document_number: string | null;
+  requested_by: string | null;
+  requested_at: string;
+  issued_by: string | null;
+  issued_at: string | null;
+}
+
+export function useDocumentRequests(taskId: string | null) {
+  const [items, setItems] = useState<DocumentRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!taskId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('document_requests')
+      .select('*')
+      .eq('pm_task_id', taskId)
+      .order('requested_at', { ascending: false });
+    if (error) logSbError('useDocumentRequests', error, { taskId });
+    setItems((data || []) as DocumentRequest[]);
+    setLoading(false);
+  }, [taskId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+/**
+ * Ask Finance for a quotation or an invoice on this campaign.
+ *
+ * Carries no copy of the client, brand or amount — Ops reads those live
+ * off the parent when they open the link, so the request can never go
+ * stale against a campaign that was edited after it was raised.
+ *
+ * Refuses to raise a second open request of the same kind: two identical
+ * "please issue a quotation" notifications a minute apart is how Ops
+ * learns to ignore them.
+ */
+export async function requestCampaignDocument(input: {
+  parent: PMTask;
+  kind: DocumentRequestKind;
+  requestedBy: string;
+  note?: string | null;
+}): Promise<DocumentRequest> {
+  const { parent, kind, requestedBy } = input;
+  if (parent.parent_task_id) {
+    throw new Error('Quotations and invoices are requested on the campaign, not a subtask.');
+  }
+  if (!parent.workspace_id) {
+    throw new Error('This campaign has no workspace; cannot raise a request.');
+  }
+
+  const { data: open, error: openErr } = await supabase
+    .from('document_requests')
+    .select('id')
+    .eq('pm_task_id', parent.id)
+    .eq('doc_kind', kind)
+    .eq('status', 'pending')
+    .limit(1);
+  if (openErr) { logSbError('requestCampaignDocument:check', openErr, { task: parent.id }); throw openErr; }
+  if (open && open.length) {
+    throw new Error(`There is already an open ${kind} request on this campaign.`);
+  }
+
+  const { data, error } = await supabase
+    .from('document_requests')
+    .insert({
+      workspace_id: parent.workspace_id,
+      pm_task_id: parent.id,
+      doc_kind: kind,
+      status: 'pending',
+      note: input.note?.trim() || null,
+      requested_by: requestedBy,
+    })
+    .select()
+    .single();
+  if (error) { logSbError('requestCampaignDocument', error, { task: parent.id, kind }); throw error; }
+  return data as DocumentRequest;
+}
+
+/**
+ * Mark a request issued and record the number. Also appends that number to
+ * the parent's quotation_numbers / invoice_numbers so the campaign form and
+ * the request queue can't disagree about what was issued.
+ */
+export async function markDocumentRequestIssued(
+  request: DocumentRequest,
+  documentNumber: string,
+  issuedBy: string,
+) {
+  const num = documentNumber.trim();
+  if (!num) throw new Error('Give the document a number.');
+
+  const { error } = await supabase
+    .from('document_requests')
+    .update({
+      status: 'issued',
+      document_number: num,
+      issued_by: issuedBy,
+      issued_at: new Date().toISOString(),
+    })
+    .eq('id', request.id);
+  if (error) { logSbError('markDocumentRequestIssued', error, { id: request.id }); throw error; }
+
+  const column = request.doc_kind === 'quotation' ? 'quotation_numbers' : 'invoice_numbers';
+  const { data: task } = await supabase
+    .from('pm_tasks')
+    .select(column)
+    .eq('id', request.pm_task_id)
+    .maybeSingle();
+
+  const existing = ((task as any)?.[column] ?? []) as string[];
+  if (!existing.some((v) => v.trim().toLowerCase() === num.toLowerCase())) {
+    await supabase
+      .from('pm_tasks')
+      .update({ [column]: [...existing, num] })
+      .eq('id', request.pm_task_id);
+  }
+}
+
+export async function cancelDocumentRequest(id: string) {
+  const { error } = await supabase
+    .from('document_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', id);
+  if (error) throw error;
 }
 
 /**
