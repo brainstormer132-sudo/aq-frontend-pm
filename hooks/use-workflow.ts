@@ -1696,6 +1696,137 @@ export async function addComment(taskId: string, authorId: string, content: stri
     .from('comments')
     .insert({ task_id: taskId, author_id: authorId, content });
   if (error) throw error;
+  // Mention notifications are fired by a database trigger (migration 049),
+  // not from here — a comment that saves must never notify nobody because
+  // the tab was closed a moment later.
+}
+
+// ── Names and @mentions (migration 049) ─────────────────────────────
+
+/** What a profile with no real name reads as. Matches unnamed_member_label(). */
+export const UNNAMED_MEMBER = 'Unnamed member';
+
+/**
+ * An email address is not a name.
+ *
+ * Signup wrote `full_name: metadata.full_name || email`, so profiles that
+ * never supplied a name carry an address. 049 cleans the stored data; this
+ * is the belt-and-braces so a row that predates the migration, or arrives
+ * from a cached response, still never renders an address to the screen.
+ */
+export function looksLikeEmail(value: string | null | undefined): boolean {
+  const v = (value ?? '').trim();
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+}
+
+/** The name to show for a person. Never an email, never blank. */
+export function displayName(profile: { full_name?: string | null } | null | undefined): string {
+  const v = (profile?.full_name ?? '').trim();
+  if (!v || looksLikeEmail(v)) return UNNAMED_MEMBER;
+  return v;
+}
+
+/** Whether this profile still needs its owner to set a real name. */
+export function needsRealName(profile: { full_name?: string | null } | null | undefined): boolean {
+  const v = (profile?.full_name ?? '').trim();
+  return !v || looksLikeEmail(v) || v === UNNAMED_MEMBER;
+}
+
+/** Set your own display name. Trimmed; an email is refused outright. */
+export async function updateMyName(userId: string, fullName: string) {
+  const name = fullName.trim().replace(/\s+/g, ' ');
+  if (!name) throw new Error('Give your name.');
+  if (looksLikeEmail(name)) throw new Error('That is an email address, not a name.');
+  if (name.length > 80) throw new Error('That name is too long.');
+  const { error } = await supabase
+    .from('profiles')
+    .update({ full_name: name })
+    .eq('id', userId);
+  if (error) { logSbError('updateMyName', error, { userId }); throw error; }
+}
+
+/**
+ * How a mention is stored: `@[[<uuid>]]`.
+ *
+ * The id, not the name — rename someone and every comment they were ever
+ * mentioned in shows the new name, instead of freezing whatever they were
+ * called that day. Same rule as client and brand elsewhere in this app.
+ */
+export const MENTION_RE =
+  /@\[\[([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\]\]/g;
+
+export function mentionToken(userId: string): string {
+  return `@[[${userId}]]`;
+}
+
+/** Every distinct user id mentioned in a body of text. */
+export function extractMentionIds(text: string | null | undefined): string[] {
+  const out = new Set<string>();
+  const re = new RegExp(MENTION_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text ?? '')) !== null) out.add(m[1]);
+  return Array.from(out);
+}
+
+export type CommentSegment =
+  | { kind: 'text'; value: string }
+  | { kind: 'mention'; userId: string; name: string };
+
+/**
+ * Split comment text into plain runs and mentions, resolving each id to the
+ * name that person has RIGHT NOW. An id nobody recognises renders as
+ * "@Unknown member" rather than leaking a raw uuid at the reader.
+ */
+export function parseCommentSegments(
+  text: string | null | undefined,
+  nameById: Map<string, string>,
+): CommentSegment[] {
+  const src = text ?? '';
+  const out: CommentSegment[] = [];
+  const re = new RegExp(MENTION_RE.source, 'g');
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    if (m.index > last) out.push({ kind: 'text', value: src.slice(last, m.index) });
+    out.push({ kind: 'mention', userId: m[1], name: nameById.get(m[1]) ?? 'Unknown member' });
+    last = m.index + m[0].length;
+  }
+  if (last < src.length) out.push({ kind: 'text', value: src.slice(last) });
+  return out;
+}
+
+/**
+ * Find the @query the caret is currently inside, if any.
+ *
+ * Returns null unless the @ starts at the beginning or follows whitespace —
+ * otherwise an email typed into a comment would open the picker on every
+ * keystroke after the @.
+ */
+export function activeMentionQuery(
+  text: string,
+  caret: number,
+): { query: string; start: number } | null {
+  const upto = text.slice(0, caret);
+  const at = upto.lastIndexOf('@');
+  if (at === -1) return null;
+  const before = at === 0 ? '' : upto[at - 1];
+  if (before && !/\s/.test(before)) return null;
+  const query = upto.slice(at + 1);
+  // A mention is a name fragment, not a paragraph.
+  if (/[\n\r]/.test(query) || query.length > 40) return null;
+  return { query, start: at };
+}
+
+/** Replace the in-progress @query with a finished mention token. */
+export function applyMention(
+  text: string,
+  start: number,
+  caret: number,
+  userId: string,
+): { text: string; caret: number } {
+  const token = `${mentionToken(userId)} `;
+  const next = text.slice(0, start) + token + text.slice(caret);
+  return { text: next, caret: start + token.length };
 }
 
 export async function deleteComment(commentId: string) {
