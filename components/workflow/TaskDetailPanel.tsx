@@ -18,6 +18,7 @@ import {
   createSubtask, removeSubtask, ensureVendorSubtasks,
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
+  displayName, parseCommentSegments,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
   campaignCompletenessWarnings,
@@ -28,6 +29,7 @@ import {
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 import { AddVendorsModal } from './AddVendorsModal';
+import { MentionBox, CommentText } from './MentionBox';
 import { TrackingSheetPanel } from './TrackingSheetPanel';
 import { SearchablePicker } from './SearchablePicker';
 
@@ -177,6 +179,12 @@ export function TaskDetailPanel({
     const m = new Map(profiles.map((p) => [p.id, p]));
     return m;
   }, [profiles]);
+
+  /** id → current display name, for resolving @mentions at render time. */
+  const mentionNames = useMemo(
+    () => new Map(profiles.map((p) => [p.id, displayName(p)])),
+    [profiles],
+  );
 
   const closer        = task?.sales_closer_id ? profileById.get(task.sales_closer_id) : null;
   const ka            = task?.key_account_id  ? profileById.get(task.key_account_id)  : null;
@@ -1654,7 +1662,7 @@ export function TaskDetailPanel({
                 )}
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
                   {comments.map((c) => {
-                    const author = c.author?.full_name ?? profileById.get(c.author_id)?.full_name ?? 'Someone';
+                    const author = displayName(c.author ?? profileById.get(c.author_id));
                     const canRemove = c.author_id === currentUserId || isPrivileged;
                     return (
                       <li key={c.id} style={{
@@ -1679,22 +1687,23 @@ export function TaskDetailPanel({
                             )}
                           </div>
                         </div>
-                        <p style={{ marginTop: 4, fontSize: 14, whiteSpace: 'pre-wrap' }}>{c.content}</p>
+                        <p style={{ marginTop: 4, fontSize: 14, whiteSpace: 'pre-wrap' }}>
+                          {/* Mentions resolve to the name that person has NOW,
+                              not whatever they were called when it was typed. */}
+                          <CommentText segments={parseCommentSegments(c.content, mentionNames)} />
+                        </p>
                       </li>
                     );
                   })}
                 </ul>
                 {canComment && (
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <textarea
-                      className="aq-textarea"
-                      style={{ minHeight: 60 }}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <MentionBox
                       value={commentText}
-                      onChange={(e) => setCommentText(e.target.value)}
-                      placeholder="Add a comment… (Cmd/Ctrl+Enter to send)"
-                      onKeyDown={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleAddComment();
-                      }}
+                      onChange={setCommentText}
+                      onSubmit={handleAddComment}
+                      people={profiles}
+                      disabled={busy}
                     />
                     <button
                       type="button"
