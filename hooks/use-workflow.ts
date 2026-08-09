@@ -1183,6 +1183,125 @@ export function isAutoVendorTitle(title: string | null, brandName: string | null
   return false;
 }
 
+// ── Bulk vendor creation (the "add 50 vendors" popup) ───────────────
+//
+// A Package Ad sold as 50 or 100 ads used to mean 50 trips through a form.
+// This creates the whole batch in ONE insert with shared ad type, platform
+// and price, leaving the vendor itself blank — 50 ads usually means 50
+// different influencers, and they get picked one at a time afterwards.
+
+/** Whether the batch is influencer/UGC work, which changes what gets prefilled. */
+export const VENDOR_FORMATS = ['influencer', 'ugc', 'other'] as const;
+export type VendorFormat = typeof VENDOR_FORMATS[number];
+
+export const VENDOR_FORMAT_LABELS: Record<VendorFormat, string> = {
+  influencer: 'Influencer',
+  ugc: 'UGC',
+  other: 'Other (printing, billboard, production…)',
+};
+
+/** Influencer and UGC work is what the tracking sheet exists to track. */
+export function formatIsTrackable(format: VendorFormat): boolean {
+  return format === 'influencer' || format === 'ugc';
+}
+
+/**
+ * The default name for the nth vendor row of a batch.
+ *
+ * No vendor is known yet, so it numbers instead: "{brand} — Vendor 7", or
+ * "Vendor 7" with no brand. Both shapes are recognised by isAutoVendorTitle,
+ * so assigning a real vendor later still renames the row to
+ * "{brand} — {vendor}". That round trip is the whole point of the format.
+ */
+export function batchVendorTitle(brandName: string | null, n: number): string {
+  const brand = (brandName ?? '').trim();
+  const label = `${SUBTASK_KIND_LABELS.vendor} ${n}`;
+  return brand ? `${brand} — ${label}` : label;
+}
+
+export interface VendorBatchRow {
+  /** Editable in the popup. Blank falls back to the generated name. */
+  title: string;
+}
+
+/**
+ * Create a batch of vendor subtasks in one insert.
+ *
+ * Returns the number created. One round trip regardless of size — 100 rows
+ * is one request, not 100, which is the difference between instant and a
+ * minute of spinner.
+ */
+export async function createVendorBatch(input: {
+  parent_task_id: string;
+  workspace_id: string;
+  creator_id: string;
+  rows: VendorBatchRow[];
+  brand_name?: string | null;
+  priority?: TaskPriority;
+  /** Written to both ad_type (free text) and media_type (constrained). */
+  ad_type?: string | null;
+  /** Joined into the subtask's free-text platform field. */
+  platforms?: string[];
+  /** Price per vendor, not a total to divide. */
+  price_per_vendor?: number | null;
+  format?: VendorFormat;
+}): Promise<number> {
+  const rows = input.rows.filter((r) => r != null);
+  if (!rows.length) return 0;
+  if (rows.length > 200) {
+    throw new Error('That is more than 200 vendors in one go — split it into batches.');
+  }
+
+  // Continue the existing numbering rather than restarting at 1.
+  const { data: existing, error: exErr } = await supabase
+    .from('pm_tasks')
+    .select('id')
+    .eq('parent_task_id', input.parent_task_id)
+    .in('subtask_kind', VENDOR_SUBTASK_KINDS as unknown as string[]);
+  if (exErr) { logSbError('createVendorBatch:count', exErr, { parent: input.parent_task_id }); throw exErr; }
+  const have = existing?.length ?? 0;
+
+  const { data: last } = await supabase
+    .from('pm_tasks')
+    .select('position')
+    .eq('parent_task_id', input.parent_task_id)
+    .order('position', { ascending: false })
+    .limit(1);
+  let nextPos = last && last.length ? ((last[0] as any).position ?? 0) + 1 : 0;
+
+  const platformText = (input.platforms ?? []).join(', ').trim() || null;
+  const adType = (input.ad_type ?? '').trim() || null;
+  const price = Number.isFinite(Number(input.price_per_vendor)) && input.price_per_vendor != null
+    ? Number(input.price_per_vendor)
+    : null;
+
+  // media_type carries a CHECK constraint (048); ad_type is free text. Only
+  // write media_type when the choice is actually one of the allowed values,
+  // otherwise a custom ad type would be rejected by the database.
+  const mediaType = adType && (MEDIA_TYPES as readonly string[]).includes(adType) ? adType : null;
+
+  const payload = rows.map((r, i) => ({
+    workspace_id: input.workspace_id,
+    parent_task_id: input.parent_task_id,
+    title: r.title.trim() || batchVendorTitle(input.brand_name ?? null, have + i + 1),
+    position: nextPos++,
+    stage: 'in_progress' as TaskStage,
+    status: 'pending',
+    priority: input.priority ?? 'medium',
+    creator_id: input.creator_id,
+    subtask_kind: 'vendor',
+    request_status: 'not_requested',
+    ad_type: adType,
+    media_type: mediaType,
+    platform: platformText,
+    price,
+  }));
+
+  const { error } = await supabase.from('pm_tasks').insert(payload);
+  if (error) { logSbError('createVendorBatch:insert', error, { parent: input.parent_task_id }); throw error; }
+  return payload.length;
+}
+
 /**
  * Top the parent up to `targetCount` vendor subtasks, appending at the end of
  * the sibling order. Never deletes: lowering the quantity leaves existing ones
