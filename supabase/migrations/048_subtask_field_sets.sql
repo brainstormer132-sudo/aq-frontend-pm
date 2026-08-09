@@ -233,19 +233,14 @@ begin
        );
     end if;
 
-    -- The three creative deliverables are offered on every service type.
-    insert into public.service_type_steps (service_type_id, title, position)
-    select r.service_type_id, v.title, v.pos
-      from (values
-        ('Campaign Design',    20),
-        ('Marketing Strategy', 21),
-        ('Visuals',            22)
-      ) as v(title, pos)
-     where not exists (
-       select 1 from public.service_type_steps s
-        where s.service_type_id = r.service_type_id
-          and lower(trim(s.title)) = lower(trim(v.title))
-     );
+    -- Campaign Design / Marketing Strategy / Visuals were ALSO seeded here
+    -- onto every service type. That was wrong — it put three creative steps
+    -- in the triage list for Billboard, Event, Social Media and everything
+    -- else. Removed (see 050, which cleans up the rows this already made).
+    --
+    -- They still exist as subtask KINDS and are one click away from the
+    -- parent's "+ Add subtask" picker on any campaign that needs them.
+    null;
   end loop;
 end $$;
 
