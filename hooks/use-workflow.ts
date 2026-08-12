@@ -291,13 +291,38 @@ export function offeredSubtaskKinds(
   steps: { service_type_id: string; title: string }[],
 ): SubtaskKind[] {
   const allowed = new Set<string>(ALWAYS_OFFERED_SUBTASK_KINDS);
+  for (const k of catalogKinds(serviceTypeIds, steps)) allowed.add(k);
+  return SUBTASK_KINDS.filter((k) => allowed.has(k));
+}
+
+/** The kinds this task's service types actually define in the catalogue. */
+export function catalogKinds(
+  serviceTypeIds: string[],
+  steps: { service_type_id: string; title: string }[],
+): SubtaskKind[] {
   const ids = new Set(serviceTypeIds);
+  const found = new Set<SubtaskKind>();
   for (const s of steps) {
     if (!ids.has(s.service_type_id)) continue;
     const kind = subtaskKindFromStepTitle(s.title);
-    if (kind) allowed.add(kind);
+    if (kind) found.add(kind);
   }
-  return SUBTASK_KINDS.filter((k) => allowed.has(k));
+  return SUBTASK_KINDS.filter((k) => found.has(k));
+}
+
+/**
+ * Does the catalogue say this task's service types EXPECT this kind?
+ *
+ * The difference from offeredSubtaskKinds matters: that one answers "may I
+ * add this?", this one answers "should I be nagged for not having it?".
+ * A Package Ad may add an analysis report; it is not expected to have one.
+ */
+export function catalogExpectsKind(
+  serviceTypeIds: string[],
+  steps: { service_type_id: string; title: string }[],
+  kind: SubtaskKind,
+): boolean {
+  return catalogKinds(serviceTypeIds, steps).includes(kind);
 }
 
 /**
@@ -1451,6 +1476,20 @@ export interface CompletenessWarning {
 export function campaignCompletenessWarnings(
   parent: PMTask | null,
   subtasks: PMTask[],
+  opts: {
+    /**
+     * Does this task's service type actually expect an analysis report?
+     *
+     * Derived from the catalogue via catalogExpectsKind(). Without this the
+     * panel nagged EVERY parent — a Package Ad was told off for having no
+     * analysis report, which was only ever specified for Campaign.
+     *
+     * Note this is separate from whether one can be ADDED: the picker offers
+     * analysis reports everywhere, because "you may" and "you must" are
+     * different questions and conflating them is what caused the bug.
+     */
+    expectsAnalysisReport?: boolean;
+  } = {},
 ): CompletenessWarning[] {
   if (!parent) return [];
   const out: CompletenessWarning[] = [];
@@ -1459,11 +1498,13 @@ export function campaignCompletenessWarnings(
     out.push({ key: 'proof_of_posting', message: 'Proof of posting has not been added.' });
   }
 
-  const analysis = subtasks.filter((s) => s.subtask_kind === 'analysis_report');
-  if (analysis.length === 0) {
-    out.push({ key: 'analysis_report', message: 'No analysis report subtask on this campaign.' });
-  } else if (!analysis.some((s) => s.status === 'done')) {
-    out.push({ key: 'analysis_report', message: 'The analysis report is not finished.' });
+  if (opts.expectsAnalysisReport) {
+    const analysis = subtasks.filter((s) => s.subtask_kind === 'analysis_report');
+    if (analysis.length === 0) {
+      out.push({ key: 'analysis_report', message: 'No analysis report yet.' });
+    } else if (!analysis.some((s) => s.status === 'done')) {
+      out.push({ key: 'analysis_report', message: 'The analysis report is not finished.' });
+    }
   }
 
   // Insight lives on the vendor subtask. Only complain once we have vendors
