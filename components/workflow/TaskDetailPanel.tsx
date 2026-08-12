@@ -18,7 +18,7 @@ import {
   createSubtask, removeSubtask,
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
-  displayName, parseCommentSegments, offeredSubtaskKinds,
+  displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
   type ServiceTypeStep,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
@@ -347,8 +347,17 @@ export function TaskDetailPanel({
   // Proof of posting, the analysis report and the insight are "always
   // required" — surfaced here so nobody forgets, but nothing refuses a save.
   const completeness = useMemo(
-    () => (task && !task.parent_task_id ? campaignCompletenessWarnings(task, subtasks) : []),
-    [task, subtasks],
+    () => (task && !task.parent_task_id
+      ? campaignCompletenessWarnings(task, subtasks, {
+          // Only nag for an analysis report where the service type asks for
+          // one. A Package Ad isn't a Campaign and shouldn't be told off for
+          // missing a report nobody expected of it.
+          expectsAnalysisReport: catalogExpectsKind(
+            taskServiceTypes.map((s) => s.id), serviceTypeSteps, 'analysis_report',
+          ),
+        })
+      : []),
+    [task, subtasks, taskServiceTypes, serviceTypeSteps],
   );
 
   // ── Publish the tracking sheet to the client (migration 045) ────────
