@@ -1221,6 +1221,12 @@ export async function ensureTrackingRowForVendor(input: {
   vendor_name: string;
   platform?: string | null;
   price_excl?: number | null;
+  /** The vendor's registered profile / handle, if they have one on file. */
+  profile_link?: string | null;
+  /** The subtask's ad type — or the campaign's, if the subtask inherits it. */
+  type_of_ad?: string | null;
+  /** What the campaign is selling, for the Product column. */
+  product?: string | null;
 }): Promise<boolean> {
   const name = (input.vendor_name ?? '').trim();
   if (!name) return false;
@@ -1238,13 +1244,33 @@ export async function ensureTrackingRowForVendor(input: {
     const nextPos = (existing ?? []).reduce(
       (max: number, r: any) => Math.max(max, Number(r.position) || 0), -1) + 1;
 
+    // Fill in what we already know; leave the rest genuinely blank.
+    //
+    // Siraj: "filled out with the data that we have and the ones we dont
+    // have dont fill any data". So no placeholder text — an empty cell has
+    // to mean "nobody has entered this", otherwise the sheet stops being a
+    // to-do list.
+    //
+    // price_excl is the exception and stays as it was: createTrackingRow
+    // coerces it to 0, and tracking_rows.price_excl may be NOT NULL (036
+    // isn't in this working copy, so I haven't confirmed it can take null).
+    // A vendor with no price therefore still shows 0 rather than empty.
+    // Worth fixing once the column's nullability is known.
     const price = Number(input.price_excl);
+    const clean = (v: string | null | undefined) => {
+      const s = (v ?? '').trim();
+      return s || undefined;
+    };
+
     await createTrackingRow(input.parent_task_id, {
       position: nextPos,
       influencer_name: name,
-      platform: input.platform ?? '',
-      price_excl: Number.isFinite(price) && input.price_excl != null ? price : 0,
-    });
+      platform: clean(input.platform),
+      profile_link: clean(input.profile_link),
+      type_of_ad: clean(input.type_of_ad),
+      product: clean(input.product),
+      price_excl: Number.isFinite(price) && input.price_excl != null ? price : undefined,
+    } as any);
     return true;
   } catch (e) {
     logSbError('ensureTrackingRowForVendor', e as any, { parent: input.parent_task_id, name });
