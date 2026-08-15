@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useTask, useTaskSubtasks, useTaskComments, useTaskAttachments, useTaskServiceTypes,
   useLegacyVendors,
@@ -19,6 +19,7 @@ import {
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
+  runDurationLabel,
   type ServiceTypeStep,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
@@ -147,23 +148,25 @@ export function TaskDetailPanel({
   const isPrivileged = role && ['owner','admin','marketing'].includes(role);
   const isAdminish   = Boolean(role && ['owner','admin'].includes(role));
 
-  // ── Phase 4: the parent is split down the middle ────────────────────
-  //   SALES half  — task name, client, brand, sales closer, description.
-  //   MARKETING half — everything else: priority, service types, key
-  //     account, stage, operations columns, tracking, collaborators.
-  //   BUDGET is shared: sales opens the number, and it stays editable on
-  //     the parent for both halves.
-  // Mirrored in Postgres by trg_enforce_task_field_ownership (migration
-  // 039) — change one and you must change the other.
-  const canEditSales     = Boolean(isAdminish || (role === 'sales' && isCreator));
-  const canEditMarketing = Boolean(isAdminish || role === 'marketing' || role === 'key_account' || isKeyAcct);
-  // The split applies to parents only; a subtask is marketing's throughout.
-  const canEditBudget    = task?.parent_task_id
-    ? canEditMarketing
-    : Boolean(canEditSales || canEditMarketing);
-  const canEditAssignee  = canEditMarketing;
+  // ── Who can edit what (migration 051) ───────────────────────────────
+  //
+  // The sales-vs-marketing field split is gone. It refused sales the right
+  // to touch a budget and marketing the right to fix a client name, which
+  // meant a one-word correction needed the other half of the company.
+  //
+  // The rule now: MEMBERS cannot edit a parent campaign. Everyone else —
+  // owner, admin, marketing, sales, key account, operations — can edit
+  // anything on it. Subtasks were never restricted and still aren't.
+  //
+  // Mirrored in Postgres by trg_enforce_task_field_ownership (051).
+  // Change one and you must change the other.
+  const canEditParent = Boolean(role && role !== 'member');
+  const canEditSales     = canEditParent;
+  const canEditMarketing = canEditParent;
+  const canEditBudget    = task?.parent_task_id ? true : canEditParent;
+  const canEditAssignee  = canEditParent;
 
-  const canEdit      = Boolean(canEditSales || canEditMarketing);
+  const canEdit      = Boolean(task?.parent_task_id ? true : canEditParent);
   const canDelete    = Boolean(isPrivileged || (role === 'sales' && isCreator));
   const canMarkDone  = Boolean(isKeyAcct || isPrivileged);
   const canRequestContract = Boolean(
@@ -465,30 +468,97 @@ export function TaskDetailPanel({
     finally { setAddingSubtask(false); }
   };
 
-  const handleRemoveSubtask = async (sub: { id: string; title: string }) => {
-    const ok = window.confirm(
-      `Remove "${sub.title}"?\n\nIts files, comments and budget go with it. This cannot be undone.`
-    );
-    if (!ok) return;
-    setRemovingSubtaskId(sub.id); setError('');
+  // ── Delete with a 10-second window to change your mind ──────────────
+  //
+  // No confirmation dialog. The row disappears at once and the delete is
+  // DEFERRED for ten seconds — cancelling is just not running it. The
+  // alternative (delete now, restore on undo) can't work: the row's files,
+  // comments and contract request go with it and can't be resurrected.
+  //
+  // Pending deletes are flushed if the panel closes, so a delete can never
+  // be silently forgotten by walking away from it.
+  const UNDO_MS = 10_000;
+  const pendingRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [pendingSubtaskDeletes, setPendingSubtaskDeletes] =
+    useState<{ id: string; title: string }[]>([]);
+  const [pendingSelfDelete, setPendingSelfDelete] = useState(false);
+  const [undoSeconds, setUndoSeconds] = useState(0);
+
+  const commitSubtaskDelete = useCallback(async (id: string) => {
+    pendingRef.current.delete(id);
+    setPendingSubtaskDeletes((p) => p.filter((x) => x.id !== id));
     try {
-      await removeSubtask(sub.id);
+      await removeSubtask(id);
       await refetchSubs();
       await refetchTask();
       onChanged?.();
     } catch (e: any) { setError(e?.message ?? String(e)); }
-    finally { setRemovingSubtaskId(null); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refetchSubs, refetchTask]);
+
+  const handleRemoveSubtask = (sub: { id: string; title: string }) => {
+    if (pendingRef.current.has(sub.id)) return;
+    setError('');
+    setPendingSubtaskDeletes((p) => [...p, { id: sub.id, title: sub.title }]);
+    pendingRef.current.set(sub.id, setTimeout(() => { commitSubtaskDelete(sub.id); }, UNDO_MS));
   };
 
-  const handleDeleteTask = async () => {
-    if (!task) return;
-    setBusy(true); setError('');
-    try {
-      await deleteTaskFn(task.id);
-      onChanged?.();
-      onClose();
-    } catch (e: any) { setError(e?.message ?? String(e)); setBusy(false); }
+  /** Subtasks minus the ones counting down to deletion. */
+  const visibleSubtasks = useMemo(
+    () => subtasks.filter((s) => !pendingSubtaskDeletes.some((p) => p.id === s.id)),
+    [subtasks, pendingSubtaskDeletes],
+  );
+
+  const undoRemoveSubtask = (id: string) => {
+    const t = pendingRef.current.get(id);
+    if (t) clearTimeout(t);
+    pendingRef.current.delete(id);
+    setPendingSubtaskDeletes((p) => p.filter((x) => x.id !== id));
   };
+
+  // Closing the panel commits anything still counting down. Leaving a
+  // delete un-run because the panel closed would be the same silent
+  // no-op that made deletes look glitchy in the first place.
+  useEffect(() => {
+    const map = pendingRef.current;
+    return () => {
+      map.forEach((t, id) => { clearTimeout(t); void removeSubtask(id).catch(() => {}); });
+      map.clear();
+    };
+  }, []);
+
+  const handleDeleteTask = () => {
+    if (!task || pendingSelfDelete) return;
+    setError('');
+    setPendingSelfDelete(true);
+    setUndoSeconds(UNDO_MS / 1000);
+  };
+
+  const undoDeleteTask = () => {
+    setPendingSelfDelete(false);
+    setUndoSeconds(0);
+  };
+
+  // Counts the parent delete down, then runs it and closes.
+  useEffect(() => {
+    if (!pendingSelfDelete || !task) return;
+    if (undoSeconds <= 0) {
+      (async () => {
+        try {
+          await deleteTaskFn(task.id);
+          onChanged?.();
+          onClose();
+        } catch (e: any) {
+          setError(e?.message ?? String(e));
+          setPendingSelfDelete(false);
+        }
+      })();
+      return;
+    }
+    const t = setTimeout(() => setUndoSeconds((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSelfDelete, undoSeconds, task?.id]);
 
   const handleMarkDone = async () => {
     if (!task) return;
@@ -735,9 +805,18 @@ export function TaskDetailPanel({
                     Mark complete
                   </button>
                 )}
-                {canDelete && (
+                {canDelete && !pendingSelfDelete && (
                   <button className="aq-btn aq-btn-danger" disabled={busy} onClick={handleDeleteTask}>
                     Delete
+                  </button>
+                )}
+                {pendingSelfDelete && (
+                  <button
+                    type="button"
+                    className="aq-btn aq-btn-secondary"
+                    onClick={undoDeleteTask}
+                  >
+                    Undo delete ({undoSeconds})
                   </button>
                 )}
                 <button className="aq-btn aq-btn-ghost" onClick={onClose} aria-label="Close">✕</button>
@@ -745,6 +824,21 @@ export function TaskDetailPanel({
             </header>
 
             <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+              {pendingSelfDelete && (
+                <section
+                  className="aq-card"
+                  style={{ padding: '12px 16px', borderLeft: '3px solid var(--aq-error)' }}
+                >
+                  <strong style={{ fontSize: 13, color: 'var(--aq-error)' }}>
+                    Deleting this campaign in {undoSeconds}s
+                  </strong>
+                  <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+                    Its subtasks, files and comments go with it. Press
+                    &ldquo;Undo delete&rdquo; above to stop.
+                  </p>
+                </section>
+              )}
+
               {error && (
                 <div style={{
                   background: 'var(--aq-error)', color: '#fff',
@@ -1341,18 +1435,21 @@ export function TaskDetailPanel({
                   The run window for the whole package, and nothing else.
                   Per-ad dates stay in the tracking sheet; per-ad vendor and
                   price stay on each vendor subtask. Marketing's half. */}
-              {!isSubtaskView && (isPackageAd || vendorSubtasks.length > 0) && (
+              {/* Dates apply to every campaign, not just Package Ads — the
+                  old gate hid the run window on an Ad Hook until it had a
+                  vendor. Always shown on a parent now. */}
+              {!isSubtaskView && (
                 <section className="aq-card" style={{ padding: 18 }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
                     marginBottom: 12, gap: 12, flexWrap: 'wrap',
                   }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>📦 Package</h3>
-                    {/* Just the count. The "of N ads sold" comparison went with
-                        the quantity field — nothing sets that number any more,
-                        so a mismatch warning against it would be noise. */}
+                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>📅 Date</h3>
+                    {/* How long it runs, worked out from the two dates rather
+                        than stored — a duration that disagrees with its own
+                        start and end is worse than no duration. */}
                     <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                      {vendorSubtasks.length} vendor{vendorSubtasks.length === 1 ? '' : 's'}
+                      {runDurationLabel(task.package_start_date, task.package_end_date)}
                     </span>
                   </div>
 
@@ -1477,9 +1574,33 @@ export function TaskDetailPanel({
                     </p>
                   )}
 
-                  {subtasks.length > 0 && (
+                  {/* Rows counting down to deletion, with a way back. */}
+                  {pendingSubtaskDeletes.map((p) => (
+                    <div
+                      key={p.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        gap: 8, marginBottom: 6, padding: '8px 12px',
+                        borderRadius: 'var(--aq-radius)',
+                        background: 'var(--aq-bg-sunken)',
+                        border: '1px dashed var(--aq-border)',
+                      }}
+                    >
+                      <span style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
+                        Removed <strong>{p.title}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-secondary"
+                        onClick={() => undoRemoveSubtask(p.id)}
+                        style={{ padding: '3px 12px', fontSize: 12 }}
+                      >Undo</button>
+                    </div>
+                  ))}
+
+                  {visibleSubtasks.length > 0 && (
                     <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {subtasks.map((s) => {
+                      {visibleSubtasks.map((s) => {
                         const done = s.status === 'done';
                         const sa = s.assignee_id ? profileById.get(s.assignee_id) : null;
                         const removing = removingSubtaskId === s.id;
