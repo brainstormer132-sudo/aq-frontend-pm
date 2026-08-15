@@ -21,7 +21,9 @@ import {
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
   runDurationLabel, vendorPickerOption,
   clientContractReadiness, sendClientContractRequest, vendorContractReadiness,
-  type MissingRequirement,
+  vendorNeedsInsight, vendorDataRequirements, inheritedFromCampaign,
+  campaignPlatformText, AD_TYPE_OPTIONS,
+  type MissingRequirement, type LegacyVendor,
   type ServiceTypeStep,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
@@ -400,9 +402,13 @@ export function TaskDetailPanel({
           expectsAnalysisReport: catalogExpectsKind(
             taskServiceTypes.map((s) => s.id), serviceTypeSteps, 'analysis_report',
           ),
+          // Only influencer / UGC vendors owe an insight. A printer doesn't.
+          insightVendorIds: new Set(
+            vendors.filter((v) => vendorNeedsInsight(v.vendor_category)).map((v) => v.id),
+          ),
         })
       : []),
-    [task, subtasks, taskServiceTypes, serviceTypeSteps],
+    [task, subtasks, taskServiceTypes, serviceTypeSteps, vendors],
   );
 
   // ── Publish the tracking sheet to the client (migration 045) ────────
@@ -1280,6 +1286,7 @@ export function TaskDetailPanel({
                 taskPlatforms={taskPlatforms}
                 subtasks={subtasks}
                 parentTask={parentTask}
+                vendors={vendors}
                 onChanged={async () => { await refetchTask(); onChanged?.(); }}
               />
               )}
@@ -2116,7 +2123,7 @@ import type { PMTask, TaskSource, ClientCategory } from '@/hooks/use-workflow';
 
 function OperationsPanel({
   task, isSubtaskView, canEdit, taskSources, clientCategories, taskPlatforms, subtasks,
-  parentTask, onChanged,
+  parentTask, vendors, onChanged,
 }: {
   task: PMTask;
   isSubtaskView: boolean;
@@ -2128,6 +2135,8 @@ function OperationsPanel({
   subtasks: PMTask[];
   /** Null on a parent row. The analysis report reads brand/name/platforms off it. */
   parentTask: PMTask | null;
+  /** The register, so a vendor subtask can tell what its vendor's category needs. */
+  vendors: LegacyVendor[];
   onChanged: () => Promise<void>;
 }) {
   // Generic field saver — writes `{ [field]: value }` to pm_tasks and
@@ -2193,6 +2202,15 @@ function OperationsPanel({
   );
 
   const subKind = task.subtask_kind;
+
+  // The vendor on this subtask, and what that means we still need.
+  const selectedVendor = task.vendor_id != null
+    ? vendors.find((v) => v.id === task.vendor_id) ?? null
+    : null;
+  const selectedVendorNeedsInsight = vendorNeedsInsight(selectedVendor?.vendor_category);
+  const vendorNeeds = vendorDataRequirements(task, selectedVendor);
+  const inheritedPlatform = inheritedFromCampaign(task.platform, campaignPlatformText(parentTask));
+  const inheritedAdType = inheritedFromCampaign(task.ad_type, parentTask?.ad_type);
 
   // ── ANALYSIS REPORT (subtask) ─────────────────────────────────────
   // Brand, campaign name and platforms are read through to the parent
@@ -2415,24 +2433,38 @@ function OperationsPanel({
           </span>
         </Row>
 
+        {/* Platform and ad type are asked on the campaign too. A blank one
+            here reads through to the campaign rather than being asked twice;
+            typing here overrides it for this vendor only. */}
         <Row label="Platform">
           {canEdit
             ? <TextInput
                 defaultValue={task.platform ?? ''}
-                placeholder="Instagram, TikTok"
+                placeholder={campaignPlatformText(parentTask) ?? 'Instagram, TikTok'}
                 onCommit={(v) => save('platform', v.trim() || null)}
               />
-            : <span>{task.platform || '—'}</span>}
+            : <span>{inheritedPlatform.value || '—'}</span>}
         </Row>
+        {inheritedPlatform.inherited && (
+          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', paddingLeft: 172, marginTop: -4 }}>
+            {inheritedPlatform.value} — from the campaign. Type here to change it for this vendor only.
+          </div>
+        )}
 
         <Row label="AD type">
           {canEdit
-            ? <TextInput
-                defaultValue={task.ad_type ?? ''}
-                placeholder="VideoShot"
-                onCommit={(v) => save('ad_type', v.trim() || null)}
-              />
-            : <span>{task.ad_type || '—'}</span>}
+            ? <select
+                className="aq-select"
+                style={{ maxWidth: 220 }}
+                value={task.ad_type ?? ''}
+                onChange={(e) => save('ad_type', e.target.value || null)}
+              >
+                <option value="">
+                  {inheritedAdType.inherited ? `${inheritedAdType.value} (from campaign)` : '—'}
+                </option>
+                {AD_TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            : <span>{inheritedAdType.value || '—'}</span>}
         </Row>
 
         <Row label="Vendor paid (SAR)">
@@ -2459,9 +2491,33 @@ function OperationsPanel({
             : <span>{task.vendor_payment_date || '—'}</span>}
         </Row>
 
+        {/* ── What this vendor still needs ───────────────────────────
+            Driven by their category: a printer is never asked for a
+            profile link, an influencer always is. */}
+        {vendorNeeds.length > 0 && (
+          <div style={{
+            marginTop: 12, padding: '10px 12px',
+            borderRadius: 'var(--aq-radius)',
+            background: 'var(--aq-bg-sunken)',
+          }}>
+            <strong style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
+              Still needed for this vendor
+            </strong>
+            <ul style={{ listStyle: 'none', marginTop: 5, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {vendorNeeds.map((m) => (
+                <li key={`${m.label}${m.where}`} style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                  · <strong>{m.label}</strong>{m.where ? ` — ${m.where}` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* ── Insight ────────────────────────────────────────────────
             Not a subtask of its own — it belongs to the vendor whose
-            work it analyses, so it rides here as a link plus a flag. */}
+            work it analyses, so it rides here as a link plus a flag.
+            Only influencer and UGC work produces one. */}
+        {selectedVendorNeedsInsight && (
         <div style={{
           marginTop: 12, paddingTop: 12,
           borderTop: '1px solid var(--aq-border-light)',
@@ -2487,6 +2543,7 @@ function OperationsPanel({
             />
           </Row>
         </div>
+        )}
       </section>
     );
   }
