@@ -1258,6 +1258,60 @@ export function isTrackableVendorCategory(category: string | null | undefined): 
   return TRACKABLE_VENDOR_CATEGORIES.includes((category ?? '').trim().toLowerCase());
 }
 
+// ── Finding a vendor ────────────────────────────────────────────────
+//
+// Siraj: "if influencer or ugc it will be license if other it will be id
+// or name ... only change is ugc or influencer we use name or license".
+//
+// So the searchable identifier depends on the vendor's OWN category, not
+// on a mode the user picks. An influencer is found by name or licence; a
+// printer or a logistics company by name or ID. One search box, and each
+// row carries the right key — nobody has to know which field to try.
+
+/** Which identifier identifies this vendor, given their category. */
+export function vendorIdentifierKind(category: string | null | undefined): 'license' | 'id' {
+  return isTrackableVendorCategory(category) ? 'license' : 'id';
+}
+
+/** The identifier itself, or null when it hasn't been registered yet. */
+export function vendorIdentifier(v: {
+  license_number?: string | null;
+  id_number?: string | null;
+  vendor_category?: string | null;
+}): { kind: 'license' | 'id'; value: string | null } {
+  const kind = vendorIdentifierKind(v.vendor_category);
+  const raw = kind === 'license' ? v.license_number : v.id_number;
+  return { kind, value: (raw ?? '').trim() || null };
+}
+
+/**
+ * A vendor as the picker should show and match it.
+ *
+ * `hint` is the visible second line — it's what tells two vendors with the
+ * same name apart. `keywords` is matched but not shown: BOTH identifiers go
+ * in, so a licence typed against a vendor filed under the wrong category
+ * still finds them. Being strict about which field you may search would
+ * only punish whoever mis-filed the vendor.
+ */
+export function vendorPickerOption(v: LegacyVendor): {
+  value: string; label: string; hint: string | null; keywords: string;
+} {
+  const { kind, value } = vendorIdentifier(v as any);
+  const category = (v.vendor_category ?? '').trim();
+  const idLabel = kind === 'license' ? 'Licence' : 'ID';
+  const hint = [
+    category || null,
+    value ? `${idLabel} ${value}` : `No ${idLabel.toLowerCase()} on file`,
+  ].filter(Boolean).join(' · ');
+  return {
+    value: String(v.id),
+    label: v.name,
+    hint,
+    keywords: [v.license_number, v.id_number, v.vat_number, category]
+      .filter(Boolean).join(' '),
+  };
+}
+
 // ── Campaign money rollup (migration 042) ───────────────────────────
 
 export interface CampaignMoney {
