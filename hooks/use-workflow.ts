@@ -1284,6 +1284,80 @@ export function vendorIdentifier(v: {
   return { kind, value: (raw ?? '').trim() || null };
 }
 
+/** Influencer and UGC work produces an insight; nothing else does. */
+export function vendorNeedsInsight(category: string | null | undefined): boolean {
+  return isTrackableVendorCategory(category);
+}
+
+/**
+ * What picking THIS vendor means you now need to fill in.
+ *
+ * Siraj: "it will ask for the relevant data for example influencer we need
+ * the insight and their data for the contracts and tracking sheet". So the
+ * ask follows the vendor's category rather than showing every field to
+ * everyone — a printing vendor is never asked for a profile link.
+ *
+ * Returns what is still OUTSTANDING, so an empty list means done.
+ */
+export function vendorDataRequirements(
+  subtask: PMTask | null,
+  vendor: LegacyVendor | null,
+): MissingRequirement[] {
+  if (!subtask || !vendor) return [];
+  const out: MissingRequirement[] = [];
+  const has = (v: unknown) => typeof v === 'string' ? v.trim().length > 0 : v != null;
+  const onVendor = `Vendors → ${vendor.name}`;
+
+  // Everyone: the money, because it drives the contract and the rollup.
+  if (!Number.isFinite(Number(subtask.price)) || subtask.price == null) {
+    out.push({ label: 'Price', where: 'this subtask' });
+  }
+  if (!Number.isFinite(Number(subtask.net_amount)) || subtask.net_amount == null) {
+    out.push({ label: 'Net amount', where: 'this subtask' });
+  }
+
+  if (vendorNeedsInsight(vendor.vendor_category)) {
+    // Influencer / UGC: the tracking sheet and the insight are the point.
+    if (!has(subtask.platform)) out.push({ label: 'Platform', where: 'this subtask' });
+    if (!has(subtask.ad_type))  out.push({ label: 'Ad type', where: 'this subtask' });
+    if (!subtask.insight_attached && !has(subtask.insight_link)) {
+      out.push({ label: 'Insight', where: 'this subtask' });
+    }
+    if (!has((vendor as any).platforms)) {
+      out.push({ label: 'Their profile / platforms', where: onVendor });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Enter it once.
+ *
+ * Siraj: "all data relevent for both sub task and parent task should be
+ * inputed once". Platform and ad type are asked on the campaign AND on
+ * every vendor under it; typing them twice is how they end up disagreeing.
+ *
+ * A vendor subtask with nothing of its own reads through to the campaign.
+ * Setting a value on the subtask overrides it for that vendor only — which
+ * is what you want when one influencer runs a Story and the rest run Reels.
+ */
+export function inheritedFromCampaign(
+  own: string | null | undefined,
+  fromParent: string | null | undefined,
+): { value: string | null; inherited: boolean } {
+  const mine = (own ?? '').trim();
+  if (mine) return { value: mine, inherited: false };
+  const theirs = (fromParent ?? '').trim();
+  return { value: theirs || null, inherited: Boolean(theirs) };
+}
+
+/** The campaign's platform list as one string, for a subtask's text field. */
+export function campaignPlatformText(parent: PMTask | null): string | null {
+  const list = parent?.platforms ?? [];
+  return list.length ? list.join(', ') : null;
+}
+
 /**
  * A vendor as the picker should show and match it.
  *
@@ -1617,6 +1691,12 @@ export function campaignCompletenessWarnings(
      * different questions and conflating them is what caused the bug.
      */
     expectsAnalysisReport?: boolean;
+    /**
+     * Vendor ids whose category actually produces an insight (influencer,
+     * UGC). Omit to expect one from every vendor, which is only right if
+     * you know they're all influencer work.
+     */
+    insightVendorIds?: Set<number>;
   } = {},
 ): CompletenessWarning[] {
   if (!parent) return [];
@@ -1635,19 +1715,27 @@ export function campaignCompletenessWarnings(
     }
   }
 
-  // Insight lives on the vendor subtask. Only complain once we have vendors
-  // to hang it off — a campaign with no vendors yet isn't missing anything.
+  // Insight lives on the vendor subtask, and only INFLUENCER/UGC vendors
+  // produce one — a printer or a logistics company has no insight to give.
+  // Which vendors those are is decided by opts.insightVendorIds, because
+  // the category lives on the vendor record, not on the subtask.
+  //
+  // Without that filter this nagged for an insight from every vendor on the
+  // campaign, the same over-reach as the analysis report warning.
   const vendors = subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind));
-  if (vendors.length > 0) {
-    const without = vendors.filter(
+  const expectInsight = opts.insightVendorIds
+    ? vendors.filter((s) => s.vendor_id != null && opts.insightVendorIds!.has(s.vendor_id))
+    : vendors;
+  if (expectInsight.length > 0) {
+    const without = expectInsight.filter(
       (s) => !s.insight_attached && !(s.insight_link ?? '').trim(),
     );
     if (without.length > 0) {
       out.push({
         key: 'insight',
-        message: without.length === vendors.length
-          ? 'No insight added on any vendor yet.'
-          : `Insight missing on ${without.length} of ${vendors.length} vendors.`,
+        message: without.length === expectInsight.length
+          ? 'No insight added on any influencer or UGC vendor yet.'
+          : `Insight missing on ${without.length} of ${expectInsight.length} influencer/UGC vendors.`,
       });
     }
   }
