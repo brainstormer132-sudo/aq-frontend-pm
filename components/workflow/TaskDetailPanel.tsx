@@ -20,6 +20,8 @@ import {
   isSingletonSubtaskKind, isSimpleDeliverableKind,
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
   runDurationLabel, vendorPickerOption,
+  clientContractReadiness, sendClientContractRequest, vendorContractReadiness,
+  type MissingRequirement,
   type ServiceTypeStep,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
@@ -314,6 +316,46 @@ export function TaskDetailPanel({
   // cancelled request is a dead end, so raising another is the right move.
   const canRaiseClientContract = !latestClientContract
     || ['rejected', 'cancelled'].includes(String(latestClientContract.status));
+
+  // ── Contract requests: check, then send. No form. ───────────────────
+  //
+  // The old flow opened RequestContractModal and re-asked for details the
+  // app already held on the campaign and the client record. Now the data is
+  // read at send time, so the request can't disagree with its own source,
+  // and an incomplete one is refused rather than handed to Legal to chase.
+  const clientForContract = useMemo(
+    () => clients.find((c) => c.id === task?.client_id) ?? null,
+    [clients, task?.client_id],
+  );
+  const clientReadiness = useMemo(
+    () => clientContractReadiness(task && !task.parent_task_id ? task : null, clientForContract),
+    [task, clientForContract],
+  );
+  const [sendingClientContract, setSendingClientContract] = useState(false);
+
+  /** Same check for the vendor side, which fires automatically when ready. */
+  const vendorReadiness = useMemo(() => {
+    if (!task?.parent_task_id) return { ready: true, missing: [] as MissingRequirement[] };
+    const v = task.vendor_id != null ? vendors.find((x) => x.id === task.vendor_id) ?? null : null;
+    const b = v ? banks.find((x) => x.vendor_id === v.id) ?? null : null;
+    return vendorContractReadiness(task, v, b);
+  }, [task, vendors, banks]);
+
+  const handleSendClientContract = async () => {
+    if (!task) return;
+    setSendingClientContract(true); setError('');
+    try {
+      await sendClientContractRequest({
+        task,
+        client: clientForContract,
+        requestedBy: currentUserId,
+      });
+      await refetchContractRequests();
+      onChanged?.();
+      setPublishNote('Client contract requested.');
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setSendingClientContract(false); }
+  };
 
   // ── Quotation / invoice requests (migration 048) ────────────────────
   // These sit on the PARENT, next to the client contract, because that is
@@ -628,11 +670,14 @@ export function TaskDetailPanel({
       ? vendors.find((v) => v.id === task.vendor_id) ?? null
       : null;
     if (!vendor) return;
-    const amount = Number(task.budget);
-    if (!Number.isFinite(amount) || amount <= 0) return;
     if (!parentTask) return;                    // parent not loaded yet
 
     const bank = banks.find((b) => b.vendor_id === vendor.id) ?? null;
+
+    // Don't send a half-filled request. It used to fire on vendor + budget
+    // alone, so Legal received requests with no licence, no signatory and
+    // no IBAN and had to chase them. The panel below says what's missing.
+    if (!vendorContractReadiness(task, vendor, bank).ready) return;
     try {
       const newId = await autoCreateContractRequestForSubtask({
         subtask: task,
@@ -853,6 +898,31 @@ export function TaskDetailPanel({
                 <div className="aq-badge aq-badge-info" style={{ alignSelf: 'flex-start' }}>
                   Read-only — you can comment and upload files
                 </div>
+              )}
+
+              {/* Vendor contract: what's still stopping it going out.
+                  The request fires by itself once everything is there, so
+                  this list IS the call to action. */}
+              {isSubtaskView && isVendorSubtaskKind(kind)
+                && !task.contract_request_id && !vendorReadiness.ready && (
+                <section
+                  className="aq-card"
+                  style={{ padding: '12px 16px', borderLeft: '3px solid var(--aq-warning, #b45309)' }}
+                >
+                  <strong style={{ fontSize: 13, color: 'var(--aq-warning, #b45309)' }}>
+                    Contract request not sent yet
+                  </strong>
+                  <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '4px 0 6px' }}>
+                    It goes to the contract app on its own once these are filled in.
+                  </p>
+                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {vendorReadiness.missing.map((m: MissingRequirement) => (
+                      <li key={`${m.label}${m.where}`} style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
+                        · <strong>{m.label}</strong>{m.where ? ` — ${m.where}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               )}
 
               {autoSentBanner && (
@@ -1280,15 +1350,41 @@ export function TaskDetailPanel({
                     </p>
                   )}
 
+                  {/* What's stopping it going out. Shown before the button so
+                      the answer is there when the button looks unavailable. */}
+                  {canRequestContract && canRaiseClientContract && !clientReadiness.ready && (
+                    <div style={{
+                      marginTop: 12, padding: '10px 12px',
+                      borderRadius: 'var(--aq-radius)',
+                      background: 'var(--aq-bg-sunken)',
+                      borderLeft: '3px solid var(--aq-warning, #b45309)',
+                    }}>
+                      <strong style={{ fontSize: 12, color: 'var(--aq-warning, #b45309)' }}>
+                        Fill these in first
+                      </strong>
+                      <ul style={{ listStyle: 'none', marginTop: 5, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {clientReadiness.missing.map((m: MissingRequirement) => (
+                          <li key={`${m.label}${m.where}`} style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
+                            · <strong>{m.label}</strong>{m.where ? ` — ${m.where}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     {canRequestContract && canRaiseClientContract && (
                       <button
                         type="button"
                         className="aq-btn aq-btn-primary"
-                        onClick={() => { setRequestKind('client'); setRequestOpen(true); }}
+                        disabled={!clientReadiness.ready || sendingClientContract}
+                        title={clientReadiness.ready ? undefined : 'Some details are still missing'}
+                        onClick={handleSendClientContract}
                         style={{ padding: '6px 12px', fontSize: 13 }}
                       >
-                        {latestClientContract ? 'Request again' : 'Request client contract'}
+                        {sendingClientContract ? 'Sending…'
+                          : latestClientContract ? 'Request again'
+                          : 'Request client contract'}
                       </button>
                     )}
                     {latestClientContract && !canRaiseClientContract && (
