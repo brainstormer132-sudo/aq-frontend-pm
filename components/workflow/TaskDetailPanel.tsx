@@ -19,7 +19,7 @@ import {
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
-  runDurationLabel,
+  runDurationLabel, vendorPickerOption,
   type ServiceTypeStep,
   COMPLEXITIES, MEDIA_TYPES,
   analysisReportInherited, effectiveAnalysisPlatforms,
@@ -399,6 +399,9 @@ export function TaskDetailPanel({
     () => subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind)),
     [subtasks],
   );
+
+  /** The vendor register, shaped for the type-ahead. */
+  const vendorOptions = useMemo(() => vendors.map(vendorPickerOption), [vendors]);
 
   /** Kinds already on this parent, so singletons can be greyed out. */
   const existingSubtaskKinds = useMemo(
@@ -1130,20 +1133,18 @@ export function TaskDetailPanel({
                     <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>Vendor</span>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       {canEditAssignee ? (
-                        <select
-                          className="aq-input"
-                          style={{ maxWidth: 360 }}
-                          value={task.vendor_id ?? ''}
-                          onChange={(e) => handleChangeVendor(e.target.value)}
+                        // Type-ahead, not a <select>: the vendor register runs
+                        // to hundreds of rows and a dropdown can only jump by
+                        // first letter. Matches on name, licence and ID at
+                        // once — see vendorPickerOption.
+                        <SearchablePicker
+                          options={vendorOptions}
+                          value={task.vendor_id != null ? String(task.vendor_id) : null}
+                          onChange={(v) => handleChangeVendor(v ?? '')}
+                          placeholder="Search by name, licence or ID…"
+                          emptyLabel="— No vendor —"
                           disabled={vendorSaving || Boolean(task.contract_request_id)}
-                        >
-                          <option value="">— No vendor —</option>
-                          {vendors.map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.name}{v.license_number ? ` · ${v.license_number}` : ''}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       ) : (
                         <span style={{ color: 'var(--aq-text)' }}>
                           {vendors.find((v) => v.id === task.vendor_id)?.name ?? '—'}
