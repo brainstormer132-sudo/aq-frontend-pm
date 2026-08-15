@@ -83,7 +83,10 @@ export function TaskDetailPanel({
   const { subtasks, refetch: refetchSubs } = useTaskSubtasks(currentTaskId);
   const { comments, refetch: refetchComments } = useTaskComments(currentTaskId);
   const { attachments, refetch: refetchAtt } = useTaskAttachments(currentTaskId);
-  const { items: taskServiceTypes } = useTaskServiceTypes(currentTaskId);
+  // Service types belong to the CAMPAIGN. On a subtask, read the parent's —
+  // asking for the subtask's own returns nothing and the Details card showed
+  // a blank where the campaign's service types should be.
+  const { items: taskServiceTypes } = useTaskServiceTypes(task?.parent_task_id ?? currentTaskId);
 
   // For subtasks we also need the PARENT task (for brand_name / legacy_client_id
   // when auto-creating a contract request). For top-level tasks parentTask is null.
@@ -196,8 +199,17 @@ export function TaskDetailPanel({
     [profiles],
   );
 
-  const closer        = task?.sales_closer_id ? profileById.get(task.sales_closer_id) : null;
-  const ka            = task?.key_account_id  ? profileById.get(task.key_account_id)  : null;
+  // ── Details that live on the campaign ───────────────────────────────
+  //
+  // Brand, client, sales closer and key account are campaign-level. A
+  // subtask has none of its own, so the Details card rendered "—" for all
+  // of them. Read through to the parent instead of asking anyone to type
+  // them twice — same rule as platform and ad type.
+  const detailSource = (task?.parent_task_id ? parentTask : task) ?? task;
+  const detailsInherited = Boolean(task?.parent_task_id && parentTask);
+
+  const closer        = detailSource?.sales_closer_id ? profileById.get(detailSource.sales_closer_id) : null;
+  const ka            = detailSource?.key_account_id  ? profileById.get(detailSource.key_account_id)  : null;
   const subAssignee   = task?.assignee_id     ? profileById.get(task.assignee_id)     : null;
 
   // Variance: parent budget vs sum of subtask budgets. Only meaningful on a
@@ -731,13 +743,25 @@ export function TaskDetailPanel({
       // there. Best-effort: ensureTrackingRowForVendor swallows its own
       // errors, because a tracking row must never block the vendor
       // assignment or the contract request that follows it.
-      if (numericId != null && parentTask?.has_tracking) {
+      if (numericId != null && parentTask) {
         const v = vendors.find((x) => x.id === numericId);
         if (v && isTrackableVendorCategory((v as any).vendor_category)) {
+          // Switch the sheet on if it isn't already. This used to require
+          // has_tracking to be true first, so assigning an influencer to a
+          // campaign whose sheet was off silently produced no row — which
+          // is why vendors kept not appearing on the tracking sheet.
+          if (!parentTask.has_tracking) {
+            try { await updateTaskFields(parentTask.id, { has_tracking: true } as any); }
+            catch { /* the row matters more than the flag */ }
+          }
           await ensureTrackingRowForVendor({
             parent_task_id: parentTask.id,
             vendor_name: v.name,
-            platform: task.platform,
+            // Prefill from whatever is already known, campaign included.
+            platform: task.platform ?? campaignPlatformText(parentTask),
+            type_of_ad: task.ad_type ?? parentTask.ad_type,
+            profile_link: (v as any).platforms ?? null,
+            product: parentTask.brand_name,
             price_excl: task.price,
           });
         }
@@ -1118,18 +1142,23 @@ export function TaskDetailPanel({
                   </>
                 ) : (
                   <>
-                    <FieldRow label="Brand"        value={task.brand_name ?? '—'} />
-                    <FieldRow label="Client"       value={task.legacy_client_id ?? '—'} />
-                    <FieldRow label="Sales closer" value={closer?.full_name ?? '—'} />
+                    <FieldRow label="Brand"        value={detailSource?.brand_name ?? '—'} />
+                    <FieldRow label="Client"       value={detailSource?.legacy_client_id ?? '—'} />
+                    <FieldRow label="Sales closer" value={closer ? displayName(closer) : '—'} />
                   </>
                 )}
-                <FieldRow label="Key account (owner)" value={ka?.full_name ?? '—'} />
+                <FieldRow label="Key account (owner)" value={ka ? displayName(ka) : '—'} />
                 <FieldRow label="Priority"     value={task.priority} />
                 <FieldRow label="Service types" value={
                   taskServiceTypes.length
                     ? taskServiceTypes.map((s) => `${s.icon ?? ''} ${s.name}`).join(', ')
                     : '—'
                 } />
+                {detailsInherited && (
+                  <p style={{ fontSize: 11, color: 'var(--aq-text-muted)', padding: '2px 0 6px' }}>
+                    Brand, client, sales closer, key account and service types come from the campaign.
+                  </p>
+                )}
                 <FieldRow label="Created"      value={new Date(task.created_at).toLocaleString()} />
                 {task.completed_at && <FieldRow label="Completed" value={new Date(task.completed_at).toLocaleString()} />}
 
