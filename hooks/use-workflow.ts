@@ -3097,6 +3097,171 @@ export function useClientBrands(clientId: string | null) {
   return { brands, loading, refetch: fetch };
 }
 
+// ── Is this request ready to send? ──────────────────────────────────
+//
+// The old flow opened a form and asked for details the app already had,
+// then let you submit something incomplete for Legal to chase. Siraj:
+// "if all data is present it should just send a request to the contract
+// app and if theyre not it says fill these requirtments".
+//
+// So: check first. Everything present → send, no form. Anything missing →
+// name it, and say WHERE to fix it, because "CR number missing" is useless
+// if you don't know it lives on the client record rather than the task.
+
+export interface MissingRequirement {
+  /** What's missing, in the user's words. */
+  label: string;
+  /** Where they go to fill it in. */
+  where: string;
+}
+
+export interface ContractReadiness {
+  ready: boolean;
+  missing: MissingRequirement[];
+}
+
+/**
+ * What a CLIENT contract needs before Legal can draft it.
+ *
+ * The client's own details come from the client record, not the campaign —
+ * they're the same on every campaign for that client, so asking again per
+ * campaign is how they end up inconsistent.
+ */
+export function clientContractReadiness(
+  task: PMTask | null,
+  client: ClientRow | null,
+): ContractReadiness {
+  const missing: MissingRequirement[] = [];
+  const has = (v: unknown) => typeof v === 'string' ? v.trim().length > 0 : v != null;
+
+  if (!task) return { ready: false, missing: [{ label: 'A campaign', where: '' }] };
+
+  if (!task.client_id && !task.legacy_client_id) {
+    missing.push({ label: 'Client', where: 'this campaign' });
+  }
+  if (!has(task.brand_name)) missing.push({ label: 'Brand', where: 'this campaign' });
+
+  const amount = Number(task.budget);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    missing.push({ label: 'Total amount', where: 'this campaign' });
+  }
+
+  // Only complain about client-record fields once we know which client.
+  if (task.client_id || task.legacy_client_id) {
+    if (!client) {
+      missing.push({ label: "The client's registration", where: 'Clients' });
+    } else {
+      if (!has(client.cr_number))      missing.push({ label: 'CR number', where: `Clients → ${client.company_name}` });
+      if (!has(client.vat_number))     missing.push({ label: 'VAT number', where: `Clients → ${client.company_name}` });
+      if (!has(client.signatory_name)) missing.push({ label: 'Signatory name', where: `Clients → ${client.company_name}` });
+      if (!has(client.contact_email) && !has(client.contact_phone)) {
+        missing.push({ label: 'An email or phone number', where: `Clients → ${client.company_name}` });
+      }
+    }
+  }
+
+  return { ready: missing.length === 0, missing };
+}
+
+/**
+ * What a VENDOR contract needs. Bank details matter here and don't for a
+ * client — this is the side AQ pays.
+ */
+export function vendorContractReadiness(
+  subtask: PMTask | null,
+  vendor: LegacyVendor | null,
+  bank: LegacyBankAccount | null,
+): ContractReadiness {
+  const missing: MissingRequirement[] = [];
+  const has = (v: unknown) => typeof v === 'string' ? v.trim().length > 0 : v != null;
+
+  if (!subtask) return { ready: false, missing: [{ label: 'A vendor subtask', where: '' }] };
+
+  if (!subtask.vendor_id || !vendor) {
+    missing.push({ label: 'Vendor', where: 'this subtask' });
+  }
+
+  const amount = Number(subtask.budget);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    missing.push({ label: 'Budget', where: 'this subtask' });
+  }
+
+  if (vendor) {
+    const where = `Vendors → ${vendor.name}`;
+    const { kind, value } = vendorIdentifier(vendor as any);
+    if (!value) {
+      missing.push({ label: kind === 'license' ? 'Licence number' : 'ID number', where });
+    }
+    if (!has(vendor.signatory_name)) missing.push({ label: 'Signatory name', where });
+    if (!bank) {
+      missing.push({ label: 'Bank account', where });
+    } else if (!has(bank.iban)) {
+      missing.push({ label: 'IBAN', where });
+    }
+  }
+
+  return { ready: missing.length === 0, missing };
+}
+
+/**
+ * Send a client contract request straight through, with no form.
+ *
+ * Everything is read from the campaign and the client record at send time,
+ * so the request can't disagree with them. Refuses rather than sending a
+ * half-filled request — an incomplete one just becomes someone else's
+ * chase-up.
+ */
+export async function sendClientContractRequest(input: {
+  task: PMTask;
+  client: ClientRow | null;
+  requestedBy: string;
+  notes?: string | null;
+}): Promise<ContractRequest> {
+  const { task, client, requestedBy } = input;
+  const check = clientContractReadiness(task, client);
+  if (!check.ready) {
+    throw new Error(
+      `Not ready to send. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
+    );
+  }
+  if (!task.workspace_id) throw new Error('This campaign has no workspace.');
+
+  return createContractRequest({
+    pm_task_id: task.id,
+    workspace_id: task.workspace_id,
+    requested_by: requestedBy,
+    request_kind: 'client',
+    template_key: null,
+    brand_name: task.brand_name ?? '',
+    amount: Number(task.budget),
+    notes: input.notes?.trim() || null,
+
+    client_name: client?.company_name ?? null,
+    client_id_legacy: task.legacy_client_id ?? null,
+    pending_client_id: null,
+    cr_number: client?.cr_number ?? null,
+    vat_number: client?.vat_number ?? null,
+    signatory_name: client?.signatory_name ?? null,
+    street: null,
+    city: client?.city ?? null,
+    postcode: null,
+    country: client?.country ?? null,
+    email: client?.contact_email ?? null,
+    phone: client?.contact_phone ?? null,
+
+    pending_vendor_id: null,
+    vendor_id: null, vendor_name: null, vendor_category: null,
+    vendor_email: null, vendor_phone: null,
+    bank_account_id: null, bank_name: null, account_name: null,
+    iban: null, account_number: null, swift_code: null,
+    license_number: null, is_influencer: null,
+    platforms: task.platforms?.join(', ') || null,
+    ad_type: task.ad_type ?? null,
+    qty: null, channel: null,
+    details: task.task_name ?? task.title ?? null,
+  } as any);
+}
+
 /**
  * Auto-create a contract request for a subtask the moment it has both a
  * vendor AND a non-zero budget. No-op if the subtask already has a
