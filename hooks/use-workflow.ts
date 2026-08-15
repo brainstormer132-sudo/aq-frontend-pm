@@ -211,8 +211,13 @@ export const APPROVAL_STAGES = ['ready_for_review', 'changes_needed', 'approved'
 export type ApprovalStage = typeof APPROVAL_STAGES[number];
 
 /** Multi Service additionally requires ad_type_custom. */
-export const AD_TYPES = ['Home Ad', 'Store Visit', 'Multi Service'] as const;
-export type AdType = typeof AD_TYPES[number];
+/**
+ * The campaign's ad type. Was Home Ad / Store Visit / Multi Service; now
+ * the full list (see AD_TYPE_OPTIONS, declared below), so the parent and
+ * the vendor subtask stop offering different vocabularies for the same
+ * question. 'Multi Service' is kept on the end for rows that already
+ * carry it, and still asks for its free-text detail.
+ */
 export const AD_TYPE_NEEDS_DETAIL = 'Multi Service';
 
 export const CONTRACT_STATUSES = ['no_contract', 'po', 'pending', 'on_process', 'done', 'signed_attached'] as const;
@@ -373,15 +378,84 @@ export function subtaskKindFromStepTitle(title: string | null | undefined): Subt
   }
 }
 
+/**
+ * "Runs from / Runs to" as a readable duration.
+ *
+ * Computed, never stored — a stored duration and its own dates drift apart
+ * the first time someone edits one of them. Inclusive of both days, because
+ * a campaign that runs the 1st to the 1st is one day, not zero.
+ */
+export function runDurationLabel(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string {
+  if (!start && !end) return 'No dates set';
+  if (!start) return 'No start date';
+  if (!end) return 'No end date';
+  const a = new Date(`${start}T00:00:00Z`).getTime();
+  const b = new Date(`${end}T00:00:00Z`).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return '—';
+  if (b < a) return 'Ends before it starts';
+  const days = Math.round((b - a) / 86_400_000) + 1;
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'}`;
+  const weeks = Math.floor(days / 7);
+  const rest = days % 7;
+  const w = `${weeks} week${weeks === 1 ? '' : 's'}`;
+  return rest === 0 ? `${days} days · ${w}` : `${days} days · ${w} ${rest}d`;
+}
+
 /** Analysis report: how hard the work is. Not the same as priority. */
 export const COMPLEXITIES = ['low', 'medium', 'high'] as const;
 export type Complexity = typeof COMPLEXITIES[number];
 
-/** Analysis report: what was actually made. */
-export const MEDIA_TYPES = [
-  'Home Ad', 'Store Visit', 'IG Reel', 'IG Post', 'IG Story', 'TikTok Video',
+/**
+ * The real ad types, from Siraj's chip lists. One combined vocabulary —
+ * an ad is one of these, not a pair of type-plus-format.
+ *
+ * Order follows the two screenshots: the placement/engagement kinds first,
+ * then the produced formats. `-Silent-` variants are distinct types, not a
+ * flag, because that is how they are tracked today.
+ *
+ * Used for both the vendor subtask's ad type and the analysis report's
+ * media type — they were always the same question asked twice.
+ */
+export const AD_TYPE_OPTIONS = [
+  'Store Visit',
+  'Store Visit -Silent-',
+  'Home Ad',
+  'Home Ad -Silent-',
+  'Billboards',
+  'Sponsorship',
+  'Usage Rights',
+  'Event Attending',
+  'Paid promotion',
+  'Logistics',
+  'PhotoShot',
+  'VideoShot',
+  'Post',
+  'Carousel Post',
+  'Reel',
+  'Story',
+  'Video',
+  'Live',
+  'Media Production',
+  'Quote Tweet',
 ] as const;
-export type MediaType = typeof MEDIA_TYPES[number];
+export type AdTypeOption = typeof AD_TYPE_OPTIONS[number];
+
+/**
+ * Kept as an alias so existing call sites keep working. The analysis
+ * report's "media type" and a vendor's "ad type" are the same list.
+ */
+export const MEDIA_TYPES = AD_TYPE_OPTIONS;
+export type MediaType = AdTypeOption;
+
+/**
+ * What the campaign's Ad type dropdown offers. Same list, plus the legacy
+ * 'Multi Service' which triggers the free-text detail box.
+ */
+export const AD_TYPES = [...AD_TYPE_OPTIONS, AD_TYPE_NEEDS_DETAIL] as const;
+export type AdType = typeof AD_TYPES[number];
 
 /**
  * Kinds retired from the picker. Migration 047 renames 'ad' → 'vendor', but
@@ -1696,15 +1770,40 @@ export async function deleteTask(taskId: string) {
     .eq('parent_task_id', taskId);
   const ids = [taskId, ...((children || []).map((c: any) => c.id as string))];
 
-  // Clear inbox items pointing at these tasks (link contains "task=<id>").
-  // A DB trigger (migration 037) also clears every other user's copies;
-  // this makes the deleter's own inbox update without waiting for a poll.
-  for (const id of ids) {
-    await supabase.from('notifications').delete().ilike('link', `%task=${id}%`);
+  // Delete FIRST, and check that it actually happened.
+  //
+  // This is the "sometimes delete glitches" bug. It used to be:
+  //
+  //     const { error } = await supabase.from('pm_tasks').delete().eq('id', taskId);
+  //     if (error) throw error;
+  //
+  // PostgREST does not report an error when RLS simply matches no rows — the
+  // request succeeds having deleted nothing. The panel closed, the caller
+  // refetched, and the task came straight back. Asking for the deleted rows
+  // back turns that silence into something we can act on.
+  const { data: deleted, error } = await supabase
+    .from('pm_tasks')
+    .delete()
+    .eq('id', taskId)
+    .select('id');
+  if (error) { logSbError('deleteTask', error, { taskId }); throw error; }
+  if (!deleted || deleted.length === 0) {
+    throw new Error(
+      'That task was not deleted — it may already be gone, or your role may not be allowed to delete it. Refresh and try again.',
+    );
   }
 
-  const { error } = await supabase.from('pm_tasks').delete().eq('id', taskId);
-  if (error) throw error;
+  // Best effort, and only once the row is genuinely gone. A DB trigger
+  // (migration 037) clears these server-side anyway; this just makes the
+  // deleter's own inbox update without waiting for a poll. It must never
+  // fail the delete — the task IS deleted by this point.
+  try {
+    for (const id of ids) {
+      await supabase.from('notifications').delete().ilike('link', `%task=${id}%`);
+    }
+  } catch (e) {
+    logSbError('deleteTask:notifications', e as any, { taskId });
+  }
 }
 
 /** Key account / admin: mark a task complete. Stage flips to `completed`,
