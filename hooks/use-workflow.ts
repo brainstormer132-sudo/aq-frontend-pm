@@ -1362,6 +1362,62 @@ export function isTrackableVendorCategory(category: string | null | undefined): 
   return TRACKABLE_VENDOR_CATEGORIES.includes((category ?? '').trim().toLowerCase());
 }
 
+/**
+ * A vendor's category, from wherever it actually lives.
+ *
+ * Two columns hold this. `vendor_category` is legacy free text; `category_id`
+ * is the FK added in 029 and is what the registration form writes now. Most
+ * of the vendor book has one or the other, and plenty have neither — of 495
+ * vendors in production, only some carry a category at all.
+ *
+ * Reading only `vendor_category`, as everything here used to, silently read
+ * "no category" for every vendor registered since 029.
+ */
+export function vendorCategoryKey(
+  vendor: { vendor_category?: string | null; category_id?: string | null } | null,
+  categories: { id: string; key: string }[] = [],
+): string | null {
+  if (!vendor) return null;
+  const legacy = (vendor.vendor_category ?? '').trim();
+  if (legacy) return legacy;
+  if (vendor.category_id) {
+    const found = categories.find((c) => c.id === vendor.category_id);
+    if (found) return found.key;
+  }
+  return null;
+}
+
+/**
+ * Categories that do NOT belong on a client-facing tracking sheet. Printing,
+ * logistics, rentals and the rest are how the work gets made; the sheet is
+ * what the client sees running.
+ */
+const UNTRACKED_VENDOR_CATEGORIES = [
+  'props', 'makeup_artist', 'makeup artist', 'logistics', 'rentals', 'rental',
+  'events', 'location', 'printing', 'media production', 'production',
+];
+
+/**
+ * Should assigning this vendor put a row on the campaign's tracking sheet?
+ *
+ * **Unknown means yes.** This is deliberately not `isTrackableVendorCategory`.
+ * That one answers "does this vendor owe an insight / a licence", where
+ * guessing wrong nags somebody for data they don't have, so silence is the
+ * safe default. Here the cost is reversed: guessing wrong means the vendor
+ * quietly never reaches the sheet, which is exactly the bug Siraj hit —
+ * "I added a vendor in the sub task why didnt it get added in the tracking
+ * sheet". A row nobody wanted can be deleted in a second; a row that never
+ * appeared is invisible.
+ *
+ * So only a category we positively recognise as off-sheet is skipped.
+ */
+export function shouldTrackVendorOnSheet(category: string | null | undefined): boolean {
+  const key = (category ?? '').trim().toLowerCase();
+  if (!key) return true;                                  // uncategorised → track it
+  if (TRACKABLE_VENDOR_CATEGORIES.includes(key)) return true;
+  return !UNTRACKED_VENDOR_CATEGORIES.includes(key);
+}
+
 // ── Finding a vendor ────────────────────────────────────────────────
 //
 // Siraj: "if influencer or ugc it will be license if other it will be id
@@ -3199,13 +3255,31 @@ export function useLegacyVendors() {
     const both = await cachedFetch<{ vendors: LegacyVendor[]; banks: LegacyBankAccount[] }>(
       'legacy-vendors',
       async () => {
-        const [{ data: v, error: vE }, { data: b, error: bE }] = await Promise.all([
+        const [{ data: v, error: vE }, { data: b, error: bE }, { data: cats }] = await Promise.all([
           supabase.from('vendors').select('*').order('name', { ascending: true }),
           supabase.from('bank_accounts').select('*'),
+          supabase.from('vendor_categories').select('id, key'),
         ]);
         if (vE) logSbError('useLegacyVendors vendors', vE);
         if (bE) logSbError('useLegacyVendors banks', bE);
-        return { vendors: (v || []) as LegacyVendor[], banks: (b || []) as LegacyBankAccount[] };
+
+        // Backfill the legacy free-text category from the 029 FK, ONCE, here.
+        //
+        // Six different places ask "what category is this vendor" —
+        // the tracking-sheet gate, the insight rule, the licence-vs-ID
+        // identifier, the picker's search text, the contract readiness check
+        // and the request payload. Every one of them read `vendor_category`
+        // and so read "none" for any vendor registered through the current
+        // form, which writes `category_id`. Repairing it at the source fixes
+        // all six; repairing it at each call site would have fixed five.
+        const categories = (cats || []) as { id: string; key: string }[];
+        const vendors = ((v || []) as LegacyVendor[]).map((row) => (
+          (row.vendor_category ?? '').trim()
+            ? row
+            : { ...row, vendor_category: vendorCategoryKey(row, categories) }
+        ));
+
+        return { vendors, banks: (b || []) as LegacyBankAccount[] };
       },
       force,
     );
