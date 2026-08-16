@@ -9,7 +9,7 @@ import {
   useContractRequests, type ContractKind,
   useTaskPlatforms, rollupCampaignMoney,
   publishTrackingSheet, unpublishTrackingSheet,
-  ensureTrackingRowForVendor, isTrackableVendorCategory,
+  ensureTrackingRowForVendor, isTrackableVendorCategory, shouldTrackVendorOnSheet,
   TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
@@ -135,6 +135,10 @@ export function TaskDetailPanel({
   const [vendorSaving, setVendorSaving] = useState(false);
   // Banner shown after the auto-fire creates a contract request.
   const [autoSentBanner, setAutoSentBanner] = useState<string | null>(null);
+  // What happened to the tracking sheet when a vendor was picked. Added
+  // because "nothing appeared and nothing was said" is indistinguishable
+  // from a bug, whether or not it was one.
+  const [trackingNote, setTrackingNote] = useState<string | null>(null);
   useEffect(() => {
     setBudgetDraft(task?.budget != null ? String(task.budget) : '');
     setAutoSentBanner(null);
@@ -864,7 +868,7 @@ export function TaskDetailPanel({
 
   const handleChangeVendor = async (newId: string) => {
     if (!task) return;
-    setVendorSaving(true); setError('');
+    setVendorSaving(true); setError(''); setTrackingNote(null);
     try {
       const numericId = newId ? Number(newId) : null;
       const patch: Record<string, unknown> = { vendor_id: numericId };
@@ -892,7 +896,16 @@ export function TaskDetailPanel({
       // assignment or the contract request that follows it.
       if (numericId != null && parentTask) {
         const v = vendors.find((x) => x.id === numericId);
-        if (v && isTrackableVendorCategory((v as any).vendor_category)) {
+        const category = (v as any)?.vendor_category as string | null | undefined;
+        if (v && !shouldTrackVendorOnSheet(category)) {
+          // Say so. Silence here is what made this look broken: the vendor
+          // saved, nothing appeared on the sheet, and there was no way to
+          // tell whether it had failed or been skipped on purpose.
+          setTrackingNote(
+            `${v.name} was not added to the tracking sheet — ${category} work isn't tracked there. Add a row by hand if you need one.`,
+          );
+        }
+        if (v && shouldTrackVendorOnSheet(category)) {
           // Switch the sheet on if it isn't already. This used to require
           // has_tracking to be true first, so assigning an influencer to a
           // campaign whose sheet was off silently produced no row — which
@@ -901,7 +914,7 @@ export function TaskDetailPanel({
             try { await updateTaskFields(parentTask.id, { has_tracking: true } as any); }
             catch { /* the row matters more than the flag */ }
           }
-          await ensureTrackingRowForVendor({
+          const added = await ensureTrackingRowForVendor({
             parent_task_id: parentTask.id,
             vendor_name: v.name,
             // Prefill from whatever is already known, campaign included.
@@ -911,6 +924,9 @@ export function TaskDetailPanel({
             product: parentTask.brand_name,
             price_excl: task.price,
           });
+          setTrackingNote(added
+            ? `${v.name} added to the campaign's tracking sheet.`
+            : `${v.name} is already on the campaign's tracking sheet.`);
         }
       }
 
@@ -1136,6 +1152,23 @@ export function TaskDetailPanel({
                   </section>
                 );
               })()}
+
+              {trackingNote && (
+                <div style={{
+                  background: '#ecfdf5', color: '#065f46',
+                  padding: '10px 14px', borderRadius: 'var(--aq-radius)',
+                  fontSize: 13, display: 'flex', justifyContent: 'space-between',
+                  alignItems: 'center', gap: 8,
+                }}>
+                  <span>{trackingNote}</span>
+                  <button
+                    type="button"
+                    className="aq-btn aq-btn-ghost"
+                    onClick={() => setTrackingNote(null)}
+                    style={{ padding: '2px 8px', fontSize: 11, color: '#065f46' }}
+                  >dismiss</button>
+                </div>
+              )}
 
               {autoSentBanner && (
                 <div style={{
