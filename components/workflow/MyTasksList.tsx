@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { updateTaskFields, isRequestSubtaskKind, type PMTask } from '@/hooks/use-workflow';
+import {
+  updateTaskFields, isRequestSubtaskKind, taskRowColor, type PMTask,
+} from '@/hooks/use-workflow';
 
 const supabase = createClient();
 
@@ -198,12 +200,16 @@ export function MyTasksList({
     const done = t.status === 'done';
     // Shared with the detail panel so the two can't drift apart.
     const isRequest = isRequestSubtaskKind(t.subtask_kind);
+    // Subtask kind if it has one, else priority. Same palette as the detail
+    // panel, so a vendor row is the same teal wherever you meet it.
+    const accent = taskRowColor(t);
     return (
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
         padding: child ? '9px 12px' : '12px 14px',
         borderRadius: 'var(--aq-radius)',
         border: '1px solid var(--aq-border-light)',
+        borderLeft: `4px solid ${accent.solid}`,
         background: done ? 'var(--aq-accent-light)'
           : context ? 'var(--aq-bg-sunken)'
           : 'var(--aq-bg-elevated)',

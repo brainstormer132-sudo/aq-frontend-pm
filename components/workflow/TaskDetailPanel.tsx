@@ -21,6 +21,10 @@ import {
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
   runDurationLabel, vendorPickerOption,
   clientContractReadiness, sendClientContractRequest, vendorContractReadiness,
+  sendVendorContractRequest, sendVendorContractRequests, updateTasksBulk,
+  subtaskContractState, contractTally, subtaskKindColor,
+  CONTRACT_STATE_COLORS, CONTRACT_STATE_LABELS,
+  type SubtaskContractState,
   vendorNeedsInsight, vendorDataRequirements, inheritedFromCampaign,
   campaignPlatformText, AD_TYPE_OPTIONS,
   type MissingRequirement, type LegacyVendor,
@@ -337,9 +341,12 @@ export function TaskDetailPanel({
   // app already held on the campaign and the client record. Now the data is
   // read at send time, so the request can't disagree with its own source,
   // and an incomplete one is refused rather than handed to Legal to chase.
+  // On a subtask the client lives on the campaign, not here — reading
+  // task.client_id from a vendor subtask always found nothing, which is how
+  // vendor requests went out with a blank client.
   const clientForContract = useMemo(
-    () => clients.find((c) => c.id === task?.client_id) ?? null,
-    [clients, task?.client_id],
+    () => clients.find((c) => c.id === (task?.parent_task_id ? parentTask?.client_id : task?.client_id)) ?? null,
+    [clients, task?.parent_task_id, task?.client_id, parentTask?.client_id],
   );
   const clientReadiness = useMemo(
     () => clientContractReadiness(task && !task.parent_task_id ? task : null, clientForContract),
@@ -381,6 +388,36 @@ export function TaskDetailPanel({
 
   const openDocRequest = (kind: 'quotation' | 'invoice') =>
     docRequests.find((r) => r.doc_kind === kind && r.status === 'pending') ?? null;
+
+  // ── Request the vendor contract from the subtask, on purpose ────────
+  //
+  // The auto-fire below still runs, but it is silent by design and only when
+  // everything happens to line up. This is the button for the other case:
+  // press it, and either it goes or it says exactly what's missing.
+  const [sendingVendorContract, setSendingVendorContract] = useState(false);
+
+  const handleSendVendorContract = async () => {
+    if (!task || !parentTask) return;
+    const vendor = task.vendor_id != null
+      ? vendors.find((v) => v.id === task.vendor_id) ?? null
+      : null;
+    const bank = vendor ? banks.find((b) => b.vendor_id === vendor.id) ?? null : null;
+    setSendingVendorContract(true); setError('');
+    try {
+      await sendVendorContractRequest({
+        subtask: task,
+        parent: parentTask,
+        vendor,
+        bank,
+        client: clientForContract,
+        requestedBy: currentUserId,
+      });
+      await refetchTask();
+      onChanged?.();
+      setAutoSentBanner('Contract request sent to the contract maker. Add notes below — they go through as comments.');
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setSendingVendorContract(false); }
+  };
 
   const handleRequestDocument = async (kind: 'quotation' | 'invoice') => {
     if (!task) return;
@@ -579,6 +616,100 @@ export function TaskDetailPanel({
     setPendingSubtaskDeletes((p) => p.filter((x) => x.id !== id));
   };
 
+  // ── Highlighting a set of subtasks and acting on all of them ────────
+  //
+  // Siraj: "make it also so you can highlight multiple subtasks to edit whole
+  // delete or request contract". Seven vendors on one campaign meant seven
+  // trips into the panel to set the same due date, and seven more to send the
+  // contracts. The three verbs he named are the three offered here.
+  const [selectedSubtaskIds, setSelectedSubtaskIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNote, setBulkNote] = useState<string | null>(null);
+
+  // Moving between tasks clears the selection — carrying it across would let
+  // a bulk action land on rows the user can no longer see.
+  useEffect(() => { setSelectedSubtaskIds([]); setBulkNote(null); }, [currentTaskId]);
+
+  const toggleSubtaskSelected = (id: string) => {
+    setBulkNote(null);
+    setSelectedSubtaskIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+  };
+
+  /** Contract state per subtask, and the counts drawn from it. */
+  const contractStateById = useMemo(() => {
+    const m = new Map<string, SubtaskContractState>();
+    for (const s of subtasks) {
+      const v = s.vendor_id != null ? vendors.find((x) => x.id === s.vendor_id) ?? null : null;
+      const b = v ? banks.find((x) => x.vendor_id === v.id) ?? null : null;
+      m.set(s.id, subtaskContractState(s, v, b));
+    }
+    return m;
+  }, [subtasks, vendors, banks]);
+
+  const tally = useMemo(
+    () => contractTally(visibleSubtasks, vendors, banks),
+    [visibleSubtasks, vendors, banks],
+  );
+
+  const selectedSubtasks = useMemo(
+    () => visibleSubtasks.filter((s) => selectedSubtaskIds.includes(s.id)),
+    [visibleSubtasks, selectedSubtaskIds],
+  );
+
+  /** Of the selected rows, the ones that could actually take a contract. */
+  const selectedAwaitingContract = useMemo(
+    () => selectedSubtasks.filter((s) => contractStateById.get(s.id) === 'ready'
+      || contractStateById.get(s.id) === 'missing'),
+    [selectedSubtasks, contractStateById],
+  );
+
+  const handleBulkDelete = () => {
+    // Reuses the same 10-second countdown as a single delete, one row each,
+    // so every one of them is individually undoable.
+    selectedSubtasks.forEach((s) => handleRemoveSubtask({ id: s.id, title: s.title }));
+    setSelectedSubtaskIds([]);
+    setBulkNote(null);
+  };
+
+  const handleBulkRequestContracts = async () => {
+    if (!task || task.parent_task_id) return;
+    setBulkBusy(true); setError(''); setBulkNote(null);
+    try {
+      const { sent, skipped } = await sendVendorContractRequests({
+        subtasks: selectedAwaitingContract,
+        parent: task,
+        vendors, banks,
+        client: clientForContract,
+        requestedBy: currentUserId,
+      });
+      await refetchSubs();
+      onChanged?.();
+      setBulkNote(
+        skipped.length === 0
+          ? `Requested ${sent} contract${sent === 1 ? '' : 's'}.`
+          : `Requested ${sent}. Skipped ${skipped.length}: ${skipped
+              .map((s) => `${s.title} (${s.reason})`).join(' · ')}`,
+      );
+      if (sent > 0) setSelectedSubtaskIds([]);
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBulkBusy(false); }
+  };
+
+  const handleBulkEdit = async (fields: Record<string, unknown>) => {
+    if (selectedSubtaskIds.length === 0) return;
+    setBulkBusy(true); setError(''); setBulkNote(null);
+    try {
+      const { updated, failed } = await updateTasksBulk(selectedSubtaskIds, fields as any);
+      await refetchSubs();
+      await refetchTask();
+      onChanged?.();
+      setBulkNote(failed.length === 0
+        ? `Updated ${updated} subtask${updated === 1 ? '' : 's'}.`
+        : `Updated ${updated}, ${failed.length} failed: ${failed[0].reason}`);
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setBulkBusy(false); }
+  };
+
   // Closing the panel commits anything still counting down. Leaving a
   // delete un-run because the panel closed would be the same silent
   // no-op that made deletes look glitchy in the first place.
@@ -702,6 +833,7 @@ export function TaskDetailPanel({
         parent: parentTask,
         vendor,
         bank,
+        client: clientForContract,
         requestedBy: currentUserId,
         notes: null,
       });
@@ -930,30 +1062,66 @@ export function TaskDetailPanel({
                 </div>
               )}
 
-              {/* Vendor contract: what's still stopping it going out.
-                  The request fires by itself once everything is there, so
-                  this list IS the call to action. */}
-              {isSubtaskView && isVendorSubtaskKind(kind)
-                && !task.contract_request_id && !vendorReadiness.ready && (
-                <section
-                  className="aq-card"
-                  style={{ padding: '12px 16px', borderLeft: '3px solid var(--aq-warning, #b45309)' }}
-                >
-                  <strong style={{ fontSize: 13, color: 'var(--aq-warning, #b45309)' }}>
-                    Contract request not sent yet
-                  </strong>
-                  <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '4px 0 6px' }}>
-                    It goes to the contract app on its own once these are filled in.
-                  </p>
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {vendorReadiness.missing.map((m: MissingRequirement) => (
-                      <li key={`${m.label}${m.where}`} style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
-                        · <strong>{m.label}</strong>{m.where ? ` — ${m.where}` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
+              {/* Vendor contract, requested from here.
+                  The request also fires by itself the moment everything is
+                  present — but "wait and hope" was the whole complaint, so
+                  there is now a button, and it says why when it can't go. */}
+              {isSubtaskView && isVendorSubtaskKind(kind) && (() => {
+                const state: SubtaskContractState = task.contract_request_id
+                  ? 'requested'
+                  : vendorReadiness.ready ? 'ready' : 'missing';
+                const c = CONTRACT_STATE_COLORS[state];
+                return (
+                  <section
+                    className="aq-card"
+                    style={{ padding: '14px 16px', borderLeft: `4px solid ${c.solid}` }}
+                  >
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 12, flexWrap: 'wrap',
+                    }}>
+                      <div>
+                        <strong style={{ fontSize: 13, color: c.solid }}>
+                          {state === 'requested' ? 'Contract requested'
+                            : state === 'ready' ? 'Ready to request the contract'
+                            : 'Contract not requested — data missing'}
+                        </strong>
+                        <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+                          {state === 'requested'
+                            ? 'The contract maker has it. Notes below go through as comments.'
+                            : state === 'ready'
+                              ? 'Everything the contract app needs is here. The client, brand, platform and ad type come from the campaign.'
+                              : 'Fill these in and the request can go — or it will go on its own once they are there.'}
+                        </p>
+                      </div>
+                      {state !== 'requested' && canEditMarketing && (
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-primary"
+                          disabled={sendingVendorContract || !vendorReadiness.ready}
+                          onClick={handleSendVendorContract}
+                          style={{ whiteSpace: 'nowrap' }}
+                          title={vendorReadiness.ready ? undefined : 'Some required data is still missing'}
+                        >
+                          {sendingVendorContract ? 'Sending…' : 'Request contract'}
+                        </button>
+                      )}
+                    </div>
+                    {state === 'missing' && (
+                      <ul style={{
+                        listStyle: 'none', display: 'flex', flexDirection: 'column',
+                        gap: 2, marginTop: 8,
+                      }}>
+                        {vendorReadiness.missing.map((m: MissingRequirement) => (
+                          <li key={`${m.label}${m.where}`} style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
+                            · <strong>{m.label}</strong>{m.where ? ` — ${m.where}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                );
+              })()}
 
               {autoSentBanner && (
                 <div style={{
@@ -1635,11 +1803,29 @@ export function TaskDetailPanel({
                     display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12,
                     gap: 12, flexWrap: 'wrap',
                   }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>
-                      {subtasks.length === 0
-                        ? 'Subtasks'
-                        : `Subtasks (${subtasks.filter((s) => s.status === 'done').length} of ${subtasks.length} done)`}
-                    </h3>
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 700 }}>
+                        {subtasks.length === 0
+                          ? 'Subtasks'
+                          : `Subtasks (${subtasks.filter((s) => s.status === 'done').length} of ${subtasks.length} done)`}
+                      </h3>
+                      {/* The contract count Siraj asked for, in the one place
+                          you look before chasing anybody. */}
+                      {tally.total > 0 && (
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                          <ContractPill
+                            state="requested"
+                            text={`${tally.requested} of ${tally.total} contracts requested`}
+                          />
+                          {tally.ready > 0 && (
+                            <ContractPill state="ready" text={`${tally.ready} ready to send`} />
+                          )}
+                          {tally.missing > 0 && (
+                            <ContractPill state="missing" text={`${tally.missing} missing data`} />
+                          )}
+                        </div>
+                      )}
+                    </div>
                     {subtasks.length > 0 && (
                       <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
                         Distributed: <strong style={{ color: 'var(--aq-text)' }}>SAR {subtaskBudgetSum.toLocaleString()}</strong>
@@ -1696,6 +1882,22 @@ export function TaskDetailPanel({
                           : addKind === 'vendor' ? '+ Add vendors…'
                           : '+ Add subtask'}
                       </button>
+
+                      {visibleSubtasks.length > 1 && (
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-ghost"
+                          onClick={() => setSelectedSubtaskIds(
+                            selectedSubtaskIds.length === visibleSubtasks.length
+                              ? []
+                              : visibleSubtasks.map((s) => s.id),
+                          )}
+                          style={{ padding: '6px 10px', fontSize: 12, marginLeft: 'auto' }}
+                        >
+                          {selectedSubtaskIds.length === visibleSubtasks.length
+                            ? 'Clear selection' : 'Select all'}
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -1731,20 +1933,146 @@ export function TaskDetailPanel({
                     </div>
                   ))}
 
+                  {/* Bulk bar — appears only once something is ticked, so the
+                      list stays quiet when you're just reading it. */}
+                  {canEditMarketing && selectedSubtaskIds.length > 0 && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                      padding: '10px 12px', marginBottom: 8,
+                      borderRadius: 'var(--aq-radius)',
+                      background: '#0f766e', color: '#fff',
+                    }}>
+                      <strong style={{ fontSize: 13 }}>
+                        {selectedSubtaskIds.length} selected
+                      </strong>
+
+                      <select
+                        className="aq-input"
+                        value=""
+                        disabled={bulkBusy}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v) handleBulkEdit({ status: v });
+                          e.target.value = '';
+                        }}
+                        style={{ width: 'auto', padding: '4px 8px', fontSize: 12, color: 'var(--aq-text)' }}
+                        aria-label="Set status on selected subtasks"
+                      >
+                        <option value="">Set status…</option>
+                        {TASK_STATUSES.map((st) => (
+                          <option key={st} value={st}>{labelFor(st)}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        className="aq-input"
+                        value=""
+                        disabled={bulkBusy}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v) handleBulkEdit({ assignee_id: v === '__none' ? null : v });
+                          e.target.value = '';
+                        }}
+                        style={{ width: 'auto', padding: '4px 8px', fontSize: 12, color: 'var(--aq-text)' }}
+                        aria-label="Assign selected subtasks"
+                      >
+                        <option value="">Assign to…</option>
+                        <option value="__none">Unassigned</option>
+                        {profiles.map((p) => (
+                          <option key={p.id} value={p.id}>{displayName(p)}</option>
+                        ))}
+                      </select>
+
+                      <input
+                        type="date"
+                        className="aq-input"
+                        disabled={bulkBusy}
+                        onChange={(e) => {
+                          if (e.target.value) handleBulkEdit({ due_date: e.target.value });
+                        }}
+                        style={{ width: 'auto', padding: '4px 8px', fontSize: 12, color: 'var(--aq-text)' }}
+                        aria-label="Set due date on selected subtasks"
+                      />
+
+                      {selectedAwaitingContract.length > 0 && (
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-secondary"
+                          disabled={bulkBusy}
+                          onClick={handleBulkRequestContracts}
+                          style={{ padding: '4px 10px', fontSize: 12 }}
+                          title={
+                            'Tries all selected vendor subtasks. Any that are still '
+                            + 'missing data are skipped and listed, not silently dropped.'
+                          }
+                        >
+                          {bulkBusy ? 'Working…'
+                            : `Request ${selectedAwaitingContract.length} contract${selectedAwaitingContract.length === 1 ? '' : 's'}`}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-danger"
+                        disabled={bulkBusy}
+                        onClick={handleBulkDelete}
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                      >Delete</button>
+
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-ghost"
+                        onClick={() => setSelectedSubtaskIds([])}
+                        style={{ padding: '4px 8px', fontSize: 12, color: '#fff' }}
+                      >Clear</button>
+                    </div>
+                  )}
+
+                  {bulkNote && (
+                    <p style={{
+                      fontSize: 12, marginBottom: 8, padding: '8px 10px',
+                      borderRadius: 'var(--aq-radius)',
+                      background: '#ecfdf5', color: '#065f46',
+                    }}>{bulkNote}</p>
+                  )}
+
                   {visibleSubtasks.length > 0 && (
                     <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {visibleSubtasks.map((s) => {
                         const done = s.status === 'done';
                         const sa = s.assignee_id ? profileById.get(s.assignee_id) : null;
                         const removing = removingSubtaskId === s.id;
+                        const selected = selectedSubtaskIds.includes(s.id);
+                        const accent = subtaskKindColor(s.subtask_kind);
+                        const cState = contractStateById.get(s.id) ?? 'n/a';
                         return (
                           <li key={s.id} style={{
                             display: 'flex', alignItems: 'center', gap: 6,
                             borderRadius: 'var(--aq-radius)',
-                            background: done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
+                            // The kind's colour on the left edge; the contract
+                            // state tints the row itself, so "who still has no
+                            // contract" is answerable without opening anything.
+                            borderLeft: `4px solid ${accent.solid}`,
+                            background: selected ? accent.soft
+                              : done ? 'var(--aq-accent-light)'
+                              : cState === 'missing' ? CONTRACT_STATE_COLORS.missing.soft
+                              : cState === 'requested' ? CONTRACT_STATE_COLORS.requested.soft
+                              : 'var(--aq-bg-sunken)',
                             border: '1px solid var(--aq-border-light)',
+                            borderLeftWidth: 4,
+                            borderLeftColor: accent.solid,
+                            outline: selected ? `2px solid ${accent.solid}` : 'none',
                             opacity: removing ? 0.5 : 1,
                           }}>
+                            {canEditMarketing && (
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleSubtaskSelected(s.id)}
+                                style={{ marginLeft: 10, width: 15, height: 15, cursor: 'pointer', flexShrink: 0 }}
+                                aria-label={`Select ${s.title}`}
+                              />
+                            )}
                             <button
                               type="button"
                               onClick={() => setCurrentTaskId(s.id)}
@@ -1764,6 +2092,17 @@ export function TaskDetailPanel({
                                 fontWeight: 600,
                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                               }}>{s.title}</span>
+                              {cState !== 'n/a' && (
+                                <span style={{
+                                  fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+                                  padding: '2px 7px', borderRadius: 999,
+                                  background: CONTRACT_STATE_COLORS[cState].solid,
+                                  color: '#fff',
+                                }}>
+                                  {cState === 'requested' ? 'contract sent'
+                                    : cState === 'ready' ? 'ready' : 'missing data'}
+                                </span>
+                              )}
                               {s.budget != null && (
                                 <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
                                   SAR {Number(s.budget).toLocaleString()}
@@ -2006,6 +2345,24 @@ function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
       <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>{label}</span>
       <span style={{ color: 'var(--aq-text)' }}>{value}</span>
     </div>
+  );
+}
+
+/** One count in the contract tally above the subtask list. */
+function ContractPill({
+  state, text,
+}: { state: 'requested' | 'ready' | 'missing'; text: string }) {
+  const c = CONTRACT_STATE_COLORS[state];
+  return (
+    <span
+      title={CONTRACT_STATE_LABELS[state]}
+      style={{
+        fontSize: 11, fontWeight: 700,
+        padding: '3px 9px', borderRadius: 999,
+        background: c.soft, color: c.solid,
+        border: `1px solid ${c.solid}33`,
+      }}
+    >{text}</span>
   );
 }
 
