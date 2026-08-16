@@ -3356,6 +3356,27 @@ export function clientContractReadiness(
 }
 
 /**
+ * What a vendor subtask costs.
+ *
+ * `price` is the field ops actually fills — the bulk popup writes it, the
+ * campaign money rollup reads it, and the margin is computed from it. The
+ * subtask also had a `budget` box, which nobody filled and which therefore
+ * sat at 0 and blocked every contract request with "Budget — this subtask".
+ * Siraj: "we can remove budget from vendor".
+ *
+ * `budget` is still read as a fallback so vendor rows created before this
+ * change, which may have a budget and no price, keep their amount.
+ */
+export function vendorSubtaskAmount(subtask: PMTask | null): number | null {
+  if (!subtask) return null;
+  const price = Number(subtask.price);
+  if (subtask.price != null && Number.isFinite(price) && price > 0) return price;
+  const budget = Number(subtask.budget);
+  if (subtask.budget != null && Number.isFinite(budget) && budget > 0) return budget;
+  return null;
+}
+
+/**
  * What a VENDOR contract needs. Bank details matter here and don't for a
  * client — this is the side AQ pays.
  */
@@ -3373,9 +3394,8 @@ export function vendorContractReadiness(
     missing.push({ label: 'Vendor', where: 'this subtask' });
   }
 
-  const amount = Number(subtask.budget);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    missing.push({ label: 'Budget', where: 'this subtask' });
+  if (vendorSubtaskAmount(subtask) == null) {
+    missing.push({ label: 'Price', where: 'this subtask' });
   }
 
   if (vendor) {
@@ -3493,7 +3513,7 @@ function buildVendorContractPayload(opts: {
     request_kind: 'vendor' as const,
     template_key: null,
     brand_name: parent.brand_name ?? subtask.brand_name ?? '',
-    amount: Number(subtask.budget),
+    amount: vendorSubtaskAmount(subtask),
     notes: notes ?? null,
 
     // Who the work is ultimately for. The contract app shows it as context;
@@ -3604,10 +3624,9 @@ export async function autoCreateContractRequestForSubtask(opts: {
   // Already sent? Don't double-fire.
   if ((subtask as any).contract_request_id) return null;
 
-  // Need both vendor + budget to be meaningful.
+  // Need both a vendor and a price to be meaningful.
   if (!vendor) return null;
-  const amount = Number(subtask.budget);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (vendorSubtaskAmount(subtask) == null) return null;
 
   if (!subtask.workspace_id) {
     throw new Error('Subtask has no workspace_id; cannot create contract request.');
