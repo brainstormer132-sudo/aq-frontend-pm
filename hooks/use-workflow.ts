@@ -267,6 +267,84 @@ export const SUBTASK_KIND_LABELS: Record<SubtaskKind, string> = {
 };
 
 /**
+ * A colour per subtask kind, and per contract state.
+ *
+ * Siraj: "lets add some color to the app". A campaign with fourteen subtasks
+ * was fourteen identical grey rows, so finding the vendor you wanted meant
+ * reading every title. Colour here is doing a job — kind and contract state
+ * are the two things you scan a list for — rather than decorating.
+ *
+ * Literal hex, not CSS variables: these are new hues that don't exist in the
+ * token set, and a `var()` that resolves to nothing renders as transparent,
+ * which is a silent failure rather than a visible one.
+ */
+export interface AccentColor {
+  /** Strong enough for a left border or icon. */
+  solid: string;
+  /** Tinted background for a chip. Pairs with `solid` as the text colour. */
+  soft: string;
+}
+
+export const SUBTASK_KIND_COLORS: Record<SubtaskKind, AccentColor> = {
+  vendor:             { solid: '#0f766e', soft: '#ccfbf1' }, // teal — the house colour
+  analysis_report:    { solid: '#6d28d9', soft: '#ede9fe' }, // violet
+  campaign_design:    { solid: '#be185d', soft: '#fce7f3' }, // pink
+  marketing_strategy: { solid: '#b45309', soft: '#fef3c7' }, // amber
+  visuals:            { solid: '#1d4ed8', soft: '#dbeafe' }, // blue
+  blueprint_3d:       { solid: '#4d7c0f', soft: '#ecfccb' }, // olive
+};
+
+/** Fallback for legacy kinds ('ad', 'tracking', …) and null. */
+export const NEUTRAL_ACCENT: AccentColor = { solid: '#475569', soft: '#e2e8f0' };
+
+export function subtaskKindColor(kind: string | null | undefined): AccentColor {
+  if (kind === 'ad') return SUBTASK_KIND_COLORS.vendor;   // pre-047 name
+  if (kind && kind in SUBTASK_KIND_COLORS) {
+    return SUBTASK_KIND_COLORS[kind as SubtaskKind];
+  }
+  return NEUTRAL_ACCENT;
+}
+
+/**
+ * Priority, as a colour. Used where a row has no subtask kind to colour by —
+ * a parent campaign in a task list — so every row in the app carries some
+ * signal on its left edge rather than none.
+ */
+export const TASK_PRIORITY_COLORS: Record<TaskPriority, AccentColor> = {
+  urgent: { solid: '#b91c1c', soft: '#fee2e2' },
+  high:   { solid: '#c2410c', soft: '#ffedd5' },
+  medium: { solid: '#0f766e', soft: '#ccfbf1' },
+  low:    { solid: '#0369a1', soft: '#e0f2fe' },
+  none:   NEUTRAL_ACCENT,
+};
+
+/**
+ * The colour for any task row: its subtask kind if it has one, otherwise its
+ * priority. One call so lists and the detail panel can't drift apart.
+ */
+export function taskRowColor(task: {
+  subtask_kind?: string | null;
+  priority?: TaskPriority | string | null;
+}): AccentColor {
+  if (task.subtask_kind) return subtaskKindColor(task.subtask_kind);
+  const p = task.priority as TaskPriority | null | undefined;
+  return (p && p in TASK_PRIORITY_COLORS) ? TASK_PRIORITY_COLORS[p] : NEUTRAL_ACCENT;
+}
+
+/** Green sent, amber ready-but-unsent, red blocked. Matches the tally. */
+export const CONTRACT_STATE_COLORS: Record<'requested' | 'ready' | 'missing', AccentColor> = {
+  requested: { solid: '#15803d', soft: '#dcfce7' },
+  ready:     { solid: '#b45309', soft: '#fef3c7' },
+  missing:   { solid: '#b91c1c', soft: '#fee2e2' },
+};
+
+export const CONTRACT_STATE_LABELS: Record<'requested' | 'ready' | 'missing', string> = {
+  requested: 'contract requested',
+  ready:     'ready to request',
+  missing:   'missing data',
+};
+
+/**
  * Kinds offered on every campaign, whatever its service type.
  *
  * Vendor because that is what a subtask fundamentally is here, and
@@ -3377,6 +3455,135 @@ export async function sendClientContractRequest(input: {
 }
 
 /**
+ * Everything a vendor contract request carries, assembled from the subtask,
+ * its parent campaign, the vendor record and the vendor's bank account.
+ *
+ * The rule Siraj set is "all data relevent from parent goes automatically to
+ * sub tasks". A subtask holds the vendor and the money; the campaign holds the
+ * client, the brand, the platforms and the ad type. A request built only from
+ * the subtask arrived at the contract app with half its fields blank and
+ * somebody had to type them again — so every campaign-level field is read
+ * through here, with the subtask's own value winning where it has one.
+ */
+function buildVendorContractPayload(opts: {
+  subtask: PMTask;
+  parent: PMTask;
+  vendor: LegacyVendor;
+  bank: LegacyBankAccount | null;
+  client?: ClientRow | null;
+  requestedBy: string;
+  notes?: string | null;
+}) {
+  const { subtask, parent, vendor, bank, client, requestedBy, notes } = opts;
+  const txt = (v: unknown) => {
+    const s = typeof v === 'string' ? v.trim() : v == null ? '' : String(v);
+    return s.length ? s : null;
+  };
+
+  // Subtask first, campaign second. A vendor booked on Instagram inside a
+  // campaign that also runs TikTok should say Instagram, not both.
+  const platforms = txt(subtask.platform) ?? campaignPlatformText(parent);
+  const adType = txt(subtask.ad_type) ?? txt(parent.ad_type);
+  const category = txt(vendor.vendor_category);
+
+  return {
+    pm_task_id: subtask.id,
+    workspace_id: subtask.workspace_id as string,
+    requested_by: requestedBy,
+    request_kind: 'vendor' as const,
+    template_key: null,
+    brand_name: parent.brand_name ?? subtask.brand_name ?? '',
+    amount: Number(subtask.budget),
+    notes: notes ?? null,
+
+    // Who the work is ultimately for. The contract app shows it as context;
+    // it is not the counterparty, so no CR/VAT/signatory of the client here.
+    client_name: txt(client?.company_name),
+    client_id_legacy: parent.legacy_client_id ?? null,
+    pending_client_id: null,
+    cr_number: null, vat_number: null, signatory_name: txt(vendor.signatory_name),
+    street: null, city: null, postcode: null, country: null,
+    email: null, phone: null,
+
+    pending_vendor_id: null,
+    vendor_id: vendor.id,
+    vendor_name: vendor.name,
+    vendor_category: category,
+    vendor_email: txt(vendor.email),
+    vendor_phone: txt(vendor.phone),
+    bank_account_id: bank?.id ?? null,
+    bank_name: bank?.bank_name ?? null,
+    account_name: bank?.account_name ?? null,
+    iban: bank?.iban ?? null,
+    account_number: bank?.account_number ?? null,
+    swift_code: bank?.swift_code ?? null,
+    license_number: txt(vendor.license_number) ?? txt(vendor.id_number),
+    is_influencer: isTrackableVendorCategory(vendor.vendor_category),
+    platforms,
+    ad_type: adType,
+    // One vendor subtask is one booking unless somebody said otherwise.
+    // `channel` is left alone: it isn't the same thing as the platform list
+    // and filling it with a copy would just be inventing data.
+    qty: null,
+    channel: null,
+    details: subtask.title ?? null,
+  };
+}
+
+/** Insert the request and link it back onto the subtask so it can't re-fire. */
+async function insertVendorContractRequest(
+  subtask: PMTask,
+  payload: ReturnType<typeof buildVendorContractPayload>,
+): Promise<string> {
+  const created = await createContractRequest(payload as any);
+  await supabase
+    .from('pm_tasks')
+    .update({ contract_request_id: created.id } as any)
+    .eq('id', subtask.id);
+  return created.id;
+}
+
+/**
+ * Send a vendor contract request on purpose, from the subtask.
+ *
+ * Siraj: "you cant request contract from subtask". The auto-fire below only
+ * runs when everything happens to be in place and says nothing when it isn't,
+ * so a subtask whose vendor was missing an IBAN just sat there. This is the
+ * button: it refuses loudly, naming what's missing and where to fix it, which
+ * is the same contract the client-side send already honours.
+ */
+export async function sendVendorContractRequest(opts: {
+  subtask: PMTask;
+  parent: PMTask;
+  vendor: LegacyVendor | null;
+  bank: LegacyBankAccount | null;
+  client?: ClientRow | null;
+  requestedBy: string;
+  notes?: string | null;
+}): Promise<string> {
+  const { subtask, vendor, bank } = opts;
+
+  if ((subtask as any).contract_request_id) {
+    throw new Error('A contract has already been requested for this subtask.');
+  }
+  if (!subtask.workspace_id) {
+    throw new Error('This subtask has no workspace; cannot raise a request.');
+  }
+
+  const check = vendorContractReadiness(subtask, vendor, bank);
+  if (!check.ready || !vendor) {
+    throw new Error(
+      `Not ready to send. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
+    );
+  }
+
+  return insertVendorContractRequest(
+    subtask,
+    buildVendorContractPayload({ ...opts, vendor, bank }),
+  );
+}
+
+/**
  * Auto-create a contract request for a subtask the moment it has both a
  * vendor AND a non-zero budget. No-op if the subtask already has a
  * `contract_request_id` (idempotent: safe to call from any save path).
@@ -3388,10 +3595,11 @@ export async function autoCreateContractRequestForSubtask(opts: {
   parent: PMTask;
   vendor: LegacyVendor | null;
   bank: LegacyBankAccount | null;
+  client?: ClientRow | null;
   requestedBy: string;
   notes?: string | null;
 }): Promise<string | null> {
-  const { subtask, parent, vendor, bank, requestedBy, notes } = opts;
+  const { subtask, vendor, bank } = opts;
 
   // Already sent? Don't double-fire.
   if ((subtask as any).contract_request_id) return null;
@@ -3404,52 +3612,110 @@ export async function autoCreateContractRequestForSubtask(opts: {
   if (!subtask.workspace_id) {
     throw new Error('Subtask has no workspace_id; cannot create contract request.');
   }
+  if (!vendorContractReadiness(subtask, vendor, bank).ready) return null;
 
-  const created = await createContractRequest({
-    pm_task_id: subtask.id,
-    workspace_id: subtask.workspace_id,
-    requested_by: requestedBy,
-    request_kind: 'vendor',
-    template_key: null,
-    brand_name: parent.brand_name ?? subtask.brand_name ?? '',
-    amount,
-    notes: notes ?? null,
+  return insertVendorContractRequest(
+    subtask,
+    buildVendorContractPayload({ ...opts, vendor, bank }),
+  );
+}
 
-    client_name: null,
-    client_id_legacy: parent.legacy_client_id ?? null,
-    pending_client_id: null,
-    cr_number: null, vat_number: null, signatory_name: null,
-    street: null, city: null, postcode: null, country: null,
-    email: null, phone: null,
+// ── Contract state per subtask, and the counts built on it ──────────
+//
+// Siraj: "if vendors have some missing data show a count of the requested and
+// highlight the ones requested and the one still missing contracts".
+//
+// Three states that matter, plus one for rows the question doesn't apply to
+// (an analysis report has no vendor and owes no contract).
 
-    pending_vendor_id: null,
-    vendor_id: vendor.id,
-    vendor_name: vendor.name,
-    vendor_category: null,
-    vendor_email: null,
-    vendor_phone: null,
-    bank_account_id: bank?.id ?? null,
-    bank_name: bank?.bank_name ?? null,
-    account_name: bank?.account_name ?? null,
-    iban: bank?.iban ?? null,
-    account_number: bank?.account_number ?? null,
-    swift_code: bank?.swift_code ?? null,
-    license_number: vendor.license_number ?? null,
-    is_influencer: null,
-    platforms: null,
-    ad_type: null,
-    qty: null,
-    channel: null,
-    details: subtask.title ?? null,
-  } as any);
+export type SubtaskContractState = 'requested' | 'ready' | 'missing' | 'n/a';
 
-  // Link the request id back onto the subtask so we don't re-fire.
-  await supabase
-    .from('pm_tasks')
-    .update({ contract_request_id: created.id } as any)
-    .eq('id', subtask.id);
+export function subtaskContractState(
+  subtask: PMTask,
+  vendor: LegacyVendor | null,
+  bank: LegacyBankAccount | null,
+): SubtaskContractState {
+  if (!isVendorSubtaskKind(subtask.subtask_kind)) return 'n/a';
+  if (subtask.contract_request_id) return 'requested';
+  return vendorContractReadiness(subtask, vendor, bank).ready ? 'ready' : 'missing';
+}
 
-  return created.id;
+export interface ContractTally {
+  /** Vendor subtasks — the only ones that owe a contract. */
+  total: number;
+  requested: number;
+  /** Everything present, just not sent yet. */
+  ready: number;
+  /** Blocked on data somebody has to fill in. */
+  missing: number;
+}
+
+export function contractTally(
+  subtasks: PMTask[],
+  vendors: LegacyVendor[],
+  banks: LegacyBankAccount[],
+): ContractTally {
+  const tally: ContractTally = { total: 0, requested: 0, ready: 0, missing: 0 };
+  for (const s of subtasks) {
+    const v = s.vendor_id != null ? vendors.find((x) => x.id === s.vendor_id) ?? null : null;
+    const b = v ? banks.find((x) => x.vendor_id === v.id) ?? null : null;
+    const state = subtaskContractState(s, v, b);
+    if (state === 'n/a') continue;
+    tally.total += 1;
+    tally[state] += 1;
+  }
+  return tally;
+}
+
+/**
+ * Request contracts for several subtasks at once.
+ *
+ * Never all-or-nothing: one vendor missing an IBAN must not stop the other
+ * six going out. Every failure comes back named so the caller can show which
+ * rows were skipped and why, rather than a single "some failed".
+ */
+export async function sendVendorContractRequests(opts: {
+  subtasks: PMTask[];
+  parent: PMTask;
+  vendors: LegacyVendor[];
+  banks: LegacyBankAccount[];
+  client?: ClientRow | null;
+  requestedBy: string;
+}): Promise<{ sent: number; skipped: { title: string; reason: string }[] }> {
+  const skipped: { title: string; reason: string }[] = [];
+  let sent = 0;
+
+  for (const subtask of opts.subtasks) {
+    const vendor = subtask.vendor_id != null
+      ? opts.vendors.find((v) => v.id === subtask.vendor_id) ?? null
+      : null;
+    const bank = vendor ? opts.banks.find((b) => b.vendor_id === vendor.id) ?? null : null;
+    try {
+      await sendVendorContractRequest({
+        subtask, parent: opts.parent, vendor, bank,
+        client: opts.client, requestedBy: opts.requestedBy,
+      });
+      sent += 1;
+    } catch (e: any) {
+      skipped.push({ title: subtask.title, reason: e?.message ?? String(e) });
+    }
+  }
+
+  return { sent, skipped };
+}
+
+/** Apply the same change to several subtasks. Failures are reported, not thrown. */
+export async function updateTasksBulk(
+  taskIds: string[],
+  fields: Partial<PMTask>,
+): Promise<{ updated: number; failed: { id: string; reason: string }[] }> {
+  const failed: { id: string; reason: string }[] = [];
+  let updated = 0;
+  for (const id of taskIds) {
+    try { await updateTaskFields(id, fields); updated += 1; }
+    catch (e: any) { failed.push({ id, reason: e?.message ?? String(e) }); }
+  }
+  return { updated, failed };
 }
 
 // ============================================================
