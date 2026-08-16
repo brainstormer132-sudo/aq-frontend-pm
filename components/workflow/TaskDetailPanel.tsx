@@ -210,6 +210,11 @@ export function TaskDetailPanel({
   // of them. Read through to the parent instead of asking anyone to type
   // them twice — same rule as platform and ad type.
   const detailSource = (task?.parent_task_id ? parentTask : task) ?? task;
+  /** The client record behind detailSource, so the card can show a name. */
+  const clientForDetails = useMemo(
+    () => clients.find((c) => c.id === detailSource?.client_id) ?? null,
+    [clients, detailSource?.client_id],
+  );
   const detailsInherited = Boolean(task?.parent_task_id && parentTask);
 
   const closer        = detailSource?.sales_closer_id ? profileById.get(detailSource.sales_closer_id) : null;
@@ -1311,7 +1316,10 @@ export function TaskDetailPanel({
                 ) : (
                   <>
                     <FieldRow label="Brand"        value={detailSource?.brand_name ?? '—'} />
-                    <FieldRow label="Client"       value={detailSource?.legacy_client_id ?? '—'} />
+                    {/* The client's NAME. This row used to print
+                        legacy_client_id, which on current rows is a raw UUID —
+                        true, and no use to anybody reading the card. */}
+                    <FieldRow label="Client"       value={clientForDetails?.company_name ?? detailSource?.legacy_client_id ?? '—'} />
                     <FieldRow label="Sales closer" value={closer ? displayName(closer) : '—'} />
                   </>
                 )}
