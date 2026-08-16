@@ -16,7 +16,7 @@ import {
   deleteTask as deleteTaskFn, markTaskCompleted, updateTaskFields,
   autoCreateContractRequestForSubtask,
   createSubtask, removeSubtask,
-  vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind,
+  vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind, vendorSubtaskAmount,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
   runDurationLabel, vendorPickerOption,
@@ -221,11 +221,21 @@ export function TaskDetailPanel({
   const ka            = detailSource?.key_account_id  ? profileById.get(detailSource.key_account_id)  : null;
   const subAssignee   = task?.assignee_id     ? profileById.get(task.assignee_id)     : null;
 
-  // Variance: parent budget vs sum of subtask budgets. Only meaningful on a
-  // parent that actually has subtasks.
+  // Variance: parent budget vs what the subtasks add up to. Only meaningful
+  // on a parent that actually has subtasks.
+  //
+  // A vendor subtask's money is its PRICE — the budget box is gone from that
+  // card, so summing budget alone would report every campaign as fully
+  // unallocated. Non-vendor subtasks still carry a budget.
+  const subtaskAmount = useCallback(
+    (s: typeof subtasks[number]) => (isVendorSubtaskKind(s.subtask_kind)
+      ? vendorSubtaskAmount(s) ?? 0
+      : Number(s.budget) || 0),
+    [],
+  );
   const subtaskBudgetSum = useMemo(
-    () => subtasks.reduce((acc, s) => acc + (Number(s.budget) || 0), 0),
-    [subtasks],
+    () => subtasks.reduce((acc, s) => acc + subtaskAmount(s), 0),
+    [subtasks, subtaskAmount],
   );
   const parentBudget = Number(task?.budget) || 0;
   const variance = parentBudget - subtaskBudgetSum;
@@ -910,18 +920,17 @@ export function TaskDetailPanel({
     finally { setVendorSaving(false); }
   };
 
-  // Watch for the moment a subtask has vendor + budget + no request yet → fire.
+  // Watch for the moment a subtask has vendor + price + no request yet → fire.
   useEffect(() => {
     if (!task || !task.parent_task_id) return;
     if (task.contract_request_id) return;
     if (!task.vendor_id) return;
-    const amount = Number(task.budget);
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (vendorSubtaskAmount(task) == null) return;
     if (!parentTask) return;
     if (vendors.length === 0) return;
     tryAutoSendContractRequest();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.id, task?.vendor_id, task?.budget, task?.contract_request_id, parentTask?.id, vendors.length]);
+  }, [task?.id, task?.vendor_id, task?.price, task?.budget, task?.contract_request_id, parentTask?.id, vendors.length]);
 
   if (!isOpen) return null;
 
@@ -1338,7 +1347,11 @@ export function TaskDetailPanel({
                 <FieldRow label="Created"      value={new Date(task.created_at).toLocaleString()} />
                 {task.completed_at && <FieldRow label="Completed" value={new Date(task.completed_at).toLocaleString()} />}
 
-                {/* Editable budget */}
+                {/* Editable budget.
+                    Not on a vendor subtask: its money is Price, in Operations
+                    below. Two boxes for one number meant the one nobody filled
+                    sat at zero and blocked the contract request. */}
+                {!(isSubtaskView && isVendorSubtaskKind(kind)) && (
                 <div style={{
                   display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
                   padding: '6px 0', fontSize: 13, alignItems: 'center',
@@ -1369,6 +1382,7 @@ export function TaskDetailPanel({
                     )}
                   </div>
                 </div>
+                )}
 
                 {/* Per-subtask assignee (the "doer"). Hidden on parents — parents
                     use the multi-collaborator panel below. */}
@@ -2111,9 +2125,9 @@ export function TaskDetailPanel({
                                     : cState === 'ready' ? 'ready' : 'missing data'}
                                 </span>
                               )}
-                              {s.budget != null && (
+                              {subtaskAmount(s) > 0 && (
                                 <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-                                  SAR {Number(s.budget).toLocaleString()}
+                                  SAR {subtaskAmount(s).toLocaleString()}
                                 </span>
                               )}
                               <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
@@ -2861,18 +2875,10 @@ function OperationsPanel({
             : <span>{inheritedAdType.value || '—'}</span>}
         </Row>
 
-        <Row label="Vendor paid (SAR)">
-          {canEdit
-            ? <TextInput
-                defaultValue={task.vendor_payment_amount != null ? String(task.vendor_payment_amount) : ''}
-                placeholder="0.00"
-                inputMode="decimal"
-                onCommit={(v) => save('vendor_payment_amount', numberOrNull(v))}
-                style={{ maxWidth: 200 }}
-              />
-            : <span>{fmtMoney(task.vendor_payment_amount)}</span>}
-        </Row>
-
+        {/* "Vendor paid (SAR)" used to sit here. It was a third box for a
+            number the row already holds twice — Price is what the vendor is
+            owed, Net is what AQ keeps. The date below still records WHEN they
+            were paid; the column is untouched in the database. */}
         <Row label="Vendor paid on">
           {canEdit
             ? <input
