@@ -2304,10 +2304,56 @@ export function applyMention(
   start: number,
   caret: number,
   userId: string,
+  /**
+   * The person's name. When given, the composer shows "@Sara K" instead of
+   * "@[[66e2ab23-…]]" — Siraj, seeing the raw id in the box: "when mentioning
+   * someone it should show their name not their id". The id still goes to the
+   * database; see encodeMentions, which swaps the names back at send time.
+   *
+   * Optional so the old call signature keeps working.
+   */
+  displayNameForUser?: string,
 ): { text: string; caret: number } {
-  const token = `${mentionToken(userId)} `;
+  const token = displayNameForUser
+    ? `@${displayNameForUser} `
+    : `${mentionToken(userId)} `;
   const next = text.slice(0, start) + token + text.slice(caret);
   return { text: next, caret: start + token.length };
+}
+
+/** A mention the user actually picked from the list, in the order they picked it. */
+export interface MentionPick { id: string; name: string }
+
+/**
+ * Turn the "@Sara K" the composer displays back into the "@[[id]]" the
+ * database stores. Call it once, on send.
+ *
+ * Only names the user genuinely chose from the picker are converted, so
+ * typing "@" and a name by hand does not silently mention somebody.
+ *
+ * Longest names are matched first: with both "Sara" and "Sara K" picked,
+ * replacing "Sara" first would leave a stray " K" behind. Within the same
+ * name, picks are consumed in the order they were made, so mentioning two
+ * different people who share a name still resolves left to right.
+ *
+ * Known limit: edit the name text after picking it and the mention stops
+ * resolving — it becomes ordinary text rather than mentioning the wrong
+ * person, which is the safe direction to fail in.
+ */
+export function encodeMentions(text: string, picks: MentionPick[]): string {
+  const ordered = picks
+    .map((p, i) => ({ ...p, i }))
+    .sort((a, b) => (b.name.length - a.name.length) || (a.i - b.i));
+
+  let out = text;
+  for (const pick of ordered) {
+    const needle = `@${pick.name}`;
+    const at = out.indexOf(needle);
+    if (at === -1) continue;                 // user edited or deleted it
+    // The replacement contains no "@Name", so the next search can't re-find it.
+    out = out.slice(0, at) + mentionToken(pick.id) + out.slice(at + needle.length);
+  }
+  return out;
 }
 
 export async function deleteComment(commentId: string) {
