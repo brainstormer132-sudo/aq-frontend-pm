@@ -608,7 +608,10 @@ export function TaskDetailPanel({
   //
   // Pending deletes are flushed if the panel closes, so a delete can never
   // be silently forgotten by walking away from it.
-  const UNDO_MS = 10_000;
+  // Three seconds, not ten. Ten was long enough that the row sat there
+  // looking broken; three is enough to catch a misclick. "Delete now" and
+  // closing the panel both skip the wait entirely.
+  const UNDO_MS = 3_000;
   const pendingRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [pendingSubtaskDeletes, setPendingSubtaskDeletes] =
     useState<{ id: string; title: string }[]>([]);
@@ -628,7 +631,14 @@ export function TaskDetailPanel({
   }, [refetchSubs, refetchTask]);
 
   const handleRemoveSubtask = (sub: { id: string; title: string }) => {
-    if (pendingRef.current.has(sub.id)) return;
+    // Already counting down? Then this is the second half of a double click —
+    // stop waiting and do it.
+    const running = pendingRef.current.get(sub.id);
+    if (running) {
+      clearTimeout(running);
+      void commitSubtaskDelete(sub.id);
+      return;
+    }
     setError('');
     setPendingSubtaskDeletes((p) => [...p, { id: sub.id, title: sub.title }]);
     pendingRef.current.set(sub.id, setTimeout(() => { commitSubtaskDelete(sub.id); }, UNDO_MS));
@@ -746,14 +756,29 @@ export function TaskDetailPanel({
   // no-op that made deletes look glitchy in the first place.
   useEffect(() => {
     const map = pendingRef.current;
-    return () => {
+
+    // Closing the tab or navigating away is not "changed my mind" — a delete
+    // that is already counting down should still happen. Best effort: the
+    // request is fired during pagehide and usually completes, but a hard tab
+    // close can cut it off, in which case the row simply survives.
+    const flush = () => {
       map.forEach((t, id) => { clearTimeout(t); void removeSubtask(id).catch(() => {}); });
       map.clear();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      flush();   // panel closed, or navigated within the app
     };
   }, []);
 
   const handleDeleteTask = () => {
-    if (!task || pendingSelfDelete) return;
+    if (!task) return;
+    // Second click while the countdown runs = delete now.
+    if (pendingSelfDelete) { setUndoSeconds(0); return; }
     setError('');
     setPendingSelfDelete(true);
     setUndoSeconds(UNDO_MS / 1000);
@@ -1077,13 +1102,21 @@ export function TaskDetailPanel({
                   </button>
                 )}
                 {pendingSelfDelete && (
-                  <button
-                    type="button"
-                    className="aq-btn aq-btn-secondary"
-                    onClick={undoDeleteTask}
-                  >
-                    Undo delete ({undoSeconds})
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="aq-btn aq-btn-secondary"
+                      onClick={undoDeleteTask}
+                    >
+                      Undo delete ({undoSeconds})
+                    </button>
+                    {/* Where Delete was, so a double click completes it. */}
+                    <button
+                      type="button"
+                      className="aq-btn aq-btn-danger"
+                      onClick={handleDeleteTask}
+                    >Delete now</button>
+                  </>
                 )}
                 <button className="aq-btn aq-btn-ghost" onClick={onClose} aria-label="Close">✕</button>
               </div>
@@ -2047,12 +2080,21 @@ export function TaskDetailPanel({
                       <span style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
                         Removed <strong>{p.title}</strong>
                       </span>
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-secondary"
-                        onClick={() => undoRemoveSubtask(p.id)}
-                        style={{ padding: '3px 12px', fontSize: 12 }}
-                      >Undo</button>
+                      <span style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-secondary"
+                          onClick={() => undoRemoveSubtask(p.id)}
+                          style={{ padding: '3px 12px', fontSize: 12 }}
+                        >Undo</button>
+                        {/* Sits where the ✕ was, so a double click lands here. */}
+                        <button
+                          type="button"
+                          className="aq-btn aq-btn-ghost"
+                          onClick={() => handleRemoveSubtask({ id: p.id, title: p.title })}
+                          style={{ padding: '3px 10px', fontSize: 12, color: 'var(--aq-error)' }}
+                        >Delete now</button>
+                      </span>
                     </div>
                   ))}
 

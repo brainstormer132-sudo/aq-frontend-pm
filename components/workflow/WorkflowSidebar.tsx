@@ -1,6 +1,11 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
+import { AQMark } from '@/components/auth/AQMark';
+
+/** Remembered across sessions so the sidebar opens the way you left it. */
+const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks' | 'crm'
           | 'clients' | 'vendors' | 'tracking' | 'contracts'
@@ -46,6 +51,13 @@ const NAV: NavItem[] = [
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'] },
 ];
 
+/** Two letters for the collapsed footer. Falls back to a dot for a blank name. */
+function initials(name: string): string {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '·';
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+}
+
 function roleLabel(role: WorkspaceRole | null) {
   if (!role) return 'no role';
   if (role === 'key_account') return 'Key account';
@@ -65,44 +77,91 @@ export function WorkflowSidebar({
 }) {
   const items = NAV.filter((n) => n.visibleTo.length === 0 || (role && n.visibleTo.includes(role)));
 
+  // Starts expanded and corrects itself after mount rather than reading
+  // localStorage during render — the server has no localStorage, and a
+  // mismatch between the two renders is a hydration error.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try { setCollapsed(localStorage.getItem(COLLAPSED_KEY) === '1'); } catch { /* private mode */ }
+  }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0'); } catch { /* private mode */ }
+      return next;
+    });
+  };
+
   return (
     <aside style={{
-      width: 240,
+      width: collapsed ? 68 : 240,
+      flexShrink: 0,
+      transition: 'width var(--aq-transition, 160ms ease)',
       background: 'var(--aq-sidebar-bg)',
       color: 'var(--aq-sidebar-text)',
       display: 'flex',
       flexDirection: 'column',
-      padding: '20px 14px',
+      padding: collapsed ? '20px 10px' : '20px 14px',
       gap: 4,
       borderRight: '1px solid var(--aq-sidebar-border)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 10px 18px' }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: 10,
-          background: '#000',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 800, fontSize: 18, color: '#fff',
-          overflow: 'hidden',
-        }}>
-          <img
-            src="/aq-logo.png"
-            alt=""
-            aria-hidden="true"
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-              if (e.currentTarget.parentElement) e.currentTarget.parentElement.textContent = 'AQ';
-            }}
-          />
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: collapsed ? '6px 0 18px' : '6px 10px 18px',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+      }}>
+        <div
+          title={collapsed ? 'AQ Suite' : undefined}
+          style={{
+            width: 40, height: 40, borderRadius: 10,
+            background: '#000', color: '#fff', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          {/* Drawn, not fetched — see AQMark. The old <img src="/aq-logo.png">
+              404'd on every load and its onError fallback quietly printed the
+              letters "AQ", which is why nobody noticed the logo was missing. */}
+          <AQMark size={24} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <strong style={{ color: 'var(--aq-sidebar-text-active)', fontSize: 15 }}>AQ Suite</strong>
-          <span style={{
-            fontSize: 11, color: 'var(--aq-sidebar-text)', opacity: 0.7,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{workspaceName}</span>
-        </div>
+        {!collapsed && (
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+            <strong style={{ color: 'var(--aq-sidebar-text-active)', fontSize: 15 }}>AQ Suite</strong>
+            <span style={{
+              fontSize: 11, color: 'var(--aq-sidebar-text)', opacity: 0.7,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{workspaceName}</span>
+          </div>
+        )}
       </div>
+
+      {/* Collapse toggle. Its own row rather than tucked next to the logo, so
+          it doesn't move when the labels disappear. */}
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-expanded={!collapsed}
+        style={{
+          display: 'flex', alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'flex-end',
+          gap: 8, marginBottom: 6, padding: '6px 12px',
+          background: 'transparent', border: 'none',
+          color: 'var(--aq-sidebar-text)', opacity: 0.7,
+          cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
+          borderRadius: 'var(--aq-radius)',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'var(--aq-sidebar-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.background = 'transparent'; }}
+      >
+        {!collapsed && <span>Collapse</span>}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+             style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 160ms ease' }}>
+          <path d="M15 6l-6 6 6 6" />
+        </svg>
+      </button>
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
         {items.map((n) => {
@@ -112,11 +171,14 @@ export function WorkflowSidebar({
               key={n.id}
               type="button"
               onClick={() => onViewChange(n.id)}
+              title={collapsed ? n.label : undefined}
+              aria-label={collapsed ? n.label : undefined}
               style={{
                 display: 'flex',
                 alignItems: 'center',
+                justifyContent: collapsed ? 'center' : 'flex-start',
                 gap: 10,
-                padding: '10px 12px',
+                padding: collapsed ? '10px 0' : '10px 12px',
                 border: 'none',
                 background: active ? 'var(--aq-sidebar-hover)' : 'transparent',
                 color: active ? 'var(--aq-sidebar-text-active)' : 'var(--aq-sidebar-text)',
@@ -141,15 +203,28 @@ export function WorkflowSidebar({
               }}>
                 <NavIcon name={n.icon} />
               </span>
-              <span style={{ flex: 1 }}>{n.label}</span>
+              {!collapsed && <span style={{ flex: 1 }}>{n.label}</span>}
               {/* pendingCount is the marketing TRIAGE backlog, so it belongs on
                   Marketing Inbox — it used to sit on the personal Inbox, where
                   every role saw a number that had nothing to do with them. */}
               {n.id === 'marketing-triage' && pendingCount && pendingCount > 0 ? (
-                <span style={{
-                  background: 'var(--aq-accent)', color: '#fff',
-                  fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 9999,
-                }}>{pendingCount}</span>
+                collapsed ? (
+                  // No room for the count, but "there is something waiting"
+                  // still has to survive the collapse.
+                  <span
+                    title={`${pendingCount} waiting`}
+                    style={{
+                      position: 'absolute', top: 7, right: 9,
+                      width: 7, height: 7, borderRadius: '50%',
+                      background: 'var(--aq-accent)',
+                    }}
+                  />
+                ) : (
+                  <span style={{
+                    background: 'var(--aq-accent)', color: '#fff',
+                    fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 9999,
+                  }}>{pendingCount}</span>
+                )
               ) : null}
               {active && (
                 <span style={{
@@ -167,24 +242,38 @@ export function WorkflowSidebar({
         paddingTop: 12, marginTop: 8,
         display: 'flex', flexDirection: 'column', gap: 8,
       }}>
-        <div style={{ padding: '4px 10px' }}>
-          <div style={{ color: 'var(--aq-sidebar-text-active)', fontSize: 13, fontWeight: 600 }}>{userName}</div>
-          <div style={{ color: 'var(--aq-sidebar-text)', fontSize: 11, opacity: 0.7 }}>{roleLabel(role)}</div>
-        </div>
+        {collapsed ? (
+          <div
+            title={`${userName} · ${roleLabel(role)}`}
+            style={{
+              alignSelf: 'center', width: 32, height: 32, borderRadius: 9,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'var(--aq-sidebar-hover)',
+              color: 'var(--aq-sidebar-text-active)', fontSize: 11, fontWeight: 700,
+            }}
+          >{initials(userName)}</div>
+        ) : (
+          <div style={{ padding: '4px 10px' }}>
+            <div style={{ color: 'var(--aq-sidebar-text-active)', fontSize: 13, fontWeight: 600 }}>{userName}</div>
+            <div style={{ color: 'var(--aq-sidebar-text)', fontSize: 11, opacity: 0.7 }}>{roleLabel(role)}</div>
+          </div>
+        )}
         <button
           type="button"
           onClick={onSignOut}
+          title={collapsed ? 'Sign out' : undefined}
+          aria-label="Sign out"
           style={{
             background: 'transparent',
             border: '1px solid var(--aq-sidebar-border)',
             color: 'var(--aq-sidebar-text)',
-            padding: '8px 12px',
+            padding: collapsed ? '8px 0' : '8px 12px',
             borderRadius: 'var(--aq-radius)',
             cursor: 'pointer',
             fontFamily: 'inherit',
             fontSize: 13,
           }}
-        >Sign out</button>
+        >{collapsed ? '⏻' : 'Sign out'}</button>
       </div>
     </aside>
   );
