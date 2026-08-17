@@ -1,158 +1,119 @@
 'use client';
 
 import { ReactNode } from 'react';
-import { AnimatedAQLogo } from './AnimatedAQLogo';
+import { AQWatermark } from './AQWatermark';
 
 /**
- * Shared split-screen auth layout — dark branded panel on the left,
- * white form panel on the right. Used by:
- *   - /auth                (PM Supabase login)
+ * The shared welcome surface. Used by:
+ *   - /auth                        (PM app sign in / create account)
  *   - /vendor/auth, /client/auth   (portal logins, via PortalAuthShell)
  *
- * The contract maker at /contracts/ uses the same visual pattern but
- * is implemented inline in plain HTML/CSS since it's a static SPA.
+ * It is no longer a split screen despite the name — the name is kept so the
+ * three call sites don't have to change. A light page on AQ's paper tone, the
+ * mark drawn oversized and transparent behind it, and the form in a single
+ * card. `public/hub.html` is the same design in static HTML; change one and
+ * you should change the other.
  *
- * Props:
- *   - subtitle:   small label below the brand block (e.g. "Vendor portal")
- *   - blurb:      paragraph in the brand block describing the surface
- *   - children:   the form panel content
- *   - tabs:       optional pill toggle at the top of the form panel
+ * Props are unchanged apart from the optional `heading`:
+ *   - subtitle : the role line under the wordmark ("Client portal")
+ *   - heading  : optional page headline. Omit it where `children` already
+ *                bring their own <h2> — /auth does, the portals don't.
+ *   - blurb    : one line of context under the headline
+ *   - tabs     : optional pill toggle, rendered above the form
  */
 export function SplitAuthLayout({
-  subtitle, blurb, children, tabs,
+  subtitle, heading, blurb, children, tabs,
 }: {
   subtitle: string;
+  heading?: string;
   blurb?: string;
   children: ReactNode;
   tabs?: ReactNode;
 }) {
   return (
-    <div style={pageStyle}>
-      {/* Scoped style overrides so this card renders consistently regardless
-          of the surrounding global theme (PM app uses a tan --aq-bg by
-          default, which we override to near-black for the auth screen). */}
+    <div className="aq-welcome">
+      {/* Scoped so this page renders the same whatever the surrounding theme
+          does. The PM app's global --aq-bg is a tan that fights the card. */}
       <style>{`
-        body.split-auth-active { background: #0b0b0e !important; }
-        .split-auth-card .aq-btn-primary,
-        .split-auth-card button[type="submit"]:not(.split-auth-tab) {
-          background: #0b0b0e !important;
-          border-color: #0b0b0e !important;
-          color: #fff !important;
-          border-radius: 999px !important;
-          padding: 12px 18px !important;
-          font-weight: 700 !important;
+        body{background:#f5f1ea !important;}
+        .aq-welcome{
+          position:relative; overflow:hidden; min-height:100vh;
+          display:flex; flex-direction:column;
+          background:#f5f1ea; color:#0b0b0e;
         }
-        .split-auth-card .aq-btn-primary:hover,
-        .split-auth-card button[type="submit"]:not(.split-auth-tab):hover {
-          background: #000 !important; border-color: #000 !important;
+        .aq-welcome-bar{
+          position:relative; z-index:1;
+          display:flex; align-items:center; justify-content:space-between; gap:16px;
+          padding:22px clamp(22px,5vw,56px);
+          border-bottom:1px solid #e4e2dc;
         }
-        .split-auth-card input:focus {
-          outline: none !important;
-          border-color: #0b0b0e !important;
-          box-shadow: 0 0 0 3px rgba(11, 11, 14, 0.12) !important;
+        .aq-welcome-word{font-size:16px; font-weight:700; letter-spacing:-.015em; line-height:1.2}
+        .aq-welcome-role{
+          font-size:10px; font-weight:600; letter-spacing:.18em; text-transform:uppercase;
+          color:#6b7280; margin-top:3px;
         }
-        .split-auth-card a { color: #0b0b0e; font-weight: 700; }
+        .aq-welcome-main{
+          position:relative; z-index:1; flex:1;
+          width:100%; max-width:1060px; margin:0 auto;
+          padding:clamp(38px,7vh,74px) clamp(22px,5vw,56px) 46px;
+          display:flex; flex-direction:column; justify-content:center;
+        }
+        .aq-welcome-head{
+          font-size:clamp(32px,4.6vw,50px); font-weight:700; line-height:1.05;
+          letter-spacing:-.03em; margin:0 0 12px; max-width:16ch;
+        }
+        .aq-welcome-sub{
+          font-size:15px; line-height:1.65; color:#6b7280;
+          max-width:52ch; margin:0 0 clamp(26px,5vh,40px);
+        }
+        .aq-welcome-card{
+          max-width:440px; background:#fff; border:1px solid #e4e2dc;
+          border-radius:16px; padding:30px 28px;
+          display:flex; flex-direction:column; gap:14px;
+        }
+
+        /* The forms use the app's own .aq-input / .aq-btn classes. Restyle
+           them here rather than in each call site, so all three surfaces
+           match without touching their markup. */
+        .aq-welcome .aq-input{
+          width:100%; font:inherit; font-size:14px;
+          padding:12px 14px; border:1px solid #e8e8ea; border-radius:11px;
+          background:#fbfbfc; transition:.15s;
+        }
+        .aq-welcome .aq-input:focus{
+          outline:none; border-color:#0f766e; background:#fff;
+          box-shadow:0 0 0 3px rgba(15,118,110,.14);
+        }
+        .aq-welcome .aq-btn-primary{
+          width:100%; font:inherit; font-size:14px; font-weight:600;
+          padding:13px 18px; background:#0f766e !important; border:0 !important;
+          color:#fff !important; border-radius:11px !important; cursor:pointer;
+        }
+        .aq-welcome .aq-btn-primary:hover{background:#0b544e !important}
+        .aq-welcome a{color:#0b0b0e; font-weight:600}
+
+        @media (max-width:720px){
+          .aq-welcome-main{justify-content:flex-start; padding-top:34px}
+          .aq-welcome-head{max-width:none}
+          .aq-welcome-card{max-width:none}
+        }
       `}</style>
 
-      <div style={splitStyle} className="split-auth-card">
-        {/* LEFT — brand panel */}
-        <aside style={brandStyle}>
-          <p style={welcomeStyle}>Welcome to</p>
-          <div style={logoWrapStyle}>
-            <AnimatedAQLogo />
-          </div>
-          <h1 style={brandNameStyle}>AQ Creativity</h1>
-          {blurb && <p style={blurbStyle}>{blurb}</p>}
-          <p style={footerStyle}>Internal · Confidential</p>
-        </aside>
+      <AQWatermark />
 
-        {/* RIGHT — form panel */}
-        <div style={formPanelStyle}>
-          {tabs}
-          <p style={subtitleStyle}>{subtitle}</p>
-          {children}
+      <div className="aq-welcome-bar">
+        <div>
+          <div className="aq-welcome-word">AQ Creativity</div>
+          <div className="aq-welcome-role">{subtitle}</div>
         </div>
+      </div>
+
+      <div className="aq-welcome-main">
+        {heading && <h1 className="aq-welcome-head">{heading}</h1>}
+        {blurb && <p className="aq-welcome-sub">{blurb}</p>}
+        {tabs}
+        <div className="aq-welcome-card">{children}</div>
       </div>
     </div>
   );
 }
-
-// ── Styles ──────────────────────────────────────────────────────────────────
-const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  background: '#0b0b0e',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  padding: 24,
-};
-const splitStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-  width: 'min(1080px, 96vw)',
-  minHeight: 'min(620px, 90vh)',
-  background: '#fff',
-  borderRadius: 24,
-  overflow: 'hidden',
-  boxShadow: '0 30px 80px rgba(0, 0, 0, 0.5)',
-};
-const brandStyle: React.CSSProperties = {
-  position: 'relative',
-  background:
-    'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.06), transparent 55%),'
-    + 'linear-gradient(155deg, #1a1a1f 0%, #0b0b0e 55%, #000 100%)',
-  color: '#fff',
-  padding: '56px 44px 64px',
-  display: 'flex', flexDirection: 'column',
-  justifyContent: 'center', alignItems: 'center',
-  textAlign: 'center',
-};
-const welcomeStyle: React.CSSProperties = {
-  textTransform: 'uppercase',
-  letterSpacing: '0.18em',
-  fontSize: 12,
-  fontWeight: 600,
-  color: 'rgba(255, 255, 255, 0.65)',
-  margin: '0 0 22px',
-};
-const logoWrapStyle: React.CSSProperties = {
-  // Logo as-is, no white circle. Slightly larger so it reads at a glance.
-  width: 110, height: 110,
-  margin: '0 auto 22px',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  borderRadius: 16,
-  overflow: 'hidden',
-};
-const logoImgStyle: React.CSSProperties = {
-  width: '100%', height: '100%', objectFit: 'contain', display: 'block',
-};
-const brandNameStyle: React.CSSProperties = {
-  fontSize: 28, fontWeight: 800,
-  margin: '0 0 14px', letterSpacing: '-0.01em',
-};
-const blurbStyle: React.CSSProperties = {
-  fontSize: 13, lineHeight: 1.65,
-  color: 'rgba(255, 255, 255, 0.72)',
-  maxWidth: 320, margin: '0 auto',
-};
-const footerStyle: React.CSSProperties = {
-  position: 'absolute',
-  bottom: 28, left: 0, right: 0,
-  fontSize: 11,
-  color: 'rgba(255, 255, 255, 0.45)',
-  letterSpacing: '0.14em',
-  textTransform: 'uppercase',
-};
-const formPanelStyle: React.CSSProperties = {
-  background: '#fff',
-  padding: '48px 52px',
-  display: 'flex', flexDirection: 'column',
-  justifyContent: 'center',
-};
-const subtitleStyle: React.CSSProperties = {
-  color: '#6b7280',
-  fontSize: 13,
-  marginTop: 6,
-  marginBottom: 22,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  fontWeight: 700,
-};
