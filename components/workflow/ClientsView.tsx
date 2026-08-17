@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   usePendingClients,
+  selectAllRows,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import {
@@ -23,13 +24,14 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   const [loading, setLoading] = useState(true);
   const refetch = async () => {
     setLoading(true);
-    const { data, error: e } = await supabase
+    // Paged: PostgREST stops at 1000 rows without saying so, which is why
+        // this list and its count both sat at exactly 1000.
+        const data = await selectAllRows<any>('ClientsView', () => supabase
       .from('clients')
       .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, vat_number, street, city, postcode, country, invite_status, status')
       .eq('status', 'active')
-      .order('company_name');
-    if (e) setError(e.message);
-    setAllClients((data as any[] | null) ?? []);
+      .order('company_name'), (msg) => setError(msg));
+    setAllClients(data ?? []);
     setLoading(false);
   };
   useEffect(() => { refetch(); }, []);
