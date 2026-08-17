@@ -4,9 +4,13 @@ import { ReactNode } from 'react';
 import { SplitAuthLayout } from '@/components/auth/SplitAuthLayout';
 
 /**
- * Centered card layout used by every portal auth page (vendor + client login,
- * setup, password reset). Now uses the shared SplitAuthLayout so the visual
- * matches the contract maker and PM-app login surfaces.
+ * Layout used by every portal auth page (vendor + client login, setup,
+ * password reset). Defers the whole visual to SplitAuthLayout so the portals,
+ * the PM login and /hub stay one surface.
+ *
+ * `title` is the portal's name and becomes the role line under the wordmark.
+ * The headline is supplied here because portal forms — unlike /auth — don't
+ * carry a heading of their own.
  */
 export function PortalAuthShell({
   title, subtitle, children,
@@ -18,11 +22,9 @@ export function PortalAuthShell({
   return (
     <SplitAuthLayout
       subtitle={title}
-      blurb="Sign in with the credentials your AQ administrator gave you. Forgot your password? Ask them for a fresh invite."
+      heading="Sign in to your portal"
+      blurb={subtitle}
     >
-      {subtitle && (
-        <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 18 }}>{subtitle}</p>
-      )}
       {children}
     </SplitAuthLayout>
   );
