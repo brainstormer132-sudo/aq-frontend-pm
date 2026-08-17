@@ -1,298 +1,199 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AQ Creativity — Hub</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
-    <style>
-      :root {
-        --ink:    #0f0f0f;
-        --ink-2:  rgba(255, 255, 255, 0.65);
-        --ink-3:  rgba(255, 255, 255, 0.35);
-        --bg:     #f5f1ea;
-        --card:   #ffffff;
-        --text:   #1f2937;
-        --muted:  #6b7280;
-        --hint:   #9ca3af;
-        --border: #e5e7eb;
-      }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body { min-height: 100vh; }
-      body {
-        background: var(--bg);
-        color: var(--text);
-        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        display: grid;
-        grid-template-columns: 1.2fr 1fr;
-        min-height: 100vh;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AQ Creativity — Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    /*
+      Workspace picker. Mirrors components/auth/SplitAuthLayout.tsx — same
+      paper, same header, same oversized transparent mark — so /hub, /auth and
+      both portals read as one surface. Change one, change the other.
 
-      /* ─── Left: brand panel ────────────────────────────────────────── */
-      .brand {
-        background: var(--ink);
-        color: #fff;
-        padding: 56px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-        position: relative;
-        min-height: 380px;
-      }
-      .brand-stack {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 18px;
-        max-width: 440px;
-      }
-      .brand-mark {
-        width: 130px; height: 130px;
-        display: flex; align-items: center; justify-content: center;
-        margin-bottom: 4px;
-        position: relative;
-        animation: breathe 5s ease-in-out 2s infinite;
-        will-change: transform;
-      }
-      .brand-mark svg {
-        width: 100%; height: 100%; display: block;
-      }
-      .brand-name {
-        font-size: 13px;
-        font-weight: 500;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.55);
-        animation: rise-in 0.5s ease-out 0.55s both;
-      }
-      .brand-headline {
-        font-size: clamp(28px, 4.2vw, 44px);
-        font-weight: 500;
-        line-height: 1.1;
-        letter-spacing: -0.01em;
-        margin-top: 8px;
-        animation: rise-in 0.55s ease-out 0.7s both;
-      }
-      .brand-blurb {
-        font-size: 15px;
-        line-height: 1.6;
-        color: var(--ink-2);
-        max-width: 420px;
-        animation: rise-in 0.55s ease-out 0.85s both;
-      }
-      .brand-footer {
-        position: absolute;
-        bottom: 28px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 12px;
-        color: var(--ink-3);
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }
-      .dot {
-        display: inline-block; width: 4px; height: 4px;
-        background: var(--ink-3); border-radius: 50%;
-      }
+      Static page: there is no session here, so it deliberately shows no
+      account row and no sign-out. Both links land on pages that do their own
+      auth check.
+    */
+    :root{
+      --ink:#0b0b0e;
+      --paper:#f5f1ea;
+      --muted:#6b7280;
+      --line:#e4e2dc;
+      --hair:#efedE8;
+      --teal:#0f766e;
+      --teal-soft:#ccfbf1;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{min-height:100vh}
+    body{
+      background:var(--paper);
+      color:var(--ink);
+      font-family:'DM Sans',-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+      -webkit-font-smoothing:antialiased;
+    }
 
-      /* ─── Logo path animations (draw once, stay) ───────────────────── */
-      .aq-anim-trace-a, .aq-anim-trace-circle {
-        fill: none;
-        stroke: #ffffff;
-        stroke-width: 280;
-        stroke-linecap: butt;
-        stroke-linejoin: miter;
-        stroke-miterlimit: 10;
-        stroke-dasharray: 100;
-        stroke-dashoffset: 100;
-      }
-      .aq-anim-trace-a {
-        animation: aq-anim-draw 1.0s ease-out 0.2s forwards,
-                   aq-anim-fade-out 0.3s ease 1.25s forwards;
-      }
-      .aq-anim-trace-circle {
-        animation: aq-anim-draw 1.5s ease-out 0.55s forwards,
-                   aq-anim-fade-out 0.3s ease 2.15s forwards;
-      }
-      .aq-anim-final-a, .aq-anim-final-circle { fill: #ffffff; opacity: 0; }
-      .aq-anim-final-a { animation: aq-anim-fade-in 0.4s ease 1.15s forwards; }
-      .aq-anim-final-circle { animation: aq-anim-fade-in 0.4s ease 2.05s forwards; }
+    .page{position:relative;overflow:hidden;min-height:100vh;display:flex;flex-direction:column}
 
-      /* ─── Cascade animations ───────────────────────────────────────── */
-      @keyframes aq-anim-draw    { to { stroke-dashoffset: 0; } }
-      @keyframes aq-anim-fade-in { to { opacity: 1; } }
-      @keyframes aq-anim-fade-out{ to { opacity: 0; } }
-      @keyframes breathe {
-        0%, 100% { transform: scale(1); }
-        50%      { transform: scale(1.03); }
-      }
-      @keyframes rise-in {
-        0%   { opacity: 0; transform: translateY(8px); }
-        100% { opacity: 1; transform: translateY(0); }
-      }
+    /* ─── The mark, oversized and barely there ───────────────────── */
+    .wm{
+      position:absolute;pointer-events:none;user-select:none;
+      right:-14%;top:50%;transform:translateY(-50%);
+      width:min(940px,78vw);height:auto;
+      color:var(--ink);opacity:0;
+      animation:wm-settle 3.2s ease-out .1s forwards;
+    }
+    /* Peaks above its resting opacity while drawing — at a flat 4.5% the
+       motion is invisible, which would make animating it pointless. */
+    @keyframes wm-settle{0%{opacity:0}28%{opacity:.075}72%{opacity:.075}100%{opacity:.045}}
 
-      @media (prefers-reduced-motion: reduce) {
-        .brand-mark,
-        .aq-anim-trace-a, .aq-anim-trace-circle,
-        .brand-name, .brand-headline, .brand-blurb {
-          animation: none !important;
-        }
-        .aq-anim-trace-a, .aq-anim-trace-circle { opacity: 0 !important; }
-        .aq-anim-final-a, .aq-anim-final-circle { opacity: 1 !important; }
-      }
+    .wm-trace{
+      fill:none;stroke:currentColor;stroke-width:280;
+      stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;
+      stroke-dasharray:100;stroke-dashoffset:100;
+    }
+    .wm-trace-a     {animation:wm-draw 1.0s ease-out .2s forwards,  wm-out .3s ease 1.25s forwards}
+    .wm-trace-circle{animation:wm-draw 1.5s ease-out .55s forwards, wm-out .3s ease 2.15s forwards}
+    .wm-final{fill:currentColor;opacity:0}
+    .wm-final-a     {animation:wm-in .4s ease 1.15s forwards}
+    .wm-final-circle{animation:wm-in .4s ease 2.05s forwards}
+    @keyframes wm-draw{to{stroke-dashoffset:0}}
+    @keyframes wm-in  {to{opacity:1}}
+    @keyframes wm-out {to{opacity:0}}
 
-      /* ─── Right: workspace picker ──────────────────────────────────── */
-      .picker {
-        background: var(--card);
-        padding: 56px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: 28px;
-      }
-      .picker-head h1 {
-        font-size: 22px;
-        font-weight: 500;
-        margin-bottom: 6px;
-      }
-      .picker-head p {
-        font-size: 14px;
-        color: var(--muted);
-      }
+    /* ─── Header ─────────────────────────────────────────────────── */
+    .bar{
+      position:relative;z-index:1;
+      display:flex;align-items:center;justify-content:space-between;gap:16px;
+      padding:22px clamp(22px,5vw,56px);
+      border-bottom:1px solid var(--line);
+    }
+    .word{font-size:16px;font-weight:700;letter-spacing:-.015em;line-height:1.2}
+    .role{font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-top:3px}
 
-      .cards { display: flex; flex-direction: column; gap: 12px; }
+    /* ─── Body ───────────────────────────────────────────────────── */
+    .main{
+      position:relative;z-index:1;flex:1;
+      width:100%;max-width:1060px;margin:0 auto;
+      padding:clamp(38px,7vh,74px) clamp(22px,5vw,56px) 46px;
+      display:flex;flex-direction:column;justify-content:center;
+    }
+    .eyebrow{
+      align-self:flex-start;
+      font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+      color:var(--teal);background:var(--teal-soft);
+      padding:6px 12px;border-radius:999px;margin:0 0 18px;
+    }
+    h1{font-size:clamp(32px,4.6vw,50px);font-weight:700;line-height:1.05;letter-spacing:-.03em;margin:0 0 12px;max-width:16ch}
+    .sub{font-size:15px;line-height:1.65;color:var(--muted);max-width:52ch;margin:0 0 clamp(28px,5vh,44px)}
 
-      a.card {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 18px 20px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        text-decoration: none;
-        color: var(--text);
-        text-align: left;
-        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-      }
-      a.card:hover {
-        transform: translateY(-1px);
-        border-color: var(--ink);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-      }
-      a.card:hover .card-arrow { transform: translateX(3px); }
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;max-width:960px}
+    a.card{
+      display:flex;flex-direction:column;text-decoration:none;color:inherit;
+      background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;
+      transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+    }
+    a.card:hover{transform:translateY(-3px);box-shadow:0 16px 40px rgba(11,11,14,.12);border-color:#d6d3cb}
+    a.card:focus-visible{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px rgba(15,118,110,.18)}
+    .band{height:6px;background:var(--teal)}
+    a.card.alt .band{background:var(--ink)}
+    .cbody{padding:24px 24px 20px;flex:1}
+    .cicon{
+      width:44px;height:44px;border-radius:12px;
+      display:flex;align-items:center;justify-content:center;margin-bottom:16px;
+      background:var(--teal-soft);color:var(--teal);
+    }
+    a.card.alt .cicon{background:#e7e7ea;color:var(--ink)}
+    .cbody h2{font-size:18px;font-weight:700;letter-spacing:-.015em;margin:0 0 6px}
+    .cbody p{font-size:13.5px;line-height:1.6;color:var(--muted);margin:0}
+    .cfoot{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      padding:14px 24px;border-top:1px solid var(--hair);
+      font-size:12.5px;font-weight:700;color:var(--teal);
+    }
+    a.card.alt .cfoot{color:var(--ink)}
+    .arrow{transition:transform .2s ease}
+    a.card:hover .arrow{transform:translateX(4px)}
 
-      .card-icon {
-        width: 42px; height: 42px;
-        border-radius: 11px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-      }
-      .card-icon.pm { background: #e8f5ed; }
-      .card-icon.contracts { background: #E6F1FB; }
+    .note{margin-top:30px;font-size:13px;color:var(--muted);line-height:1.6}
 
-      .card-body { flex: 1; min-width: 0; }
-      .card-body h2 { font-size: 15px; font-weight: 500; margin-bottom: 3px; }
-      .card-body p { font-size: 13px; color: var(--muted); line-height: 1.4; }
+    @media (prefers-reduced-motion:reduce){
+      .wm{animation:none;opacity:.045}
+      .wm-trace{animation:none !important;opacity:0 !important}
+      .wm-final{animation:none !important;opacity:1 !important}
+      a.card{transition:none}
+    }
 
-      .card-arrow {
-        color: var(--ink);
-        font-size: 16px;
-        flex-shrink: 0;
-        transition: transform 0.15s ease;
-      }
+    /* Behind a narrow column the mark fights the type at any opacity high
+       enough to see, so on a phone it drops to the bottom corner. */
+    @media (max-width:720px){
+      .wm{right:-30%;top:auto;bottom:-6%;transform:none;width:120vw}
+      .main{justify-content:flex-start;padding-top:34px}
+      h1{max-width:none}
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <svg class="wm" viewBox="0 0 5906 5906" aria-hidden="true" focusable="false">
+      <path class="wm-trace wm-trace-a" pathLength="100" d="M 2476 3092 L 3105 2100 L 4341 3927" />
+      <path class="wm-trace wm-trace-circle" pathLength="100" d="M 3547 3730 A 1430 1430 0 1 1 4070 3207" />
+      <path class="wm-final wm-final-circle" d="M2462.701172,1095.070801 C2524.169189,1078.617920 2584.914307,1067.204834 2646.364258,1058.958252 C2731.217773,1047.570679 2816.412842,1044.611206 2901.718994,1049.106689 C3060.633789,1057.481079 3214.311523,1091.109863 3361.281738,1152.309448 C3679.976074,1285.016479 3926.088135,1500.185791 4093.553711,1803.085449 C4167.245117,1936.373657 4217.134277,2078.406006 4244.684570,2228.343506 C4265.010254,2338.962158 4272.257812,2450.401855 4268.227051,2562.646729 C4263.322754,2699.222168 4240.206543,2832.690186 4198.657715,2962.922119 C4192.188477,2983.198242 4185.559082,3003.423340 4178.525391,3025.149658 C4175.030273,3021.870117 4171.869141,3019.663818 4169.674316,3016.733154 C4101.767578,2926.071533 4034.052490,2835.265869 3965.941162,2744.758301 C3960.572510,2737.624268 3958.748535,2731.057129 3960.569336,2722.679688 C3968.499512,2686.193848 3973.800293,2649.294678 3977.769043,2612.182129 C3984.801270,2546.413818 3986.176758,2480.557373 3981.705078,2414.552734 C3978.639648,2369.305420 3973.076660,2324.421387 3964.840088,2279.806641 C3938.038330,2134.632324 3885.542969,1999.354126 3805.607910,1875.421631 C3644.394287,1625.473022 3419.019287,1460.815796 3134.612305,1376.064087 C3066.772461,1355.848267 2997.292725,1343.425415 2926.869141,1337.037720 C2868.412842,1331.735718 2809.865967,1330.958252 2751.131592,1334.897949 C2616.206787,1343.948486 2486.834229,1375.239990 2363.503174,1430.356812 C2140.500732,1530.016357 1968.313965,1686.767822 1844.567871,1896.884277 C1774.319214,2016.164062 1726.375977,2144.112793 1700.999756,2280.204834 C1684.579102,2368.269043 1678.072266,2457.126709 1682.843628,2546.803223 C1695.911255,2792.403564 1777.134033,3012.859863 1929.406860,3205.778564 C2082.925537,3400.276123 2280.684326,3531.223145 2517.161621,3604.140625 C2587.372070,3625.790039 2659.210693,3639.782959 2732.252441,3646.976562 C2797.349854,3653.387695 2862.559082,3653.991455 2927.915283,3648.960938 C3080.662354,3637.203613 3224.741943,3595.602295 3360.829834,3525.672852 C3414.251953,3498.221680 3464.894531,3466.280273 3513.375977,3430.868652 C3517.680420,3427.725098 3522.008301,3424.609863 3526.420166,3421.621094 C3527.435791,3420.933350 3528.842285,3420.822510 3531.504883,3420.005371 C3583.394043,3498.385254 3635.517334,3577.118896 3688.005859,3656.404297 C3685.396729,3658.775146 3683.675781,3660.665527 3681.648926,3662.133545 C3544.489746,3761.496582 3394.731201,3835.080322 3231.876953,3881.848389 C3163.948975,3901.355957 3094.942627,3915.412598 3024.870605,3924.862061 C2938.689697,3936.484131 2852.162842,3939.679688 2765.530762,3935.073486 C2568.186279,3924.580811 2380.702881,3875.621826 2203.944092,3786.747314 C2066.666016,3717.724121 1942.024414,3630.769531 1831.998413,3523.269043 C1652.880493,3348.262695 1528.009399,3140.456055 1456.056274,2900.721191 C1434.576294,2829.153809 1418.941040,2756.276855 1409.051025,2682.256348 C1398.264282,2601.524902 1393.317383,2520.351074 1397.104736,2438.934570 C1411.847656,2122.006104 1514.027954,1836.343994 1710.656860,1587.073364 C1898.625610,1348.781250 2140.852783,1188.737183 2432.281250,1103.473999 C2441.851807,1100.673950 2451.503174,1098.150391 2462.701172,1095.070801 z" />
+      <path class="wm-final wm-final-a" d="M3386.711914,2861.393555 C3293.406982,2729.061279 3200.960693,2597.885742 3108.879150,2467.227539 C3102.674316,2467.349609 3101.745850,2471.775146 3099.473633,2474.558350 C3097.375244,2477.128662 3095.645264,2480.000977 3093.765137,2482.748535 C3013.261963,2600.399414 2932.752197,2718.045898 2852.259277,2835.703857 C2796.968262,2916.524414 2741.704834,2997.364502 2686.410889,3078.183105 C2682.659668,3083.665771 2678.754395,3089.043213 2674.379150,3095.235840 C2542.705322,3093.583496 2410.934570,3091.929688 2278.763916,3090.270996 C2276.771973,3083.339355 2281.597900,3079.728760 2284.251465,3075.735352 C2326.645264,3011.935791 2369.212891,2948.251953 2411.738281,2884.539795 C2579.628662,2633.001221 2747.520996,2381.464111 2915.406250,2129.922363 C2974.572266,2041.274536 3033.711914,1952.609009 3092.898193,1863.974854 C3096.150635,1859.103760 3099.722656,1854.445923 3102.663574,1850.359619 C3104.593506,1850.254150 3105.294922,1850.032349 3105.836182,1850.236084 C3106.417969,1850.455200 3106.960205,1850.996582 3107.330078,1851.529053 C3585.884033,2540.317627 4064.422363,3229.116943 4542.933105,3917.935547 C4544.057129,3919.553223 4544.837891,3921.426514 4545.633301,3923.243896 C4545.848633,3923.735596 4545.528320,3924.460938 4545.454102,3925.079102 C4545.161133,3925.656250 4545.004883,3926.428955 4544.537109,3926.756836 C4544.047363,3927.100830 4543.258301,3927.105713 4542.599609,3927.107422 C4411.960449,3927.417969 4281.321777,3927.715576 4150.682617,3928.011963 C4146.717773,3928.020996 4142.752930,3928.013184 4138.279785,3928.013184 C3887.866455,3572.607910 3637.718506,3217.578857 3386.711914,2861.393555 z" />
+    </svg>
 
-      .picker-fineprint {
-        font-size: 12px;
-        color: var(--hint);
-        line-height: 1.5;
-      }
-      .picker-fineprint a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-
-      /* ─── Mobile: stack vertically ─────────────────────────────────── */
-      @media (max-width: 900px) {
-        body { grid-template-columns: 1fr; }
-        .brand {
-          padding: 32px 28px;
-          min-height: 220px;
-        }
-        .brand-headline { font-size: 26px; }
-        .brand-blurb { font-size: 14px; }
-        .picker { padding: 32px 28px; }
-      }
-    </style>
-  </head>
-  <body>
-    <!-- Left: brand panel -->
-    <aside class="brand">
-      <div class="brand-stack">
-        <div class="brand-mark" aria-label="AQ Creativity">
-          <svg viewBox="0 0 5906 5906" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path class="aq-anim-trace-a" pathLength="100" d="M 2476 3092 L 3105 2100 L 4341 3927" />
-            <path class="aq-anim-trace-circle" pathLength="100" d="M 3547 3730 A 1430 1430 0 1 1 4070 3207" />
-            <path class="aq-anim-final-circle" d="M2462.701172,1095.070801 C2524.169189,1078.617920 2584.914307,1067.204834 2646.364258,1058.958252 C2731.217773,1047.570679 2816.412842,1044.611206 2901.718994,1049.106689 C3060.633789,1057.481079 3214.311523,1091.109863 3361.281738,1152.309448 C3679.976074,1285.016479 3926.088135,1500.185791 4093.553711,1803.085449 C4167.245117,1936.373657 4217.134277,2078.406006 4244.684570,2228.343506 C4265.010254,2338.962158 4272.257812,2450.401855 4268.227051,2562.646729 C4263.322754,2699.222168 4240.206543,2832.690186 4198.657715,2962.922119 C4192.188477,2983.198242 4185.559082,3003.423340 4178.525391,3025.149658 C4175.030273,3021.870117 4171.869141,3019.663818 4169.674316,3016.733154 C4101.767578,2926.071533 4034.052490,2835.265869 3965.941162,2744.758301 C3960.572510,2737.624268 3958.748535,2731.057129 3960.569336,2722.679688 C3968.499512,2686.193848 3973.800293,2649.294678 3977.769043,2612.182129 C3984.801270,2546.413818 3986.176758,2480.557373 3981.705078,2414.552734 C3978.639648,2369.305420 3973.076660,2324.421387 3964.840088,2279.806641 C3938.038330,2134.632324 3885.542969,1999.354126 3805.607910,1875.421631 C3644.394287,1625.473022 3419.019287,1460.815796 3134.612305,1376.064087 C3066.772461,1355.848267 2997.292725,1343.425415 2926.869141,1337.037720 C2868.412842,1331.735718 2809.865967,1330.958252 2751.131592,1334.897949 C2616.206787,1343.948486 2486.834229,1375.239990 2363.503174,1430.356812 C2140.500732,1530.016357 1968.313965,1686.767822 1844.567871,1896.884277 C1774.319214,2016.164062 1726.375977,2144.112793 1700.999756,2280.204834 C1684.579102,2368.269043 1678.072266,2457.126709 1682.843628,2546.803223 C1695.911255,2792.403564 1777.134033,3012.859863 1929.406860,3205.778564 C2082.925537,3400.276123 2280.684326,3531.223145 2517.161621,3604.140625 C2587.372070,3625.790039 2659.210693,3639.782959 2732.252441,3646.976562 C2797.349854,3653.387695 2862.559082,3653.991455 2927.915283,3648.960938 C3080.662354,3637.203613 3224.741943,3595.602295 3360.829834,3525.672852 C3414.251953,3498.221680 3464.894531,3466.280273 3513.375977,3430.868652 C3517.680420,3427.725098 3522.008301,3424.609863 3526.420166,3421.621094 C3527.435791,3420.933350 3528.842285,3420.822510 3531.504883,3420.005371 C3583.394043,3498.385254 3635.517334,3577.118896 3688.005859,3656.404297 C3685.396729,3658.775146 3683.675781,3660.665527 3681.648926,3662.133545 C3544.489746,3761.496582 3394.731201,3835.080322 3231.876953,3881.848389 C3163.948975,3901.355957 3094.942627,3915.412598 3024.870605,3924.862061 C2938.689697,3936.484131 2852.162842,3939.679688 2765.530762,3935.073486 C2568.186279,3924.580811 2380.702881,3875.621826 2203.944092,3786.747314 C2066.666016,3717.724121 1942.024414,3630.769531 1831.998413,3523.269043 C1652.880493,3348.262695 1528.009399,3140.456055 1456.056274,2900.721191 C1434.576294,2829.153809 1418.941040,2756.276855 1409.051025,2682.256348 C1398.264282,2601.524902 1393.317383,2520.351074 1397.104736,2438.934570 C1411.847656,2122.006104 1514.027954,1836.343994 1710.656860,1587.073364 C1898.625610,1348.781250 2140.852783,1188.737183 2432.281250,1103.473999 C2441.851807,1100.673950 2451.503174,1098.150391 2462.701172,1095.070801 z" />
-            <path class="aq-anim-final-a" d="M3386.711914,2861.393555 C3293.406982,2729.061279 3200.960693,2597.885742 3108.879150,2467.227539 C3102.674316,2467.349609 3101.745850,2471.775146 3099.473633,2474.558350 C3097.375244,2477.128662 3095.645264,2480.000977 3093.765137,2482.748535 C3013.261963,2600.399414 2932.752197,2718.045898 2852.259277,2835.703857 C2796.968262,2916.524414 2741.704834,2997.364502 2686.410889,3078.183105 C2682.659668,3083.665771 2678.754395,3089.043213 2674.379150,3095.235840 C2542.705322,3093.583496 2410.934570,3091.929688 2278.763916,3090.270996 C2276.771973,3083.339355 2281.597900,3079.728760 2284.251465,3075.735352 C2326.645264,3011.935791 2369.212891,2948.251953 2411.738281,2884.539795 C2579.628662,2633.001221 2747.520996,2381.464111 2915.406250,2129.922363 C2974.572266,2041.274536 3033.711914,1952.609009 3092.898193,1863.974854 C3096.150635,1859.103760 3099.722656,1854.445923 3102.663574,1850.359619 C3104.593506,1850.254150 3105.294922,1850.032349 3105.836182,1850.236084 C3106.417969,1850.455200 3106.960205,1850.996582 3107.330078,1851.529053 C3585.884033,2540.317627 4064.422363,3229.116943 4542.933105,3917.935547 C4544.057129,3919.553223 4544.837891,3921.426514 4545.633301,3923.243896 C4545.848633,3923.735596 4545.528320,3924.460938 4545.454102,3925.079102 C4545.161133,3925.656250 4545.004883,3926.428955 4544.537109,3926.756836 C4544.047363,3927.100830 4543.258301,3927.105713 4542.599609,3927.107422 C4411.960449,3927.417969 4281.321777,3927.715576 4150.682617,3928.011963 C4146.717773,3928.020996 4142.752930,3928.013184 4138.279785,3928.013184 C3887.866455,3572.607910 3637.718506,3217.578857 3386.711914,2861.393555 z" />
-          </svg>
-        </div>
-        <span class="brand-name">AQ Creativity</span>
-        <h2 class="brand-headline">Welcome back.</h2>
-        <p class="brand-blurb">
-          Everything AQ in one place — manage projects, generate contracts, coordinate the team. Pick a workspace to get started.
-        </p>
+    <header class="bar">
+      <div>
+        <div class="word">AQ Creativity</div>
+        <div class="role">Suite</div>
       </div>
+    </header>
 
-      <div class="brand-footer">
-        <span>Internal</span><span class="dot"></span><span>Confidential</span>
-      </div>
-    </aside>
+    <main class="main">
+      <p class="eyebrow">Choose a workspace</p>
+      <h1>Where are you working today?</h1>
+      <p class="sub">Everything AQ in one place — projects, contracts and the people who run them.</p>
 
-    <!-- Right: workspace picker -->
-    <main class="picker">
-      <div class="picker-head">
-        <h1>Choose your workspace</h1>
-        <p>Pick the one you want to work in.</p>
-      </div>
-
-      <div class="cards">
+      <div class="grid">
         <a class="card" href="/dashboard/workflow">
-          <div class="card-icon pm">
-            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#1f8f4f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-            </svg>
-          </div>
-          <div class="card-body">
+          <span class="band"></span>
+          <span class="cbody">
+            <span class="cicon">
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+                <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+              </svg>
+            </span>
             <h2>Project Management</h2>
-            <p>Tasks, triage, key accounts &amp; team coordination.</p>
-          </div>
-          <span class="card-arrow">→</span>
+            <p>Campaigns, vendor subtasks, tracking sheets, triage and the team.</p>
+          </span>
+          <span class="cfoot">Open workspace
+            <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          </span>
         </a>
 
-        <a class="card" href="/contracts/">
-          <div class="card-icon contracts">
-            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#185FA5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-            </svg>
-          </div>
-          <div class="card-body">
+        <a class="card alt" href="/contracts/">
+          <span class="band"></span>
+          <span class="cbody">
+            <span class="cicon">
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>
+                <path d="M9 14h6"/><path d="M9 17.5h4"/>
+              </svg>
+            </span>
             <h2>Contracts</h2>
-            <p>Generate vendor &amp; client contracts, manage templates.</p>
-          </div>
-          <span class="card-arrow">→</span>
+            <p>Generate vendor and client contracts, manage templates and the archive.</p>
+          </span>
+          <span class="cfoot">Open workspace
+            <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          </span>
         </a>
       </div>
 
-      <p class="picker-fineprint">
-        Need access you don't have? Reach out to your AQ admin for an invite.
-      </p>
+      <p class="note">Need access you don't have? Reach out to your AQ admin for an invite.</p>
     </main>
-  </body>
+  </div>
+</body>
 </html>
