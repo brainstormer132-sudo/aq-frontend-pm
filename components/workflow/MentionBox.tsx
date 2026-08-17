@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   activeMentionQuery, applyMention, displayName,
-  type Profile,
+  type MentionPick, type Profile,
 } from '@/hooks/use-workflow';
 
 /**
@@ -18,7 +18,7 @@ import {
  * does: the textarea's blur would close the list before a click landed.
  */
 export function MentionBox({
-  value, onChange, onSubmit, people, placeholder, disabled,
+  value, onChange, onSubmit, people, placeholder, disabled, onPicksChange,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -26,11 +26,27 @@ export function MentionBox({
   people: Profile[];
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * Every mention the user has picked, so the caller can run encodeMentions()
+   * before saving. The box shows names; the database stores ids.
+   */
+  onPicksChange?: (picks: MentionPick[]) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const [caret, setCaret] = useState(0);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const [picks, setPicks] = useState<MentionPick[]>([]);
+
+  // A cleared box has no mentions left to resolve. Without this, sending a
+  // comment and starting a new one would re-apply the previous picks.
+  useEffect(() => {
+    if (value === '' && picks.length) {
+      setPicks([]);
+      onPicksChange?.([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   const active = useMemo(
     () => (open ? activeMentionQuery(value, caret) : null),
@@ -63,8 +79,14 @@ export function MentionBox({
 
   const choose = (userId: string) => {
     if (!active) return;
-    const next = applyMention(value, active.start, caret, userId);
+    const name = displayName(people.find((p) => p.id === userId));
+    const next = applyMention(value, active.start, caret, userId, name);
     onChange(next.text);
+    setPicks((prev) => {
+      const merged = [...prev, { id: userId, name }];
+      onPicksChange?.(merged);
+      return merged;
+    });
     setOpen(false);
     // Put the caret after the inserted token on the next frame, once React
     // has written the new value into the textarea.

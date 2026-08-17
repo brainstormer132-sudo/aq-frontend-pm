@@ -19,6 +19,7 @@ import {
   vendorSubtaskTitle, isAutoVendorTitle, isVendorSubtaskKind, vendorSubtaskAmount,
   isSingletonSubtaskKind, isSimpleDeliverableKind,
   displayName, parseCommentSegments, offeredSubtaskKinds, catalogExpectsKind,
+  encodeMentions, type MentionPick,
   runDurationLabel, vendorPickerOption,
   clientContractReadiness, sendClientContractRequest, vendorContractReadiness,
   sendVendorContractRequest, sendVendorContractRequests, updateTasksBulk,
@@ -118,6 +119,11 @@ export function TaskDetailPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [commentText, setCommentText] = useState('');
+  // Mentions the user picked, so the display names can be turned back into
+  // ids on send. See encodeMentions().
+  const [mentionPicks, setMentionPicks] = useState<MentionPick[]>([]);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [titleSaving, setTitleSaving] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   // Which side the contract modal opens on — the client card sets 'client'.
   const [requestKind, setRequestKind] = useState<ContractKind>('vendor');
@@ -141,8 +147,11 @@ export function TaskDetailPanel({
   const [trackingNote, setTrackingNote] = useState<string | null>(null);
   useEffect(() => {
     setBudgetDraft(task?.budget != null ? String(task.budget) : '');
+    setTitleDraft(task?.title ?? '');
     setAutoSentBanner(null);
-  }, [task?.id, task?.budget]);
+    // title is in the deps so the box follows a rename made anywhere else —
+    // the vendor auto-namer, or another tab.
+  }, [task?.id, task?.budget, task?.title]);
 
   // File picker (kept hidden; clicking the "Upload file" button triggers it).
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -248,8 +257,11 @@ export function TaskDetailPanel({
     if (!task || !commentText.trim()) return;
     setBusy(true); setError('');
     try {
-      await addComment(task.id, currentUserId, commentText.trim());
+      // The box shows "@Sara K"; the database stores "@[[id]]" so renames
+      // follow the mention. Swap them back at the last possible moment.
+      await addComment(task.id, currentUserId, encodeMentions(commentText.trim(), mentionPicks));
       setCommentText('');
+      setMentionPicks([]);
       await refetchComments();
     } catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(false); }
@@ -813,6 +825,20 @@ export function TaskDetailPanel({
       onChanged?.();
     } catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBudgetSaving(false); }
+  };
+
+  const handleSaveTitle = async () => {
+    const next = titleDraft.trim();
+    if (!task || !next || next === task.title) return;
+    setTitleSaving(true); setError('');
+    try {
+      await updateTaskFields(task.id, { title: next } as any);
+      await refetchTask();
+      // The parent's list shows the name too.
+      await refetchSubs();
+      onChanged?.();
+    } catch (e: any) { setError(e?.message ?? String(e)); }
+    finally { setTitleSaving(false); }
   };
 
   const handleChangeAssignee = async (newId: string) => {
@@ -1380,11 +1406,14 @@ export function TaskDetailPanel({
                 <FieldRow label="Created"      value={new Date(task.created_at).toLocaleString()} />
                 {task.completed_at && <FieldRow label="Completed" value={new Date(task.completed_at).toLocaleString()} />}
 
-                {/* Editable budget.
-                    Not on a vendor subtask: its money is Price, in Operations
-                    below. Two boxes for one number meant the one nobody filled
-                    sat at zero and blocked the contract request. */}
-                {!(isSubtaskView && isVendorSubtaskKind(kind)) && (
+                {/* Editable budget — campaigns only.
+                    A vendor subtask's money is Price, in Operations below;
+                    two boxes for one number meant the one nobody filled sat at
+                    zero and blocked the contract request. Nothing else owns
+                    money at all — Siraj: "analysis reports dont need budget or
+                    vendor" — and the same is true of the creative deliverables,
+                    which need only a status, a due date and an attachment. */}
+                {!isSubtaskView && (
                 <div style={{
                   display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
                   padding: '6px 0', fontSize: 13, alignItems: 'center',
@@ -1451,9 +1480,48 @@ export function TaskDetailPanel({
                   </div>
                 )}
 
-                {/* Per-subtask vendor (picked from the vendors table — not typeable).
-                    When this is set AND budget > 0, the contract request auto-fires. */}
+                {/* Rename. A generated name like "Sunbulah — Vendor 3" is a
+                    placeholder until somebody has a better one, and the auto
+                    namer stands down as soon as one is typed: isAutoVendorTitle
+                    only recognises its own output, so a hand-written name is
+                    never overwritten when the vendor changes. */}
                 {isSubtaskView && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
+                    padding: '6px 0', fontSize: 13, alignItems: 'center',
+                  }}>
+                    <span style={{ color: 'var(--aq-text-muted)', fontWeight: 600 }}>Name</span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {canEdit ? (
+                        <>
+                          <input
+                            className="aq-input"
+                            style={{ maxWidth: 300 }}
+                            value={titleDraft}
+                            onChange={(e) => setTitleDraft(e.target.value)}
+                            placeholder="Subtask name"
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveTitle(); }}
+                          />
+                          <button
+                            type="button"
+                            className="aq-btn aq-btn-secondary"
+                            onClick={handleSaveTitle}
+                            disabled={titleSaving || !titleDraft.trim() || titleDraft.trim() === task.title}
+                          >{titleSaving ? 'Saving…' : 'Save'}</button>
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--aq-text)' }}>{task.title}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Vendor — only on a vendor subtask, which is the only kind
+                    that has one. It used to show on every subtask, so an
+                    analysis report asked you to pick a vendor it would never
+                    use, and the contract-request machinery hung off a field
+                    that made no sense there. */}
+                {isSubtaskView && isVendorSubtaskKind(kind) && (
                   <div style={{
                     display: 'grid', gridTemplateColumns: '140px 1fr', gap: 12,
                     padding: '6px 0', fontSize: 13, alignItems: 'center',
@@ -2315,6 +2383,7 @@ export function TaskDetailPanel({
                 {canComment && (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <MentionBox
+                      onPicksChange={setMentionPicks}
                       value={commentText}
                       onChange={setCommentText}
                       onSubmit={handleAddComment}
