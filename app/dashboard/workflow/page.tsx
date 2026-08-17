@@ -24,6 +24,7 @@ import { ContractsView } from '@/components/workflow/ContractsView';
 import { ClientsView } from '@/components/workflow/ClientsView';
 import { VendorsView } from '@/components/workflow/VendorsView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
+import { DataView } from '@/components/workflow/DataView';
 
 const supabase = createClient();
 
@@ -363,6 +364,12 @@ export default function WorkflowPage() {
             role={role}
             onOpenTask={(id) => setOpenTaskId(id)}
           />
+        )}
+
+        {/* One search box over every client and vendor; the same panels
+            narrowed to whoever is picked. Read-only — it writes nothing. */}
+        {view === 'data' && (
+          <DataView workspaceId={workspace.id} onOpenTask={(id) => setOpenTaskId(id)} />
         )}
 
         {view === 'clients'  && <ClientsView role={role} />}

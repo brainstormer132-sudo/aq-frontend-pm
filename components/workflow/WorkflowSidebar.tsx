@@ -8,7 +8,7 @@ import { AQMark } from '@/components/auth/AQMark';
 const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks' | 'crm'
-          | 'clients' | 'vendors' | 'tracking' | 'contracts'
+          | 'clients' | 'vendors' | 'tracking' | 'contracts' | 'data'
           | 'team' | 'settings';
 
 interface NavItem {
@@ -47,6 +47,11 @@ const NAV: NavItem[] = [
   // Tracking Sheets — every campaign flagged with a tracking sheet (chosen at
   // triage via the "Tracking Sheet" subtask). Opens the ad/vendor grid.
   { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account','operations'] },
+  // Data — one search box over every client and vendor, and the same panels
+  // narrowed to whoever is picked. It shows net_amount and aq_gross, which
+  // are AQ's margin, so it is NOT visible to everyone: marketing and
+  // operations have no reason to see what the agency makes on a job.
+  { id: 'data',            label: 'Data',            icon: 'chart',     visibleTo: ['owner','admin','sales','key_account'] },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'] },
 ];
@@ -281,7 +286,7 @@ export function WorkflowSidebar({
 
 export type { View };
 
-type IconName = 'home' | 'plus' | 'inbox' | 'list' | 'check' | 'file' | 'building' | 'briefcase' | 'grid' | 'users' | 'settings';
+type IconName = 'home' | 'plus' | 'inbox' | 'list' | 'check' | 'file' | 'building' | 'briefcase' | 'grid' | 'chart' | 'users' | 'settings';
 
 function NavIcon({ name }: { name: IconName }) {
   const common = {
@@ -322,6 +327,9 @@ function NavIcon({ name }: { name: IconName }) {
   );
   if (name === 'grid') return (
     <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" /></svg>
+  );
+  if (name === 'chart') return (
+    <svg {...common}><path d="M3 3v18h18" /><path d="M7 15v-4" /><path d="M12 15V7" /><path d="M17 15v-6" /></svg>
   );
   if (name === 'users') return (
     <svg {...common}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
