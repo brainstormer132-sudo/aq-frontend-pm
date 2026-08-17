@@ -112,7 +112,7 @@ export function WorkflowSidebar({
         justifyContent: collapsed ? 'center' : 'flex-start',
       }}>
         <div
-          title={collapsed ? 'AQ Suite' : undefined}
+          title={collapsed ? 'AQ' : undefined}
           style={{
             width: 40, height: 40, borderRadius: 10,
             background: '#000', color: '#fff', flexShrink: 0,
@@ -126,7 +126,7 @@ export function WorkflowSidebar({
         </div>
         {!collapsed && (
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-            <strong style={{ color: 'var(--aq-sidebar-text-active)', fontSize: 15 }}>AQ Suite</strong>
+            <strong style={{ color: 'var(--aq-sidebar-text-active)', fontSize: 15 }}>AQ</strong>
             <span style={{
               fontSize: 11, color: 'var(--aq-sidebar-text)', opacity: 0.7,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
