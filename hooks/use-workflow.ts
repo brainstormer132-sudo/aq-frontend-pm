@@ -222,6 +222,9 @@ const MAX_ROWS = 50_000;
 export async function selectAllRows<T>(
   label: string,
   build: () => any,
+  /** Surface the failure in the UI as well as the console, where a view has
+   *  somewhere to put it. */
+  onError?: (message: string) => void,
 ): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; from < MAX_ROWS; from += PAGE_SIZE) {
@@ -231,6 +234,7 @@ export async function selectAllRows<T>(
       // doesn't fall through to the runaway warning below and claim the table
       // is enormous when the real problem was one failed request.
       logSbError(label, error, { from });
+      onError?.(error.message ?? String(error));
       return out;
     }
     const rows = (data || []) as T[];
