@@ -195,6 +195,53 @@ async function cachedFetch<T>(key: string, loader: () => Promise<T>, force = fal
   return inflight;
 }
 
+// ── Reading a whole table when it is bigger than one page ───────────
+//
+// PostgREST caps a response at `db-max-rows`, which Supabase ships as 1000.
+// It does not error and it does not tell you it truncated — you just get
+// 1000 rows and no hint that there are more.
+//
+// That is how the Clients stat card came to read exactly "1,000". It wasn't
+// a limit anybody chose; it was the whole client list quietly stopping at the
+// page boundary, which also meant every client after the 1000th alphabetically
+// was invisible to the picker and to the contract readiness check.
+//
+// Anything that reads a table which can grow past a thousand rows goes
+// through here.
+
+const PAGE_SIZE = 1000;
+/** Runaway guard. Well past any table this app legitimately reads whole. */
+const MAX_ROWS = 50_000;
+
+/**
+ * Page through a select until the table runs out.
+ *
+ * `build` must return a fresh query builder each call — a PostgREST builder
+ * is single-use, so reusing one silently returns the first page every time.
+ */
+export async function selectAllRows<T>(
+  label: string,
+  build: () => any,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < MAX_ROWS; from += PAGE_SIZE) {
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      // Keep what we have and stop. Returning rather than breaking, so this
+      // doesn't fall through to the runaway warning below and claim the table
+      // is enormous when the real problem was one failed request.
+      logSbError(label, error, { from });
+      return out;
+    }
+    const rows = (data || []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) return out;   // short page = last page
+  }
+  // eslint-disable-next-line no-console
+  console.warn(`${label}: stopped at ${MAX_ROWS} rows. The table is bigger than this screen should be loading.`);
+  return out;
+}
+
 /** Drop cached reference data — call after creating a client or vendor. */
 export function invalidateRefCache(key?: string) {
   if (key) REF_CACHE.delete(key); else REF_CACHE.clear();
@@ -1009,11 +1056,16 @@ export function useWorkflowTasks(workspaceId: string | null, stage?: TaskStage |
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setTasks([]); setLoading(false); return; }
-    let query = supabase.from('pm_tasks').select('*').eq('workspace_id', workspaceId).is('parent_task_id', null);
-    if (stage && stage !== 'all') query = query.eq('stage', stage);
-    const { data, error } = await query.order('created_at', { ascending: false });
-    if (error) logSbError('useWorkflowTasks', error, { workspaceId, stage });
-    setTasks((data || []) as PMTask[]);
+    // Paged for the same reason the client list is: past 1000 campaigns this
+    // silently stopped listing them, and a campaign missing from All Tasks
+    // looks like a deleted campaign.
+    const rows = await selectAllRows<PMTask>('useWorkflowTasks', () => {
+      let query = supabase.from('pm_tasks').select('*')
+        .eq('workspace_id', workspaceId).is('parent_task_id', null);
+      if (stage && stage !== 'all') query = query.eq('stage', stage);
+      return query.order('created_at', { ascending: false });
+    });
+    setTasks(rows);
     setLoading(false);
   }, [workspaceId, stage]);
 
@@ -3301,13 +3353,16 @@ export function useLegacyVendors() {
     const both = await cachedFetch<{ vendors: LegacyVendor[]; banks: LegacyBankAccount[] }>(
       'legacy-vendors',
       async () => {
-        const [{ data: v, error: vE }, { data: b, error: bE }, { data: cats }] = await Promise.all([
-          supabase.from('vendors').select('*').order('name', { ascending: true }),
-          supabase.from('bank_accounts').select('*'),
+        // Vendors and bank accounts are both paged: the vendor book was at
+        // 495 rows when this was written, which is close enough to the 1000
+        // cap that hitting it was a matter of time, and the failure is silent.
+        const [v, b, { data: cats }] = await Promise.all([
+          selectAllRows<LegacyVendor>('useLegacyVendors vendors',
+            () => supabase.from('vendors').select('*').order('name', { ascending: true })),
+          selectAllRows<LegacyBankAccount>('useLegacyVendors banks',
+            () => supabase.from('bank_accounts').select('*').order('id', { ascending: true })),
           supabase.from('vendor_categories').select('id, key'),
         ]);
-        if (vE) logSbError('useLegacyVendors vendors', vE);
-        if (bE) logSbError('useLegacyVendors banks', bE);
 
         // Backfill the legacy free-text category from the 029 FK, ONCE, here.
         //
@@ -3373,14 +3428,13 @@ export function useClients() {
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async (force = false) => {
-    const rows = await cachedFetch<ClientRow[]>('clients', async () => {
-      const { data, error } = await supabase
+    const rows = await cachedFetch<ClientRow[]>('clients', () => selectAllRows<ClientRow>(
+      'useClients',
+      () => supabase
         .from('clients')
         .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id')
-        .order('company_name', { ascending: true });
-      if (error) { logSbError('useClients', error); return []; }
-      return (data || []) as ClientRow[];
-    }, force);
+        .order('company_name', { ascending: true }),
+    ), force);
     setClients(rows);
     setLoading(false);
   }, []);
