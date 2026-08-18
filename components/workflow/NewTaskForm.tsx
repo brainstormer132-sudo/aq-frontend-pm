@@ -5,11 +5,13 @@ import {
   createSalesTask,
   useClients,
   useClientBrands,
+  useLegacyVendors,
   type Profile,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { SearchablePicker } from './SearchablePicker';
 import type { CampaignPrefill } from '@/lib/crm-sync';
+import { closerFields, closerOptions } from '@/lib/sales-closer';
 
 /**
  * Sales create-task screen. Open boxes for sales fields; greyed-out
@@ -49,6 +51,10 @@ export function NewTaskForm({
 
   const { clients, loading: clientsLoading } = useClients();
   const { brands, loading: brandsLoading }   = useClientBrands(clientId || null);
+  const { vendors }                          = useLegacyVendors();
+
+  // Creator-category vendors only — a printing house did not close the deal.
+  const influencerClosers = useMemo(() => closerOptions([], vendors || []), [vendors]);
 
   // Reset brand whenever client changes — old brand wouldn't belong to new client.
   useEffect(() => { setBrandId(''); }, [clientId]);
@@ -89,7 +95,8 @@ export function NewTaskForm({
         legacy_client_id: selectedClient.cr_number || selectedClient.id,
         client_id: selectedClient.id,
         brand_id: selectedBrand.id,
-        sales_closer_id: salesCloser || null,
+        // One picker, the two mutually exclusive columns behind it.
+        ...closerFields(salesCloser),
         budget: budget ? Number(budget.replace(/,/g, '')) : null,
         details: details.trim() || null,
         creator_id: currentUserId,
@@ -205,17 +212,28 @@ export function NewTaskForm({
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Sales closer">
+              {/* Colleagues and influencers in one list — an influencer who
+                  brought the client in is the closer too. */}
               <select
                 className="aq-select"
                 value={salesCloser}
                 onChange={(e) => setSalesCloser(e.target.value)}
               >
                 <option value="">— Select —</option>
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name} {p.role !== 'member' ? `(${p.role === 'key_account' ? 'Key account' : p.role})` : ''}
-                  </option>
-                ))}
+                <optgroup label="Team">
+                  {profiles.map((p) => (
+                    <option key={p.id} value={`p:${p.id}`}>
+                      {p.full_name} {p.role !== 'member' ? `(${p.role === 'key_account' ? 'Key account' : p.role})` : ''}
+                    </option>
+                  ))}
+                </optgroup>
+                {influencerClosers.length > 0 && (
+                  <optgroup label="Influencers">
+                    {influencerClosers.map((o) => (
+                      <option key={o.key} value={o.key}>{o.label}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </Field>
             <Field label="Budget (SAR)">

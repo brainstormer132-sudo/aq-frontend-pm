@@ -65,6 +65,12 @@ export interface PMTask {
   // FK to public.client_brands (set by NewTaskForm picker).
   brand_id: string | null;
   sales_closer_id: string | null;
+  /**
+   * An influencer who closed the deal (vendors.id), migration 054.
+   * Mutually exclusive with sales_closer_id — a CHECK constraint enforces
+   * it, and lib/sales-closer.ts is what keeps the UI from ever setting both.
+   */
+  sales_closer_vendor_id: number | null;
   key_account_id: string | null;
   service_type_id: string | null;
   budget: number | null;
@@ -1119,6 +1125,8 @@ export async function createSalesTask(input: {
   /** FK to public.client_brands.id — set by the new dropdown picker. */
   brand_id?: string | null;
   sales_closer_id?: string | null;
+  /** Set instead of sales_closer_id when an influencer closed it (054). */
+  sales_closer_vendor_id?: number | null;
   budget?: number | null;
   details?: string | null;
   creator_id: string;
@@ -1134,6 +1142,7 @@ export async function createSalesTask(input: {
       client_id: input.client_id ?? null,
       brand_id: input.brand_id ?? null,
       sales_closer_id: input.sales_closer_id ?? null,
+      sales_closer_vendor_id: input.sales_closer_vendor_id ?? null,
       budget: input.budget ?? null,
       description: input.details ?? null,
       creator_id: input.creator_id,

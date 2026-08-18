@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  triageMarketingTask, deleteTask,
+  triageMarketingTask, deleteTask, useLegacyVendors,
   type PMTask, type Profile, type ServiceType, type ServiceTypeStep,
   type WorkspaceRole, type TaskPriority,
 } from '@/hooks/use-workflow';
+import { closerLabel } from '@/lib/sales-closer';
 
 /** Common subtasks live at position >= 101 in the DB seed. */
 const COMMON_STEP_THRESHOLD = 100;
@@ -39,6 +40,8 @@ export function MarketingInbox({
   role: WorkspaceRole | null;
   onTriaged: () => void;
 }) {
+  // Needed to name an influencer closer; the list is cached across views.
+  const { vendors } = useLegacyVendors();
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [serviceTypeIds, setServiceTypeIds] = useState<string[]>([]);
@@ -208,7 +211,9 @@ export function MarketingInbox({
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {tasks.map((t) => {
               const active = t.id === activeTaskId;
-              const closer = profiles.find((p) => p.id === t.sales_closer_id);
+              // Reads either closer column — an influencer who brought the
+              // client in shows by name rather than as a blank.
+              const closer = closerLabel(t, profiles, vendors || []);
               return (
                 <li key={t.id} style={{ position: 'relative' }}>
                   <button
@@ -238,7 +243,7 @@ export function MarketingInbox({
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
                       {t.brand_name || '(no brand)'} · client {t.legacy_client_id || '—'}
-                      {closer ? ` · closer ${closer.full_name}` : ''}
+                      {closer !== '—' ? ` · closer ${closer}` : ''}
                     </div>
                     {t.description && (
                       <div style={{ fontSize: 12, color: 'var(--aq-text-secondary)', marginTop: 2 }}>

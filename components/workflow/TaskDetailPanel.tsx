@@ -37,6 +37,7 @@ import {
   SUBTASK_KIND_LABELS, isRequestSubtaskKind,
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
+import { closerKey, closerFields, closerOptions, closerLabel } from '@/lib/sales-closer';
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 import { AddVendorsModal } from './AddVendorsModal';
@@ -230,6 +231,13 @@ export function TaskDetailPanel({
   );
   const detailsInherited = Boolean(task?.parent_task_id && parentTask);
 
+  // Influencers who can be named as the closer. Only creator categories —
+  // a printing house did not bring the client in.
+  const influencerClosers = useMemo(
+    () => closerOptions([], vendors || []),
+    [vendors],
+  );
+  const closerName = closerLabel(detailSource, profiles, vendors || []);
   const closer        = detailSource?.sales_closer_id ? profileById.get(detailSource.sales_closer_id) : null;
   const ka            = detailSource?.key_account_id  ? profileById.get(detailSource.key_account_id)  : null;
   const subAssignee   = task?.assignee_id     ? profileById.get(task.assignee_id)     : null;
@@ -1398,19 +1406,34 @@ export function TaskDetailPanel({
                     </div>
                     <div style={SALES_ROW}>
                       <span style={SALES_LABEL}>Sales closer</span>
+                      {/* One picker, two columns behind it. An influencer who
+                          brings a client in is the closer just as much as a
+                          colleague is; before this it went in the description,
+                          where nothing could count it. closerFields() always
+                          returns both columns, so picking one clears the other
+                          and the CHECK constraint can never fire. */}
                       <select
                         className="aq-input"
                         style={{ maxWidth: 360 }}
-                        value={task.sales_closer_id ?? ''}
+                        value={closerKey(task)}
                         disabled={salesSaving}
-                        onChange={(e) => patchSalesFields({ sales_closer_id: e.target.value || null })}
+                        onChange={(e) => patchSalesFields(closerFields(e.target.value))}
                       >
                         <option value="">— Unassigned —</option>
-                        {profiles.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.full_name}{p.role ? ` (${p.role})` : ''}
-                          </option>
-                        ))}
+                        <optgroup label="Team">
+                          {profiles.map((p) => (
+                            <option key={p.id} value={`p:${p.id}`}>
+                              {p.full_name}{p.role ? ` (${p.role})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                        {influencerClosers.length > 0 && (
+                          <optgroup label="Influencers">
+                            {influencerClosers.map((o) => (
+                              <option key={o.key} value={o.key}>{o.label}</option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                     </div>
                   </>
@@ -1421,7 +1444,9 @@ export function TaskDetailPanel({
                         legacy_client_id, which on current rows is a raw UUID —
                         true, and no use to anybody reading the card. */}
                     <FieldRow label="Client"       value={clientForDetails?.company_name ?? detailSource?.legacy_client_id ?? '—'} />
-                    <FieldRow label="Sales closer" value={closer ? displayName(closer) : '—'} />
+                    {/* Reads either column — an influencer closer prints their
+                        name, not a blank. */}
+                    <FieldRow label="Sales closer" value={closerName} />
                   </>
                 )}
                 <FieldRow label="Key account (owner)" value={ka ? displayName(ka) : '—'} />

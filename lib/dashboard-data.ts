@@ -49,6 +49,25 @@ export interface DashTask {
   contract_status: string | null;
   vendor_payment_amount: number | null;
   vendor_payment_date: string | null;
+
+  // ── the vendor report's columns (all optional: older callers, and the
+  //    dashboard panels above, do not need them) ─────────────────
+  due_date?: string | null;
+  approval_stage?: string | null;
+  /** Per-ad platform, on a subtask. Campaigns carry `platforms` instead. */
+  platform?: string | null;
+  platforms?: string[] | null;
+  ad_type?: string | null;
+  service_type_id?: string | null;
+  source_id?: string | null;
+  client_category_id?: string | null;
+}
+
+/** id → name for the three campaign lookups the report prints by name. */
+export interface DashLookups {
+  sources?: { id: string; name: string }[];
+  clientCategories?: { id: string; name: string }[];
+  serviceTypes?: { id: string; name: string }[];
 }
 
 export interface DashClient {
@@ -483,6 +502,128 @@ function paymentSlices(states: PaymentState[], amounts: number[]): Slice[] {
     .map((k) => ({ key: k, ...acc.get(k)! }));
 }
 
+/* ────────────────────────────────────────────────────────────────
+   The vendor report
+
+   AQ's own format, one row per ad, in this exact column order. It is a
+   reconciliation sheet as much as a report: columns 14–17 are what the ad
+   was worth to the talent, what they have already been paid, what is still
+   owed, and whether that is settled — which is the sequence somebody reads
+   when a vendor asks "what do you still owe me".
+
+   "Month of quotation" is the month the campaign was raised. There is no
+   separate quotation date in the schema and inventing one would mean a
+   field somebody has to maintain; the campaign's creation date is the date
+   the whole page already uses.
+   ──────────────────────────────────────────────────────────────── */
+
+export const VENDOR_REPORT_COLUMNS = [
+  'Month of quotation',
+  'Name of task',
+  'Brand name',
+  'Client ctg',
+  'Source',
+  'Ctg',
+  'Due date',
+  'Platform',
+  'Ad type',
+  'Approval stage',
+  'Price',
+  'Status',
+  'Client payment',
+  'Total net of the ad',
+  'Previous payment to the talent',
+  'Net',
+  'Payment status to the talent',
+];
+
+function pretty(value: string | null | undefined): string {
+  const s = (value ?? '').trim().replace(/_/g, ' ');
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+function nameFrom(list: { id: string; name: string }[] | undefined, id: string | null | undefined): string {
+  if (!id) return '—';
+  const hit = (list ?? []).find((x) => x.id === id);
+  return hit ? hit.name : '—';
+}
+
+/** The per-ad platform, falling back to the campaign's list. */
+function platformOf(ad: DashTask, campaign: DashTask | undefined): string {
+  const own = (ad.platform ?? '').trim();
+  if (own) return own;
+  const list = campaign?.platforms;
+  if (Array.isArray(list) && list.length) return list.join(', ');
+  return '—';
+}
+
+export function vendorReportTable(
+  ads: DashTask[],
+  campaignById: Map<string, DashTask>,
+  lookups: DashLookups,
+): TableModel {
+  const rows: TableRow[] = ads.map((ad) => {
+    const c = ad.parent_task_id ? campaignById.get(ad.parent_task_id) : undefined;
+    const owed = num(ad.net_amount);
+    const already = num(ad.vendor_payment_amount);
+    const balance = Math.max(0, owed - already);
+    const pay = vendorPaymentState(ad);
+    const clientPay = c ? clientPaymentState(c) : { label: '—', tone: 'none' as Tone };
+
+    return {
+      id: ad.id,
+      cells: [
+        { kind: 'text', text: c ? monthLabel(monthOf(c.created_at)) : monthLabel(monthOf(ad.created_at)) },
+        { kind: 'text', text: c ? nameOf(c) : nameOf(ad) },
+        { kind: 'text', text: (c?.brand_name ?? '').trim() || '—' },
+        { kind: 'text', text: nameFrom(lookups.clientCategories, c?.client_category_id) },
+        { kind: 'text', text: nameFrom(lookups.sources, c?.source_id) },
+        { kind: 'text', text: nameFrom(lookups.serviceTypes, c?.service_type_id) },
+        { kind: 'text', text: dayOf(c?.due_date) || '—' },
+        { kind: 'text', text: platformOf(ad, c) },
+        { kind: 'text', text: (ad.ad_type ?? c?.ad_type ?? '').trim() || '—' },
+        { kind: 'text', text: pretty(c?.approval_stage) || '—' },
+        { kind: 'num', text: full(num(ad.price)) },
+        { kind: 'text', text: pretty(ad.status) || '—' },
+        { kind: 'pill', text: clientPay.label, tone: clientPay.tone },
+        { kind: 'num', text: full(owed) },
+        { kind: 'num', text: full(already) },
+        { kind: 'num', text: full(balance) },
+        { kind: 'pill', text: pay.label, tone: pay.tone },
+      ] as Cell[],
+    };
+  });
+
+  return {
+    title: 'Every ad, in the report format',
+    caption: 'One row per ad. Month of quotation is the month the campaign was raised; Net is what is still owed after previous payments.',
+    columns: VENDOR_REPORT_COLUMNS,
+    rows,
+  };
+}
+
+/**
+ * The same table as a CSV, for Excel.
+ *
+ * Quoting is not optional here: a task called `Ramadan, 2026` or a platform
+ * list of `Instagram, TikTok` would otherwise split into two columns and
+ * shift every number after it into the wrong header.
+ */
+export function toCsv(table: TableModel): string {
+  const esc = (v: string) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [table.columns.map(esc).join(',')];
+  for (const r of table.rows) {
+    lines.push(r.cells.map((c) => esc(
+      // Numbers go out unformatted so Excel reads them as numbers, not text.
+      c.kind === 'num' ? c.text.replace(/,/g, '') : c.text,
+    )).join(','));
+  }
+  return lines.join('\r\n');
+}
+
 export interface DashboardInput {
   tasks: DashTask[];
   clients: DashClient[];
@@ -490,6 +631,8 @@ export interface DashboardInput {
   people: DashPerson[];
   scope: Scope | null;
   range: DateRange;
+  /** Source / client category / service type names for the vendor report. */
+  lookups?: DashLookups;
 }
 
 export function buildDashboard(input: DashboardInput): DashboardModel {
@@ -716,7 +859,10 @@ function vendorModel(input: DashboardInput, s: Scoped, clientName: Map<string, s
     return p ? contractState(p).key === 'signed' : false;
   }).length;
 
-  const recent = [...s.subtasks].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 10);
+  // Every ad in scope, newest first — deliberately NOT a top ten. The
+  // report is reconciled against, so a table that quietly stopped at ten
+  // rows would disagree with the totals printed above it.
+  const recent = [...s.subtasks].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
   return {
     kpis: [
@@ -751,27 +897,10 @@ function vendorModel(input: DashboardInput, s: Scoped, clientName: Map<string, s
         compact,
       ),
     },
-    table: {
-      title: 'Every time they worked',
-      caption: 'Task creation date, newest first. Narrow it with the date range above.',
-      columns: ['Subtask', 'Client', 'Created', 'Contract', 'Payment', 'Net'],
-      rows: recent.map((r) => {
-        const p = r.parent_task_id ? parentById.get(r.parent_task_id) : undefined;
-        const con = p ? contractState(p) : { label: '—', tone: 'none' as Tone };
-        const pay = vendorPaymentState(r);
-        return {
-          id: r.id,
-          cells: [
-            { kind: 'text', text: nameOf(r) },
-            { kind: 'text', text: p?.client_id ? (clientName.get(p.client_id) ?? '—') : '—' },
-            { kind: 'text', text: dayOf(r.created_at) },
-            { kind: 'pill', text: con.label, tone: con.tone },
-            { kind: 'pill', text: pay.label, tone: pay.tone },
-            { kind: 'num', text: full(num(r.net_amount)) },
-          ] as Cell[],
-        };
-      }),
-    },
+    // AQ's own seventeen-column format, newest first, EVERY ad in scope —
+    // not a top ten. A report that quietly stops at ten rows is worse than
+    // no report: the totals above it would not match the rows below it.
+    table: vendorReportTable(recent, parentById, input.lookups ?? {}),
     note: `Everything on this page is ${scope.name} only. Price and AQ gross are internal — a vendor-facing version will carry neither.`,
     counted: { parents: s.parents.length, subtasks: s.subtasks.length },
   };

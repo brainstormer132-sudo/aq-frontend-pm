@@ -1,10 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useClients, useLegacyVendors, useWorkspaceProfiles } from '@/hooks/use-workflow';
+import {
+  useClients, useLegacyVendors, useWorkspaceProfiles,
+  useTaskSources, useClientCategories, useServiceTypes,
+} from '@/hooks/use-workflow';
 import { useDashboardRows } from '@/hooks/use-dashboard';
 import {
-  ALL_TIME, buildDashboard, searchEntities, compact, full,
+  ALL_TIME, buildDashboard, searchEntities, compact, full, toCsv,
   type Cell, type DateRange, type Scope, type SearchHit, type Tone,
 } from '@/lib/dashboard-data';
 
@@ -45,10 +48,17 @@ export function DataView({
   /** Click a table row → open that task in the detail panel. */
   onOpenTask?: (taskId: string) => void;
 }) {
-  const { rows, loading, error, refetch } = useDashboardRows(workspaceId);
+  // No Refresh button here either: the rows reload whenever this view is
+  // opened, and the sixty-second cache means switching away and back is the
+  // refresh. See the note in the workflow page.
+  const { rows, loading, error } = useDashboardRows(workspaceId);
   const { clients } = useClients();
   const { vendors } = useLegacyVendors();
   const { profiles } = useWorkspaceProfiles(workspaceId);
+  // The vendor report prints Source, Client ctg and Ctg by name, not by id.
+  const { items: sources } = useTaskSources(workspaceId);
+  const { items: clientCategories } = useClientCategories(workspaceId);
+  const { serviceTypes } = useServiceTypes(workspaceId);
 
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -86,9 +96,14 @@ export function DataView({
     return { from: d.toISOString().slice(0, 10), to: null };
   }, [rangeKey, from, to, today]);
 
+  const lookups = useMemo(
+    () => ({ sources, clientCategories, serviceTypes }),
+    [sources, clientCategories, serviceTypes],
+  );
+
   const model = useMemo(() => buildDashboard({
-    tasks: rows, clients, vendors, people: profiles, scope, range,
-  }), [rows, clients, vendors, profiles, scope, range]);
+    tasks: rows, clients, vendors, people: profiles, scope, range, lookups,
+  }), [rows, clients, vendors, profiles, scope, range, lookups]);
 
   const pick = (h: SearchHit) => {
     setScope({ kind: h.kind, id: h.id, name: h.name, meta: h.meta });
@@ -188,10 +203,6 @@ export function DataView({
           <span style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
             · optional. On All time you see the whole record.
           </span>
-          <button type="button" className="aq-btn aq-btn-secondary" onClick={() => refetch(true)}
-                  style={{ marginLeft: 'auto', fontSize: 12.5, padding: '5px 12px' }}>
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -269,7 +280,30 @@ export function DataView({
             </Panel>
           </div>
 
-          <Panel title={model.table.title} caption={model.table.caption}>
+          <Panel
+            title={model.table.title}
+            caption={model.table.caption}
+            // Always rendered, disabled when there is nothing to export.
+            // Hiding it meant that on an empty workspace the export looked
+            // like a feature that had never been built — an absent control
+            // is indistinguishable from a missing one.
+            action={(
+              <button
+                type="button"
+                className="aq-btn aq-btn-secondary"
+                disabled={model.table.rows.length === 0}
+                title={model.table.rows.length === 0
+                  ? 'Nothing to export yet — this table is empty'
+                  : `Download these ${model.table.rows.length} rows as a CSV`}
+                onClick={() => downloadCsv(model.table, scope)}
+                style={{
+                  fontSize: 12.5, padding: '5px 12px', whiteSpace: 'nowrap',
+                  opacity: model.table.rows.length === 0 ? 0.45 : 1,
+                  cursor: model.table.rows.length === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >Download CSV</button>
+            )}
+          >
             {model.table.rows.length === 0 ? (
               <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>Nothing to show here.</p>
             ) : (
@@ -281,8 +315,9 @@ export function DataView({
                         <th key={c} style={{
                           textAlign: i === model.table.columns.length - 1 ? 'right' : 'left',
                           fontSize: 10.5, letterSpacing: '.09em', textTransform: 'uppercase',
-                          color: 'var(--aq-text-muted)', padding: '7px 8px',
+                          color: 'var(--aq-text-muted)', padding: '7px 10px',
                           borderBottom: '1px solid var(--aq-border-light)',
+                          whiteSpace: 'nowrap',
                         }}>{c}</th>
                       ))}
                     </tr>
@@ -339,14 +374,47 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
   );
 }
 
-function Panel({ title, caption, children }: { title: string; caption: string; children: React.ReactNode }) {
+function Panel({ title, caption, children, action }: {
+  title: string;
+  caption: string;
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="aq-card" style={{ padding: '16px 18px' }}>
-      <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>{title}</h2>
-      <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '2px 0 14px' }}>{caption}</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>{title}</h2>
+          <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '2px 0 14px' }}>{caption}</p>
+        </div>
+        {action}
+      </div>
       {children}
     </div>
   );
+}
+
+/**
+ * The table as it stands, as a file.
+ *
+ * Whatever is on screen is what downloads — same rows, same scope, same date
+ * range. A download that quietly ignored the filters would be worse than no
+ * download, because the numbers would look authoritative and be wrong.
+ */
+function downloadCsv(table: { columns: string[]; rows: { cells: Cell[] }[]; title: string }, scope: Scope | null) {
+  const csv = toCsv(table as any);
+  // A BOM, so Excel opens Arabic client and vendor names correctly instead
+  // of as mojibake.
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const who = (scope?.name ?? 'workspace').replace(/[^\w\u0600-\u06FF-]+/g, '-').slice(0, 40);
+  a.href = url;
+  a.download = `AQ-${who}-report.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function Legend({ items }: { items: [string, string][] }) {
@@ -363,7 +431,14 @@ function Legend({ items }: { items: [string, string][] }) {
 }
 
 function TableCell({ cell }: { cell: Cell }) {
-  const base = { padding: '9px 8px', borderBottom: '1px solid var(--aq-border-light)' } as const;
+  // nowrap, and the container scrolls sideways. The report is seventeen
+  // columns wide; letting cells wrap turned every row into three lines of
+  // ragged text and made a ledger impossible to read across.
+  const base = {
+    padding: '9px 10px',
+    borderBottom: '1px solid var(--aq-border-light)',
+    whiteSpace: 'nowrap' as const,
+  } as const;
   if (cell.kind === 'pill') {
     return (
       <td style={base}>

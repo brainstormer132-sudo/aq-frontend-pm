@@ -36,6 +36,10 @@ const COLUMNS = [
   'client_payment_status', 'client_payment_amount',
   'contract_status',
   'vendor_payment_amount', 'vendor_payment_date',
+  // The vendor report's seventeen columns need these as well: the campaign's
+  // lookups and dates, and the per-ad platform and ad type.
+  'due_date', 'approval_stage', 'platform', 'platforms', 'ad_type',
+  'service_type_id', 'source_id', 'client_category_id',
 ].join(', ');
 
 interface Cached { at: number; rows: DashTask[] }

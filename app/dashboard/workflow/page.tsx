@@ -50,7 +50,6 @@ export default function WorkflowPage() {
   const [workspace, setWorkspace] = useState<{ id: string; name: string } | null>(null);
   const [bootError, setBootError] = useState('');
   const [booting, setBooting] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   // Bumping this triggers child components (MyTasksList etc.) to refetch.
   const [refreshTick, setRefreshTick] = useState(0);
@@ -180,18 +179,10 @@ export default function WorkflowPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const refreshAll = async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([refetchPending(), refetchAll(), refetchProfiles(), refetchServiceTypes()]);
-      setRefreshTick((n) => n + 1);
-      setToast({ kind: 'ok', text: 'Refreshed' });
-    } catch (e: any) {
-      setToast({ kind: 'err', text: `Refresh failed: ${e?.message ?? e}` });
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  // The manual Refresh button is gone (Aug 2026). Every view refetches when
+  // it mounts, and each action that changes something already refetches what
+  // it touched — so the button's only real job was to reassure, and it cost a
+  // control in the corner of every single screen.
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -271,16 +262,6 @@ export default function WorkflowPage() {
             <p style={{ fontSize: 14, color: 'var(--aq-text-secondary)', marginTop: 4 }}>
               {viewSubtitle(view)}
             </p>
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button
-              type="button"
-              className="aq-btn aq-btn-ghost"
-              onClick={refreshAll}
-              disabled={refreshing}
-            >
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </button>
           </div>
         </header>
 
