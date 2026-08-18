@@ -9,6 +9,7 @@ import {
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { SearchablePicker } from './SearchablePicker';
+import type { CampaignPrefill } from '@/lib/crm-sync';
 
 /**
  * Sales create-task screen. Open boxes for sales fields; greyed-out
@@ -22,20 +23,26 @@ import { SearchablePicker } from './SearchablePicker';
  * cascades to that client's brands.
  */
 export function NewTaskForm({
-  workspaceId, currentUserId, role, profiles, onCreated,
+  workspaceId, currentUserId, role, profiles, onCreated, prefill,
 }: {
   workspaceId: string;
   currentUserId: string;
   role: WorkspaceRole | null;
   profiles: (Profile & { role: WorkspaceRole })[];
   onCreated?: (taskId: string) => void;
+  /**
+   * Starting point for the form — currently set when a CRM deal is won.
+   * It only ever fills boxes in; the person still reviews and submits, so a
+   * won deal never becomes a campaign behind anybody's back.
+   */
+  prefill?: CampaignPrefill | null;
 }) {
-  const [taskName, setTaskName]       = useState('');
-  const [clientId, setClientId]       = useState<string>('');
+  const [taskName, setTaskName]       = useState(prefill?.task_name ?? '');
+  const [clientId, setClientId]       = useState<string>(prefill?.client_id ?? '');
   const [brandId, setBrandId]         = useState<string>('');
   const [salesCloser, setSalesCloser] = useState('');
-  const [budget, setBudget]           = useState('');
-  const [details, setDetails]         = useState('');
+  const [budget, setBudget]           = useState(prefill?.budget != null ? String(prefill.budget) : '');
+  const [details, setDetails]         = useState(prefill?.details ?? '');
   const [submitting, setSubmitting]   = useState(false);
   const [error, setError]             = useState('');
   const [success, setSuccess]         = useState('');

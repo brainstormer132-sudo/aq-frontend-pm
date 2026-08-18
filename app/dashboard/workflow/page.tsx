@@ -25,6 +25,7 @@ import { ClientsView } from '@/components/workflow/ClientsView';
 import { VendorsView } from '@/components/workflow/VendorsView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
 import { DataView } from '@/components/workflow/DataView';
+import { prefillFromDeal, type CampaignPrefill } from '@/lib/crm-sync';
 
 const supabase = createClient();
 
@@ -55,6 +56,8 @@ export default function WorkflowPage() {
   const [refreshTick, setRefreshTick] = useState(0);
   // Slide-over task detail panel — null when closed.
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  // Set when a CRM deal is won: the New Task form opens filled in from it.
+  const [taskPrefill, setTaskPrefill] = useState<CampaignPrefill | null>(null);
 
   // Remember-me opt-out: if the auth page set aq_session_only on this tab,
   // sign the user out as soon as the tab is closing. The flag lives in
@@ -307,11 +310,16 @@ export default function WorkflowPage() {
 
         {view === 'new-task' && (
           <NewTaskForm
+            // Keyed on the prefill so arriving from a won deal always gets a
+            // fresh form: without it React reuses the mounted one and the
+            // boxes stay empty.
+            key={taskPrefill ? `deal-${taskPrefill.task_name}` : 'blank'}
             workspaceId={workspace.id}
             currentUserId={user.id}
             role={role}
             profiles={profiles}
-            onCreated={onTaskCreated}
+            prefill={taskPrefill}
+            onCreated={() => { setTaskPrefill(null); onTaskCreated(); }}
           />
         )}
 
@@ -324,6 +332,7 @@ export default function WorkflowPage() {
             workspaceId={workspace.id}
             currentUserId={user.id}
             currentUserName={user.full_name}
+            onStartCampaign={(deal) => { setTaskPrefill(prefillFromDeal(deal)); setView('new-task'); }}
           />
         )}
 
@@ -536,6 +545,7 @@ function viewTitle(v: View) {
     : v === 'clients'  ? 'Clients'
     : v === 'vendors'  ? 'Vendors'
     : v === 'tracking' ? 'Tracking Sheets'
+    : v === 'data'     ? 'Data'
     : v === 'team'     ? 'Team'
     : 'Settings';
 }
@@ -551,6 +561,7 @@ function viewSubtitle(v: View) {
     : v === 'clients'   ? 'Add and search approved clients used by projects and contracts.'
     : v === 'vendors'   ? 'Add vendors, bank details, and review pending registration requests.'
     : v === 'tracking'  ? 'Campaigns with a tracking sheet — open one to add and track vendors.'
+    : v === 'data'      ? 'Everything, until you search for someone.'
     : v === 'team'      ? 'People in this workspace and their roles.'
     : 'Configuration and admin tools.';
 }

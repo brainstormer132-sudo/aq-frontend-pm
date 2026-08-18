@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  useCrmDeals, moveCrmDealStage, deleteCrmDeal,
+  useCrmDeals, moveCrmDealStage, deleteCrmDeal, logDealOutcome,
   useClients, useLegacyVendors,
   DEAL_STAGES, type CrmDeal, type DealStage,
 } from '@/hooks/use-workflow';
@@ -20,11 +20,13 @@ import { DealEditor } from './DealEditor';
  * editor in edit mode.
  */
 export function DealsKanban({
-  workspaceId, currentUserId, currentUserName,
+  workspaceId, currentUserId, currentUserName, onStartCampaign,
 }: {
   workspaceId: string;
   currentUserId: string;
   currentUserName: string;
+  /** Won a deal → hand it to the New Task form, prefilled. */
+  onStartCampaign?: (deal: CrmDeal) => void;
 }) {
   const { items: deals, loading, refetch } = useCrmDeals(workspaceId);
   const { clients } = useClients();
@@ -90,7 +92,20 @@ export function DealsKanban({
     if (!deal || deal.stage === stage) return;
     try {
       await moveCrmDealStage(deal.id, stage);
+      // Won and lost are the two moves the contact's timeline should carry —
+      // otherwise the CRM records that a deal exists but never that it landed.
+      void logDealOutcome(deal, stage);
       await refetch();
+      // A won deal is the one moment the CRM has something the PM app wants.
+      // It is offered, not taken: deals move by mouse drag, and a mis-drag
+      // that silently created a real campaign for a real client would be a
+      // worse mistake than one extra click.
+      if (stage === 'won' && onStartCampaign && deal.target_type === 'client') {
+        const go = window.confirm(
+          `Deal won: ${deal.name}.\n\nStart a campaign from it? The New Task form opens with the client, name and value already filled in — nothing is created until you submit it.`,
+        );
+        if (go) onStartCampaign(deal);
+      }
     } catch (e) {
       console.error('moveCrmDealStage', e);
       alert('Could not move deal — see console.');

@@ -100,12 +100,8 @@ export function DataView({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', margin: 0 }}>Data</h1>
-        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: '4px 0 0' }}>
-          Everything, until you search for someone.
-        </p>
-      </div>
+      {/* No title here on purpose — the page shell already prints "Data"
+          above every view, and two headings stacked read as a mistake. */}
 
       {/* ── search ─────────────────────────────────────────────── */}
       <div className="aq-card" style={{ padding: 16 }}>
@@ -128,12 +124,17 @@ export function DataView({
               overflow: 'hidden',
             }}>
               {hits.map((h) => (
+                // Two lines, not one. Client names here run to
+                // "Science and Sunshine Advertising Agency FZ LLC", which on a
+                // single row wrapped to six lines and pushed "matched on" off
+                // the edge — the one part of the row that explains why a bare
+                // number found anything.
                 <button
                   key={`${h.kind}-${h.id}`}
                   type="button"
                   onClick={() => pick(h)}
                   style={{
-                    display: 'flex', width: '100%', gap: 12, alignItems: 'center',
+                    display: 'block', width: '100%',
                     textAlign: 'left', font: 'inherit', background: 'none', border: 0,
                     padding: '10px 14px', cursor: 'pointer',
                     borderBottom: '1px solid var(--aq-border-light)',
@@ -141,14 +142,23 @@ export function DataView({
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--aq-bg-sunken)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
                 >
-                  <span className="aq-badge aq-badge-muted" style={{ textTransform: 'uppercase', fontSize: 10 }}>
-                    {h.kind}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span className="aq-badge aq-badge-muted"
+                          style={{ textTransform: 'uppercase', fontSize: 10, flex: 'none' }}>
+                      {h.kind}
+                    </span>
+                    <span style={{
+                      fontWeight: 500, flex: 1, minWidth: 0,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{h.name}</span>
+                    <span style={{ fontSize: 12, color: 'var(--aq-text-muted)', flex: 'none' }}>
+                      matched on {h.matched}
+                    </span>
                   </span>
-                  <span style={{ fontWeight: 500 }}>{h.name}</span>
-                  <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{h.meta}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                    matched on {h.matched}
-                  </span>
+                  <span style={{
+                    display: 'block', fontSize: 12, color: 'var(--aq-text-muted)',
+                    marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{h.meta}</span>
                 </button>
               ))}
             </div>

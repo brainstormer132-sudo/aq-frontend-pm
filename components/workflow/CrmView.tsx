@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import {
   useClients, useLegacyVendors, useCrmRecentActivities,
-  type ClientRow, type LegacyVendor,
+  type ClientRow, type LegacyVendor, type CrmDeal,
 } from '@/hooks/use-workflow';
 import { CrmContactDetail } from './CrmContactDetail';
 import { CrmDashboard } from './CrmDashboard';
@@ -35,11 +35,13 @@ export interface CrmContact {
 }
 
 export function CrmView({
-  workspaceId, currentUserId, currentUserName,
+  workspaceId, currentUserId, currentUserName, onStartCampaign,
 }: {
   workspaceId: string;
   currentUserId: string;
   currentUserName: string;
+  /** Won a deal → open New Task prefilled from it. Handled by the page. */
+  onStartCampaign?: (deal: CrmDeal) => void;
 }) {
   const [mode, setMode] = useState<CrmMode>('dashboard');
   const [tab, setTab] = useState<CrmTab>('clients');
@@ -126,6 +128,7 @@ export function CrmView({
           workspaceId={workspaceId}
           currentUserId={currentUserId}
           currentUserName={currentUserName}
+          onStartCampaign={onStartCampaign}
         />
       )}
       {mode === 'tasks' && (

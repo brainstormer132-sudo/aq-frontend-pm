@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   useWorkspaceStats, useRecentActivity, useTaskCountsByMember,
-  useWorkflowTasks,
+  useWorkflowTasks, useCrmTasks,
   usePmTaskCampaignRollup,
   type Profile, type WorkspaceRole, type PmTaskCampaignRollup,
 } from '@/hooks/use-workflow';
+import { countFollowUps } from '@/lib/crm-sync';
 
 /**
  * Home dashboard — replaces the role-default landing page.
@@ -38,6 +39,16 @@ export function WorkflowDashboard({
     [allTasks, userId],
   );
 
+  // CRM follow-ups count as work. They were invisible outside the CRM
+  // screen, so "Overdue 0" could be true of campaigns and wrong about you.
+  const { items: followUps } = useCrmTasks(workspaceId, { assignedTo: userId });
+  const [today, setToday] = useState<string | null>(null);
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+  const crm = useMemo(
+    () => (today ? countFollowUps(followUps || [], today) : { overdue: 0, today: 0, open: 0 }),
+    [followUps, today],
+  );
+
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const greeting = makeGreeting();
 
@@ -52,9 +63,9 @@ export function WorkflowDashboard({
 
       {/* Stat cards */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-        <Stat label="My tasks"          value={stats.mine}             onClick={() => onGoTo('my-tasks')} />
-        <Stat label="Overdue"           value={stats.overdue}          tone={stats.overdue ? 'error' : 'default'} />
-        <Stat label="Due today"         value={stats.dueToday}         tone={stats.dueToday ? 'warning' : 'default'} />
+        <Stat label="My tasks"          value={stats.mine + crm.open}  onClick={() => onGoTo('my-tasks')} />
+        <Stat label="Overdue"           value={stats.overdue + crm.overdue} tone={stats.overdue + crm.overdue ? 'error' : 'default'} />
+        <Stat label="Due today"         value={stats.dueToday + crm.today}  tone={stats.dueToday + crm.today ? 'warning' : 'default'} />
         <Stat label="Pending triage"    value={stats.pendingMarketing} onClick={() => onGoTo('marketing-triage')} tone={stats.pendingMarketing ? 'info' : 'default'} />
       </section>
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>

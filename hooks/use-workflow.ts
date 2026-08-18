@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
+import {
+  onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
+  onClientPaymentChanged, onDealWon, onDealLost,
+} from '@/lib/crm-sync';
 
 const supabase = createClient();
 
@@ -1139,7 +1143,14 @@ export async function createSalesTask(input: {
     .select()
     .single();
   if (error) throw error;
-  return data as PMTask;
+
+  // The client's CRM timeline learns about this campaign without anybody
+  // having to remember to write it down. Fire-and-forget: a timeline entry
+  // must never be able to fail a campaign that is already saved.
+  const created = data as PMTask;
+  void logToClientTimeline(created.workspace_id, created.client_id, onCampaignCreated(created));
+
+  return created;
 }
 
 /** Marketing: triage. Set priority + service types + key_account, advance stage,
@@ -2114,8 +2125,36 @@ export async function removeSubtask(subtaskId: string) {
 
 /** Member / key account: update a task (status / completed / etc). */
 export async function updateTaskFields(taskId: string, fields: Partial<PMTask>) {
+  // Contract and client-payment status are the two fields the client's
+  // timeline cares about. Read the row FIRST so we know what actually
+  // changed: a form save re-sends every field, and without the comparison a
+  // timeline fills up with "contract signed" ten times over.
+  const watched = 'contract_status' in fields || 'client_payment_status' in fields;
+  let before: PMTask | null = null;
+  if (watched) {
+    const { data } = await supabase
+      .from('pm_tasks')
+      .select('id, workspace_id, client_id, task_name, title, brand_name, contract_status, client_payment_status')
+      .eq('id', taskId)
+      .maybeSingle();
+    before = (data as PMTask) ?? null;
+  }
+
   const { error } = await supabase.from('pm_tasks').update(fields).eq('id', taskId);
   if (error) throw error;
+
+  if (watched && before) {
+    const after = { ...before, ...fields } as PMTask;
+    if ('contract_status' in fields) {
+      void logToClientTimeline(before.workspace_id, before.client_id,
+        onContractStatusChanged(after, before.contract_status, fields.contract_status));
+    }
+    if ('client_payment_status' in fields) {
+      void logToClientTimeline(before.workspace_id, before.client_id,
+        onClientPaymentChanged(after, before.client_payment_status, fields.client_payment_status,
+          fields.client_payment_amount ?? null));
+    }
+  }
 }
 
 /** Hard-delete a task. Cascades to subtasks via the FK. */
@@ -2167,15 +2206,24 @@ export async function deleteTask(taskId: string) {
 /** Key account / admin: mark a task complete. Stage flips to `completed`,
  *  which fires the DB trigger that notifies marketing. */
 export async function markTaskCompleted(taskId: string) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('pm_tasks')
     .update({
       status: 'done',
       stage: 'completed',
       completed_at: new Date().toISOString(),
     })
-    .eq('id', taskId);
+    .eq('id', taskId)
+    .select('id, workspace_id, client_id, parent_task_id, task_name, title, brand_name')
+    .maybeSingle();
   if (error) throw error;
+
+  // Only campaigns reach the timeline. A finished subtask is internal
+  // detail; a finished campaign is a thing the client experienced.
+  const row = data as PMTask | null;
+  if (row && !row.parent_task_id) {
+    void logToClientTimeline(row.workspace_id, row.client_id, onCampaignCompleted(row));
+  }
 }
 
 // ============================================================
@@ -4021,6 +4069,90 @@ export async function addCrmActivity(input: {
 export async function deleteCrmActivity(id: string) {
   const { error } = await supabase.from('crm_activities').delete().eq('id', id);
   if (error) throw error;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Auto-logging PM events onto the CRM timeline
+
+   The CRM used to know only what somebody typed into it, so a client's
+   timeline showed the calls people remembered to log and nothing about
+   the campaigns we actually ran. These helpers are the bridge: creating
+   a campaign, finishing one, getting the contract signed and getting
+   paid all land on that client's timeline by themselves.
+
+   Two deliberate properties:
+
+   · Logging NEVER breaks the thing that triggered it. Every call is
+     wrapped — if the insert is refused (RLS, a missing workspace) the
+     campaign still saves and the failure goes to the console. A timeline
+     entry is worth less than the save it accompanies.
+   · The wording, and the "is this worth logging at all?" rules, live in
+     lib/crm-sync.ts, which is pure and unit tested. This file decides
+     WHEN to ask, and does the writing.
+   ──────────────────────────────────────────────────────────────── */
+
+/** Who is doing this. Resolved once per session, not once per event. */
+let CRM_ACTOR: { id: string; name: string } | null = null;
+
+async function currentActor(): Promise<{ id: string; name: string } | null> {
+  if (CRM_ACTOR) return CRM_ACTOR;
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth?.user;
+  if (!user) return null;
+  const { data: profile } = await supabase
+    .from('profiles').select('full_name').eq('id', user.id).maybeSingle();
+  const name = String((profile as any)?.full_name ?? '').trim()
+    || String(user.email ?? '').trim()
+    || 'Someone';
+  CRM_ACTOR = { id: user.id, name };
+  return CRM_ACTOR;
+}
+
+/** Forget the cached actor — called on sign-out so the next user isn't them. */
+export function resetCrmActor() { CRM_ACTOR = null; }
+
+async function logToClientTimeline(
+  workspaceId: string | null,
+  clientId: string | null,
+  entry: { kind: CrmActivityKind; body: string } | null,
+): Promise<void> {
+  if (!entry || !workspaceId || !clientId) return;
+  try {
+    const actor = await currentActor();
+    await addCrmActivity({
+      workspace_id: workspaceId,
+      target_type: 'client',
+      target_id: clientId,
+      kind: entry.kind,
+      body: entry.body,
+      author_id: actor?.id ?? '',
+      author_name: actor?.name ?? 'System',
+    });
+  } catch (err) {
+    // Deliberately swallowed — see the note above.
+    logSbError('logToClientTimeline', err, { clientId, body: entry.body });
+  }
+}
+
+/** Log a won or lost deal against whoever the deal is about. */
+export async function logDealOutcome(deal: CrmDeal, stage: DealStage): Promise<void> {
+  if (stage !== 'won' && stage !== 'lost') return;
+  if (!deal.target_type || !deal.target_id) return;
+  const entry = stage === 'won' ? onDealWon(deal) : onDealLost(deal);
+  try {
+    const actor = await currentActor();
+    await addCrmActivity({
+      workspace_id: deal.workspace_id,
+      target_type: deal.target_type,
+      target_id: String(deal.target_id),
+      kind: entry.kind,
+      body: entry.body,
+      author_id: actor?.id ?? '',
+      author_name: actor?.name ?? 'System',
+    });
+  } catch (err) {
+    logSbError('logDealOutcome', err, { deal: deal.id, stage });
+  }
 }
 
 // Pending vendor & client onboarding queues (legacy contract app)
