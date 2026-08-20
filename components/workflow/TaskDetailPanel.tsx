@@ -8,6 +8,7 @@ import {
   useClients, useClientBrands,
   useContractRequests, type ContractKind,
   useTaskPlatforms, rollupCampaignMoney,
+  useVendorAdLines, useAdLinesForSubtasks,
   publishTrackingSheet, unpublishTrackingSheet,
   ensureTrackingRowForVendor, isTrackableVendorCategory, shouldTrackVendorOnSheet,
   TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
@@ -39,6 +40,10 @@ import {
 } from '@/hooks/use-workflow';
 import { closerKey, closerFields, closerOptions, closerLabel } from '@/lib/sales-closer';
 import { AdLinesCard } from './AdLinesCard';
+import { DateField } from './DateField';
+import {
+  useResizablePanel, MIN_PANEL_WIDTH, maxPanelWidth,
+} from './use-resizable-panel';
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 import { AddVendorsModal } from './AddVendorsModal';
@@ -482,9 +487,21 @@ export function TaskDetailPanel({
   // ── Warn, don't block (Siraj's call) ────────────────────────────────
   // Proof of posting, the analysis report and the insight are "always
   // required" — surfaced here so nobody forgets, but nothing refuses a save.
+  //
+  // Proof is counted per ad now (058), so the ads under every vendor on this
+  // campaign have to be loaded before the question can be answered at all.
+  const vendorSubtaskIds = useMemo(
+    () => subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind)).map((s) => s.id),
+    [subtasks],
+  );
+  const { bySubtask: adLinesBySubtask } = useAdLinesForSubtasks(
+    task && !task.parent_task_id ? vendorSubtaskIds : [],
+  );
+
   const completeness = useMemo(
     () => (task && !task.parent_task_id
       ? campaignCompletenessWarnings(task, subtasks, {
+          adLinesBySubtask,
           // Only nag for an analysis report where the service type asks for
           // one. A Package Ad isn't a Campaign and shouldn't be told off for
           // missing a report nobody expected of it.
@@ -497,7 +514,7 @@ export function TaskDetailPanel({
           ),
         })
       : []),
-    [task, subtasks, taskServiceTypes, serviceTypeSteps, vendors],
+    [task, subtasks, taskServiceTypes, serviceTypeSteps, vendors, adLinesBySubtask],
   );
 
   // ── Publish the tracking sheet to the client (migration 045) ────────
@@ -1008,6 +1025,8 @@ export function TaskDetailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id, task?.vendor_id, task?.price, task?.budget, task?.contract_request_id, parentTask?.id, vendors.length]);
 
+  const { width: panelWidth, dragging, startDrag, nudge } = useResizablePanel();
+
   if (!isOpen) return null;
 
   const isSubtaskView = Boolean(task?.parent_task_id);
@@ -1027,10 +1046,33 @@ export function TaskDetailPanel({
         style={{ flex: 1, background: 'rgba(15, 29, 34, 0.4)' }}
         aria-hidden="true"
       />
+      {/* Drag to widen. Keyboard users get the same thing via the arrow
+          keys — a mouse-only control here would put the extra columns out
+          of reach for anyone not using one. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        aria-valuenow={panelWidth}
+        aria-valuemin={MIN_PANEL_WIDTH}
+        aria-valuemax={maxPanelWidth()}
+        tabIndex={0}
+        onPointerDown={(e) => { e.preventDefault(); startDrag(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(40); }
+          if (e.key === 'ArrowRight') { e.preventDefault(); nudge(-40); }
+        }}
+        style={{
+          width: 9, flexShrink: 0, cursor: 'col-resize',
+          background: dragging ? 'var(--aq-accent)' : 'transparent',
+          borderLeft: '1px solid transparent',
+          touchAction: 'none',
+        }}
+      />
       <aside
         className="animate-slide-in"
         style={{
-          width: '100%', maxWidth: 760,
+          width: panelWidth, maxWidth: '100%',
           background: 'var(--aq-bg-elevated)',
           overflow: 'auto',
           boxShadow: 'var(--aq-shadow-lg)',
@@ -2666,6 +2708,20 @@ function RequestCard({
 
 import type { PMTask, TaskSource, ClientCategory } from '@/hooks/use-workflow';
 
+/**
+ * The one platform to preselect for a new ad, or nothing.
+ *
+ * A campaign that runs on Instagram AND TikTok stores "Instagram, TikTok" in
+ * a single text field. Offering that whole string as a platform would put
+ * "Instagram, TikTok" in the platform column of an ad that ran on one of
+ * them — a value no report can group by. Two platforms means no default;
+ * whoever adds the ads picks.
+ */
+function soleplatform(text: string | null | undefined): string | null {
+  const parts = (text ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return parts.length === 1 ? parts[0] : null;
+}
+
 function OperationsPanel({
   task, isSubtaskView, canEdit, taskSources, clientCategories, taskPlatforms, subtasks,
   parentTask, vendors, onChanged,
@@ -2684,6 +2740,14 @@ function OperationsPanel({
   vendors: LegacyVendor[];
   onChanged: () => Promise<void>;
 }) {
+  // The ads inside this booking, loaded here rather than inside the card so
+  // this panel can answer a question the card cannot: whether proof of
+  // posting belongs on the booking at all. With ads, proof is per ad; with
+  // none, the booking is the single piece of work and keeps its own.
+  const isVendorBooking = isSubtaskView && isVendorSubtaskKind(task.subtask_kind);
+  const { lines: adLines, loading: adLinesLoading, refetch: refetchAdLines } =
+    useVendorAdLines(isVendorBooking ? task.id : null);
+
   // Generic field saver — writes `{ [field]: value }` to pm_tasks and
   // refetches the row. Null-coerced empties so a cleared field actually
   // becomes NULL in the DB, not the string "".
@@ -3101,8 +3165,13 @@ function OperationsPanel({
             read "done".
 
             Same gate as the insight above — a printer or a logistics
-            company posts nothing and has nothing to prove. */}
-        {selectedVendorNeedsInsight && (
+            company posts nothing and has nothing to prove.
+
+            Hidden once the booking has ads: an influencer booked for twelve
+            pieces posts twelve times, and proof then lives on each ad
+            below. Two places to record it would mean one of them is always
+            out of date, and no way to tell which. */}
+        {selectedVendorNeedsInsight && adLines.length === 0 && (
         <div style={{
           marginTop: 12, paddingTop: 12,
           borderTop: '1px solid var(--aq-border-light)',
@@ -3129,11 +3198,40 @@ function OperationsPanel({
           </Row>
         </div>
         )}
+        {/* Proof recorded on the booking before it had ads. Shown, not
+            copied down: one link cannot be split across twelve posts, and a
+            guess written into the evidence column is worse than a blank. */}
+        {selectedVendorNeedsInsight && adLines.length > 0
+          && (task.proof_of_posting_attached || (task.proof_of_posting_link ?? '').trim()) && (
+          <div style={{
+            marginTop: 12, paddingTop: 12,
+            borderTop: '1px solid var(--aq-border-light)',
+            fontSize: 12, color: 'var(--aq-text-muted)',
+          }}>
+            <strong style={{ color: 'var(--aq-text-secondary)' }}>
+              Proof of posting · recorded on the booking
+            </strong>
+            <div style={{ marginTop: 3 }}>
+              {task.proof_of_posting_link
+                ? <a href={task.proof_of_posting_link} target="_blank" rel="noopener noreferrer">Open</a>
+                : 'File attached'}
+              {' — from before this booking was split into ads. Proof now sits on each ad below.'}
+            </div>
+          </div>
+        )}
         </section>
 
       {/* The ads inside this booking. One contract is written from all of
           them — see lib/ad-lines.ts. */}
-      <AdLinesCard subtaskId={task.id} canEdit={canEdit} />
+      <AdLinesCard
+        subtaskId={task.id}
+        canEdit={canEdit}
+        lines={adLines}
+        loading={adLinesLoading}
+        refetch={refetchAdLines}
+        platformOptions={taskPlatforms.map((p) => p.name)}
+        defaultPlatform={soleplatform(task.platform ?? campaignPlatformText(parentTask))}
+      />
     </>
     );
   }
@@ -3561,55 +3659,4 @@ function TextInput({
   );
 }
 
-/**
- * A date box that saves when you LEAVE it, not while you are still picking.
- *
- * Every date on this panel used to be `<input type="date" onChange={save}>`.
- * Chrome's picker fires `change` the moment it has a usable value — so
- * clicking a month in the dropdown wrote a date to the database and
- * re-rendered the row before you had chosen the day, which read as "it
- * submitted on its own". The bulk-edit one was worse: a half-made date was
- * written to every selected subtask at once.
- *
- * So: keep a draft while the picker is open, commit on blur or Enter, and
- * say nothing if the value did not actually change — a no-op write still
- * costs a round trip and still bumps updated_at.
- */
-function DateField({
-  value, onCommit, disabled, min, style, 'aria-label': ariaLabel,
-}: {
-  value: string | null | undefined;
-  onCommit: (next: string | null) => void;
-  disabled?: boolean;
-  min?: string;
-  style?: React.CSSProperties;
-  'aria-label'?: string;
-}) {
-  const [draft, setDraft] = useState(value ?? '');
-  // Follow the row if it changes underneath us — a refetch, or somebody else.
-  useEffect(() => { setDraft(value ?? ''); }, [value]);
-
-  const commit = () => {
-    const next = draft || null;
-    if ((value ?? null) === next) return;
-    onCommit(next);
-  };
-
-  return (
-    <input
-      type="date"
-      className="aq-input"
-      style={style}
-      value={draft}
-      min={min}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
-      }}
-    />
-  );
-}
 

@@ -7,7 +7,8 @@ import {
   onClientPaymentChanged, onDealWon, onDealLost,
 } from '@/lib/crm-sync';
 import {
-  totalsOf, adTypeSummary, contractDetails, type AdLine,
+  totalsOf, adTypeSummary, contractDetails,
+  adsExpectingProof, adsMissingProof, type AdLine,
 } from '@/lib/ad-lines';
 
 const supabase = createClient();
@@ -1666,22 +1667,98 @@ export async function fetchVendorAdLines(subtaskId: string): Promise<AdLine[]> {
   return (data || []) as AdLine[];
 }
 
+/**
+ * The columns an insert may set. Written once so createAdLine and the bulk
+ * insert cannot drift: the first version of this listed six fields and
+ * silently dropped the due date and brief that 057 had just added, which
+ * looks exactly like the save failing to stick.
+ */
+function adLineInsertRow(input: AdLine) {
+  return {
+    subtask_id: input.subtask_id,
+    position: input.position ?? 0,
+    ad_type: (input.ad_type ?? '').trim(),
+    platform: input.platform ?? null,
+    quantity: input.quantity ?? 1,
+    unit_price: input.unit_price ?? 0,
+    notes: input.notes ?? null,
+    due_date: input.due_date ?? null,
+    description: input.description ?? null,
+    status: input.status ?? 'Not started',
+  };
+}
+
 export async function createAdLine(input: AdLine): Promise<AdLine> {
   const { data, error } = await supabase
     .from('vendor_ad_lines')
-    .insert({
-      subtask_id: input.subtask_id,
-      position: input.position ?? 0,
-      ad_type: (input.ad_type ?? '').trim(),
-      platform: input.platform ?? null,
-      quantity: input.quantity ?? 1,
-      unit_price: input.unit_price ?? 0,
-      notes: input.notes ?? null,
-    })
+    .insert(adLineInsertRow(input))
     .select()
     .single();
   if (error) { logSbError('createAdLine', error, { subtask: input.subtask_id }); throw error; }
   return data as AdLine;
+}
+
+/**
+ * Several ads in one insert.
+ *
+ * One statement, not a loop: six round trips can fail on the fourth and
+ * leave a half-made booking that nobody asked for. Here the batch either
+ * lands or it does not.
+ */
+export async function createAdLines(inputs: AdLine[]): Promise<AdLine[]> {
+  if (!inputs.length) return [];
+  const { data, error } = await supabase
+    .from('vendor_ad_lines')
+    .insert(inputs.map(adLineInsertRow))
+    .select();
+  if (error) {
+    logSbError('createAdLines', error, { subtask: inputs[0]?.subtask_id, count: inputs.length });
+    throw error;
+  }
+  return (data || []) as AdLine[];
+}
+
+/**
+ * Every ad under a set of vendor bookings, grouped by booking.
+ *
+ * The campaign panel needs this to know what to chase: proof now lives on
+ * the ad, so "is this campaign finished" cannot be answered from the
+ * subtask rows alone. Empty list in, empty map out — no query.
+ */
+export async function fetchAdLinesForSubtasks(
+  subtaskIds: string[],
+): Promise<Map<string, AdLine[]>> {
+  const out = new Map<string, AdLine[]>();
+  const ids = (subtaskIds || []).filter(Boolean);
+  if (!ids.length) return out;
+  const rows = await selectAllRows<AdLine>(
+    'fetchAdLinesForSubtasks',
+    () => supabase
+      .from('vendor_ad_lines')
+      .select('*')
+      .in('subtask_id', ids)
+      .order('position', { ascending: true }),
+  );
+  for (const r of rows) {
+    const key = (r as any).subtask_id as string;
+    if (!out.has(key)) out.set(key, []);
+    out.get(key)!.push(r);
+  }
+  return out;
+}
+
+/** The same, as a hook. Re-runs when the set of bookings changes. */
+export function useAdLinesForSubtasks(subtaskIds: string[]) {
+  const key = subtaskIds.slice().sort().join(',');
+  const [bySubtask, setBySubtask] = useState<Map<string, AdLine[]>>(new Map());
+
+  const fetch = useCallback(async () => {
+    setBySubtask(await fetchAdLinesForSubtasks(key ? key.split(',') : []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { bySubtask, refetch: fetch };
 }
 
 export async function updateAdLine(id: string, fields: Partial<AdLine>): Promise<void> {
@@ -2007,6 +2084,17 @@ export function campaignCompletenessWarnings(
      * you know they're all influencer work.
      */
     insightVendorIds?: Set<number>;
+    /**
+     * The ads inside each vendor booking, keyed by subtask id.
+     *
+     * Proof of posting is per ad (migration 058). A booking with ads is
+     * chased ad by ad; a booking without them is chased as one thing, which
+     * is right for a vendor hired to do a single piece of work.
+     *
+     * Omit it and every booking is treated as a single piece — the old
+     * behaviour, and correct for anyone who never uses ad lines.
+     */
+    adLinesBySubtask?: Map<string, AdLine[]>;
   } = {},
 ): CompletenessWarning[] {
   if (!parent) return [];
@@ -2023,16 +2111,31 @@ export function campaignCompletenessWarnings(
   const posting = opts.insightVendorIds
     ? vendorSubtasks.filter((s) => s.vendor_id != null && opts.insightVendorIds!.has(s.vendor_id))
     : vendorSubtasks;
+  //
+  // Counted per POST, not per booking (migration 058). An influencer booked
+  // for twelve pieces owes twelve proofs; "1 of 1 vendors" would call that
+  // finished the moment the first one landed. A booking with no ad lines is
+  // still one unit, which is right for a vendor hired to do one thing.
   if (posting.length > 0) {
-    const without = posting.filter(
-      (s) => !s.proof_of_posting_attached && !(s.proof_of_posting_link ?? '').trim(),
-    );
-    if (without.length > 0) {
+    let expected = 0;
+    let missing = 0;
+    for (const s of posting) {
+      const lines = opts.adLinesBySubtask?.get(s.id) ?? [];
+      if (lines.length > 0) {
+        expected += adsExpectingProof(lines).length;
+        missing += adsMissingProof(lines).length;
+      } else {
+        expected += 1;
+        if (!s.proof_of_posting_attached && !(s.proof_of_posting_link ?? '').trim()) missing += 1;
+      }
+    }
+    if (missing > 0) {
+      const noun = `post${expected === 1 ? '' : 's'}`;
       out.push({
         key: 'proof_of_posting',
-        message: without.length === posting.length
-          ? 'No proof of posting on any influencer or UGC vendor yet.'
-          : `Proof of posting missing on ${without.length} of ${posting.length} influencer/UGC vendors.`,
+        message: missing === expected
+          ? `No proof of posting yet on any of the ${expected} influencer/UGC ${noun}.`
+          : `Proof of posting missing on ${missing} of ${expected} influencer/UGC ${noun}.`,
       });
     }
   }

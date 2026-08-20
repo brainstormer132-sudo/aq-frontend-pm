@@ -33,6 +33,13 @@ export interface AdLine {
   due_date?: string | null;
   description?: string | null;
   status?: string | null;
+
+  // ── proof, per ad (migration 058) ─────────────────────────────
+  // An influencer booked for twelve pieces posts twelve times. One link on
+  // the booking says "some of it happened" and nothing about which.
+  proof_of_posting_link?: string | null;
+  proof_of_posting_attached?: boolean | null;
+  posted_on?: string | null;
 }
 
 export const AD_LINE_STATUSES = ['Not started', 'Scheduled', 'Shot', 'Posted', 'Cancelled'] as const;
@@ -183,6 +190,124 @@ export function blankLine(subtaskId: string, existing: AdLine[]): AdLine {
     unit_price: 0,
     notes: null,
   };
+}
+
+// ── Adding several at once ──────────────────────────────────────────
+//
+// Bookings arrive in batches: "six home ads at 1,500". Adding those one
+// blank row at a time meant six rounds of typing the same ad type and the
+// same price, and six chances to typo one of them. The dialog asks once.
+//
+// Six separate lines, not one line of quantity six, because the whole point
+// of 057 is that each ad has its own day and its own brief. A single line of
+// six cannot hold six dates.
+
+export interface AdLineSpec {
+  /** How many separate ads to create. */
+  count: number;
+  ad_type: string;
+  platform?: string | null;
+  /** Pieces per ad — usually 1. A line of 2 is "two stories in one slot". */
+  quantity: number;
+  unit_price: number;
+  /** Optional brief copied onto each; they can be edited apart afterwards. */
+  description?: string | null;
+}
+
+export interface AdLineSpecTotals {
+  /** Rows that will be created. */
+  lines: number;
+  /** Pieces, counting quantity — 6 lines × 2 = 12 ads. */
+  ads: number;
+  amount: number;
+  free: boolean;
+}
+
+/**
+ * What the dialog shows above the fields, recomputed on every keystroke.
+ *
+ * The number that ends up in the contract is worth showing BEFORE the rows
+ * exist, because "6 × 1500 = 9,000" is checkable at a glance and a list of
+ * six rows adding up to 9,000 is not.
+ */
+export function specTotals(spec: AdLineSpec): AdLineSpecTotals {
+  const lines = Math.max(0, Math.floor(num(spec.count)));
+  const qty = Math.max(0, Math.floor(num(spec.quantity)));
+  const amount = lines * qty * num(spec.unit_price);
+  return { lines, ads: lines * qty, amount, free: amount === 0 };
+}
+
+/** What is still wrong with the dialog, in words. Empty means it can be saved. */
+export function specProblems(spec: AdLineSpec): string[] {
+  const out: string[] = [];
+  const count = num(spec.count);
+  if (!Number.isInteger(count) || count < 1) out.push('Add at least one line.');
+  else if (count > 100) out.push('That is more than 100 lines — add them in smaller batches.');
+  if (!txt(spec.ad_type)) out.push('Pick an ad type.');
+  if (!(num(spec.quantity) > 0)) out.push('Quantity must be at least 1.');
+  if (num(spec.unit_price) < 0) out.push('A price cannot be negative.');
+  return out;
+}
+
+/**
+ * The rows the dialog will create, positioned after whatever is already
+ * there so a second batch lands underneath the first rather than jumbled
+ * through it.
+ *
+ * No due dates: they differ per ad by definition, so they are set on the
+ * ads themselves. Leaving them blank is visible — the card counts undated
+ * lines in red — where a guessed date would not be.
+ */
+export function newLines(subtaskId: string, existing: AdLine[], spec: AdLineSpec): AdLine[] {
+  const start = (existing || []).reduce((max, l) => Math.max(max, num(l.position)), -1) + 1;
+  const count = Math.max(0, Math.floor(num(spec.count)));
+  const out: AdLine[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      subtask_id: subtaskId,
+      position: start + i,
+      ad_type: txt(spec.ad_type),
+      platform: txt(spec.platform) || null,
+      quantity: Math.floor(num(spec.quantity)) || 1,
+      unit_price: num(spec.unit_price),
+      description: txt(spec.description) || null,
+      status: 'Not started',
+      due_date: null,
+      notes: null,
+    });
+  }
+  return out;
+}
+
+// ── Proof, per ad ───────────────────────────────────────────────────
+
+/** A link OR the tick. Whitespace is not a link. */
+export function hasProof(line: AdLine): boolean {
+  return Boolean(line?.proof_of_posting_attached) || txt(line?.proof_of_posting_link) !== '';
+}
+
+/**
+ * The ads still owing proof.
+ *
+ * A cancelled ad is exempt: nothing was posted, so there is nothing to
+ * prove, and counting it would leave a warning that can never be cleared
+ * except by deleting a line somebody deliberately kept.
+ */
+export function adsMissingProof(lines: AdLine[]): AdLine[] {
+  return (lines || []).filter((l) => txt(l.status) !== 'Cancelled' && !hasProof(l));
+}
+
+/** The ads that are expected to produce proof at all. */
+export function adsExpectingProof(lines: AdLine[]): AdLine[] {
+  return (lines || []).filter((l) => txt(l.status) !== 'Cancelled');
+}
+
+/** One ad's name in a list: `Home Ad ×2 — Riyadh branch`. */
+export function lineLabel(line: AdLine): string {
+  const type = txt(line?.ad_type) || 'Ad';
+  const qty = num(line?.quantity) > 1 ? ` ×${line.quantity}` : '';
+  const desc = txt(line?.description);
+  return `${type}${qty}${desc ? ` — ${desc}` : ''}`;
 }
 
 /** What is still wrong with a line, in words. Empty means it can be saved. */
