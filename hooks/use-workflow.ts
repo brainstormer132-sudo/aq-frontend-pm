@@ -2012,8 +2012,29 @@ export function campaignCompletenessWarnings(
   if (!parent) return [];
   const out: CompletenessWarning[] = [];
 
-  if (!parent.proof_of_posting_attached && !(parent.proof_of_posting_link ?? '').trim()) {
-    out.push({ key: 'proof_of_posting', message: 'Proof of posting has not been added.' });
+  // Proof of posting moved off the campaign and onto each influencer / UGC
+  // vendor (Aug 2026). One campaign has many influencers and each posts their
+  // own thing, so a single campaign-level tick could be true of one of them
+  // and false of the other five while the campaign read "done".
+  //
+  // Same set as the insight rule: a printer or a logistics company posts
+  // nothing and has nothing to prove.
+  const vendorSubtasks = subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind));
+  const posting = opts.insightVendorIds
+    ? vendorSubtasks.filter((s) => s.vendor_id != null && opts.insightVendorIds!.has(s.vendor_id))
+    : vendorSubtasks;
+  if (posting.length > 0) {
+    const without = posting.filter(
+      (s) => !s.proof_of_posting_attached && !(s.proof_of_posting_link ?? '').trim(),
+    );
+    if (without.length > 0) {
+      out.push({
+        key: 'proof_of_posting',
+        message: without.length === posting.length
+          ? 'No proof of posting on any influencer or UGC vendor yet.'
+          : `Proof of posting missing on ${without.length} of ${posting.length} influencer/UGC vendors.`,
+      });
+    }
   }
 
   if (opts.expectsAnalysisReport) {
@@ -2032,10 +2053,8 @@ export function campaignCompletenessWarnings(
   //
   // Without that filter this nagged for an insight from every vendor on the
   // campaign, the same over-reach as the analysis report warning.
-  const vendors = subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind));
-  const expectInsight = opts.insightVendorIds
-    ? vendors.filter((s) => s.vendor_id != null && opts.insightVendorIds!.has(s.vendor_id))
-    : vendors;
+  // The same vendors the proof rule looked at, for the same reason.
+  const expectInsight = posting;
   if (expectInsight.length > 0) {
     const without = expectInsight.filter(
       (s) => !s.insight_attached && !(s.insight_link ?? '').trim(),

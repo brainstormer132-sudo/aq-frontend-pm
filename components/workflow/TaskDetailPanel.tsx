@@ -1855,62 +1855,36 @@ export function TaskDetailPanel({
                   Lives on the campaign, not a subtask — one campaign, one
                   proof. Required in the sense that it's chased, not in the
                   sense that anything refuses to save without it. */}
-              {!isSubtaskView && (
-                <section className="aq-card" style={{ padding: 18 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Proof of posting</h3>
+              {/* Proof of posting moved onto each influencer / UGC vendor
+                  (Aug 2026): one campaign has many influencers, and a single
+                  campaign-level tick could be true of one and false of the
+                  other five while the campaign read "done".
 
+                  Anything already recorded here stays visible rather than
+                  being orphaned — one campaign-level link cannot be split
+                  across six vendors, so it is shown, not migrated. */}
+              {!isSubtaskView
+                && (task.proof_of_posting_attached || (task.proof_of_posting_link ?? '').trim()) && (
+                <section className="aq-card" style={{ padding: 18 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+                    Proof of posting · recorded on the campaign
+                  </h3>
+                  <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginBottom: 10 }}>
+                    Kept from before proof moved onto each influencer. New proof goes on the
+                    vendor subtask it belongs to.
+                  </p>
                   <div style={SALES_ROW}>
                     <span style={SALES_LABEL}>Attached</span>
-                    <label style={{
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      cursor: canEditMarketing ? 'pointer' : 'default', fontSize: 13,
-                    }}>
-                      <input
-                        type="checkbox"
-                        checked={!!task.proof_of_posting_attached}
-                        disabled={!canEditMarketing}
-                        onChange={async (e) => {
-                          try {
-                            await updateTaskFields(task.id, {
-                              proof_of_posting_attached: e.target.checked,
-                            } as any);
-                            await refetchTask();
-                            onChanged?.();
-                          } catch (err: any) { setError(err?.message ?? String(err)); }
-                        }}
-                        style={{ width: 15, height: 15 }}
-                      />
-                      <span style={{
-                        fontWeight: 600,
-                        color: task.proof_of_posting_attached
-                          ? 'var(--aq-success, #15803d)' : 'var(--aq-text-muted)',
-                      }}>
-                        {task.proof_of_posting_attached ? 'Attached' : 'Not attached'}
-                      </span>
-                    </label>
+                    <span style={{ fontSize: 13 }}>
+                      {task.proof_of_posting_attached ? 'Yes' : 'No'}
+                    </span>
                   </div>
-
-                  <div style={SALES_ROW}>
-                    <span style={SALES_LABEL}>File link</span>
-                    {canEditMarketing ? (
-                      <input
-                        className="aq-input"
-                        defaultValue={task.proof_of_posting_link ?? ''}
-                        placeholder="https://drive.google.com/…"
-                        onBlur={async (e) => {
-                          const v = e.target.value.trim() || null;
-                          if (v === (task.proof_of_posting_link ?? null)) return;
-                          try {
-                            await updateTaskFields(task.id, { proof_of_posting_link: v } as any);
-                            await refetchTask();
-                            onChanged?.();
-                          } catch (err: any) { setError(err?.message ?? String(err)); }
-                        }}
-                      />
-                    ) : task.proof_of_posting_link ? (
+                  {task.proof_of_posting_link && (
+                    <div style={SALES_ROW}>
+                      <span style={SALES_LABEL}>File link</span>
                       <a href={task.proof_of_posting_link} target="_blank" rel="noopener noreferrer">Open</a>
-                    ) : <span style={{ fontSize: 13 }}>—</span>}
-                  </div>
+                    </div>
+                  )}
                 </section>
               )}
 
@@ -3114,6 +3088,43 @@ function OperationsPanel({
             <Attached
               value={task.insight_attached}
               onToggle={(v) => save('insight_attached', v)}
+            />
+          </Row>
+        </div>
+        )}
+
+        {/* ── Proof of posting ───────────────────────────────────────
+            Moved here from the campaign (Aug 2026). It belongs to the
+            person who posted: one campaign has six influencers, each
+            posts their own thing, and a single tick on the campaign was
+            true of one of them and false of the rest while the campaign
+            read "done".
+
+            Same gate as the insight above — a printer or a logistics
+            company posts nothing and has nothing to prove. */}
+        {selectedVendorNeedsInsight && (
+        <div style={{
+          marginTop: 12, paddingTop: 12,
+          borderTop: '1px solid var(--aq-border-light)',
+        }}>
+          <div className="aq-label" style={{ marginBottom: 4 }}>Proof of posting</div>
+
+          <Row label="File link">
+            {canEdit
+              ? <TextInput
+                  defaultValue={task.proof_of_posting_link ?? ''}
+                  placeholder="https://drive.google.com/…"
+                  onCommit={(v) => save('proof_of_posting_link', v.trim() || null)}
+                />
+              : task.proof_of_posting_link
+                ? <a href={task.proof_of_posting_link} target="_blank" rel="noopener noreferrer">Open</a>
+                : <span>—</span>}
+          </Row>
+
+          <Row label="Proof file">
+            <Attached
+              value={task.proof_of_posting_attached}
+              onToggle={(v) => save('proof_of_posting_attached', v)}
             />
           </Row>
         </div>
