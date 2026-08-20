@@ -155,7 +155,7 @@ export function AddAdLinesDialog({
                 onChange={(e) => set('count')(Number(e.target.value))}
               />
             </Field>
-            <Field label="Pieces each" hint="usually 1">
+            <Field label="Quantity" hint="usually 1">
               <input
                 className="aq-input"
                 type="number" min={1}
@@ -163,7 +163,7 @@ export function AddAdLinesDialog({
                 onChange={(e) => set('quantity')(Number(e.target.value))}
               />
             </Field>
-            <Field label="Price each (SAR)">
+            <Field label="Price (SAR)">
               <input
                 className="aq-input"
                 type="number" min={0} step="0.01"

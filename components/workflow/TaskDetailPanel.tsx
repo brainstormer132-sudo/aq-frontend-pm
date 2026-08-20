@@ -3014,17 +3014,29 @@ function OperationsPanel({
             : <span>{task.due_date || '—'}</span>}
         </Row>
 
+        {/* With ads, this is their total and cannot be typed (059) — two
+            places to put one number is how a booking ends up worth less than
+            the ads inside it. Without ads it is a plain field, which is right
+            for a vendor hired to do one thing. */}
         <Row label="Price (SAR)">
-          {canEdit
-            ? <TextInput
-                defaultValue={task.price != null ? String(task.price) : ''}
-                placeholder="0.00"
-                inputMode="decimal"
-                onCommit={(v) => save('price', numberOrNull(v))}
-                style={{ maxWidth: 200 }}
-              />
-            : <span>{fmtMoney(task.price)}</span>}
+          {adLines.length > 0
+            ? <span style={{ fontWeight: 600 }}>{fmtMoney(task.price)}</span>
+            : canEdit
+              ? <TextInput
+                  defaultValue={task.price != null ? String(task.price) : ''}
+                  placeholder="0.00"
+                  inputMode="decimal"
+                  onCommit={(v) => save('price', numberOrNull(v))}
+                  style={{ maxWidth: 200 }}
+                />
+              : <span>{fmtMoney(task.price)}</span>}
         </Row>
+        {adLines.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', paddingLeft: 172, marginTop: -4 }}>
+            Added up from the {adLines.length} ad{adLines.length === 1 ? '' : 's'} below.
+            Change an ad&apos;s price and this follows.
+          </div>
+        )}
 
         <Row label="Net amount (SAR)">
           {canEdit
@@ -3231,6 +3243,7 @@ function OperationsPanel({
         refetch={refetchAdLines}
         platformOptions={taskPlatforms.map((p) => p.name)}
         defaultPlatform={soleplatform(task.platform ?? campaignPlatformText(parentTask))}
+        onTotalChanged={onChanged}
       />
     </>
     );

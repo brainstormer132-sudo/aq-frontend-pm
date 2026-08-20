@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import {
-  createAdLines, updateAdLine, deleteAdLine, AD_TYPE_OPTIONS, type AdLine,
+  createAdLines, updateAdLine, deleteAdLine, syncBookingPriceFromAds,
+  AD_TYPE_OPTIONS, type AdLine,
 } from '@/hooks/use-workflow';
 import {
-  totalsOf, lineProblems, adTypeSummary, newLines, lineLabel, hasProof,
+  totalsOf, lineTotal, lineProblems, adTypeSummary, newLines, lineLabel, hasProof,
   adsMissingProof, AD_LINE_STATUSES, type AdLineSpec,
 } from '@/lib/ad-lines';
 import { AddAdLinesDialog } from './AddAdLinesDialog';
@@ -31,6 +32,7 @@ import { DateField } from './DateField';
  */
 export function AdLinesCard({
   subtaskId, canEdit, lines, loading, refetch, platformOptions, defaultPlatform,
+  onTotalChanged,
 }: {
   subtaskId: string;
   canEdit: boolean;
@@ -39,6 +41,8 @@ export function AdLinesCard({
   refetch: () => Promise<void> | void;
   platformOptions: string[];
   defaultPlatform?: string | null;
+  /** Refresh the booking above — its price is written from these ads. */
+  onTotalChanged?: () => Promise<void> | void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -49,11 +53,18 @@ export function AdLinesCard({
   const undated = lines.filter((l) => !l.due_date);
   const unproven = adsMissingProof(lines);
 
+  /** Every write moves the booking's price, so every write pushes it up. */
+  const syncUp = async () => {
+    await syncBookingPriceFromAds(subtaskId);
+    await onTotalChanged?.();
+  };
+
   const add = async (spec: AdLineSpec) => {
     setError('');
     try {
       await createAdLines(newLines(subtaskId, lines, spec));
       await refetch();
+      await syncUp();
       setAdding(false);
     } catch (e: any) { setError(e?.message ?? String(e)); throw e; }
   };
@@ -63,7 +74,11 @@ export function AdLinesCard({
     const problems = lineProblems({ ...line, ...fields });
     if (problems.length) { setError(problems[0]); return; }
     setBusy(line.id); setError('');
-    try { await updateAdLine(line.id, fields); await refetch(); }
+    try {
+      await updateAdLine(line.id, fields);
+      await refetch();
+      if ('unit_price' in fields) await syncUp();
+    }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };
@@ -71,7 +86,7 @@ export function AdLinesCard({
   const remove = async (line: AdLine) => {
     if (!line.id) return;
     setBusy(line.id); setError('');
-    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); }
+    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); await syncUp(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };
@@ -134,7 +149,7 @@ export function AdLinesCard({
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {lines.map((l, i) => {
             const open = openId === l.id;
-            const total = Number(l.line_total ?? (l.quantity * l.unit_price));
+            const total = lineTotal(l);
             return (
               <div key={l.id} style={{ borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)' }}>
                 {/* The row: shows, does not edit. */}
@@ -313,25 +328,26 @@ function AdDetail({
       </Cell>
 
       <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-        <Cell label="Pieces" width={90}>
+        <Cell label="Quantity" width={90}>
           <NumberCell
             value={line.quantity} min={1} disabled={!canEdit}
             onCommit={(v) => onPatch({ quantity: v })}
           />
         </Cell>
-        <Cell label="Price each (SAR)" width={140}>
+        {/* One price box, not a unit price plus a total. Two boxes for one
+            number is two ways to be wrong, and the wrong one goes into a
+            contract. Zero is legal and is labelled below, not blanked. */}
+        <Cell label="Price (SAR)" width={140}>
           <NumberCell
             value={Number(line.unit_price)} min={0} step="0.01" disabled={!canEdit}
             onCommit={(v) => onPatch({ unit_price: v })}
           />
         </Cell>
-        <Cell label="Line total" width={120}>
-          <div style={{ padding: '7px 0', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {Number(line.line_total ?? line.quantity * line.unit_price) === 0
-              ? <span style={{ color: 'var(--aq-text-muted)', fontWeight: 400 }}>no charge</span>
-              : Math.round(Number(line.line_total ?? 0)).toLocaleString('en-US')}
+        {Number(line.unit_price) === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', padding: '7px 0' }}>
+            No charge — it still goes in the contract.
           </div>
-        </Cell>
+        )}
       </div>
 
       {/* ── Proof, for this ad ────────────────────────────────────────

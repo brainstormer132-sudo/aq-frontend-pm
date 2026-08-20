@@ -53,11 +53,21 @@ function num(v: number | null | undefined): number {
   return v != null && Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * What this ad costs. One number, not a unit price times a quantity
+ * (migration 059).
+ *
+ * A vendor quotes "this ad, 1,500". Asking for a unit price and a quantity
+ * made the person entering it choose which box the 1,500 belonged in, and
+ * the wrong choice landed in a contract. `quantity` still exists — it is
+ * what makes the contract say "6 × Home Ad" — and it no longer touches the
+ * money.
+ */
 export function lineTotal(line: AdLine): number {
   if (line.line_total != null && Number.isFinite(Number(line.line_total))) {
     return Number(line.line_total);
   }
-  return num(line.quantity) * num(line.unit_price);
+  return num(line.unit_price);
 }
 
 export interface AdLineTotals {
@@ -126,11 +136,11 @@ export function contractDetails(lines: AdLine[], header?: string | null): string
   const groups = groupByAdType(lines);
   if (!groups.length) return txt(header);
 
+  // No "X each" any more: since 059 the price is set per ad and not derived
+  // from a unit rate, so dividing the group total back out would print a
+  // per-piece figure nobody agreed to.
   const body = groups.map((g) => {
-    const each = g.quantity > 0 ? g.amount / g.quantity : 0;
-    const price = g.amount === 0
-      ? 'no charge'
-      : `${money(each)} each · ${money(g.amount)}`;
+    const price = g.amount === 0 ? 'no charge' : money(g.amount);
     return `${g.quantity} × ${g.ad_type} — ${price}`;
   });
 
@@ -207,7 +217,7 @@ export interface AdLineSpec {
   count: number;
   ad_type: string;
   platform?: string | null;
-  /** Pieces per ad — usually 1. A line of 2 is "two stories in one slot". */
+  /** Quantity per ad — usually 1. A line of 2 is "two stories in one slot". */
   quantity: number;
   unit_price: number;
   /** Optional brief copied onto each; they can be edited apart afterwards. */
@@ -217,7 +227,7 @@ export interface AdLineSpec {
 export interface AdLineSpecTotals {
   /** Rows that will be created. */
   lines: number;
-  /** Pieces, counting quantity — 6 lines × 2 = 12 ads. */
+  /** Ads, counting quantity — 6 lines × 2 = 12 ads. */
   ads: number;
   amount: number;
   free: boolean;
@@ -233,7 +243,9 @@ export interface AdLineSpecTotals {
 export function specTotals(spec: AdLineSpec): AdLineSpecTotals {
   const lines = Math.max(0, Math.floor(num(spec.count)));
   const qty = Math.max(0, Math.floor(num(spec.quantity)));
-  const amount = lines * qty * num(spec.unit_price);
+  // Price is per ad, so quantity is not in this sum (059). Six ads at 1,500
+  // is 9,000 whether each of them stands for one piece or three.
+  const amount = lines * num(spec.unit_price);
   return { lines, ads: lines * qty, amount, free: amount === 0 };
 }
 

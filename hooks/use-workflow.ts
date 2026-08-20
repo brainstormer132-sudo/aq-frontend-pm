@@ -1768,6 +1768,26 @@ export async function updateAdLine(id: string, fields: Partial<AdLine>): Promise
   if (error) { logSbError('updateAdLine', error, { id }); throw error; }
 }
 
+/**
+ * Push the ads' total up onto the booking they belong to (059).
+ *
+ * The booking's `price` is what every other part of the app already reads —
+ * the campaign money roll-up, the vendor report, the dashboards, the
+ * contract when there are no ads. Writing the total there means none of them
+ * had to be taught about ad lines, and none of them can show a booking as
+ * worth less than the ads inside it.
+ *
+ * With no ads, nothing is written. A booking priced by hand keeps its price;
+ * zeroing it because somebody deleted a trial ad would wipe a real number.
+ */
+export async function syncBookingPriceFromAds(subtaskId: string): Promise<number | null> {
+  const lines = await fetchVendorAdLines(subtaskId);
+  if (!lines.length) return null;
+  const { amount } = totalsOf(lines);
+  await updateTaskFields(subtaskId, { price: amount } as any);
+  return amount;
+}
+
 export async function deleteAdLine(id: string): Promise<void> {
   const { error } = await supabase.from('vendor_ad_lines').delete().eq('id', id);
   if (error) { logSbError('deleteAdLine', error, { id }); throw error; }
