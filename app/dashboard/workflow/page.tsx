@@ -400,6 +400,12 @@ export default function WorkflowPage() {
             workspaceId={workspace.id}
             currentUserId={user.id}
             role={role}
+            // The header prints the name from boot. Without this it would go
+            // on printing the old one until a reload.
+            onProfileSaved={(p) => {
+              setUser((u) => (u ? { ...u, full_name: p.full_name } : u));
+              refetchProfiles?.();
+            }}
           />
         )}
 

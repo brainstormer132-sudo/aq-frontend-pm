@@ -10,6 +10,7 @@ import {
   totalsOf, adTypeSummary, contractDetails,
   adsExpectingProof, adsMissingProof, type AdLine,
 } from '@/lib/ad-lines';
+import { avatarProblems, avatarPath, avatarStoragePath } from '@/lib/profile';
 
 const supabase = createClient();
 
@@ -2845,6 +2846,122 @@ export async function addAttachmentLink(input: {
  * the leading workspace_id is what the storage RLS policies key on, so a
  * member of one workspace can never read/write another workspace's files.
  */
+// ── Your own profile (062) ──────────────────────────────────────────
+//
+// The name colleagues see, the face beside it, and what you do here. Small
+// surface, and the one place in the app where a person edits a row about
+// themselves rather than about work.
+
+export interface MyProfile {
+  id: string;
+  full_name: string;
+  avatar_url: string | null;
+  job_title: string | null;
+}
+
+export function useMyProfile(userId: string | null) {
+  const [profile, setProfile] = useState<MyProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!userId) { setProfile(null); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, avatar_url, job_title')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) logSbError('useMyProfile', error, { userId });
+    setProfile((data as MyProfile | null) ?? null);
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { profile, loading, refetch: fetch };
+}
+
+/**
+ * Save the name and job title.
+ *
+ * Busts the profiles cache afterwards: it holds names for 60 seconds, which
+ * is fine for a colleague's name and wrong for your own — you have just
+ * typed it and want to see it, not wonder whether it saved.
+ */
+export async function saveMyProfile(
+  userId: string,
+  fields: { full_name?: string; job_title?: string | null; avatar_url?: string | null },
+): Promise<MyProfile | null> {
+  const { data, error } = await timed<any>('profiles.update', async () =>
+    supabase.from('profiles').update(fields).eq('id', userId)
+      .select('id, full_name, avatar_url, job_title').maybeSingle());
+  if (error) { logSbError('saveMyProfile', error, { userId }); throw error; }
+  invalidateRefCache();
+  return (data as MyProfile | null) ?? null;
+}
+
+/**
+ * Put a picture in the avatars bucket and point the profile at it.
+ *
+ * Uploaded under a fresh name every time rather than overwriting: browsers
+ * and CDNs cache an image by URL, so replacing the bytes at the same path
+ * leaves everyone looking at the old face for as long as their cache holds.
+ * A new name changes the URL, which is the only thing a cache listens to.
+ *
+ * The previous picture is deleted afterwards, and only afterwards — losing
+ * the old one and then failing to upload the new one would leave somebody
+ * with no picture and no way back.
+ */
+export async function uploadMyAvatar(userId: string, file: File): Promise<MyProfile | null> {
+  const problems = avatarProblems(file);
+  if (problems.length) throw new Error(problems[0]);
+
+  const token =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const path = avatarPath(userId, file.name, token);
+
+  const { error: upErr } = await supabase.storage
+    .from('avatars')
+    .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type || undefined });
+  if (upErr) { logSbError('uploadMyAvatar', upErr, { userId }); throw upErr; }
+
+  const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+  const url = pub?.publicUrl ?? null;
+
+  // Read the old one BEFORE pointing the row at the new one.
+  const { data: before } = await supabase
+    .from('profiles').select('avatar_url').eq('id', userId).maybeSingle();
+  const saved = await saveMyProfile(userId, { avatar_url: url });
+
+  const old = avatarStoragePath((before as any)?.avatar_url);
+  if (old && old !== path) {
+    // Best effort. A picture nobody points at is 200KB, not a problem.
+    await supabase.storage.from('avatars').remove([old]).catch(() => {});
+  }
+  return saved;
+}
+
+/** Take the picture off. The file goes too — nothing else points at it. */
+export async function removeMyAvatar(userId: string): Promise<MyProfile | null> {
+  const { data: before } = await supabase
+    .from('profiles').select('avatar_url').eq('id', userId).maybeSingle();
+  const saved = await saveMyProfile(userId, { avatar_url: null });
+  const old = avatarStoragePath((before as any)?.avatar_url);
+  if (old) await supabase.storage.from('avatars').remove([old]).catch(() => {});
+  return saved;
+}
+
+/**
+ * Change your own sign-in password.
+ *
+ * Goes to the auth system, not to a table — nothing in this app has ever
+ * seen a password and this does not change that.
+ */
+export async function changeMyPassword(next: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password: next });
+  if (error) { logSbError('changeMyPassword', error, {}); throw error; }
+}
+
 export async function uploadTaskAttachment(input: {
   file: File;
   task_id: string;

@@ -9,6 +9,7 @@ import {
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { OperationsLookupsPanel } from './OperationsLookupsPanel';
+import { MyProfileCard } from './MyProfileCard';
 
 const ROLES: WorkspaceRole[] = [
   'owner','admin','operations','sales','marketing','key_account','member',
@@ -62,11 +63,13 @@ type RemoveMemberTarget = {
 };
 
 export function TeamSettingsPanel({
-  workspaceId, currentUserId, role,
+  workspaceId, currentUserId, role, onProfileSaved,
 }: {
   workspaceId: string;
   currentUserId: string;
   role: WorkspaceRole | null;
+  /** So the header stops showing the name you have just changed. */
+  onProfileSaved?: (profile: { full_name: string; avatar_url: string | null }) => void;
 }) {
   const { members, refetch, loading } = useWorkspaceMembers(workspaceId);
   const { counts } = useTaskCountsByMember(workspaceId);
@@ -239,19 +242,29 @@ export function TeamSettingsPanel({
     }
   };
 
+  // Your own profile comes FIRST, and for everyone.
+  //
+  // The rest of this screen is team administration and is owner/admin only —
+  // which used to mean a member opening Settings got one sentence telling
+  // them they were not allowed in, and no way to change their own name.
+  // Editing yourself is not an admin power.
   if (!canEdit) {
     return (
-      <div className="aq-card" style={{ padding: 28 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>Settings - Team</h2>
-        <p style={{ marginTop: 8, color: 'var(--aq-text-muted)', fontSize: 14 }}>
-          Only owner and admin roles can manage team. Your role is <strong>{role ?? 'unset'}</strong>.
-        </p>
+      <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <MyProfileCard userId={currentUserId} onSaved={onProfileSaved} />
+        <div className="aq-card" style={{ padding: 28 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700 }}>Team &amp; roles</h2>
+          <p style={{ marginTop: 8, color: 'var(--aq-text-muted)', fontSize: 14 }}>
+            Managing the team is owner and admin only. Your role is <strong>{role ?? 'unset'}</strong>.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <MyProfileCard userId={currentUserId} onSaved={onProfileSaved} />
       <div className="aq-card" style={{ padding: 24 }}>
         <header style={{ marginBottom: 16 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700 }}>Team & roles</h2>
