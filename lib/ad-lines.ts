@@ -26,7 +26,16 @@ export interface AdLine {
   /** Generated in the database; recomputed here when absent. */
   line_total?: number | null;
   notes?: string | null;
+
+  // ── per-ad, not per-booking (migration 057) ───────────────────
+  // Same vendor, same contract, different work: the ads inside one booking
+  // land on different days and carry their own briefs.
+  due_date?: string | null;
+  description?: string | null;
+  status?: string | null;
 }
+
+export const AD_LINE_STATUSES = ['Not started', 'Scheduled', 'Shot', 'Posted', 'Cancelled'] as const;
 
 function txt(v: string | null | undefined): string {
   return (v ?? '').trim();
@@ -120,13 +129,46 @@ export function contractDetails(lines: AdLine[], header?: string | null): string
 
   const { amount, ads } = totalsOf(lines);
   const head = txt(header);
+  const dated = schedule(lines);
+
+  // The dates belong in the contract: they are what the vendor is agreeing
+  // to deliver and when. A line with a brief carries it here too, because
+  // "Store Visit" alone does not tell anybody which branch.
+  const when = dated.length ? [
+    '',
+    'Schedule:',
+    ...dated.map((l) => {
+      const bits = [
+        `${txt(l.due_date)} — ${txt(l.ad_type) || 'Ad'}`,
+        Number(l.quantity) > 1 ? `×${l.quantity}` : null,
+        txt(l.description) || null,
+      ].filter(Boolean);
+      return bits.join(' · ');
+    }),
+  ] : [];
+
   return [
     head,
     head ? '' : null,
     ...body,
+    ...when,
     '',
     `Total: ${ads} ad${ads === 1 ? '' : 's'} · ${money(amount)}`,
   ].filter((l) => l !== null).join('\n').trim();
+}
+
+/**
+ * The dated lines, oldest first, for the contract's schedule.
+ *
+ * Only lines that actually have a date. A booking where nobody has set dates
+ * yet gets no schedule section rather than a list of blanks, which would
+ * read as though the dates were deliberately left open.
+ */
+export function schedule(lines: AdLine[]): AdLine[] {
+  return (lines || [])
+    .filter((l) => !!txt(l.due_date))
+    .slice()
+    .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
 }
 
 /** A blank line for the editor, positioned after the ones already there. */

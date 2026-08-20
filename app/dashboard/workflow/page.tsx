@@ -8,6 +8,7 @@ import {
   displayName, needsRealName,
 } from '@/hooks/use-workflow';
 import { useRealtime } from '@/hooks/use-realtime';
+import { useCalendarItems } from '@/hooks/use-calendar-items';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
@@ -360,6 +361,7 @@ export default function WorkflowPage() {
             profiles={profiles}
             serviceTypes={serviceTypes}
             currentUserId={user.id}
+            workspaceId={workspace.id}
             onOpen={(id) => setOpenTaskId(id)}
           />
         )}
@@ -594,6 +596,62 @@ function TeamPanel({ profiles }: { profiles: any[] }) {
  * tested — including February, year boundaries and months that start on a
  * Sunday, all of which look fine in whatever month you happen to build in.
  */
+
+/**
+ * The calendar's own data.
+ *
+ * The list above it shows campaigns, which is what All Tasks has always been.
+ * The calendar deliberately shows more: subtasks and the individual ads
+ * inside a vendor booking carry their own due dates, and those are the dates
+ * people actually work to. A calendar of campaign deadlines alone would look
+ * complete while missing most of the work.
+ */
+function CalendarPanel({
+  workspaceId, month, today, query, memberFilter, onMonth, onOpen,
+}: {
+  workspaceId: string;
+  month: string;
+  today: string;
+  query: string;
+  memberFilter: string;
+  onMonth: (m: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const { items, loading } = useCalendarItems(workspaceId);
+
+  const shown = items.filter((i) => {
+    if (memberFilter !== 'all' && i.assignee_id !== memberFilter) return false;
+    if (!query) return true;
+    return [i.title, i.context].some((v) => String(v || '').toLowerCase().includes(query));
+  });
+
+  if (loading) {
+    return (
+      <div className="aq-card" style={{ padding: 32, color: 'var(--aq-text-muted)' }}>
+        Loading campaigns, subtasks and ads…
+      </div>
+    );
+  }
+
+  return (
+    <TaskCalendar
+      tasks={shown.map((i) => ({
+        id: i.taskId,
+        key: i.id,
+        task_name: i.context && i.kind !== 'campaign' ? `${i.title}` : i.title,
+        brand_name: i.context,
+        due_date: i.due_date,
+        status: i.done ? 'done' : 'pending',
+        kind: i.kind,
+      }))}
+      month={month}
+      today={today}
+      onMonth={onMonth}
+      onOpen={onOpen}
+    />
+  );
+}
+
 function TaskCalendar({
   tasks, month, today, onMonth, onOpen,
 }: {
@@ -609,10 +667,10 @@ function TaskCalendar({
 
   const chip = (t: any, overdue: boolean) => (
     <button
-      key={t.id}
+      key={t.key ?? t.id}
       type="button"
       onClick={() => onOpen(t.id)}
-      title={name(t)}
+      title={t.brand_name ? `${name(t)} — ${t.brand_name}` : name(t)}
       style={{
         display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
         fontSize: 11, padding: '2px 5px', marginTop: 2, cursor: 'pointer',
@@ -683,7 +741,7 @@ function TaskCalendar({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 520, overflowY: 'auto' }}>
           {undated.map((t: any) => (
             <button
-              key={t.id}
+              key={t.key ?? t.id}
               type="button"
               onClick={() => onOpen(t.id)}
               style={{
@@ -706,11 +764,12 @@ function TaskCalendar({
 }
 
 function AllTasks({
-  tasks, profiles, serviceTypes, onOpen, currentUserId,
+  tasks, profiles, serviceTypes, onOpen, currentUserId, workspaceId,
 }: {
   tasks: any[]; profiles: any[]; serviceTypes: any[];
   onOpen: (id: string) => void;
   currentUserId: string;
+  workspaceId: string;
 }) {
   const labelRole = (role: string) => role === 'key_account' ? 'Key account' : role;
   const [query, setQuery] = useState('');
@@ -788,10 +847,12 @@ function AllTasks({
       </div>
 
       {mode === 'calendar' && today && month ? (
-        <TaskCalendar
-          tasks={filtered}
+        <CalendarPanel
+          workspaceId={workspaceId}
           month={month}
           today={today}
+          query={q}
+          memberFilter={memberFilter}
           onMonth={setMonth}
           onOpen={onOpen}
         />
