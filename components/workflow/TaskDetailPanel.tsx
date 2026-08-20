@@ -38,6 +38,7 @@ import {
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
 import { closerKey, closerFields, closerOptions, closerLabel } from '@/lib/sales-closer';
+import { AdLinesCard } from './AdLinesCard';
 import { TaskAssignees } from './TaskAssignees';
 import { RequestContractModal } from './RequestContractModal';
 import { AddVendorsModal } from './AddVendorsModal';
@@ -1938,13 +1939,11 @@ export function TaskDetailPanel({
                   <div style={SALES_ROW}>
                     <span style={SALES_LABEL}>Runs from</span>
                     {canEditMarketing ? (
-                      <input
-                        className="aq-input"
-                        type="date"
+                      <DateField
                         style={{ maxWidth: 200 }}
-                        value={task.package_start_date ?? ''}
+                        value={task.package_start_date}
                         disabled={packageSaving}
-                        onChange={(e) => patchPackageFields({ package_start_date: e.target.value || null })}
+                        onCommit={(v) => patchPackageFields({ package_start_date: v })}
                       />
                     ) : (
                       <span>{task.package_start_date ?? '—'}</span>
@@ -1954,14 +1953,12 @@ export function TaskDetailPanel({
                   <div style={SALES_ROW}>
                     <span style={SALES_LABEL}>Runs to</span>
                     {canEditMarketing ? (
-                      <input
-                        className="aq-input"
-                        type="date"
+                      <DateField
                         style={{ maxWidth: 200 }}
-                        value={task.package_end_date ?? ''}
+                        value={task.package_end_date}
                         min={task.package_start_date ?? undefined}
                         disabled={packageSaving}
-                        onChange={(e) => patchPackageFields({ package_end_date: e.target.value || null })}
+                        onCommit={(v) => patchPackageFields({ package_end_date: v })}
                       />
                     ) : (
                       <span>{task.package_end_date ?? '—'}</span>
@@ -2173,13 +2170,10 @@ export function TaskDetailPanel({
                         ))}
                       </select>
 
-                      <input
-                        type="date"
-                        className="aq-input"
+                      <DateField
+                        value={null}
                         disabled={bulkBusy}
-                        onChange={(e) => {
-                          if (e.target.value) handleBulkEdit({ due_date: e.target.value });
-                        }}
+                        onCommit={(v) => { if (v) handleBulkEdit({ due_date: v }); }}
                         style={{ width: 'auto', padding: '4px 8px', fontSize: 12, color: 'var(--aq-text)' }}
                         aria-label="Set due date on selected subtasks"
                       />
@@ -2943,12 +2937,10 @@ function OperationsPanel({
 
         <Row label="Due date">
           {canEdit
-            ? <input
-                type="date"
-                className="aq-input"
+            ? <DateField
                 style={{ maxWidth: 200 }}
-                defaultValue={task.due_date ?? ''}
-                onChange={(e) => save('due_date', e.target.value || null)}
+                value={task.due_date}
+                onCommit={(v) => save('due_date', v)}
               />
             : <span>{task.due_date || '—'}</span>}
         </Row>
@@ -2966,8 +2958,23 @@ function OperationsPanel({
   // PER-VENDOR (subtask) fields ───────────────────────────────────────
   if (isSubtaskView) {
     return (
+      <>
+      
       <section className="aq-card" style={{ padding: 18 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Operations · Vendor</h3>
+
+        {/* A due date so the calendar has something to place. Without one a
+            task falls into the "No due date" rail on All Tasks, in red —
+            visible rather than simply absent. */}
+        <Row label="Due date">
+          {canEdit
+            ? <DateField
+                style={{ maxWidth: 200 }}
+                value={task.due_date}
+                onCommit={(v) => save('due_date', v)}
+              />
+            : <span>{task.due_date || '—'}</span>}
+        </Row>
 
         <Row label="Price (SAR)">
           {canEdit
@@ -3050,12 +3057,10 @@ function OperationsPanel({
             were paid; the column is untouched in the database. */}
         <Row label="Vendor paid on">
           {canEdit
-            ? <input
-                type="date"
-                className="aq-input"
+            ? <DateField
                 style={{ maxWidth: 200 }}
-                defaultValue={task.vendor_payment_date ?? ''}
-                onChange={(e) => save('vendor_payment_date', e.target.value || null)}
+                value={task.vendor_payment_date}
+                onCommit={(v) => save('vendor_payment_date', v)}
               />
             : <span>{task.vendor_payment_date || '—'}</span>}
         </Row>
@@ -3113,7 +3118,12 @@ function OperationsPanel({
           </Row>
         </div>
         )}
-      </section>
+        </section>
+
+      {/* The ads inside this booking. One contract is written from all of
+          them — see lib/ad-lines.ts. */}
+      <AdLinesCard subtaskId={task.id} canEdit={canEdit} />
+    </>
     );
   }
 
@@ -3121,6 +3131,19 @@ function OperationsPanel({
   return (
     <section className="aq-card" style={{ padding: 18 }}>
       <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Operations · Campaign</h3>
+
+      {/* A due date so the calendar has something to place. Without one a
+          task falls into the "No due date" rail on All Tasks, in red —
+          visible rather than simply absent. */}
+      <Row label="Due date">
+        {canEdit
+          ? <DateField
+              style={{ maxWidth: 200 }}
+              value={task.due_date}
+              onCommit={(v) => save('due_date', v)}
+            />
+          : <span>{task.due_date || '—'}</span>}
+      </Row>
 
       <Row label="Source">
         {canEdit
@@ -3284,12 +3307,10 @@ function OperationsPanel({
               <option value="partial">Partial</option>
               <option value="paid">Paid</option>
             </select>
-            <input
-              type="date"
-              className="aq-input"
+            <DateField
               style={{ maxWidth: 160 }}
-              defaultValue={task.client_payment_date ?? ''}
-              onChange={(e) => save('client_payment_date', e.target.value || null)}
+              value={task.client_payment_date}
+              onCommit={(v) => save('client_payment_date', v)}
             />
             <TextInput
               defaultValue={task.client_payment_amount != null ? String(task.client_payment_amount) : ''}
@@ -3351,12 +3372,10 @@ function OperationsPanel({
 
       <Row label="Net payment date">
         {canEdit
-          ? <input
-              type="date"
-              className="aq-input"
+          ? <DateField
               style={{ maxWidth: 200 }}
-              defaultValue={task.net_payment_date ?? ''}
-              onChange={(e) => save('net_payment_date', e.target.value || null)}
+              value={task.net_payment_date}
+              onCommit={(v) => save('net_payment_date', v)}
             />
           : <span>{task.net_payment_date || '—'}</span>}
       </Row>
@@ -3530,3 +3549,56 @@ function TextInput({
     />
   );
 }
+
+/**
+ * A date box that saves when you LEAVE it, not while you are still picking.
+ *
+ * Every date on this panel used to be `<input type="date" onChange={save}>`.
+ * Chrome's picker fires `change` the moment it has a usable value — so
+ * clicking a month in the dropdown wrote a date to the database and
+ * re-rendered the row before you had chosen the day, which read as "it
+ * submitted on its own". The bulk-edit one was worse: a half-made date was
+ * written to every selected subtask at once.
+ *
+ * So: keep a draft while the picker is open, commit on blur or Enter, and
+ * say nothing if the value did not actually change — a no-op write still
+ * costs a round trip and still bumps updated_at.
+ */
+function DateField({
+  value, onCommit, disabled, min, style, 'aria-label': ariaLabel,
+}: {
+  value: string | null | undefined;
+  onCommit: (next: string | null) => void;
+  disabled?: boolean;
+  min?: string;
+  style?: React.CSSProperties;
+  'aria-label'?: string;
+}) {
+  const [draft, setDraft] = useState(value ?? '');
+  // Follow the row if it changes underneath us — a refetch, or somebody else.
+  useEffect(() => { setDraft(value ?? ''); }, [value]);
+
+  const commit = () => {
+    const next = draft || null;
+    if ((value ?? null) === next) return;
+    onCommit(next);
+  };
+
+  return (
+    <input
+      type="date"
+      className="aq-input"
+      style={style}
+      value={draft}
+      min={min}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+      }}
+    />
+  );
+}
+

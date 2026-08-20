@@ -8,6 +8,7 @@ import {
   type Profile, type WorkspaceRole, type PmTaskCampaignRollup,
 } from '@/hooks/use-workflow';
 import { countFollowUps } from '@/lib/crm-sync';
+import { FollowUps } from './FollowUps';
 
 /**
  * Home dashboard — replaces the role-default landing page.
@@ -22,7 +23,7 @@ export function WorkflowDashboard({
   role: WorkspaceRole | null;
   profiles: (Profile & { role: WorkspaceRole })[];
   onOpenTask: (id: string) => void;
-  onGoTo: (view: 'inbox' | 'marketing-triage' | 'all-tasks' | 'my-tasks' | 'team' | 'new-task') => void;
+  onGoTo: (view: 'inbox' | 'marketing-triage' | 'all-tasks' | 'team' | 'new-task') => void;
 }) {
   const roleLabel = (value: string | null | undefined) => value === 'key_account' ? 'Key account' : value;
   const { stats } = useWorkspaceStats(workspaceId, userId);
@@ -61,9 +62,13 @@ export function WorkflowDashboard({
         </p>
       </header>
 
+      {/* Follow-ups moved here when My Tasks was retired — the counters above
+          already count them, so this is where they belong. */}
+      <FollowUps workspaceId={workspaceId} userId={userId} />
+
       {/* Stat cards */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-        <Stat label="My tasks"          value={stats.mine + crm.open}  onClick={() => onGoTo('my-tasks')} />
+        <Stat label="My tasks"          value={stats.mine + crm.open}  onClick={() => onGoTo('all-tasks')} />
         <Stat label="Overdue"           value={stats.overdue + crm.overdue} tone={stats.overdue + crm.overdue ? 'error' : 'default'} />
         <Stat label="Due today"         value={stats.dueToday + crm.today}  tone={stats.dueToday + crm.today ? 'warning' : 'default'} />
         <Stat label="Pending triage"    value={stats.pendingMarketing} onClick={() => onGoTo('marketing-triage')} tone={stats.pendingMarketing ? 'info' : 'default'} />
@@ -86,7 +91,7 @@ export function WorkflowDashboard({
         <div className="aq-card" style={{ padding: 20 }}>
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 style={{ fontSize: 16, fontWeight: 700 }}>My tasks</h3>
-            <button className="aq-btn aq-btn-ghost" onClick={() => onGoTo('my-tasks')} style={{ padding: '4px 10px', fontSize: 12 }}>
+            <button className="aq-btn aq-btn-ghost" onClick={() => onGoTo('all-tasks')} style={{ padding: '4px 10px', fontSize: 12 }}>
               View all
             </button>
           </header>

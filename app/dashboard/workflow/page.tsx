@@ -1,17 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { withBase } from '@/lib/paths';
 import {
   useMyRole, useServiceTypes, useWorkspaceProfiles, useWorkflowTasks,
   displayName, needsRealName,
 } from '@/hooks/use-workflow';
+import { useRealtime } from '@/hooks/use-realtime';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
 import { MarketingInbox } from '@/components/workflow/MarketingInbox';
-import { MyTasksList } from '@/components/workflow/MyTasksList';
 import { TaskDetailPanel } from '@/components/workflow/TaskDetailPanel';
 // NotificationsBell removed from topbar 2026-05-17 — the inbox is now an
 // item in the left sidebar (see WorkflowSidebar "Inbox" entry) which opens
@@ -26,6 +26,9 @@ import { VendorsView } from '@/components/workflow/VendorsView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
 import { DataView } from '@/components/workflow/DataView';
 import { prefillFromDeal, type CampaignPrefill } from '@/lib/crm-sync';
+import {
+  monthGrid, splitByDueDate, monthTitle, shiftMonth, isOverdue, WEEKDAYS,
+} from '@/lib/task-calendar';
 
 const supabase = createClient();
 
@@ -180,9 +183,30 @@ export default function WorkflowPage() {
   }, [toast]);
 
   // The manual Refresh button is gone (Aug 2026). Every view refetches when
-  // it mounts, and each action that changes something already refetches what
-  // it touched — so the button's only real job was to reassure, and it cost a
-  // control in the corner of every single screen.
+  // it mounts, each action refetches what it touched — and now the database
+  // pushes changes as they happen, so a task somebody else creates appears
+  // here on its own.
+  //
+  // Debounced, because a bulk edit of twenty subtasks arrives as twenty
+  // separate events and would otherwise fire twenty identical refetches.
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (syncTimer.current) clearTimeout(syncTimer.current); }, []);
+
+  const syncFromRealtime = () => {
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      refetchPending();
+      refetchAll();
+      setRefreshTick((n) => n + 1);
+    }, 400);
+  };
+
+  useRealtime({
+    table: 'pm_tasks',
+    enabled: !!wsId,
+    filter: wsId ? `workspace_id=eq.${wsId}` : undefined,
+    onChange: syncFromRealtime,
+  });
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -222,7 +246,7 @@ export default function WorkflowPage() {
   // they'd just see "Marketing only".
   const onTaskCreated = () => {
     refetchPending(); refetchAll();
-    setView(role === 'sales' ? 'my-tasks' : 'inbox');
+    setView(role === 'sales' ? 'all-tasks' : 'inbox');
     setRefreshTick((n) => n + 1);
     setToast({ kind: 'ok', text: 'Task submitted to marketing.' });
   };
@@ -335,15 +359,7 @@ export default function WorkflowPage() {
             tasks={allTasks}
             profiles={profiles}
             serviceTypes={serviceTypes}
-            onOpen={(id) => setOpenTaskId(id)}
-          />
-        )}
-
-        {view === 'my-tasks' && (
-          <MyTasksList
-            workspaceId={workspace.id}
-            userId={user.id}
-            refreshKey={refreshTick}
+            currentUserId={user.id}
             onOpen={(id) => setOpenTaskId(id)}
           />
         )}
@@ -521,7 +537,6 @@ function viewTitle(v: View) {
     : v === 'crm'      ? 'CRM'
     : v === 'marketing-triage' ? 'Marketing Inbox'
     : v === 'all-tasks'? 'All Tasks'
-    : v === 'my-tasks' ? 'My Tasks'
     : v === 'contracts'? 'Contract Requests'
     : v === 'clients'  ? 'Clients'
     : v === 'vendors'  ? 'Vendors'
@@ -537,7 +552,6 @@ function viewSubtitle(v: View) {
     : v === 'crm'       ? 'Client and vendor relationships — activity log, notes, recent contact.'
     : v === 'marketing-triage' ? 'Tasks waiting for priority, service type, and a key account.'
     : v === 'all-tasks' ? 'Every workflow task in this workspace — searchable.'
-    : v === 'my-tasks'  ? "What you're assigned to or own."
     : v === 'contracts' ? 'Vendor and client contract requests submitted from tasks.'
     : v === 'clients'   ? 'Add and search approved clients used by projects and contracts.'
     : v === 'vendors'   ? 'Add vendors, bank details, and review pending registration requests.'
@@ -567,16 +581,150 @@ function TeamPanel({ profiles }: { profiles: any[] }) {
   );
 }
 
+
+/**
+ * Tasks on a month grid, with the ones nobody dated beside it.
+ *
+ * The rail is the point of this view as much as the grid is. A task with no
+ * due date cannot be drawn on a calendar, and a calendar that simply omits it
+ * is worse than no calendar: the work disappears and the page still looks
+ * complete. So they sit to the right, in red, counted.
+ *
+ * All the date arithmetic is in lib/task-calendar.ts, which is pure and
+ * tested — including February, year boundaries and months that start on a
+ * Sunday, all of which look fine in whatever month you happen to build in.
+ */
+function TaskCalendar({
+  tasks, month, today, onMonth, onOpen,
+}: {
+  tasks: any[];
+  month: string;
+  today: string;
+  onMonth: (m: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const { dated, undated } = splitByDueDate(tasks, (t: any) => t.due_date);
+  const weeks = monthGrid(month, dated, (t: any) => t.due_date, today);
+  const name = (t: any) => t.task_name || t.title || 'Untitled';
+
+  const chip = (t: any, overdue: boolean) => (
+    <button
+      key={t.id}
+      type="button"
+      onClick={() => onOpen(t.id)}
+      title={name(t)}
+      style={{
+        display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
+        fontSize: 11, padding: '2px 5px', marginTop: 2, cursor: 'pointer',
+        borderRadius: 5, border: '1px solid var(--aq-border-light)',
+        background: overdue ? '#fee2e2' : 'var(--aq-bg-sunken)',
+        color: overdue ? '#b91c1c' : 'var(--aq-text)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}
+    >{name(t)}</button>
+  );
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 3fr) minmax(220px, 1fr)', gap: 14, alignItems: 'start' }}>
+      <div className="aq-card" style={{ padding: 16 }}>
+        <header style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <button type="button" className="aq-btn aq-btn-secondary"
+                  onClick={() => onMonth(shiftMonth(month, -1))}
+                  style={{ fontSize: 12.5, padding: '4px 10px' }}>←</button>
+          <strong style={{ fontSize: 15 }}>{monthTitle(month)}</strong>
+          <button type="button" className="aq-btn aq-btn-secondary"
+                  onClick={() => onMonth(shiftMonth(month, 1))}
+                  style={{ fontSize: 12.5, padding: '4px 10px' }}>→</button>
+          <button type="button" className="aq-btn aq-btn-secondary"
+                  onClick={() => onMonth(today.slice(0, 7))}
+                  style={{ fontSize: 12.5, padding: '4px 10px', marginLeft: 'auto' }}>Today</button>
+        </header>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4 }}>
+          {WEEKDAYS.map((d) => (
+            <div key={d} style={{
+              fontSize: 10.5, fontWeight: 700, letterSpacing: '.08em',
+              textTransform: 'uppercase', color: 'var(--aq-text-muted)',
+              padding: '2px 4px',
+            }}>{d}</div>
+          ))}
+          {weeks.flat().map((cell) => (
+            <div key={cell.day} style={{
+              minHeight: 92, padding: 4, borderRadius: 8,
+              border: cell.isToday ? '1px solid var(--aq-text)' : '1px solid var(--aq-border-light)',
+              background: cell.inMonth ? 'transparent' : 'var(--aq-bg-sunken)',
+              opacity: cell.inMonth ? 1 : 0.55,
+            }}>
+              <div style={{
+                fontSize: 11, fontWeight: cell.isToday ? 700 : 500,
+                color: cell.inMonth ? 'var(--aq-text-secondary)' : 'var(--aq-text-muted)',
+              }}>{cell.dayOfMonth}</div>
+              {cell.items.slice(0, 3).map((t: any) =>
+                chip(t, isOverdue(t.due_date, today, t.status === 'done' || t.stage === 'completed')))}
+              {cell.items.length > 3 && (
+                <div style={{ fontSize: 10.5, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+                  +{cell.items.length - 3} more
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="aq-card" style={{ padding: 16, border: undated.length ? '1px solid #b91c1c' : undefined }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: undated.length ? '#b91c1c' : 'var(--aq-text)' }}>
+          No due date {undated.length ? `· ${undated.length}` : ''}
+        </h3>
+        <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '2px 0 10px' }}>
+          {undated.length
+            ? 'These cannot be placed on the calendar. Give them a due date and they move across.'
+            : 'Everything in view has a due date.'}
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 520, overflowY: 'auto' }}>
+          {undated.map((t: any) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onOpen(t.id)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
+                fontSize: 12.5, padding: '7px 9px', cursor: 'pointer',
+                border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
+                borderRadius: 7,
+              }}
+            >
+              <strong style={{ display: 'block', fontWeight: 600 }}>{name(t)}</strong>
+              <span style={{ fontSize: 11, opacity: 0.85 }}>
+                no due date{t.brand_name ? ` · ${t.brand_name}` : ''}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AllTasks({
-  tasks, profiles, serviceTypes, onOpen,
+  tasks, profiles, serviceTypes, onOpen, currentUserId,
 }: {
   tasks: any[]; profiles: any[]; serviceTypes: any[];
   onOpen: (id: string) => void;
+  currentUserId: string;
 }) {
   const labelRole = (role: string) => role === 'key_account' ? 'Key account' : role;
   const [query, setQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [memberFilter, setMemberFilter] = useState<string>('all');
+  const [mode, setMode] = useState<'list' | 'calendar'>('list');
+
+  // Today is read after mount, never during render: the server does not know
+  // what day it is where you are, and a mismatch between the two renders is a
+  // hydration error.
+  const [today, setToday] = useState<string | null>(null);
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+  const [month, setMonth] = useState<string | null>(null);
+  useEffect(() => { if (today && !month) setMonth(today.slice(0, 7)); }, [today, month]);
 
   const q = query.trim().toLowerCase();
   const filtered = tasks.filter((t) => {
@@ -622,16 +770,32 @@ function AllTasks({
         </select>
         <select className="aq-select" value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)}>
           <option value="all">All members</option>
-          {profiles.map((p) => (
+          {/* What the My Tasks screen used to be, as one option here. */}
+          <option value={currentUserId}>Only mine</option>
+          {profiles.filter((p) => p.id !== currentUserId).map((p) => (
             <option key={p.id} value={p.id}>{p.full_name} ({labelRole(p.role)})</option>
           ))}
         </select>
-        <span className="aq-badge aq-badge-muted" style={{ alignSelf: 'center' }}>
-          {filtered.length} · {completed} done
+        <span style={{ alignSelf: 'center', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="aq-badge aq-badge-muted">{filtered.length} · {completed} done</span>
+          <button
+            type="button"
+            className="aq-btn aq-btn-secondary"
+            onClick={() => setMode(mode === 'list' ? 'calendar' : 'list')}
+            style={{ fontSize: 12.5, padding: '5px 12px', whiteSpace: 'nowrap' }}
+          >{mode === 'list' ? 'Calendar' : 'List'}</button>
         </span>
       </div>
 
-      {filtered.length === 0 ? (
+      {mode === 'calendar' && today && month ? (
+        <TaskCalendar
+          tasks={filtered}
+          month={month}
+          today={today}
+          onMonth={setMonth}
+          onOpen={onOpen}
+        />
+      ) : filtered.length === 0 ? (
         <div className="aq-card" style={{ padding: 32, textAlign: 'center', color: 'var(--aq-text-muted)' }}>
           {tasks.length === 0
             ? 'No workflow tasks yet. Try the New Task screen.'

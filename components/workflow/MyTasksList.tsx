@@ -1,5 +1,17 @@
 'use client';
 
+/**
+ * RETIRED (Aug 2026). Nothing imports this any more.
+ *
+ * My Tasks was All Tasks with one filter applied, and two lists of the same
+ * rows meant two places to look and two places to fix. All Tasks now carries
+ * an "Only mine" option in its member filter, and the CRM follow-ups this
+ * screen used to show moved to the Dashboard as components/workflow/FollowUps.
+ *
+ * Kept rather than deleted only because deleting a file is awkward through
+ * the upload flow; it can go whenever somebody is in the repo properly.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import {

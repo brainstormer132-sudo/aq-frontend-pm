@@ -7,7 +7,7 @@ import { AQMark } from '@/components/auth/AQMark';
 /** Remembered across sessions so the sidebar opens the way you left it. */
 const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 
-type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'my-tasks' | 'crm'
+type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'crm'
           | 'clients' | 'vendors' | 'tracking' | 'contracts' | 'data'
           | 'team' | 'settings';
 
@@ -30,7 +30,10 @@ const NAV: NavItem[] = [
   // notify Ops, and All Tasks is how they browse to the campaign that owns the
   // subtask they were pinged about.
   { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account','operations'] },
-  { id: 'my-tasks',  label: 'My Tasks',   icon: 'check',    visibleTo: [] },
+  // My Tasks retired Aug 2026: it was All Tasks with one filter applied, and
+  // two lists of the same rows meant two places to look. All Tasks now has an
+  // "Only mine" option in the member filter, and the CRM follow-ups it used to
+  // carry moved to the Dashboard.
   // Marketing Triage — tasks waiting for priority/service-type/key-account.
   // Marketing/admin/owner only. The dashboard "Pending triage" stat card
   // also links here.

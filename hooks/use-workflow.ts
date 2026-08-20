@@ -6,6 +6,9 @@ import {
   onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
   onClientPaymentChanged, onDealWon, onDealLost,
 } from '@/lib/crm-sync';
+import {
+  totalsOf, adTypeSummary, contractDetails, type AdLine,
+} from '@/lib/ad-lines';
 
 const supabase = createClient();
 
@@ -1620,6 +1623,77 @@ export function vendorPickerOption(v: LegacyVendor): {
     keywords: [v.license_number, v.id_number, v.vat_number, category]
       .filter(Boolean).join(' '),
   };
+}
+
+
+// ── Ad lines inside a vendor subtask (migration 056) ────────────────
+//
+// A Package Ad is one booking with several ads in it. The subtask holds the
+// vendor, the money and the contract; the lines hold what was actually
+// booked — six home ads, six store visits, three free reminders — and the
+// contract is written from them.
+
+export type { AdLine } from '@/lib/ad-lines';
+
+export function useVendorAdLines(subtaskId: string | null) {
+  const [lines, setLines] = useState<AdLine[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!subtaskId) { setLines([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('vendor_ad_lines')
+      .select('*')
+      .eq('subtask_id', subtaskId)
+      .order('position', { ascending: true });
+    if (error) logSbError('useVendorAdLines', error, { subtaskId });
+    setLines((data || []) as AdLine[]);
+    setLoading(false);
+  }, [subtaskId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { lines, loading, refetch: fetch };
+}
+
+/** Read the lines outside React — used when building a contract request. */
+export async function fetchVendorAdLines(subtaskId: string): Promise<AdLine[]> {
+  const { data, error } = await supabase
+    .from('vendor_ad_lines')
+    .select('*')
+    .eq('subtask_id', subtaskId)
+    .order('position', { ascending: true });
+  if (error) { logSbError('fetchVendorAdLines', error, { subtaskId }); return []; }
+  return (data || []) as AdLine[];
+}
+
+export async function createAdLine(input: AdLine): Promise<AdLine> {
+  const { data, error } = await supabase
+    .from('vendor_ad_lines')
+    .insert({
+      subtask_id: input.subtask_id,
+      position: input.position ?? 0,
+      ad_type: (input.ad_type ?? '').trim(),
+      platform: input.platform ?? null,
+      quantity: input.quantity ?? 1,
+      unit_price: input.unit_price ?? 0,
+      notes: input.notes ?? null,
+    })
+    .select()
+    .single();
+  if (error) { logSbError('createAdLine', error, { subtask: input.subtask_id }); throw error; }
+  return data as AdLine;
+}
+
+export async function updateAdLine(id: string, fields: Partial<AdLine>): Promise<void> {
+  // line_total is generated — sending it back would be rejected by Postgres.
+  const { line_total, id: _id, subtask_id, ...rest } = fields as any;
+  const { error } = await supabase.from('vendor_ad_lines').update(rest).eq('id', id);
+  if (error) { logSbError('updateAdLine', error, { id }); throw error; }
+}
+
+export async function deleteAdLine(id: string): Promise<void> {
+  const { error } = await supabase.from('vendor_ad_lines').delete().eq('id', id);
+  if (error) { logSbError('deleteAdLine', error, { id }); throw error; }
 }
 
 // ── Campaign money rollup (migration 042) ───────────────────────────
@@ -3619,6 +3693,8 @@ export function vendorContractReadiness(
   subtask: PMTask | null,
   vendor: LegacyVendor | null,
   bank: LegacyBankAccount | null,
+  /** Sum of the subtask's ad lines, when the caller has them. */
+  linesTotal?: number | null,
 ): ContractReadiness {
   const missing: MissingRequirement[] = [];
   const has = (v: unknown) => typeof v === 'string' ? v.trim().length > 0 : v != null;
@@ -3629,8 +3705,16 @@ export function vendorContractReadiness(
     missing.push({ label: 'Vendor', where: 'this subtask' });
   }
 
-  if (vendorSubtaskAmount(subtask) == null) {
-    missing.push({ label: 'Price', where: 'this subtask' });
+  // Money can come from either place: a single price on the subtask, or the
+  // ad lines inside it. `linesTotal` is passed in by callers that have
+  // already loaded them — a booking priced entirely through its lines has no
+  // subtask price, and asking for one would be asking for the same number
+  // twice.
+  const money = linesTotal != null && linesTotal > 0
+    ? linesTotal
+    : vendorSubtaskAmount(subtask);
+  if (money == null) {
+    missing.push({ label: 'Price, or at least one ad line', where: 'this subtask' });
   }
 
   if (vendor) {
@@ -3728,8 +3812,12 @@ function buildVendorContractPayload(opts: {
   client?: ClientRow | null;
   requestedBy: string;
   notes?: string | null;
+  /** The ads inside this booking (migration 056). Empty = the old shape. */
+  lines?: AdLine[];
 }) {
   const { subtask, parent, vendor, bank, client, requestedBy, notes } = opts;
+  const lines = opts.lines ?? [];
+  const lineTotals = totalsOf(lines);
   const txt = (v: unknown) => {
     const s = typeof v === 'string' ? v.trim() : v == null ? '' : String(v);
     return s.length ? s : null;
@@ -3748,7 +3836,10 @@ function buildVendorContractPayload(opts: {
     request_kind: 'vendor' as const,
     template_key: null,
     brand_name: parent.brand_name ?? subtask.brand_name ?? '',
-    amount: vendorSubtaskAmount(subtask),
+    // With ad lines, the lines ARE the price — a booking of six home ads and
+    // six store visits is worth what they add up to, and the subtask's single
+    // price field cannot express it. Without lines, nothing changes.
+    amount: lines.length ? lineTotals.amount : vendorSubtaskAmount(subtask),
     notes: notes ?? null,
 
     // Who the work is ultimately for. The contract app shows it as context;
@@ -3775,13 +3866,19 @@ function buildVendorContractPayload(opts: {
     license_number: txt(vendor.license_number) ?? txt(vendor.id_number),
     is_influencer: isTrackableVendorCategory(vendor.vendor_category),
     platforms,
-    ad_type: adType,
-    // One vendor subtask is one booking unless somebody said otherwise.
-    // `channel` is left alone: it isn't the same thing as the platform list
-    // and filling it with a copy would just be inventing data.
-    qty: null,
+    // "6 × Home Ad, 6 × Store Visit, 3 × Reminder" rather than one ad type,
+    // so the contract says what was actually booked.
+    ad_type: lines.length ? adTypeSummary(lines) : adType,
+    // Counted by quantity: six home ads are six ads, not one line.
+    // `channel` is still left alone — it isn't the platform list, and filling
+    // it with a copy would be inventing data.
+    qty: lines.length ? lineTotals.ads : null,
     channel: null,
-    details: subtask.title ?? null,
+    // Itemised once, free lines included. A reminder that costs nothing is
+    // still part of the agreement.
+    details: lines.length
+      ? contractDetails(lines, subtask.title ?? null)
+      : (subtask.title ?? null),
   };
 }
 
@@ -3825,7 +3922,11 @@ export async function sendVendorContractRequest(opts: {
     throw new Error('This subtask has no workspace; cannot raise a request.');
   }
 
-  const check = vendorContractReadiness(subtask, vendor, bank);
+  // One contract per vendor subtask, covering every ad inside it.
+  const lines = await fetchVendorAdLines(subtask.id);
+  const linesTotal = totalsOf(lines).amount;
+
+  const check = vendorContractReadiness(subtask, vendor, bank, linesTotal);
   if (!check.ready || !vendor) {
     throw new Error(
       `Not ready to send. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
@@ -3834,7 +3935,7 @@ export async function sendVendorContractRequest(opts: {
 
   return insertVendorContractRequest(
     subtask,
-    buildVendorContractPayload({ ...opts, vendor, bank }),
+    buildVendorContractPayload({ ...opts, vendor, bank, lines }),
   );
 }
 
@@ -3859,18 +3960,22 @@ export async function autoCreateContractRequestForSubtask(opts: {
   // Already sent? Don't double-fire.
   if ((subtask as any).contract_request_id) return null;
 
-  // Need both a vendor and a price to be meaningful.
+  // Need a vendor, and money from somewhere — the subtask's price or its ad
+  // lines. A package booked entirely through lines has no subtask price.
   if (!vendor) return null;
-  if (vendorSubtaskAmount(subtask) == null) return null;
+
+  const lines = await fetchVendorAdLines(subtask.id);
+  const linesTotal = totalsOf(lines).amount;
+  if (vendorSubtaskAmount(subtask) == null && linesTotal <= 0) return null;
 
   if (!subtask.workspace_id) {
     throw new Error('Subtask has no workspace_id; cannot create contract request.');
   }
-  if (!vendorContractReadiness(subtask, vendor, bank).ready) return null;
+  if (!vendorContractReadiness(subtask, vendor, bank, linesTotal).ready) return null;
 
   return insertVendorContractRequest(
     subtask,
-    buildVendorContractPayload({ ...opts, vendor, bank }),
+    buildVendorContractPayload({ ...opts, vendor, bank, lines }),
   );
 }
 
