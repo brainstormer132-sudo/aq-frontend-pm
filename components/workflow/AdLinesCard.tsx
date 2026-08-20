@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import {
-  createAdLines, updateAdLine, deleteAdLine, syncBookingPriceFromAds,
-  AD_TYPE_OPTIONS, type AdLine,
+  createAdLines, updateAdLine, deleteAdLine, AD_TYPE_OPTIONS, type AdLine,
 } from '@/hooks/use-workflow';
 import {
   totalsOf, lineTotal, lineProblems, adTypeSummary, newLines, lineLabel, hasProof,
@@ -18,10 +17,10 @@ import { SkeletonRows } from '@/components/Skeleton';
  * vendor booked for it, then each ad that vendor owes.
  *
  * They are ads, not tasks of their own, and that is deliberate. Everything
- * that is true of the booking stays on the booking: one vendor, one price
- * roll-up, ONE contract written from all the lines. What differs per ad —
- * its day, its brief, its status, its proof — lives on the ad. Promoting
- * them to real tasks would have split the contract too.
+ * that is true of the booking stays on the booking: one vendor, one price of
+ * its own, ONE contract written from all the lines. What differs per ad —
+ * its day, its brief, its status, its price, its proof — lives on the ad.
+ * Promoting them to real tasks would have split the contract too.
  *
  * The list only shows things. Editing happens inside one ad at a time,
  * opened by clicking it, because a grid of forty live inputs is where you
@@ -33,7 +32,6 @@ import { SkeletonRows } from '@/components/Skeleton';
  */
 export function AdLinesCard({
   subtaskId, canEdit, lines, loading, refetch, platformOptions, defaultPlatform,
-  onTotalChanged,
 }: {
   subtaskId: string;
   canEdit: boolean;
@@ -42,8 +40,6 @@ export function AdLinesCard({
   refetch: () => Promise<void> | void;
   platformOptions: string[];
   defaultPlatform?: string | null;
-  /** Refresh the booking above — its price is written from these ads. */
-  onTotalChanged?: () => Promise<void> | void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -54,18 +50,11 @@ export function AdLinesCard({
   const undated = lines.filter((l) => !l.due_date);
   const unproven = adsMissingProof(lines);
 
-  /** Every write moves the booking's price, so every write pushes it up. */
-  const syncUp = async () => {
-    await syncBookingPriceFromAds(subtaskId);
-    await onTotalChanged?.();
-  };
-
   const add = async (spec: AdLineSpec) => {
     setError('');
     try {
       await createAdLines(newLines(subtaskId, lines, spec));
       await refetch();
-      await syncUp();
       setAdding(false);
     } catch (e: any) { setError(e?.message ?? String(e)); throw e; }
   };
@@ -75,11 +64,7 @@ export function AdLinesCard({
     const problems = lineProblems({ ...line, ...fields });
     if (problems.length) { setError(problems[0]); return; }
     setBusy(line.id); setError('');
-    try {
-      await updateAdLine(line.id, fields);
-      await refetch();
-      if ('unit_price' in fields) await syncUp();
-    }
+    try { await updateAdLine(line.id, fields); await refetch(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };
@@ -87,7 +72,7 @@ export function AdLinesCard({
   const remove = async (line: AdLine) => {
     if (!line.id) return;
     setBusy(line.id); setError('');
-    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); await syncUp(); }
+    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };
@@ -111,10 +96,11 @@ export function AdLinesCard({
         )}
       </header>
 
-      {/* ── The roll-up, above the list ──────────────────────────────
-          This is the number that goes on the contract and into the
-          campaign's money. It is computed from the ads below and cannot be
-          typed, so it cannot disagree with them. */}
+      {/* ── What the ads add up to ───────────────────────────────────
+          A read-out, not a source of truth. It does NOT get written onto
+          the booking: the vendor's Price is typed by hand and stands on its
+          own, which is how it worked before and what Siraj asked for back
+          (Aug 2026). This is here so you can check the two agree. */}
       {lines.length > 0 && (
         <div style={{
           padding: '10px 14px', marginBottom: 12,
