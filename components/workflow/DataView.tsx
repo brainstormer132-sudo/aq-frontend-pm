@@ -6,6 +6,7 @@ import {
   useTaskSources, useClientCategories, useServiceTypes,
 } from '@/hooks/use-workflow';
 import { useDashboardRows } from '@/hooks/use-dashboard';
+import { SkeletonDashboard } from '@/components/Skeleton';
 import {
   ALL_TIME, buildDashboard, searchEntities, compact, full, toCsv,
   type Cell, type DateRange, type Scope, type SearchHit, type Tone,
@@ -231,9 +232,10 @@ export function DataView({
       )}
 
       {loading && rows.length === 0 ? (
-        <div className="aq-card" style={{ padding: 28, color: 'var(--aq-text-muted)' }}>
-          Loading every campaign and subtask…
-        </div>
+        // It really is loading every campaign and every subtask, so this is
+        // the slowest screen in the app. Showing the shape of the answer
+        // beats a sentence explaining why it is taking a while.
+        <SkeletonDashboard />
       ) : (
         <>
           <div style={{

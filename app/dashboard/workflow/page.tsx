@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { withBase } from '@/lib/paths';
 import {
@@ -10,6 +10,7 @@ import {
 import { useRealtime } from '@/hooks/use-realtime';
 import { useCalendarItems } from '@/hooks/use-calendar-items';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
+import { SkeletonShell, SkeletonRows } from '@/components/Skeleton';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
 import { MarketingInbox } from '@/components/workflow/MarketingInbox';
@@ -55,8 +56,6 @@ export default function WorkflowPage() {
   const [bootError, setBootError] = useState('');
   const [booting, setBooting] = useState(true);
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  // Bumping this triggers child components (MyTasksList etc.) to refetch.
-  const [refreshTick, setRefreshTick] = useState(0);
   // Slide-over task detail panel — null when closed.
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   // Set when a CRM deal is won: the New Task form opens filled in from it.
@@ -115,21 +114,22 @@ export default function WorkflowPage() {
       // fallback got written into profiles.full_name at signup and every
       // view then rendered it faithfully. An address is not a name — if
       // there isn't one, say so and prompt for it (SetYourNameCard).
-      const { data: myProfile } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('id', u.id)
-        .maybeSingle();
+      // These two do not need each other, so they go together. In sequence
+      // they were two round trips before anything at all could render, on
+      // top of the two above.
+      const [{ data: myProfile }, { data: memberships, error: mErr }] = await Promise.all([
+        supabase.from('profiles').select('full_name').eq('id', u.id).maybeSingle(),
+        supabase
+          .from('workspace_members')
+          .select('workspace_id, workspace:workspaces(id, name)')
+          .eq('user_id', u.id)
+          .limit(1),
+      ]);
       setUser({
         id: u.id,
         email: u.email ?? '',
         full_name: displayName(myProfile as any),
       });
-      const { data: memberships, error: mErr } = await supabase
-        .from('workspace_members')
-        .select('workspace_id, workspace:workspaces(id, name)')
-        .eq('user_id', u.id)
-        .limit(1);
       if (mErr) { setBootError(mErr.message); setBooting(false); return; }
       const ws = (memberships?.[0] as any)?.workspace;
       if (ws) setWorkspace({ id: ws.id, name: ws.name });
@@ -149,8 +149,15 @@ export default function WorkflowPage() {
   const { role } = useMyRole(wsId);
   const { profiles, refetch: refetchProfiles } = useWorkspaceProfiles(wsId);
   const { serviceTypes, steps, refetch: refetchServiceTypes } = useServiceTypes(wsId);
-  const { tasks: pendingMarketing, refetch: refetchPending } = useWorkflowTasks(wsId, 'pending_marketing');
-  const { tasks: allTasks, refetch: refetchAll } = useWorkflowTasks(wsId, 'all');
+  const { tasks: allTasks, loading: tasksLoading, refetch: refetchAll } = useWorkflowTasks(wsId, 'all');
+
+  // Derived, not fetched. This used to be a second full scan of pm_tasks for
+  // rows the first scan had already returned — twice the wait on every load
+  // and on every save, for a number in the sidebar.
+  const pendingMarketing = useMemo(
+    () => allTasks.filter((t) => t.stage === 'pending_marketing'),
+    [allTasks],
+  );
 
   // Default landing: Dashboard for everyone — replaces the role-specific routing.
   const [initialViewSet, setInitialViewSet] = useState(false);
@@ -193,20 +200,28 @@ export default function WorkflowPage() {
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (syncTimer.current) clearTimeout(syncTimer.current); }, []);
 
-  const syncFromRealtime = () => {
+  /**
+   * Reload the task list, once, after things stop happening.
+   *
+   * Everything funnels through here — realtime events and the detail panel's
+   * own saves. Before, saving one field ran two full scans of pm_tasks and
+   * re-rendered the page, and then the realtime echo of that same save ran
+   * them again: four scans for one date. Typing felt like wading.
+   *
+   * 700ms because a save and its echo arrive within a few hundred
+   * milliseconds of each other, and a bulk edit of twenty subtasks arrives
+   * as twenty separate events.
+   */
+  const scheduleSync = () => {
     if (syncTimer.current) clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
-      refetchPending();
-      refetchAll();
-      setRefreshTick((n) => n + 1);
-    }, 400);
+    syncTimer.current = setTimeout(() => { refetchAll(); }, 700);
   };
 
   useRealtime({
     table: 'pm_tasks',
     enabled: !!wsId,
     filter: wsId ? `workspace_id=eq.${wsId}` : undefined,
-    onChange: syncFromRealtime,
+    onChange: scheduleSync,
   });
 
   const signOut = async () => {
@@ -215,16 +230,11 @@ export default function WorkflowPage() {
   };
 
   // ---- boot states ----
-  if (booting) {
-    return (
-      <div style={fullCenter}>
-        <div className="aq-card" style={{ padding: 32, textAlign: 'center' }}>
-          <Logo size={48} />
-          <p style={{ color: 'var(--aq-text-muted)', marginTop: 16 }}>Loading workspace…</p>
-        </div>
-      </div>
-    );
-  }
+  // The shell, in the shape it will be in a moment — sidebar where the
+  // sidebar goes, header where the header goes. A centred card in the middle
+  // of an empty page made every load feel like a cold start, because the
+  // whole layout arrived at once and jumped.
+  if (booting) return <SkeletonShell />;
   if (bootError) {
     return (
       <div className="aq-card" style={{ margin: 40, padding: 32, color: 'var(--aq-error)' }}>
@@ -246,15 +256,13 @@ export default function WorkflowPage() {
   // their submitted task in stage=pending_marketing) — not Inbox, where
   // they'd just see "Marketing only".
   const onTaskCreated = () => {
-    refetchPending(); refetchAll();
+    refetchAll();
     setView(role === 'sales' ? 'all-tasks' : 'inbox');
-    setRefreshTick((n) => n + 1);
     setToast({ kind: 'ok', text: 'Task submitted to marketing.' });
   };
 
   const onTaskTriaged = () => {
-    refetchPending(); refetchAll();
-    setRefreshTick((n) => n + 1);
+    refetchAll();
     setToast({ kind: 'ok', text: 'Task triaged. Subtasks created and key account notified.' });
   };
 
@@ -358,6 +366,7 @@ export default function WorkflowPage() {
         {view === 'all-tasks' && (
           <AllTasks
             tasks={allTasks}
+            loading={tasksLoading}
             profiles={profiles}
             serviceTypes={serviceTypes}
             currentUserId={user.id}
@@ -397,12 +406,13 @@ export default function WorkflowPage() {
         {/* Slide-over task detail */}
         <TaskDetailPanel
           taskId={openTaskId}
+          workspaceId={workspace.id}
           currentUserId={user.id}
           role={role}
           profiles={profiles}
           serviceTypeSteps={steps}
           onClose={() => setOpenTaskId(null)}
-          onChanged={() => { refetchPending(); refetchAll(); setRefreshTick((n) => n + 1); }}
+          onChanged={scheduleSync}
         />
 
         {/* Floating toast */}
@@ -764,9 +774,9 @@ function TaskCalendar({
 }
 
 function AllTasks({
-  tasks, profiles, serviceTypes, onOpen, currentUserId, workspaceId,
+  tasks, loading, profiles, serviceTypes, onOpen, currentUserId, workspaceId,
 }: {
-  tasks: any[]; profiles: any[]; serviceTypes: any[];
+  tasks: any[]; loading: boolean; profiles: any[]; serviceTypes: any[];
   onOpen: (id: string) => void;
   currentUserId: string;
   workspaceId: string;
@@ -856,6 +866,10 @@ function AllTasks({
           onMonth={setMonth}
           onOpen={onOpen}
         />
+      ) : loading && tasks.length === 0 ? (
+        // Not "no tasks yet" — that sentence was shown for the whole of every
+        // load, telling people with 400 campaigns that they had none.
+        <SkeletonRows rows={7} label="Loading tasks" />
       ) : filtered.length === 0 ? (
         <div className="aq-card" style={{ padding: 32, textAlign: 'center', color: 'var(--aq-text-muted)' }}>
           {tasks.length === 0

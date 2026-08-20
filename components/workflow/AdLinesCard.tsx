@@ -11,6 +11,7 @@ import {
 } from '@/lib/ad-lines';
 import { AddAdLinesDialog } from './AddAdLinesDialog';
 import { DateField } from './DateField';
+import { SkeletonRows } from '@/components/Skeleton';
 
 /**
  * The ads inside one vendor booking — the third level: campaign, then the
@@ -139,7 +140,9 @@ export function AdLinesCard({
       {error && <p style={{ fontSize: 12.5, color: '#b91c1c', marginBottom: 8 }}>{error}</p>}
 
       {loading ? (
-        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>Loading…</p>
+        // An empty booking and one that has not loaded yet used to look the
+        // same, and the empty one says "no ads yet" — which people acted on.
+        <SkeletonRows rows={3} height={44} gap={0} label="Loading ads" />
       ) : lines.length === 0 ? (
         <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
           No ads yet. Without them the contract is written from the single price on

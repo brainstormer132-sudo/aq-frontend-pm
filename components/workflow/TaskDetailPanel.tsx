@@ -41,6 +41,7 @@ import {
 import { closerKey, closerFields, closerOptions, closerLabel } from '@/lib/sales-closer';
 import { AdLinesCard } from './AdLinesCard';
 import { DateField } from './DateField';
+import { SkeletonLine, SkeletonFields } from '@/components/Skeleton';
 import {
   useResizablePanel, MIN_PANEL_WIDTH, maxPanelWidth,
 } from './use-resizable-panel';
@@ -75,7 +76,7 @@ const SALES_LABEL: React.CSSProperties = { color: 'var(--aq-text-muted)', fontWe
  * set, so all the existing hooks just work on them.
  */
 export function TaskDetailPanel({
-  taskId, currentUserId, role, profiles, serviceTypeSteps = [], onClose, onChanged,
+  taskId, workspaceId, currentUserId, role, profiles, serviceTypeSteps = [], onClose, onChanged,
 }: {
   taskId: string | null;
   currentUserId: string;
@@ -85,13 +86,22 @@ export function TaskDetailPanel({
   serviceTypeSteps?: ServiceTypeStep[];
   onClose: () => void;
   onChanged?: () => void;
+  /**
+   * The workspace, from the page that already knows it.
+   *
+   * Without it the lookups below had to wait for the task row to come back
+   * just to learn which workspace they were in — a second round trip for
+   * data that was never in doubt. Every dropdown in the panel was empty for
+   * the length of two requests instead of one.
+   */
+  workspaceId?: string | null;
 }) {
   // The task we're CURRENTLY viewing in the panel — may be the original
   // taskId or a subtask the user clicked into.
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(taskId);
   useEffect(() => { setCurrentTaskId(taskId); }, [taskId]);
 
-  const { task, refetch: refetchTask, loading } = useTask(currentTaskId);
+  const { task, refetch: refetchTask, apply: applyTask, loading } = useTask(currentTaskId);
   const { subtasks, refetch: refetchSubs } = useTaskSubtasks(currentTaskId);
   const { comments, refetch: refetchComments } = useTaskComments(currentTaskId);
   const { attachments, refetch: refetchAtt } = useTaskAttachments(currentTaskId);
@@ -110,9 +120,9 @@ export function TaskDetailPanel({
   // Operations lookups (migration 028) — Source + Client Category dropdowns
   // on the parent campaign. Empty list = workspace hasn't seeded any yet,
   // in which case the inputs gracefully degrade to "—".
-  const { items: taskSources } = useTaskSources(task?.workspace_id ?? null);
-  const { items: clientCategories } = useClientCategories(task?.workspace_id ?? null);
-  const { items: taskPlatforms } = useTaskPlatforms(task?.workspace_id ?? null);
+  const { items: taskSources } = useTaskSources(workspaceId ?? task?.workspace_id ?? null);
+  const { items: clientCategories } = useClientCategories(workspaceId ?? task?.workspace_id ?? null);
+  const { items: taskPlatforms } = useTaskPlatforms(workspaceId ?? task?.workspace_id ?? null);
 
   // Client + brand pickers for the sales half of a parent campaign (Phase 4).
   const { clients } = useClients();
@@ -121,7 +131,7 @@ export function TaskDetailPanel({
   // Contract requests raised against THIS task (Phase 6). The parent card
   // reads the client ones; vendor requests are auto-fired from subtasks.
   const { items: contractRequests, refetch: refetchContractRequests } =
-    useContractRequests(task?.workspace_id ?? null, task?.id ?? null);
+    useContractRequests(workspaceId ?? task?.workspace_id ?? null, task?.id ?? null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1082,7 +1092,19 @@ export function TaskDetailPanel({
         aria-modal="true"
       >
         {loading || !task ? (
-          <div style={{ padding: 28, color: 'var(--aq-text-muted)' }}>Loading task…</div>
+          <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div>
+              <SkeletonLine width={90} height={10} />
+              <SkeletonLine width="62%" height={24} style={{ marginTop: 10 }} />
+              <SkeletonLine width="34%" height={13} style={{ marginTop: 8 }} />
+            </div>
+            <div className="aq-card" style={{ padding: 18 }}>
+              <SkeletonFields rows={7} label="Loading task" />
+            </div>
+            <div className="aq-card" style={{ padding: 18 }}>
+              <SkeletonFields rows={4} label="Loading task" />
+            </div>
+          </div>
         ) : (
           <>
             {/* Back-to-parent link, only when viewing a subtask */}
@@ -1708,7 +1730,13 @@ export function TaskDetailPanel({
                 subtasks={subtasks}
                 parentTask={parentTask}
                 vendors={vendors}
-                onChanged={async () => { await refetchTask(); onChanged?.(); }}
+                // `applied` is the row the write just returned. Falling back
+                // to a refetch keeps the other callers honest — a save that
+                // hands back nothing still ends up showing the truth.
+                onChanged={async (applied) => {
+                  if (applied) applyTask(applied); else await refetchTask();
+                  onChanged?.();
+                }}
               />
               )}
 
@@ -2738,7 +2766,8 @@ function OperationsPanel({
   parentTask: PMTask | null;
   /** The register, so a vendor subtask can tell what its vendor's category needs. */
   vendors: LegacyVendor[];
-  onChanged: () => Promise<void>;
+  /** Given the row the write returned, when there is one. */
+  onChanged: (applied?: PMTask | null) => Promise<void>;
 }) {
   // The ads inside this booking, loaded here rather than inside the card so
   // this panel can answer a question the card cannot: whether proof of
@@ -2756,8 +2785,8 @@ function OperationsPanel({
       raw === '' || raw === undefined ? null :
       raw;
     try {
-      await updateTaskFields(task.id, { [field]: value } as any);
-      await onChanged();
+      const applied = await updateTaskFields(task.id, { [field]: value } as any);
+      await onChanged(applied);
     } catch (e: any) {
       window.alert(`Save failed: ${e?.message ?? e}`);
     }

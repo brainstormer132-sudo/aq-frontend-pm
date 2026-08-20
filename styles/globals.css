@@ -223,6 +223,27 @@ html, body {
 .animate-slide-in { animation: slideIn 0.22s ease-out; }
 .animate-scale-in { animation: scaleIn 0.16s ease-out; }
 
+/* Skeletons — the shape of what is coming, while it is coming.
+   A blank panel and a broken panel look identical; this one moves, so it
+   reads as "loading" without a spinner claiming the whole screen. */
+@keyframes aqShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.aq-skeleton {
+  border-radius: var(--aq-radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--aq-bg-sunken) 25%,
+    var(--aq-bg-hover)  37%,
+    var(--aq-bg-sunken) 63%
+  );
+  background-size: 200% 100%;
+  animation: aqShimmer 1.4s ease-in-out infinite;
+}
+/* Respect the setting. A shimmer that cannot be turned off is a problem for
+   anyone who gets motion sickness from it. */
+@media (prefers-reduced-motion: reduce) {
+  .aq-skeleton { animation: none; background: var(--aq-bg-sunken); }
+}
+
 /* ============================================================
    Portal layout (vendor + client dashboards)
    Sidebar + topbar shell + reusable cards/tiles/tables.

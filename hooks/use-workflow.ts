@@ -193,15 +193,43 @@ const REF_CACHE = new Map<string, CacheEntry<any>>();
 /** Reference data is stale-tolerant; 60s is far longer than a click-through. */
 const REF_CACHE_TTL_MS = 60_000;
 
+/**
+ * What the app is actually asking the database for.
+ *
+ * `queries` counts requests that went to the network — a cache hit does not
+ * count, which is the point. In development a request slower than `slowMs`
+ * says so in the console with its label, so the next time somebody says a
+ * screen is slow there is something to look at other than a stopwatch.
+ */
+export const perf = {
+  queries: 0,
+  cacheHits: 0,
+  slowMs: 800,
+};
+
+async function timed<T>(label: string, run: () => Promise<T>): Promise<T> {
+  perf.queries += 1;
+  const started = Date.now();
+  try {
+    return await run();
+  } finally {
+    const took = Date.now() - started;
+    if (took > perf.slowMs && process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.warn(`[aq] slow query ${label}: ${took}ms`);
+    }
+  }
+}
+
 async function cachedFetch<T>(key: string, loader: () => Promise<T>, force = false): Promise<T> {
   const now = Date.now();
   const hit = REF_CACHE.get(key) as CacheEntry<T> | undefined;
   if (!force && hit) {
     // A request already in flight: join it rather than starting a second.
-    if (hit.inflight) return hit.inflight;
-    if (now - hit.at < REF_CACHE_TTL_MS) return hit.data;
+    if (hit.inflight) { perf.cacheHits += 1; return hit.inflight; }
+    if (now - hit.at < REF_CACHE_TTL_MS) { perf.cacheHits += 1; return hit.data; }
   }
-  const inflight = loader().then(
+  const inflight = timed(key, loader).then(
     (data) => { REF_CACHE.set(key, { at: Date.now(), data, inflight: null }); return data; },
     (err) => { REF_CACHE.delete(key); throw err; },
   );
@@ -242,7 +270,7 @@ export async function selectAllRows<T>(
 ): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; from < MAX_ROWS; from += PAGE_SIZE) {
-    const { data, error } = await build().range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await timed<any>(label, () => build().range(from, from + PAGE_SIZE - 1));
     if (error) {
       // Keep what we have and stop. Returning rather than breaking, so this
       // doesn't fall through to the runaway warning below and claim the table
@@ -739,23 +767,27 @@ export function useMyRole(workspaceId: string | null) {
   const [role, setRole] = useState<WorkspaceRole | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setRole(null); setLoading(false); return; }
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setRole(null); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('workspace_members')
-      .select('role')
-      .eq('workspace_id', workspaceId)
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (error) { logSbError('useMyRole', error, { workspaceId }); }
-    setRole((data?.role as WorkspaceRole) ?? null);
+    const mine = await cachedFetch<WorkspaceRole | null>(`myRole:${workspaceId}`, async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return null;
+      const { data, error } = await supabase
+        .from('workspace_members')
+        .select('role')
+        .eq('workspace_id', workspaceId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (error) { logSbError('useMyRole', error, { workspaceId }); }
+      return (data?.role as WorkspaceRole) ?? null;
+    }, force);
+    setRole(mine);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { role, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { role, loading, refetch };
 }
 
 /** Service-type templates and any workspace-custom ones, with their steps. */
@@ -764,31 +796,37 @@ export function useServiceTypes(workspaceId: string | null) {
   const [steps, setSteps] = useState<ServiceTypeStep[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
-    setLoading(true);
-    // Templates (workspace_id NULL) + this workspace's customs
-    let query = supabase.from('service_types').select('*').order('position', { ascending: true });
-    const { data: types, error } = await query;
-    if (error) logSbError('useServiceTypes types', error, { workspaceId });
-    const filtered = (types || []).filter((t: any) => t.workspace_id === null || t.workspace_id === workspaceId);
-    setServiceTypes(filtered as ServiceType[]);
-
-    if (filtered.length) {
-      const { data: stepRows, error: stepErr } = await supabase
+  // Two queries, cached as one unit: the catalogue and its steps are only
+  // meaningful together, and caching them apart would let a panel render
+  // service types whose steps had not arrived.
+  const fetch = useCallback(async (force = false) => {
+    const { types: filtered, steps: stepRows } = await cachedFetch<{
+      types: ServiceType[]; steps: ServiceTypeStep[];
+    }>(`serviceTypes:${workspaceId ?? 'none'}`, async () => {
+      // Templates (workspace_id NULL) + this workspace's customs
+      let query = supabase.from('service_types').select('*').order('position', { ascending: true });
+      const { data: types, error } = await query;
+      if (error) logSbError('useServiceTypes types', error, { workspaceId });
+      const list = (types || []).filter(
+        (t: any) => t.workspace_id === null || t.workspace_id === workspaceId,
+      ) as ServiceType[];
+      if (!list.length) return { types: list, steps: [] };
+      const { data: rows, error: stepErr } = await supabase
         .from('service_type_steps')
         .select('*')
-        .in('service_type_id', filtered.map((t: any) => t.id))
+        .in('service_type_id', list.map((t: any) => t.id))
         .order('position', { ascending: true });
       if (stepErr) logSbError('useServiceTypes steps', stepErr, { workspaceId });
-      setSteps((stepRows || []) as ServiceTypeStep[]);
-    } else {
-      setSteps([]);
-    }
+      return { types: list, steps: (rows || []) as ServiceTypeStep[] };
+    }, force);
+    setServiceTypes(filtered);
+    setSteps(stepRows);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { serviceTypes, steps, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { serviceTypes, steps, loading, refetch };
 }
 
 // ============================================================
@@ -925,20 +963,26 @@ export function useTaskSources(workspaceId: string | null) {
   const [items, setItems] = useState<TaskSource[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  // Cached: this is a handful of rows that changes when an admin edits the
+  // list, and it was being re-queried every time any panel opened.
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('task_sources')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('position', { ascending: true });
-    if (error) logSbError('useTaskSources', error, { workspaceId });
-    setItems((data || []) as TaskSource[]);
+    const rows = await cachedFetch<TaskSource[]>(`task_sources:${workspaceId}`, async () => {
+      const { data, error } = await supabase
+        .from('task_sources')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .order('position', { ascending: true });
+      if (error) logSbError('useTaskSources', error, { workspaceId });
+      return (data || []) as TaskSource[];
+    }, force);
+    setItems(rows);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { items, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { items, loading, refetch };
 }
 
 /** Platform options for the campaign multi-select (migration 042). */
@@ -946,40 +990,52 @@ export function useTaskPlatforms(workspaceId: string | null) {
   const [items, setItems] = useState<TaskSource[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  // Cached: this is a handful of rows that changes when an admin edits the
+  // list, and it was being re-queried every time any panel opened.
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('task_platforms')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('position', { ascending: true });
-    if (error) logSbError('useTaskPlatforms', error, { workspaceId });
-    setItems((data || []) as TaskSource[]);
+    const rows = await cachedFetch<TaskSource[]>(`task_platforms:${workspaceId}`, async () => {
+      const { data, error } = await supabase
+        .from('task_platforms')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .order('position', { ascending: true });
+      if (error) logSbError('useTaskPlatforms', error, { workspaceId });
+      return (data || []) as TaskSource[];
+    }, force);
+    setItems(rows);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { items, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { items, loading, refetch };
 }
 
 export function useClientCategories(workspaceId: string | null) {
   const [items, setItems] = useState<ClientCategory[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  // Cached: this is a handful of rows that changes when an admin edits the
+  // list, and it was being re-queried every time any panel opened.
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('client_categories')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('position', { ascending: true });
-    if (error) logSbError('useClientCategories', error, { workspaceId });
-    setItems((data || []) as ClientCategory[]);
+    const rows = await cachedFetch<ClientCategory[]>(`client_categories:${workspaceId}`, async () => {
+      const { data, error } = await supabase
+        .from('client_categories')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .order('position', { ascending: true });
+      if (error) logSbError('useClientCategories', error, { workspaceId });
+      return (data || []) as ClientCategory[];
+    }, force);
+    setItems(rows);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { items, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { items, loading, refetch };
 }
 
 /**
@@ -1049,22 +1105,31 @@ export function useWorkspaceProfiles(workspaceId: string | null) {
   const [profiles, setProfiles] = useState<(Profile & { role: WorkspaceRole })[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  // Cached. Every list that shows an assignee's name asks for this, so a
+  // page with four such lists used to make four identical requests.
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setProfiles([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('workspace_members')
-      .select('role, profile:profiles(id, full_name, avatar_url)')
-      .eq('workspace_id', workspaceId);
-    if (error) logSbError('useWorkspaceProfiles', error, { workspaceId });
-    const out = (data || [])
-      .filter((m: any) => m.profile)
-      .map((m: any) => ({ ...m.profile, role: m.role as WorkspaceRole }));
+    const out = await cachedFetch<(Profile & { role: WorkspaceRole })[]>(
+      `profiles:${workspaceId}`,
+      async () => {
+        const { data, error } = await supabase
+          .from('workspace_members')
+          .select('role, profile:profiles(id, full_name, avatar_url)')
+          .eq('workspace_id', workspaceId);
+        if (error) logSbError('useWorkspaceProfiles', error, { workspaceId });
+        return (data || [])
+          .filter((m: any) => m.profile)
+          .map((m: any) => ({ ...m.profile, role: m.role as WorkspaceRole }));
+      },
+      force,
+    );
     setProfiles(out);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { profiles, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { profiles, loading, refetch };
 }
 
 /** Workflow tasks in a workspace, optionally filtered by stage. */
@@ -2365,7 +2430,12 @@ export async function updateTaskFields(taskId: string, fields: Partial<PMTask>) 
     before = (data as PMTask) ?? null;
   }
 
-  const { error } = await supabase.from('pm_tasks').update(fields).eq('id', taskId);
+  // Ask for the row back in the same round trip. The caller used to write,
+  // then immediately re-read the same row to find out what it now says —
+  // two requests for one edit, and the field showed the old value until the
+  // second one landed.
+  const { data: updated, error } = await timed<any>('pm_tasks.update', async () =>
+    supabase.from('pm_tasks').update(fields).eq('id', taskId).select('*').maybeSingle());
   if (error) throw error;
 
   if (watched && before) {
@@ -2380,6 +2450,8 @@ export async function updateTaskFields(taskId: string, fields: Partial<PMTask>) 
           fields.client_payment_amount ?? null));
     }
   }
+
+  return (updated as PMTask | null) ?? null;
 }
 
 /** Hard-delete a task. Cascades to subtasks via the FK. */
@@ -2469,7 +2541,21 @@ export function useTask(taskId: string | null) {
   }, [taskId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { task, loading, refetch: fetch };
+
+  /**
+   * Take a row we already have rather than going back for it.
+   *
+   * Every save wrote the field, then re-read the same row to display it.
+   * The write already knows the answer — `updateTaskFields` returns it — so
+   * this puts it straight on screen. Ignores a row for a different task, in
+   * case a save lands after the user has clicked into another one.
+   */
+  const apply = useCallback((row: PMTask | null) => {
+    if (!row || !taskId || row.id !== taskId) return;
+    setTask(row);
+  }, [taskId]);
+
+  return { task, loading, refetch: fetch, apply };
 }
 
 export interface TaskComment {
