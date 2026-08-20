@@ -163,7 +163,7 @@ export function AddAdLinesDialog({
                 onChange={(e) => set('quantity')(Number(e.target.value))}
               />
             </Field>
-            <Field label="Price (SAR)">
+            <Field label="Price each (SAR)">
               <input
                 className="aq-input"
                 type="number" min={0} step="0.01"

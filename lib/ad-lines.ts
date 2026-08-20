@@ -54,20 +54,19 @@ function num(v: number | null | undefined): number {
 }
 
 /**
- * What this ad costs. One number, not a unit price times a quantity
- * (migration 059).
+ * What a line costs: the price of ONE ad, times how many of them.
  *
- * A vendor quotes "this ad, 1,500". Asking for a unit price and a quantity
- * made the person entering it choose which box the 1,500 belonged in, and
- * the wrong choice landed in a contract. `quantity` still exists — it is
- * what makes the contract say "6 × Home Ad" — and it no longer touches the
- * money.
+ * 059 briefly made the price flat for the whole line — a vendor quotes
+ * "this ad, 1,500", so one box seemed simpler. In use it read wrong: a line
+ * of 4 Store Visits at 5,000.66 showed as 5,000 for all four, and the number
+ * people carry in their head is the per-ad rate. 060 put the multiplication
+ * back.
  */
 export function lineTotal(line: AdLine): number {
   if (line.line_total != null && Number.isFinite(Number(line.line_total))) {
     return Number(line.line_total);
   }
-  return num(line.unit_price);
+  return num(line.quantity) * num(line.unit_price);
 }
 
 export interface AdLineTotals {
@@ -136,11 +135,13 @@ export function contractDetails(lines: AdLine[], header?: string | null): string
   const groups = groupByAdType(lines);
   if (!groups.length) return txt(header);
 
-  // No "X each" any more: since 059 the price is set per ad and not derived
-  // from a unit rate, so dividing the group total back out would print a
-  // per-piece figure nobody agreed to.
+  // The per-ad rate is what was agreed and what the vendor will check, so
+  // the contract shows it alongside the total rather than only the total.
   const body = groups.map((g) => {
-    const price = g.amount === 0 ? 'no charge' : money(g.amount);
+    const each = g.quantity > 0 ? g.amount / g.quantity : 0;
+    const price = g.amount === 0
+      ? 'no charge'
+      : `${money(each)} each · ${money(g.amount)}`;
     return `${g.quantity} × ${g.ad_type} — ${price}`;
   });
 
@@ -217,7 +218,7 @@ export interface AdLineSpec {
   count: number;
   ad_type: string;
   platform?: string | null;
-  /** Quantity per ad — usually 1. A line of 2 is "two stories in one slot". */
+  /** How many ads this line stands for. Multiplies the price. */
   quantity: number;
   unit_price: number;
   /** Optional brief copied onto each; they can be edited apart afterwards. */
@@ -243,9 +244,9 @@ export interface AdLineSpecTotals {
 export function specTotals(spec: AdLineSpec): AdLineSpecTotals {
   const lines = Math.max(0, Math.floor(num(spec.count)));
   const qty = Math.max(0, Math.floor(num(spec.quantity)));
-  // Price is per ad, so quantity is not in this sum (059). Six ads at 1,500
-  // is 9,000 whether each of them stands for one piece or three.
-  const amount = lines * num(spec.unit_price);
+  // Price is per ad, so quantity multiplies it (060): three lines of two
+  // Stories at 500 is six ads and 3,000.
+  const amount = lines * qty * num(spec.unit_price);
   return { lines, ads: lines * qty, amount, free: amount === 0 };
 }
 

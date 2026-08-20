@@ -75,6 +75,11 @@ export interface PMTask {
    * it, and lib/sales-closer.ts is what keeps the UI from ever setting both.
    */
   sales_closer_vendor_id: number | null;
+  /**
+   * An influencer closed it, unnamed (061). The picker stopped listing the
+   * register's hundreds of influencers one by one; this is what it writes.
+   */
+  sales_closer_influencer: boolean | null;
   key_account_id: string | null;
   service_type_id: string | null;
   budget: number | null;
@@ -1194,8 +1199,10 @@ export async function createSalesTask(input: {
   /** FK to public.client_brands.id — set by the new dropdown picker. */
   brand_id?: string | null;
   sales_closer_id?: string | null;
-  /** Set instead of sales_closer_id when an influencer closed it (054). */
+  /** Set instead of sales_closer_id when a NAMED influencer closed it (054). */
   sales_closer_vendor_id?: number | null;
+  /** Set instead of both when an influencer closed it, unnamed (061). */
+  sales_closer_influencer?: boolean | null;
   budget?: number | null;
   details?: string | null;
   creator_id: string;
@@ -1212,6 +1219,7 @@ export async function createSalesTask(input: {
       brand_id: input.brand_id ?? null,
       sales_closer_id: input.sales_closer_id ?? null,
       sales_closer_vendor_id: input.sales_closer_vendor_id ?? null,
+      sales_closer_influencer: input.sales_closer_influencer ?? false,
       budget: input.budget ?? null,
       description: input.details ?? null,
       creator_id: input.creator_id,
@@ -1831,6 +1839,30 @@ export async function updateAdLine(id: string, fields: Partial<AdLine>): Promise
   const { line_total, id: _id, subtask_id, ...rest } = fields as any;
   const { error } = await supabase.from('vendor_ad_lines').update(rest).eq('id', id);
   if (error) { logSbError('updateAdLine', error, { id }); throw error; }
+}
+
+/**
+ * Fill the booking's Price in from its ads — without locking it.
+ *
+ * The booking's `price` is what everything else already reads: the campaign
+ * money roll-up, the vendor report, the dashboards. Adding up the ads by
+ * hand and retyping the answer is a step nobody should have to take, and the
+ * one time it gets skipped the booking is worth less than the work inside it.
+ *
+ * So it is written, and it stays a normal typed field. Siraj's rule: the
+ * breakdown goes to the total automatically, but the total is still editable.
+ * Type over it and it stands — until the next time an ad's price changes,
+ * which writes again. That is the trade: automatic means automatic.
+ *
+ * With no ads, nothing is written. A booking priced by hand keeps its price;
+ * zeroing it because somebody deleted a trial ad would wipe a real number.
+ */
+export async function syncBookingPriceFromAds(subtaskId: string): Promise<number | null> {
+  const lines = await fetchVendorAdLines(subtaskId);
+  if (!lines.length) return null;
+  const { amount } = totalsOf(lines);
+  await updateTaskFields(subtaskId, { price: amount } as any);
+  return amount;
 }
 
 export async function deleteAdLine(id: string): Promise<void> {

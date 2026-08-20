@@ -8,7 +8,7 @@ import {
   useClients, useClientBrands,
   useContractRequests, type ContractKind,
   useTaskPlatforms, rollupCampaignMoney,
-  useVendorAdLines, useAdLinesForSubtasks,
+  useVendorAdLines, useAdLinesForSubtasks, syncBookingPriceFromAds,
   publishTrackingSheet, unpublishTrackingSheet,
   ensureTrackingRowForVendor, isTrackableVendorCategory, shouldTrackVendorOnSheet,
   TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
@@ -39,6 +39,7 @@ import {
   type Profile, type WorkspaceRole, type SubtaskKind,
 } from '@/hooks/use-workflow';
 import { closerKey, closerFields, closerOptions, closerLabel } from '@/lib/sales-closer';
+import { totalsOf } from '@/lib/ad-lines';
 import { AdLinesCard } from './AdLinesCard';
 import { DateField } from './DateField';
 import { SkeletonLine, SkeletonFields } from '@/components/Skeleton';
@@ -247,11 +248,11 @@ export function TaskDetailPanel({
   );
   const detailsInherited = Boolean(task?.parent_task_id && parentTask);
 
-  // Influencers who can be named as the closer. Only creator categories —
-  // a printing house did not bring the client in.
+  // The influencer side of the closer picker: one generic option, plus the
+  // named influencer this row already has, if it has one (061).
   const influencerClosers = useMemo(
-    () => closerOptions([], vendors || []),
-    [vendors],
+    () => closerOptions([], vendors || [], task),
+    [vendors, task],
   );
   const closerName = closerLabel(detailSource, profiles, vendors || []);
   const closer        = detailSource?.sales_closer_id ? profileById.get(detailSource.sales_closer_id) : null;
@@ -1492,13 +1493,15 @@ export function TaskDetailPanel({
                             </option>
                           ))}
                         </optgroup>
-                        {influencerClosers.length > 0 && (
-                          <optgroup label="Influencers">
-                            {influencerClosers.map((o) => (
-                              <option key={o.key} value={o.key}>{o.label}</option>
-                            ))}
-                          </optgroup>
-                        )}
+                        {/* One option, not the whole register. Since 061 the
+                            answer is "an influencer brought them in"; the
+                            hundreds of names were a list nobody could get
+                            through. A row saved with a specific influencer
+                            still shows that name here, so opening it cannot
+                            quietly replace the name with the generic. */}
+                        {influencerClosers.map((o) => (
+                          <option key={o.key} value={o.key}>{o.label}</option>
+                        ))}
                       </select>
                     </div>
                   </>
@@ -2776,6 +2779,34 @@ function OperationsPanel({
   const isVendorBooking = isSubtaskView && isVendorSubtaskKind(task.subtask_kind);
   const { lines: adLines, loading: adLinesLoading, refetch: refetchAdLines } =
     useVendorAdLines(isVendorBooking ? task.id : null);
+  const adsTotal = totalsOf(adLines).amount;
+
+  /**
+   * Fill Price in from the ads on open — but only when it is empty.
+   *
+   * Bookings whose ads were entered before the total started flowing up sat
+   * at 0.00 with twelve ads under them, which is the campaign's money
+   * missing. Opening one now fills it in.
+   *
+   * Only when EMPTY. Opening a task must never overwrite a number somebody
+   * typed: a booking agreed at a figure the breakdown does not reach is a
+   * real thing, and silently correcting it on a page load would be a change
+   * nobody asked for and nobody would see. Where the two disagree there is a
+   * button instead, below.
+   */
+  const backfilled = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isVendorBooking || adLinesLoading) return;
+    if (adLines.length === 0 || adsTotal <= 0) return;
+    if (task.price != null && Number(task.price) !== 0) return;
+    if (backfilled.current === task.id) return;
+    backfilled.current = task.id;
+    (async () => {
+      await syncBookingPriceFromAds(task.id);
+      await onChanged();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVendorBooking, adLinesLoading, adLines.length, adsTotal, task.id, task.price]);
 
   // Generic field saver — writes `{ [field]: value }` to pm_tasks and
   // refetches the row. Null-coerced empties so a cleared field actually
@@ -3043,10 +3074,10 @@ function OperationsPanel({
             : <span>{task.due_date || '—'}</span>}
         </Row>
 
-        {/* The vendor's own price, typed. It was briefly locked to the sum
-            of the ads below; Siraj asked for that back the way it was — the
-            prices that matter are the per-ad ones, and this field is the
-            vendor's number, not a derived one. */}
+        {/* Filled in from the ads below whenever they change, and still
+            typeable. Locking it was wrong — some bookings are agreed at a
+            number the line-by-line breakdown does not reach. Typing over it
+            stands until an ad's price or quantity changes again. */}
         <Row label="Price (SAR)">
           {canEdit
             ? <TextInput
@@ -3058,6 +3089,32 @@ function OperationsPanel({
               />
             : <span>{fmtMoney(task.price)}</span>}
         </Row>
+        {adLines.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', paddingLeft: 172, marginTop: -4 }}>
+            Filled in from the {adLines.length} ad{adLines.length === 1 ? '' : 's'} below.
+            You can type over it.
+            {/* Only when they actually disagree — a button that is always
+                there is one nobody reads. */}
+            {canEdit && Math.abs(Number(task.price ?? 0) - adsTotal) > 0.005 && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await syncBookingPriceFromAds(task.id);
+                    await onChanged();
+                  }}
+                  style={{
+                    font: 'inherit', background: 'none', border: 'none', padding: 0,
+                    color: 'var(--aq-accent)', cursor: 'pointer', textDecoration: 'underline',
+                  }}
+                >
+                  Use the ads&apos; total (SAR {Math.round(adsTotal).toLocaleString('en-US')})
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         <Row label="Net amount (SAR)">
           {canEdit
@@ -3264,6 +3321,7 @@ function OperationsPanel({
         refetch={refetchAdLines}
         platformOptions={taskPlatforms.map((p) => p.name)}
         defaultPlatform={soleplatform(task.platform ?? campaignPlatformText(parentTask))}
+        onTotalChanged={onChanged}
       />
     </>
     );

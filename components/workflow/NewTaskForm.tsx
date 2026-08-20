@@ -53,7 +53,8 @@ export function NewTaskForm({
   const { brands, loading: brandsLoading }   = useClientBrands(clientId || null);
   const { vendors }                          = useLegacyVendors();
 
-  // Creator-category vendors only — a printing house did not close the deal.
+  // One generic "Influencer" option (061). A new task has no legacy named
+  // influencer to preserve, so nothing is passed as the current value.
   const influencerClosers = useMemo(() => closerOptions([], vendors || []), [vendors]);
 
   // Reset brand whenever client changes — old brand wouldn't belong to new client.
@@ -227,13 +228,13 @@ export function NewTaskForm({
                     </option>
                   ))}
                 </optgroup>
-                {influencerClosers.length > 0 && (
-                  <optgroup label="Influencers">
-                    {influencerClosers.map((o) => (
-                      <option key={o.key} value={o.key}>{o.label}</option>
-                    ))}
-                  </optgroup>
-                )}
+                {/* One option, not the whole register. Since 061 the answer
+                    is "an influencer brought them in"; the hundreds of names
+                    were a list nobody could get through. A row saved with a
+                    specific influencer still shows that name here. */}
+                {influencerClosers.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
+                ))}
               </select>
             </Field>
             <Field label="Budget (SAR)">

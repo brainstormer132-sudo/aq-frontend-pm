@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import {
-  createAdLines, updateAdLine, deleteAdLine, AD_TYPE_OPTIONS, type AdLine,
+  createAdLines, updateAdLine, deleteAdLine, syncBookingPriceFromAds,
+  AD_TYPE_OPTIONS, type AdLine,
 } from '@/hooks/use-workflow';
 import {
   totalsOf, lineTotal, lineProblems, adTypeSummary, newLines, lineLabel, hasProof,
@@ -32,6 +33,7 @@ import { SkeletonRows } from '@/components/Skeleton';
  */
 export function AdLinesCard({
   subtaskId, canEdit, lines, loading, refetch, platformOptions, defaultPlatform,
+  onTotalChanged,
 }: {
   subtaskId: string;
   canEdit: boolean;
@@ -40,6 +42,8 @@ export function AdLinesCard({
   refetch: () => Promise<void> | void;
   platformOptions: string[];
   defaultPlatform?: string | null;
+  /** Refresh the booking above — its Price is filled in from these ads. */
+  onTotalChanged?: () => Promise<void> | void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -50,11 +54,18 @@ export function AdLinesCard({
   const undated = lines.filter((l) => !l.due_date);
   const unproven = adsMissingProof(lines);
 
+  /** Anything that moves the money re-fills the booking's Price. */
+  const syncUp = async () => {
+    await syncBookingPriceFromAds(subtaskId);
+    await onTotalChanged?.();
+  };
+
   const add = async (spec: AdLineSpec) => {
     setError('');
     try {
       await createAdLines(newLines(subtaskId, lines, spec));
       await refetch();
+      await syncUp();
       setAdding(false);
     } catch (e: any) { setError(e?.message ?? String(e)); throw e; }
   };
@@ -64,7 +75,12 @@ export function AdLinesCard({
     const problems = lineProblems({ ...line, ...fields });
     if (problems.length) { setError(problems[0]); return; }
     setBusy(line.id); setError('');
-    try { await updateAdLine(line.id, fields); await refetch(); }
+    try {
+      await updateAdLine(line.id, fields);
+      await refetch();
+      // Quantity moves the money too, now that it multiplies the price.
+      if ('unit_price' in fields || 'quantity' in fields) await syncUp();
+    }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };
@@ -72,7 +88,7 @@ export function AdLinesCard({
   const remove = async (line: AdLine) => {
     if (!line.id) return;
     setBusy(line.id); setError('');
-    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); }
+    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); await syncUp(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };
@@ -97,10 +113,9 @@ export function AdLinesCard({
       </header>
 
       {/* ── What the ads add up to ───────────────────────────────────
-          A read-out, not a source of truth. It does NOT get written onto
-          the booking: the vendor's Price is typed by hand and stands on its
-          own, which is how it worked before and what Siraj asked for back
-          (Aug 2026). This is here so you can check the two agree. */}
+          Written up into the booking's Price whenever it changes — and the
+          field up there stays typeable, so a number that was agreed
+          differently can still be entered by hand. */}
       {lines.length > 0 && (
         <div style={{
           padding: '10px 14px', marginBottom: 12,
@@ -323,20 +338,33 @@ function AdDetail({
             onCommit={(v) => onPatch({ quantity: v })}
           />
         </Cell>
-        {/* One price box, not a unit price plus a total. Two boxes for one
-            number is two ways to be wrong, and the wrong one goes into a
-            contract. Zero is legal and is labelled below, not blanked. */}
-        <Cell label="Price (SAR)" width={140}>
+        {/* The per-ad rate, and what the line comes to. It was briefly one
+            flat price for the whole line; a line of 4 at 5,000.66 then read
+            as 5,000 for all four, so the multiplication is back and is shown
+            rather than left to be worked out. "each" is in the label because
+            without it the two numbers look like the same number twice. */}
+        <Cell label="Price each (SAR)" width={140}>
           <NumberCell
             value={Number(line.unit_price)} min={0} step="0.01" disabled={!canEdit}
             onCommit={(v) => onPatch({ unit_price: v })}
           />
         </Cell>
-        {Number(line.unit_price) === 0 && (
-          <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', padding: '7px 0' }}>
-            No charge — it still goes in the contract.
+        <Cell label="Line total" width={150}>
+          <div style={{ padding: '7px 0', fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+            {lineTotal(line) === 0
+              ? <span style={{ color: 'var(--aq-text-muted)', fontWeight: 400 }}>
+                  no charge — still in the contract
+                </span>
+              : <>
+                  {Number(line.quantity) > 1 && (
+                    <span style={{ color: 'var(--aq-text-muted)', fontWeight: 400 }}>
+                      {line.quantity} × {Number(line.unit_price).toLocaleString('en-US')} ={' '}
+                    </span>
+                  )}
+                  {lineTotal(line).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                </>}
           </div>
-        )}
+        </Cell>
       </div>
 
       {/* ── Proof, for this ad ────────────────────────────────────────
