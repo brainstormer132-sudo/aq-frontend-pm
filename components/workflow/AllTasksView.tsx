@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { usePmTaskCampaignRollup } from '@/hooks/use-workflow';
 import {
   buildRows, sortRows, filterRows, nextSort, summarise, summaryLine, emptyMessage,
@@ -36,7 +37,7 @@ import { CalendarPanel } from './TaskCalendarView';
  * is in lib/all-tasks.ts, pure and tested.
  */
 export function AllTasksView({
-  tasks, loading, profiles, currentUserId, workspaceId, onOpen,
+  tasks, loading, profiles, currentUserId, workspaceId, onOpen, hrefFor,
 }: {
   tasks: TaskRow[];
   loading: boolean;
@@ -44,6 +45,10 @@ export function AllTasksView({
   currentUserId: string;
   workspaceId: string;
   onOpen: (id: string) => void;
+  /* Where a row goes. Given, the campaign name becomes a real anchor, so a
+     row can be middle-clicked into a new tab and its address copied — a
+     campaign is a place now, not a drawer state. */
+  hrefFor?: (id: string) => string;
 }) {
   const { rows: rollup, loading: rollupLoading } = usePmTaskCampaignRollup(workspaceId);
 
@@ -247,7 +252,13 @@ export function AllTasksView({
             </thead>
             <tbody>
               {shown.map((r) => (
-                <Row key={r.id} row={r} today={today} onOpen={() => onOpen(r.id)} />
+                <Row
+                  key={r.id}
+                  row={r}
+                  today={today}
+                  href={hrefFor?.(r.id)}
+                  onOpen={() => onOpen(r.id)}
+                />
               ))}
             </tbody>
           </table>
@@ -268,16 +279,28 @@ export function AllTasksView({
 
 /* ─────────────────────────────────────────────────────────────── */
 
-function Row({ row, today, onOpen }: { row: TableRow; today: string; onOpen: () => void }) {
+function Row({ row, today, href, onOpen }: {
+  row: TableRow; today: string; href?: string; onOpen: () => void;
+}) {
   const late = row.dueTone === 'late';
   const todayish = row.dueTone === 'today';
 
   return (
     <tr
-      onClick={onOpen}
-      tabIndex={0}
-      role="button"
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      // The whole row stays clickable — that is how it has always behaved and
+      // a 40px strip of dead table between the columns would be worse. The
+      // name is additionally a real link, so cmd-click and "copy link" work.
+      onClick={(e) => {
+        // Let the anchor handle its own click, including modifier keys.
+        if ((e.target as HTMLElement).closest('a')) return;
+        onOpen();
+      }}
+      tabIndex={href ? -1 : 0}
+      role={href ? undefined : 'button'}
+      onKeyDown={(e) => {
+        if (href) return; // the anchor is the focus stop and Enter follows it
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); }
+      }}
       style={{ cursor: 'pointer' }}
       className="aq-tr"
     >
@@ -293,7 +316,16 @@ function Row({ row, today, onOpen }: { row: TableRow; today: string; onOpen: () 
               background: late ? '#b91c1c' : todayish ? '#d97706' : 'transparent',
             }}
           />
-          <span style={{ fontWeight: 600 }}>{row.name}</span>
+          {href ? (
+            <Link
+              href={href}
+              style={{ fontWeight: 600, color: 'inherit', textDecoration: 'none' }}
+            >
+              {row.name}
+            </Link>
+          ) : (
+            <span style={{ fontWeight: 600 }}>{row.name}</span>
+          )}
         </span>
       </Td>
       <Td muted>{row.client || '—'}</Td>

@@ -470,9 +470,9 @@ export function NewTaskForm({
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 16, flexWrap: 'wrap' }}>
         <button
-          className="aq-btn aq-btn-primary"
           type="submit"
           disabled={submitting || problems.length > 0}
+          style={inkButton(submitting || problems.length > 0)}
         >{submitting ? 'Sending…' : 'Send to marketing'}</button>
         {/* The four grey cards, as the one sentence they always were. */}
         <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
@@ -504,13 +504,23 @@ function Step({
     <div style={{ display: 'flex', gap: 14 }}>
       {/* The spine: a number, and a line down to the next step. */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 24 }}>
+        {/* The spine used to be green twice over: a solid accent circle on the
+            open step and a mint one on anything done. Ink for where you are,
+            plain grey for everywhere else — the position in the list is the
+            information, and it does not need a colour to carry it.
+
+            The tick is `done && reachable`, not `done`. The brief is optional
+            so it is marked done from the start, which on a blank form drew a
+            ✓ beside the words "Pick a client first" — a step claiming to be
+            finished before it could even be opened. */}
         <span style={{
           width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 11.5, fontWeight: 700,
-          background: open ? 'var(--aq-accent)' : done ? 'var(--aq-accent-light)' : 'var(--aq-bg-sunken)',
-          color: open ? '#fff' : done ? '#14603a' : 'var(--aq-text-muted)',
-        }}>{done ? '✓' : index}</span>
+          background: open ? 'var(--aq-text)' : 'var(--aq-bg-sunken)',
+          border: open ? 'none' : '1px solid var(--aq-border-light)',
+          color: open ? '#fff' : 'var(--aq-text-muted)',
+        }}>{done && reachable ? '✓' : index}</span>
         {!last && <span style={{ width: 1, flex: 1, background: 'var(--aq-border-light)', marginTop: 4 }} />}
       </div>
 
@@ -553,6 +563,31 @@ function Step({
   );
 }
 
+/**
+ * The buttons on this form.
+ *
+ * They used to be `aq-btn-primary`, which is the accent green, and the global
+ * `:disabled` rule fades it to `opacity: .5`. On a blank form both buttons
+ * start disabled, so the first thing anybody saw was two washed-out mint
+ * slabs — a colour that reads as neither "ready" nor "off", just unwell.
+ *
+ * Ink instead, the same button Clients and Vendors use. And a disabled button
+ * is drawn as a real state — flat grey, muted text — rather than the enabled
+ * one turned half-transparent.
+ */
+function inkButton(disabled?: boolean): React.CSSProperties {
+  return {
+    font: 'inherit', fontSize: 14, fontWeight: 600,
+    padding: '10px 18px', borderRadius: 'var(--aq-radius)',
+    border: '1px solid transparent',
+    background: disabled ? 'var(--aq-bg-sunken)' : 'var(--aq-text)',
+    color: disabled ? 'var(--aq-text-muted)' : '#fff',
+    borderColor: disabled ? 'var(--aq-border-light)' : 'var(--aq-text)',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    whiteSpace: 'nowrap',
+  };
+}
+
 function NextButton({
   disabled, hint, onClick, children,
 }: {
@@ -565,10 +600,9 @@ function NextButton({
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 2, flexWrap: 'wrap' }}>
       <button
         type="button"
-        className="aq-btn aq-btn-primary"
         onClick={onClick}
         disabled={disabled}
-        style={{ fontSize: 13 }}
+        style={{ ...inkButton(disabled), fontSize: 13 }}
       >{children}</button>
       {disabled && hint && (
         <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{hint}</span>

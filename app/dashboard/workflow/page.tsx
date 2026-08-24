@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { withBase } from '@/lib/paths';
 import {
@@ -48,6 +49,7 @@ async function ensureProfile(user: { id: string; email?: string | null; user_met
 }
 
 export default function WorkflowPage() {
+  const router = useRouter();
   const [view, setView] = useState<View>('inbox');
   const [user, setUser] = useState<{ id: string; email: string; full_name: string } | null>(null);
   const [workspace, setWorkspace] = useState<{ id: string; name: string } | null>(null);
@@ -370,7 +372,12 @@ export default function WorkflowPage() {
             profiles={profiles}
             currentUserId={user.id}
             workspaceId={workspace.id}
-            onOpen={(id) => setOpenTaskId(id)}
+            /* A campaign row goes to the campaign's own page now. The drawer
+               is still there — the page links back to it — but the register
+               should not be the only way to reach a campaign, and a drawer
+               has no address you can send anyone. */
+            onOpen={(id) => router.push(`/dashboard/campaign/${id}`)}
+            hrefFor={(id) => `/dashboard/campaign/${id}`}
           />
         )}
 
