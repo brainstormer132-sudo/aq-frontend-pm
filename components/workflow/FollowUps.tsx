@@ -14,11 +14,21 @@ import { followUpUrgency } from '@/lib/crm-sync';
  * makes both harder to scan.
  */
 export function FollowUps({
-  workspaceId, userId, refreshKey,
+  workspaceId, userId, refreshKey, bare = false,
 }: {
   workspaceId: string;
   userId: string;
   refreshKey?: number;
+  /**
+   * Render just the rows, no card and no heading.
+   *
+   * The dashboard rebuild (Aug 2026) folded these into "Your work" rather
+   * than giving them a card of their own above everything else. A call to
+   * make and a subtask to deliver ARE different kinds of obligation — but
+   * two cards of things-to-do at the top of a page is the clutter the
+   * rebuild set out to remove, and the tick-off button had to survive.
+   */
+  bare?: boolean;
 }) {
   const { items, loading, refetch } = useCrmTasks(workspaceId, { assignedTo: userId });
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -47,27 +57,24 @@ export function FollowUps({
     finally { setBusyId(null); }
   };
 
-  return (
-    <div className="aq-card animate-fade-in" style={{ padding: 20 }}>
-      <header style={{ marginBottom: 12 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>Follow-ups</h2>
-        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-          From the CRM — {open.length} open. Ticking one here ticks it there.
-        </p>
-      </header>
-      <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {open.map((t) => {
+  const rows = (
+      <ul style={{
+        listStyle: 'none', display: 'flex', flexDirection: 'column',
+        gap: bare ? 0 : 6,
+      }}>
+        {open.map((t, i) => {
           const flag = tone(t);
           return (
             <li key={t.id} style={{
               display: 'flex', alignItems: 'center', gap: 10,
-              padding: '10px 12px',
-              border: '1px solid var(--aq-border-light)',
-              borderRadius: 'var(--aq-radius)',
+              padding: bare ? '10px 4px' : '10px 12px',
+              border: bare ? 'none' : '1px solid var(--aq-border-light)',
+              borderTop: bare && i === 0 ? 'none' : bare ? '1px solid var(--aq-border-light)' : undefined,
+              borderRadius: bare ? 0 : 'var(--aq-radius)',
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{t.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+                <div style={{ fontSize: bare ? 13.5 : 14, fontWeight: 600 }}>{t.title}</div>
+                <div style={{ fontSize: bare ? 11.5 : 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
                   {t.due_at ? `Due ${String(t.due_at).slice(0, 10)}` : 'No due date'}
                   {t.description ? ` · ${t.description.slice(0, 80)}` : ''}
                 </div>
@@ -89,6 +96,19 @@ export function FollowUps({
           );
         })}
       </ul>
+  );
+
+  if (bare) return rows;
+
+  return (
+    <div className="aq-card animate-fade-in" style={{ padding: 20 }}>
+      <header style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700 }}>Follow-ups</h2>
+        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+          From the CRM — {open.length} open. Ticking one here ticks it there.
+        </p>
+      </header>
+      {rows}
     </div>
   );
 }

@@ -13,6 +13,16 @@ import {
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { vendorOps, type ExternalInvite } from '@/lib/contract-api';
+import {
+  buildVendors, sortRows, filterRows, nextSort, summarise, summaryLine,
+  emptyMessage, isFiltered, deleteWarning, deletedMessage,
+  VENDOR_COLUMNS, DEFAULT_SORT, EMPTY_FILTER,
+  type Filter, type RegistryRow, type Sort,
+} from '@/lib/registry';
+import {
+  RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
+  Detail, DETAIL_GRID,
+} from './RegistryTable';
 import { InviteLinkModal } from '@/components/workflow/InviteLinkModal';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
 import { VendorEditorModal } from '@/components/workflow/VendorEditorModal';
@@ -25,8 +35,6 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
   const [query, setQuery] = useState('');
   const [editorOpen, setEditorOpen] = useState(false);
   const [editVendor, setEditVendor] = useState<LegacyVendor | null>(null);
-  /** vendor.id of the card currently expanded inline. null = none. */
-  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [activeInvite, setActiveInvite] = useState<ExternalInvite | null>(null);
@@ -52,29 +60,57 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
     return m;
   }, [categories]);
 
-  const visibleVendors = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return vendors.filter((v) => !q || [
-      v.name,
-      v.license_number,
-      v.id_number,
-      v.signatory_name,
-      v.contact_name,
-      v.email,
-      v.phone,
-      ...(banksByVendor.get(v.id) ?? []).flatMap((b) => [b.bank_name, b.iban, b.account_name]),
-    ].some((value) => String(value || '').toLowerCase().includes(q)));
-  }, [banksByVendor, query, vendors]);
+  const [filter, setFilter] = useState<Filter>(EMPTY_FILTER);
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+
+  const rows = useMemo(
+    () => buildVendors({ vendors: vendors as any, banks: banks as any, categories: categories as any }),
+    [vendors, banks, categories],
+  );
+  // The bank fields stay searchable even though they are off the list:
+  // finance look this screen up by IBAN when a payment bounces, which is the
+  // one good reason the IBAN was ever printed on the card.
+  const bankText = (r: RegistryRow) =>
+    (banksByVendor.get(Number(r.id)) ?? []).flatMap((b) => [
+      String(b.bank_name ?? ''), String(b.iban ?? ''), String(b.account_name ?? ''),
+    ]);
+  const shown = useMemo(
+    () => sortRows(filterRows(rows, { ...filter, query }, bankText), sort),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, filter, query, sort, banks],
+  );
+  const summary = summarise(rows, shown);
+  const deleting = confirmDeleteId ? rows.find((r) => r.id === confirmDeleteId) ?? null : null;
+
+  const presentCategories = useMemo(() => {
+    const seen = new Set(rows.map((r) => r.who).filter(Boolean) as string[]);
+    return [...seen].sort((a, b) => a.localeCompare(b, 'en'));
+  }, [rows]);
+
+  const removeVendor = async (row: RegistryRow) => {
+    setBusyId(Number(row.id)); setError(''); setMessage('');
+    try {
+      await vendorOps.remove(Number(row.id));
+      setMessage(deletedMessage(row.name));
+      setConfirmDeleteId(null);
+      setExpandedId(null);
+      await refetchVendors();
+    } catch (e: any) {
+      // A sentence, not a window.alert telling somebody to restart uvicorn.
+      setError(`Could not delete ${row.name}. ${e?.message ?? String(e)}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const openCreate = () => { setEditVendor(null); setError(''); setEditorOpen(true); };
   const openEdit = (v: LegacyVendor) => { setEditVendor(v); setError(''); setEditorOpen(true); };
   const closeEditor = () => { setEditorOpen(false); setEditVendor(null); };
   const onSaved = async () => {
     await Promise.all([refetchPending(), refetchVendors()]);
-  };
-
-  const toggleExpand = (vendorId: number) => {
-    setExpandedId((cur) => (cur === vendorId ? null : vendorId));
   };
 
   const act = async (id: number, action: 'approve' | 'reject') => {
@@ -92,243 +128,172 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
   };
 
   return (
-    <div className="animate-fade-in" style={{ minHeight: 'calc(100vh - 180px)' }}>
-      <div style={registryHeader}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-          <h2 style={{ fontSize: 24, fontWeight: 800 }}>Vendors</h2>
-          <span style={{ color: 'var(--aq-text-muted)', fontSize: 15 }}>
-            {visibleVendors.length} vendor{visibleVendors.length === 1 ? '' : 's'}
-          </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <label style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 10, top: 8, fontSize: 14 }}>🔍</span>
-            <input
-              className="aq-input"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search"
-              style={{ width: 220, paddingLeft: 34 }}
-            />
-          </label>
-          <button className="aq-btn aq-btn-primary" disabled={!canCreate} onClick={openCreate}>
-            + Add Vendor
-          </button>
-        </div>
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <RegistryHeader title="Vendors" line={summaryLine(summary, 'vendor')}>
+        {/* Ink, not accent green — green already means "portal active" two
+            columns over, and a green button beside green pills makes the
+            colour stop meaning anything. */}
+        <AddButton
+          label="Add a vendor"
+          onClick={openCreate}
+          disabled={!canCreate}
+          title={canCreate ? undefined : 'Only owners, admins and marketing add vendors'}
+        />
+      </RegistryHeader>
+
+      <div style={{ display: 'flex', gap: 6 }}>
+        <Chip
+          label="Vendors"
+          count={rows.length}
+          on={tab === 'vendors'}
+          onClick={() => setTab('vendors')}
+        />
+        <Chip
+          label="Pending requests"
+          count={pendingOnly.length}
+          on={tab === 'pending'}
+          onClick={() => setTab('pending')}
+        />
       </div>
 
-      <div style={tabsStyle}>
-        <button className={tab === 'vendors' ? 'registry-tab active' : 'registry-tab'} onClick={() => setTab('vendors')}>
-          Vendors
-        </button>
-        <button className={tab === 'pending' ? 'registry-tab active' : 'registry-tab'} onClick={() => setTab('pending')}>
-          Pending Requests {pendingOnly.length ? `(${pendingOnly.length})` : ''}
-        </button>
-      </div>
-
-      {error && <div className="aq-badge aq-badge-error" style={{ marginTop: 14 }}>{error}</div>}
+      {error && (
+        <div role="alert" style={{
+          padding: '10px 14px', borderRadius: 'var(--aq-radius)',
+          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+        }}>{error}</div>
+      )}
+      {message && !error && (
+        <div role="status" style={{
+          padding: '10px 14px', borderRadius: 'var(--aq-radius)',
+          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+        }}>{message}</div>
+      )}
 
       {tab === 'vendors' && (
-        visibleVendors.length === 0 ? (
-          <EmptyState
-            icon="🏭"
-            title="No vendors yet"
-            body="Add your first vendor or accept one from pending requests."
-            actionLabel="+ Add Vendor"
-            canCreate={canCreate}
-            onAction={openCreate}
-          />
-        ) : (
-          <div style={gridStyle}>
-            {visibleVendors.map((vendor) => {
-              const vendorBanks = banksByVendor.get(vendor.id) ?? [];
-              const v = vendor as any;
-              const inviteStatus: string = v.invite_status || 'none';
-              const email: string | null = v.email || null;
-              const cat = vendor.category_id ? categoryById.get(vendor.category_id) ?? null : null;
-              const idLabel = cat?.requires_license ? 'License' : 'ID';
-              const idValue = cat?.requires_license
-                ? (vendor.license_number || vendor.id_number || '—')
-                : (vendor.id_number || vendor.license_number || '—');
-              const isExpanded = expandedId === vendor.id;
-              // Clicking the card toggles the inline summary. Buttons
-              // inside the card use stopPropagation so they don't also
-              // collapse the expand.
-              return (
-                <article
-                  key={vendor.id}
-                  className="aq-card"
-                  style={{ padding: 18, cursor: 'pointer' }}
-                  onClick={() => toggleExpand(vendor.id)}
-                  aria-expanded={isExpanded}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 800 }}>{vendor.name}</h3>
-                        {cat && (
-                          <span
-                            className="aq-badge"
-                            style={{ background: 'var(--aq-bg-sunken)', color: 'var(--aq-text-secondary)' }}
-                          >
-                            {cat.label}
-                          </span>
-                        )}
-                      </div>
-                      <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-                        {idLabel}: {idValue}
-                      </p>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
-                      <span className={`aq-badge ${
-                        inviteStatus === 'accepted'      ? 'aq-badge-success'
-                        : inviteStatus === 'invite_sent' ? 'aq-badge-info'
-                        : inviteStatus === 'pending_invite' ? 'aq-badge-warning'
-                        : 'aq-badge-muted'
-                      }`}>
-                        {inviteStatus === 'accepted'      ? 'Portal active'
-                          : inviteStatus === 'invite_sent' ? 'Invite sent'
-                          : inviteStatus === 'pending_invite' ? 'Invite pending'
-                          : 'No portal'}
-                      </span>
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-secondary"
-                        style={{ padding: '4px 10px', fontSize: 12 }}
-                        title="Set a password for this vendor's portal account"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPortalTarget({
-                            role: 'vendor',
-                            label: vendor.name,
-                            vendor_id: Number(vendor.id),
-                            email: email,
-                          });
-                        }}
-                      >
-                        {inviteStatus === 'accepted' ? 'Reset password' : 'Make portal'}
-                      </button>
-                    </div>
-                  </div>
-                  <dl style={metaGrid}>
-                    <Meta label="Contact" value={vendor.contact_name || '—'} />
-                    <Meta label="Phone" value={vendor.phone || '—'} />
-                    <Meta label="Bank" value={vendorBanks[0]?.bank_name} />
-                    <Meta label="IBAN" value={vendorBanks[0]?.iban} />
-                    {vendor.vat_number ? <Meta label="VAT" value={vendor.vat_number} /> : null}
-                    {vendor.signatory_name ? <Meta label="Signatory" value={vendor.signatory_name} /> : null}
-                  </dl>
+        <>
+          <RegistryToolbar
+            query={query}
+            onQuery={setQuery}
+            placeholder="Search name, ID, licence, contact, bank or IBAN…"
+          >
+            <Chip
+              label="Missing contract details"
+              count={summary.withGaps}
+              danger
+              on={filter.withGaps}
+              onClick={() => setFilter((f) => ({ ...f, withGaps: !f.withGaps }))}
+            />
+            <Chip
+              label="No portal"
+              count={summary.noPortal}
+              on={filter.noPortal}
+              onClick={() => setFilter((f) => ({ ...f, noPortal: !f.noPortal }))}
+            />
+            {/* Only categories that exist here. A filter that can only ever
+                empty the table reads like a broken screen. */}
+            <select
+              className="aq-select"
+              value={filter.category ?? ''}
+              onChange={(e) => setFilter((f) => ({ ...f, category: e.target.value || null }))}
+              style={{ width: 'auto', fontSize: 12.5, padding: '5px 10px' }}
+              aria-label="Category"
+            >
+              <option value="">Every category</option>
+              {presentCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {isFiltered({ ...filter, query }) && (
+              <button
+                type="button"
+                className="aq-btn aq-btn-ghost"
+                onClick={() => { setFilter(EMPTY_FILTER); setQuery(''); }}
+                style={{ fontSize: 12.5, padding: '5px 10px', color: 'var(--aq-text-secondary)' }}
+              >Clear</button>
+            )}
+          </RegistryToolbar>
 
-                  {/*
-                   * Expanded block: extra details only shown when the
-                   * card is clicked. Includes every bank (not just the
-                   * primary), per-category specifics, and notes.
-                   */}
-                  {isExpanded && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      style={{
-                        marginTop: 14,
-                        paddingTop: 12,
-                        borderTop: '1px solid var(--aq-border-light)',
-                        display: 'flex', flexDirection: 'column', gap: 10,
-                      }}
-                    >
-                      {vendorBanks.length > 1 && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--aq-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
-                            All bank accounts
-                          </div>
-                          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {vendorBanks.map((b) => (
-                              <li key={b.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                                <span style={{ color: 'var(--aq-text-secondary)' }}>{b.bank_name || '—'}</span>
-                                <span style={{ fontFamily: 'monospace' }}>{b.iban || '—'}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      <CategoryDetail vendor={vendor} category={cat} />
-                      {vendor.details && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--aq-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-                            Notes
-                          </div>
-                          <p style={{ fontSize: 12, color: 'var(--aq-text-secondary)', margin: 0, whiteSpace: 'pre-wrap' }}>{vendor.details}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
+          {deleting && (
+            <Confirm
+              text={deleteWarning(deleting, 'vendor')}
+              confirmLabel="Yes, delete"
+              busy={busyId != null}
+              onConfirm={() => removeVendor(deleting)}
+              onCancel={() => setConfirmDeleteId(null)}
+            />
+          )}
 
-                  <div
-                    style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {canEdit && (
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-secondary"
-                        style={{ padding: '4px 10px', fontSize: 12 }}
-                        onClick={() => openEdit(vendor)}
-                      >
-                        Edit
-                      </button>
-                    )}
-                    {(role === 'owner' || role === 'admin') && (
-                      <button
-                        type="button"
-                        className="aq-btn aq-btn-ghost"
-                        style={{ padding: '4px 10px', fontSize: 12, color: 'var(--aq-error)' }}
-                        onClick={async () => {
-                          try {
-                            await vendorOps.remove(Number(vendor.id));
-                            await refetchVendors();
-                          } catch (err: any) {
-                            window.alert(
-                              `Could not delete vendor "${vendor.name}".\n\n${err?.message ?? String(err)}\n\nIf this says "not a member of any AQ workspace", the contract backend has not been restarted with the latest auth code. Restart uvicorn and try again.`,
-                            );
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )
+          {shown.length === 0 ? (
+            <div className="aq-card" style={{
+              padding: 34, textAlign: 'center', color: 'var(--aq-text-muted)', fontSize: 13.5,
+            }}>{emptyMessage({ ...filter, query }, rows.length, 'vendor')}</div>
+          ) : (
+            <RegistryTable
+              rows={shown}
+              columns={VENDOR_COLUMNS}
+              showValue={false}
+              sort={sort}
+              onSort={(k) => setSort((cur) => nextSort(cur, k))}
+              expandedId={expandedId}
+              onToggle={(id) => setExpandedId((cur) => (cur === id ? null : id))}
+              renderDetail={(r) => (
+                <VendorDetail
+                  row={r}
+                  banks={banksByVendor.get(Number(r.id)) ?? []}
+                  category={categoryById.get(String((r.raw as any).category_id ?? '')) ?? null}
+                  canEdit={canEdit}
+                  isAdmin={role === 'owner' || role === 'admin'}
+                  onEdit={() => openEdit(r.raw as unknown as LegacyVendor)}
+                  onPortal={() => setPortalTarget({
+                    role: 'vendor',
+                    label: r.name,
+                    vendor_id: Number(r.id),
+                    email: String((r.raw as any).email ?? '') || null,
+                  })}
+                  onDelete={() => setConfirmDeleteId(r.id)}
+                />
+              )}
+            />
+          )}
+        </>
       )}
 
       {tab === 'pending' && (
         pendingOnly.length === 0 ? (
-          <EmptyState
-            icon="📨"
-            title="No pending requests"
-            body="Vendor registration requests will appear here for review."
-            actionLabel="+ Add Vendor"
-            canCreate={canCreate}
-            onAction={openCreate}
-          />
+          <div className="aq-card" style={{
+            padding: 34, textAlign: 'center', color: 'var(--aq-text-muted)', fontSize: 13.5,
+          }}>
+            No pending requests. Vendor registrations land here for review.
+          </div>
         ) : (
-          <div style={gridStyle}>
-            {pendingOnly.map((request) => (
-              <article key={request.id} className="aq-card" style={{ padding: 18 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 800 }}>{request.full_name}</h3>
-                <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-                  {request.license_number || 'No ID'} · {request.iban || 'No IBAN'}
-                </p>
-                <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-                  <button className="aq-btn aq-btn-primary" disabled={!canApprove || busyId === request.id} onClick={() => act(request.id, 'approve')}>
-                    Approve
-                  </button>
-                  <button className="aq-btn aq-btn-ghost" disabled={!canApprove || busyId === request.id} onClick={() => act(request.id, 'reject')}>
-                    Reject
-                  </button>
-                </div>
-              </article>
+          <div className="aq-card" style={{ overflow: 'hidden' }}>
+            {pendingOnly.map((request, i) => (
+              <div
+                key={request.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+                }}
+              >
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600 }}>
+                    {request.full_name}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+                    {request.license_number || 'no ID'} · {request.iban ? 'IBAN on file' : 'no IBAN'}
+                  </span>
+                </span>
+                <button
+                  className="aq-btn aq-btn-ghost"
+                  disabled={!canApprove || busyId === request.id}
+                  onClick={() => act(request.id, 'reject')}
+                  style={{ fontSize: 12, padding: '4px 10px', color: 'var(--aq-text-secondary)' }}
+                >Reject</button>
+                <button
+                  className="aq-btn aq-btn-primary"
+                  disabled={!canApprove || busyId === request.id}
+                  onClick={() => act(request.id, 'approve')}
+                  style={{ fontSize: 12, padding: '4px 11px' }}
+                >{busyId === request.id ? 'Working…' : 'Approve'}</button>
+              </div>
             ))}
           </div>
         )
@@ -355,7 +320,104 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
 }
 
 /**
- * CategoryDetail — small read-only block shown when a vendor card
+ * What was on the card, now behind the row.
+ *
+ * The IBAN in particular: the old list printed bank name and IBAN on every
+ * card, so sixty-one IBANs were on screen at once. They are still
+ * *searchable* — finance look this screen up by IBAN when a payment
+ * bounces — they are just not printed sixty-one times.
+ */
+function VendorDetail({
+  row, banks, category, canEdit, isAdmin, onEdit, onPortal, onDelete,
+}: {
+  row: RegistryRow;
+  banks: LegacyBankAccount[];
+  category: LegacyVendorCategory | null;
+  canEdit: boolean;
+  isAdmin: boolean;
+  onEdit: () => void;
+  onPortal: () => void;
+  onDelete: () => void;
+}) {
+  const v = row.raw as unknown as LegacyVendor;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={DETAIL_GRID}>
+        <Detail label="Contact" value={v.contact_name} />
+        <Detail label="Email" value={v.email} />
+        <Detail label="Phone" value={v.phone} />
+        <Detail label="Signatory" value={v.signatory_name} missing />
+        <Detail label="VAT" value={v.vat_number} />
+        <Detail label="ID number" value={v.id_number} />
+        <Detail label="Licence" value={v.license_number} />
+      </div>
+
+      <div>
+        <div style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+          textTransform: 'uppercase', color: 'var(--aq-text-muted)', marginBottom: 5,
+        }}>Bank accounts</div>
+        {banks.length === 0 ? (
+          <p style={{ fontSize: 12.5, color: '#b91c1c', fontWeight: 600, margin: 0 }}>
+            None on file — this vendor cannot be paid, and the contract goes out
+            with the payment block blank.
+          </p>
+        ) : (
+          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {banks.map((b) => (
+              <li key={b.id} style={{
+                display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5,
+              }}>
+                <span style={{ color: 'var(--aq-text-secondary)' }}>{b.bank_name || '—'}</span>
+                <span style={{
+                  fontFamily: 'ui-monospace, monospace',
+                  color: b.iban ? 'var(--aq-text)' : '#b91c1c',
+                  fontWeight: b.iban ? 400 : 600,
+                }}>{b.iban || 'no IBAN'}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <CategoryDetail vendor={v} category={category} />
+
+      {v.details && (
+        <div>
+          <div style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+            textTransform: 'uppercase', color: 'var(--aq-text-muted)', marginBottom: 4,
+          }}>Notes</div>
+          <p style={{
+            fontSize: 12.5, color: 'var(--aq-text-secondary)', margin: 0, whiteSpace: 'pre-wrap',
+          }}>{v.details}</p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        {canEdit && (
+          <button
+            type="button" className="aq-btn aq-btn-secondary" onClick={onEdit}
+            style={{ fontSize: 12, padding: '5px 11px' }}
+          >Edit</button>
+        )}
+        <button
+          type="button" className="aq-btn aq-btn-secondary" onClick={onPortal}
+          style={{ fontSize: 12, padding: '5px 11px' }}
+        >{row.portal === 'active' ? 'Reset password' : 'Make portal'}</button>
+        {isAdmin && (
+          <button
+            type="button" className="aq-btn aq-btn-ghost" onClick={onDelete}
+            style={{ fontSize: 12, padding: '5px 11px', color: '#b91c1c' }}
+          >Delete vendor…</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * CategoryDetail — small read-only block shown when a vendor row
  * is expanded. Surfaces the per-category fields that are set, so a
  * user can confirm them without entering the editor.
  */

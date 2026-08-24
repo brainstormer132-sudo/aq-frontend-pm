@@ -62,7 +62,8 @@ export function CrmContactDetail({
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteCrmActivity(id);
+      // Pass the workspace so the cached feed and activity index drop it too.
+      await deleteCrmActivity(id, workspaceId);
       await refetch();
       onChanged?.();
     } catch (e: any) {

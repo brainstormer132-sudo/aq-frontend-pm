@@ -10,7 +10,7 @@ import {
   useTaskPlatforms, rollupCampaignMoney,
   useVendorAdLines, useAdLinesForSubtasks, syncBookingPriceFromAds,
   publishTrackingSheet, unpublishTrackingSheet,
-  ensureTrackingRowForVendor, isTrackableVendorCategory, shouldTrackVendorOnSheet,
+  ensureTrackingRowsForBooking, isTrackableVendorCategory, shouldTrackVendorOnSheet,
   TASK_STATUSES, APPROVAL_STAGES, AD_TYPES, AD_TYPE_NEEDS_DETAIL, CONTRACT_STATUSES, labelFor,
   addComment, deleteComment, addAttachmentLink, uploadTaskAttachment,
   getAttachmentDownloadUrl, deleteAttachment,
@@ -1002,8 +1002,11 @@ export function TaskDetailPanel({
             try { await updateTaskFields(parentTask.id, { has_tracking: true } as any); }
             catch { /* the row matters more than the flag */ }
           }
-          const added = await ensureTrackingRowForVendor({
+          const added = await ensureTrackingRowsForBooking({
             parent_task_id: parentTask.id,
+            // The booking, so the sheet can put one row per ad on it — and so
+            // the placeholder can be claimed when the ads are added.
+            subtask_id: task.id,
             vendor_name: v.name,
             // Prefill from whatever is already known, campaign included.
             platform: task.platform ?? campaignPlatformText(parentTask),
@@ -1012,9 +1015,9 @@ export function TaskDetailPanel({
             product: parentTask.brand_name,
             price_excl: task.price,
           });
-          setTrackingNote(added
-            ? `${v.name} added to the campaign's tracking sheet.`
-            : `${v.name} is already on the campaign's tracking sheet.`);
+          setTrackingNote(added > 0
+            ? `${added} ${added === 1 ? 'row' : 'rows'} added to the campaign's tracking sheet — one per ad.`
+            : `${v.name}'s ads are already on the campaign's tracking sheet.`);
         }
       }
 

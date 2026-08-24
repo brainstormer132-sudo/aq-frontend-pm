@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import {
   onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
@@ -11,6 +11,11 @@ import {
   adsExpectingProof, adsMissingProof, type AdLine,
 } from '@/lib/ad-lines';
 import { avatarProblems, avatarPath, avatarStoragePath } from '@/lib/profile';
+import { taskCounts } from '@/lib/team';
+import {
+  expandBooking, planSync, plannedRows, adoptionPatch,
+  type BookingInput, type PlannedRowInput,
+} from '@/lib/tracking-sync';
 
 const supabase = createClient();
 
@@ -849,39 +854,86 @@ export function withVat(priceExcl: number): number {
 /** A tracking-enabled campaign enriched with its sheet's row count + value. */
 export type TrackingCampaign = PMTask & { row_count: number; total_incl: number };
 
-/** Every campaign (top-level pm_task) flagged with a tracking sheet. */
+/** One working sheet row, reduced to what the list needs to roll up. */
+export interface TrackingRollupRow {
+  task_id: string;
+  id: string;
+  price_incl: number | null;
+  updated_at: string | null;
+}
+
+/** One published snapshot row, reduced to what the list needs to compare. */
+export interface TrackingPublishedStamp {
+  task_id: string;
+  source_row_id: string | null;
+  updated_at: string | null;
+}
+
+/** How many task ids go into one `in()` before it is split. Matches contracts. */
+const TRACKING_ID_BATCH = 100;
+
+/**
+ * Every campaign (top-level pm_task) flagged with a tracking sheet, plus the
+ * raw material the list needs: each sheet's rows and its published snapshot.
+ *
+ * Both row reads used to be a single unpaged `.in()`. PostgREST caps a response
+ * at db-max-rows (1000) without erroring, so past a thousand tracking rows
+ * across the workspace the Vendors and Total columns quietly under-reported —
+ * the same silent truncation that made the Clients card read exactly "1,000".
+ * Everything here goes through selectAllRows now, in id batches.
+ */
 export function useTrackingCampaigns(workspaceId: string | null) {
   const [items, setItems] = useState<TrackingCampaign[]>([]);
+  const [rows, setRows] = useState<TrackingRollupRow[]>([]);
+  const [published, setPublished] = useState<TrackingPublishedStamp[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
-    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    if (!workspaceId) {
+      setItems([]); setRows([]); setPublished([]); setLoading(false);
+      return;
+    }
     setLoading(true);
-    const { data, error } = await supabase
-      .from('pm_tasks')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .eq('has_tracking', true)
-      .is('parent_task_id', null)
-      .order('created_at', { ascending: false });
-    if (error) logSbError('useTrackingCampaigns', error, { workspaceId });
 
-    const campaigns = (data || []) as PMTask[];
+    const campaigns = await selectAllRows<PMTask>('useTrackingCampaigns', () =>
+      supabase
+        .from('pm_tasks')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('has_tracking', true)
+        .is('parent_task_id', null)
+        .order('created_at', { ascending: false }));
 
-    // Roll up each campaign's tracking rows (count + total incl. VAT) in one query.
+    const ids = campaigns.map((c) => c.id);
+    const allRows: TrackingRollupRow[] = [];
+    const allPublished: TrackingPublishedStamp[] = [];
+
+    for (let i = 0; i < ids.length; i += TRACKING_ID_BATCH) {
+      const batch = ids.slice(i, i + TRACKING_ID_BATCH);
+      const [r, p] = await Promise.all([
+        selectAllRows<TrackingRollupRow>('useTrackingCampaigns rows', () =>
+          supabase
+            .from('tracking_rows')
+            .select('task_id, id, price_incl, updated_at')
+            .in('task_id', batch)
+            .order('id', { ascending: true })),
+        selectAllRows<TrackingPublishedStamp>('useTrackingCampaigns published', () =>
+          supabase
+            .from('tracking_rows_published')
+            .select('task_id, source_row_id, updated_at')
+            .in('task_id', batch)
+            .order('id', { ascending: true })),
+      ]);
+      allRows.push(...r);
+      allPublished.push(...p);
+    }
+
+    // row_count / total_incl are kept for anything still reading the old shape.
     const counts: Record<string, { row_count: number; total_incl: number }> = {};
-    if (campaigns.length) {
-      const ids = campaigns.map((c) => c.id);
-      const { data: rowData, error: rowErr } = await supabase
-        .from('tracking_rows')
-        .select('task_id, price_incl')
-        .in('task_id', ids);
-      if (rowErr) logSbError('useTrackingCampaigns rows', rowErr, { workspaceId });
-      for (const r of (rowData || []) as any[]) {
-        const b = counts[r.task_id] ?? (counts[r.task_id] = { row_count: 0, total_incl: 0 });
-        b.row_count += 1;
-        b.total_incl += Number(r.price_incl || 0);
-      }
+    for (const r of allRows) {
+      const b = counts[r.task_id] ?? (counts[r.task_id] = { row_count: 0, total_incl: 0 });
+      b.row_count += 1;
+      b.total_incl += Number(r.price_incl || 0);
     }
 
     setItems(campaigns.map((c) => ({
@@ -889,11 +941,13 @@ export function useTrackingCampaigns(workspaceId: string | null) {
       row_count: counts[c.id]?.row_count ?? 0,
       total_incl: counts[c.id]?.total_incl ?? 0,
     })));
+    setRows(allRows);
+    setPublished(allPublished);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { items, loading, refetch: fetch };
+  return { items, rows, published, loading, refetch: fetch };
 }
 
 /** All tracking rows for one campaign (parent pm_task), ordered. */
@@ -904,13 +958,13 @@ export function useTrackingRows(taskId: string | null) {
   const fetch = useCallback(async () => {
     if (!taskId) { setRows([]); setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await supabase
-      .from('tracking_rows')
-      .select('*')
-      .eq('task_id', taskId)
-      .order('position', { ascending: true });
-    if (error) logSbError('useTrackingRows', error, { taskId });
-    setRows((data || []) as TrackingRow[]);
+    const all = await selectAllRows<TrackingRow>('useTrackingRows', () =>
+      supabase
+        .from('tracking_rows')
+        .select('*')
+        .eq('task_id', taskId)
+        .order('position', { ascending: true }));
+    setRows(all);
     setLoading(false);
   }, [taskId]);
 
@@ -1054,20 +1108,29 @@ export function usePmTaskCampaignRollup(workspaceId: string | null) {
   const [rows, setRows] = useState<PmTaskCampaignRollup[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setRows([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('pm_task_campaign_rollup')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('parent_task_id', { ascending: false });
-    if (error) logSbError('usePmTaskCampaignRollup', error, { workspaceId });
-    setRows((data || []) as PmTaskCampaignRollup[]);
+    // Cached, because two screens want it — the Dashboard's attention panel
+    // and the All Tasks table — and it is the same answer for both.
+    //
+    // Paged, because it was not: one row per campaign means a workspace past
+    // its thousandth campaign was silently handing back 1000 rows, and every
+    // campaign after that showed no vendors and no value. A zero in the
+    // vendors column is a thing people act on.
+    const data = await cachedFetch(`campaignRollup:${workspaceId}`, () =>
+      selectAllRows<PmTaskCampaignRollup>('usePmTaskCampaignRollup', () =>
+        supabase
+          .from('pm_task_campaign_rollup')
+          .select('*')
+          .eq('workspace_id', workspaceId)
+          .order('parent_task_id', { ascending: false })),
+      force);
+    setRows(data);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { rows, loading, refetch: fetch };
+  return { rows, loading, refetch: () => fetch(true) };
 }
 
 /** CRUD for the task_sources lookup (admin-only via RLS). */
@@ -1086,6 +1149,99 @@ export async function updateTaskSource(id: string, fields: Partial<Pick<TaskSour
 export async function deleteTaskSource(id: string) {
   const { error } = await supabase.from('task_sources').delete().eq('id', id);
   if (error) throw error;
+}
+
+/**
+ * CRUD for the task_platforms lookup (migration 042, admin-only via RLS).
+ *
+ * There wasn't any. The Platform picker on every campaign read this table and
+ * nothing in the app could add a row to it, so the list could only be changed
+ * with SQL. Same shape as the other two lookups.
+ */
+export async function createTaskPlatform(workspaceId: string, name: string, position: number) {
+  const { data, error } = await supabase
+    .from('task_platforms')
+    .insert({ workspace_id: workspaceId, name, position })
+    .select('*').single();
+  if (error) throw error;
+  return data as TaskSource;
+}
+export async function updateTaskPlatform(id: string, fields: Partial<Pick<TaskSource, 'name' | 'position'>>) {
+  const { error } = await supabase.from('task_platforms').update(fields).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteTaskPlatform(id: string) {
+  const { error } = await supabase.from('task_platforms').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * How many rows are pointing at each lookup entry.
+ *
+ * Deleting a source or a category is `on delete set null` on `pm_tasks` and
+ * `clients` (028, 042), so the screen has to be able to say how many rows are
+ * about to lose their value. Platforms are a `text[]` on the campaign, so they
+ * are counted by name and survive a delete.
+ */
+export interface LookupUsageCounts {
+  sources: Record<string, number>;
+  categories: Record<string, { campaigns: number; clients: number }>;
+  /** Keyed by the platform's name, because that is what pm_tasks.platforms holds. */
+  platforms: Record<string, number>;
+}
+
+export function useLookupUsage(workspaceId: string | null) {
+  const [usage, setUsage] = useState<LookupUsageCounts>({ sources: {}, categories: {}, platforms: {} });
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) {
+      setUsage({ sources: {}, categories: {}, platforms: {} });
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+
+    const [tasks, clients] = await Promise.all([
+      selectAllRows<any>('useLookupUsage tasks', () =>
+        supabase
+          .from('pm_tasks')
+          .select('id, source_id, client_category_id, platforms')
+          .eq('workspace_id', workspaceId)
+          .order('id', { ascending: true })),
+      selectAllRows<any>('useLookupUsage clients', () =>
+        supabase
+          .from('clients')
+          .select('id, client_category_id')
+          .eq('workspace_id', workspaceId)
+          .order('id', { ascending: true })),
+    ]);
+
+    const sources: Record<string, number> = {};
+    const categories: Record<string, { campaigns: number; clients: number }> = {};
+    const platforms: Record<string, number> = {};
+
+    const bucket = (id: string) =>
+      categories[id] ?? (categories[id] = { campaigns: 0, clients: 0 });
+
+    for (const t of tasks) {
+      if (t.source_id) sources[t.source_id] = (sources[t.source_id] ?? 0) + 1;
+      if (t.client_category_id) bucket(t.client_category_id).campaigns += 1;
+      for (const p of (Array.isArray(t.platforms) ? t.platforms : [])) {
+        const key = String(p ?? '').trim();
+        if (key) platforms[key] = (platforms[key] ?? 0) + 1;
+      }
+    }
+    for (const c of clients) {
+      if (c.client_category_id) bucket(c.client_category_id).clients += 1;
+    }
+
+    setUsage({ sources, categories, platforms });
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { usage, loading, refetch: fetch };
 }
 
 /** CRUD for the client_categories lookup (admin-only via RLS). */
@@ -1417,20 +1573,32 @@ export async function unpublishTrackingSheet(taskId: string): Promise<void> {
   if (error) { logSbError('unpublishTrackingSheet', error, { taskId }); throw error; }
 }
 
+/**
+ * A row of the published snapshot. It is `like tracking_rows` (045), plus the
+ * three columns the snapshot adds — `source_row_id` is what lets the sheet work
+ * out which rows have changed since the client last saw them.
+ */
+export type PublishedTrackingRow = TrackingRow & {
+  published_at: string | null;
+  published_by: string | null;
+  source_row_id: string | null;
+};
+
 /** The published snapshot for a campaign — what the client currently sees. */
 export function usePublishedTrackingRows(taskId: string | null) {
-  const [rows, setRows] = useState<TrackingRow[]>([]);
+  const [rows, setRows] = useState<PublishedTrackingRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
     if (!taskId) { setRows([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('tracking_rows_published')
-      .select('*')
-      .eq('task_id', taskId)
-      .order('position', { ascending: true });
-    if (error) logSbError('usePublishedTrackingRows', error, { taskId });
-    setRows((data || []) as TrackingRow[]);
+    setLoading(true);
+    const all = await selectAllRows<PublishedTrackingRow>('usePublishedTrackingRows', () =>
+      supabase
+        .from('tracking_rows_published')
+        .select('*')
+        .eq('task_id', taskId)
+        .order('position', { ascending: true }));
+    setRows(all);
     setLoading(false);
   }, [taskId]);
 
@@ -1439,17 +1607,124 @@ export function usePublishedTrackingRows(taskId: string | null) {
 }
 
 /**
- * Give an influencer/UGC vendor a row on the campaign's tracking sheet.
+ * A campaign's vendor bookings, with the ads inside each one.
  *
- * Called when a vendor is picked on a subtask. Idempotent by vendor name —
- * re-picking the same vendor, or changing an unrelated field, will not add a
- * second row. Returns true only when a row was actually created.
+ * The tracking sheet is one row per AD now (migration 063), so it needs the
+ * lines, not just the subtasks. Vendor names come from the vendor book, which
+ * is already cached — the subtask only carries a numeric vendor_id.
+ */
+export async function fetchCampaignBookings(parentTaskId: string): Promise<BookingInput[]> {
+  if (!parentTaskId) return [];
+
+  const subtasks = await selectAllRows<any>('fetchCampaignBookings subtasks', () =>
+    supabase
+      .from('pm_tasks')
+      .select('id, vendor_id, platform, task_name, title, position')
+      .eq('parent_task_id', parentTaskId)
+      .order('position', { ascending: true }));
+
+  if (!subtasks.length) return [];
+
+  const byId = await fetchAdLinesForSubtasks(subtasks.map((s) => s.id));
+  const vendorNames = await fetchVendorNames(
+    subtasks.map((s) => s.vendor_id).filter((v): v is number => v != null),
+  );
+
+  return subtasks
+    .map((s) => ({
+      subtask_id: s.id as string,
+      // The subtask's own name is the fallback: a booking made before the
+      // vendor book had the row still says who it is for in its title.
+      vendor_name: (s.vendor_id != null ? vendorNames.get(s.vendor_id) : null)
+        ?? (s.task_name || s.title || ''),
+      profile_link: null,
+      platform: s.platform ?? null,
+      lines: (byId.get(s.id) ?? []) as any[],
+    }))
+    .filter((b) => b.lines.length > 0);
+}
+
+/** id → name, for the vendors on a campaign's bookings. */
+async function fetchVendorNames(ids: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const unique = Array.from(new Set(ids));
+  if (!unique.length) return out;
+  const rows = await selectAllRows<any>('fetchVendorNames', () =>
+    supabase.from('vendors').select('id, name').in('id', unique).order('id', { ascending: true }));
+  for (const r of rows) out.set(Number(r.id), String(r.name ?? ''));
+  return out;
+}
+
+export function useCampaignBookings(parentTaskId: string | null) {
+  const [bookings, setBookings] = useState<BookingInput[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!parentTaskId) { setBookings([]); setLoading(false); return; }
+    setLoading(true);
+    try {
+      setBookings(await fetchCampaignBookings(parentTaskId));
+    } catch (e) {
+      logSbError('useCampaignBookings', e as any, { parentTaskId });
+      setBookings([]);
+    }
+    setLoading(false);
+  }, [parentTaskId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { bookings, loading, refetch: fetch };
+}
+
+/**
+ * Write the rows a plan says are missing. Adds only — never edits or deletes.
+ *
+ * One insert, not a loop: eleven round trips can fail on the seventh and
+ * leave half a booking on the sheet, which reads exactly like the sync being
+ * broken. The unique index on (ad_line_id, ad_line_seq) makes a double-click
+ * harmless.
+ */
+export async function addTrackingRowsFromBookings(
+  taskId: string,
+  rows: PlannedRowInput[],
+): Promise<number> {
+  if (!taskId || !rows.length) return 0;
+  const payload = rows.map((r) => ({
+    ...r,
+    task_id: taskId,
+    price_incl: r.price_excl != null ? withVat(r.price_excl) : 0,
+  }));
+  const { data, error } = await supabase.from('tracking_rows').insert(payload).select('id');
+  if (error) { logSbError('addTrackingRowsFromBookings', error, { taskId }); throw error; }
+  return (data || []).length;
+}
+
+/**
+ * Put a vendor's booking on the campaign's tracking sheet.
+ *
+ * Called when a vendor is picked on a subtask.
+ *
+ * **One row per AD** since migration 063. It used to be one row per vendor,
+ * idempotent by NAME, so a vendor booked for six home ads and six store
+ * visits got twelve ad lines and exactly one sheet row — one posting date and
+ * one status standing for twelve pieces of work.
+ *
+ * Two cases:
+ *
+ *  - the booking already has ads → one row each, keyed to
+ *    (ad_line_id, ad_line_seq), so re-running adds nothing.
+ *  - the booking has no ads yet (the usual order: pick the vendor, then add
+ *    the ads) → one placeholder row keyed to the subtask, so the sheet is not
+ *    empty while the booking is being built. `planSync` claims that row for
+ *    the first real ad rather than leaving it duplicated above it.
+ *
+ * Returns how many rows were created — 0 when everything was already there.
  *
  * Deliberately quiet: a tracking sheet is a nicety, and a failure here must
  * never block the vendor assignment or the contract request that follows it.
  */
-export async function ensureTrackingRowForVendor(input: {
+export async function ensureTrackingRowsForBooking(input: {
   parent_task_id: string;
+  subtask_id: string;
   vendor_name: string;
   platform?: string | null;
   price_excl?: number | null;
@@ -1459,59 +1734,98 @@ export async function ensureTrackingRowForVendor(input: {
   type_of_ad?: string | null;
   /** What the campaign is selling, for the Product column. */
   product?: string | null;
-}): Promise<boolean> {
+}): Promise<number> {
   const name = (input.vendor_name ?? '').trim();
-  if (!name) return false;
+  if (!name || !input.parent_task_id) return 0;
   try {
-    const { data: existing } = await supabase
-      .from('tracking_rows')
-      .select('id, position, influencer_name')
-      .eq('task_id', input.parent_task_id);
+    const existing = await selectAllRows<any>('ensureTrackingRowsForBooking rows', () =>
+      supabase
+        .from('tracking_rows')
+        .select('id, position, influencer_name, ad_line_id, ad_line_seq, subtask_id, posting_date, price_excl, type_of_ad, platform')
+        .eq('task_id', input.parent_task_id)
+        .order('position', { ascending: true }));
 
-    const already = (existing ?? []).some(
-      (r: any) => (r.influencer_name ?? '').trim().toLowerCase() === name.toLowerCase(),
-    );
-    if (already) return false;
-
-    const nextPos = (existing ?? []).reduce(
+    const nextPos = existing.reduce(
       (max: number, r: any) => Math.max(max, Number(r.position) || 0), -1) + 1;
 
-    // Fill in what we already know; leave the rest genuinely blank.
-    //
-    // Siraj: "filled out with the data that we have and the ones we dont
-    // have dont fill any data". So no placeholder text — an empty cell has
-    // to mean "nobody has entered this", otherwise the sheet stops being a
-    // to-do list.
-    //
-    // price_excl is the exception and stays as it was: createTrackingRow
-    // coerces it to 0, and tracking_rows.price_excl may be NOT NULL (036
-    // isn't in this working copy, so I haven't confirmed it can take null).
-    // A vendor with no price therefore still shows 0 rather than empty.
-    // Worth fixing once the column's nullability is known.
-    const price = Number(input.price_excl);
-    const clean = (v: string | null | undefined) => {
-      const s = (v ?? '').trim();
-      return s || undefined;
-    };
+    const lines = input.subtask_id ? await fetchVendorAdLines(input.subtask_id) : [];
 
-    await createTrackingRow(input.parent_task_id, {
-      position: nextPos,
-      influencer_name: name,
-      platform: clean(input.platform),
-      profile_link: clean(input.profile_link),
-      type_of_ad: clean(input.type_of_ad),
-      product: clean(input.product),
-      price_excl: Number.isFinite(price) && input.price_excl != null ? price : undefined,
-    } as any);
-    return true;
+    // No ads booked yet — one placeholder, keyed to the subtask so the sync
+    // can claim it later instead of drawing a second row saying the same
+    // thing. Idempotent by subtask, not by name: two bookings with the same
+    // vendor on one campaign are two bookings.
+    if (!lines.length) {
+      const already = existing.some(
+        (r: any) => r.subtask_id === input.subtask_id
+          || (!r.subtask_id && (r.influencer_name ?? '').trim().toLowerCase() === name.toLowerCase()),
+      );
+      if (already) return 0;
+
+      // Siraj: "filled out with the data that we have and the ones we dont
+      // have dont fill any data" — an empty cell has to mean "nobody has
+      // entered this", or the sheet stops being a to-do list.
+      const clean = (v: string | null | undefined) => {
+        const t = (v ?? '').trim();
+        return t || undefined;
+      };
+      const price = Number(input.price_excl);
+      await createTrackingRow(input.parent_task_id, {
+        position: nextPos,
+        subtask_id: input.subtask_id,
+        influencer_name: name,
+        platform: clean(input.platform),
+        profile_link: clean(input.profile_link),
+        type_of_ad: clean(input.type_of_ad),
+        product: clean(input.product),
+        price_excl: Number.isFinite(price) && input.price_excl != null ? price : undefined,
+      } as any);
+      return 1;
+    }
+
+    const ads = expandBooking({
+      subtask_id: input.subtask_id,
+      vendor_name: name,
+      profile_link: input.profile_link ?? null,
+      platform: input.platform ?? null,
+      lines: lines as any,
+    }, input.platform ?? null);
+
+    const plan = planSync({ ads, rows: existing as any });
+
+    for (const adoption of plan.toAdopt) {
+      await updateTrackingRow(String(adoption.row.id), adoptionPatch(adoption) as any);
+    }
+    const added = await addTrackingRowsFromBookings(
+      input.parent_task_id,
+      plannedRows(plan, nextPos, input.product),
+    );
+    return added + plan.toAdopt.length;
   } catch (e) {
-    logSbError('ensureTrackingRowForVendor', e as any, { parent: input.parent_task_id, name });
-    return false;
+    logSbError('ensureTrackingRowsForBooking', e as any, { parent: input.parent_task_id, name });
+    return 0;
   }
 }
 
+/**
+ * Kept so older call sites keep compiling. Returns true when anything landed.
+ * @deprecated Use ensureTrackingRowsForBooking — it needs the subtask id.
+ */
+export async function ensureTrackingRowForVendor(input: {
+  parent_task_id: string;
+  subtask_id?: string;
+  vendor_name: string;
+  platform?: string | null;
+  price_excl?: number | null;
+  profile_link?: string | null;
+  type_of_ad?: string | null;
+  product?: string | null;
+}): Promise<boolean> {
+  const n = await ensureTrackingRowsForBooking({ ...input, subtask_id: input.subtask_id ?? '' });
+  return n > 0;
+}
+
 /** Categories whose work the client tracks. Mirrors vendor_is_trackable() in 045. */
-const TRACKABLE_VENDOR_CATEGORIES = ['influencer', 'ugc', 'ugc creator', 'user generated content'];
+export const TRACKABLE_VENDOR_CATEGORIES = ['influencer', 'ugc', 'ugc creator', 'user generated content'];
 export function isTrackableVendorCategory(category: string | null | undefined): boolean {
   return TRACKABLE_VENDOR_CATEGORIES.includes((category ?? '').trim().toLowerCase());
 }
@@ -3117,18 +3431,25 @@ export function useWorkspaceStats(workspaceId: string | null, userId: string | n
     total: 0, completed: 0, pendingMarketing: 0, inProgress: 0,
     overdue: 0, dueToday: 0, mine: 0,
   });
+  /** The rows behind the counters, so nothing has to ask for them twice. */
+  const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setLoading(false); return; }
     setLoading(true);
-    // One round-trip — pull all parent tasks + a count subset, derive client-side.
-    const { data, error } = await supabase
+    // One round-trip — every row in the workspace, slim, derived client-side.
+    //
+    // Paged, because it was not: past a thousand tasks PostgREST returned
+    // exactly a thousand and said nothing, so the counters on the landing
+    // screen would have quietly stopped growing.
+    //
+    // A few more columns than the counters need, so the "needs attention"
+    // panel can be built from the same request instead of a second one.
+    const rows = await selectAllRows<any>('useWorkspaceStats', () => supabase
       .from('pm_tasks')
-      .select('id, stage, status, due_date, completed_at, assignee_id, key_account_id, creator_id, parent_task_id')
-      .eq('workspace_id', workspaceId);
-    if (error) { logSbError('useWorkspaceStats', error, { workspaceId }); setLoading(false); return; }
-    const rows = (data || []) as any[];
+      .select('id, stage, status, due_date, completed_at, assignee_id, key_account_id, creator_id, parent_task_id, task_name, title, brand_name, created_at, subtask_kind, vendor_id, price, contract_request_id')
+      .eq('workspace_id', workspaceId));
     const today = new Date().toISOString().slice(0, 10);
     const parents = rows.filter((r) => !r.parent_task_id);
     const isMine = (r: any) => userId && (r.assignee_id === userId || r.key_account_id === userId || r.creator_id === userId);
@@ -3142,11 +3463,12 @@ export function useWorkspaceStats(workspaceId: string | null, userId: string | n
       mine: rows.filter(isMine).length,
     };
     setStats(next);
+    setRows(rows);
     setLoading(false);
   }, [workspaceId, userId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { stats, loading, refetch: fetch };
+  return { stats, rows, loading, refetch: fetch };
 }
 
 export interface ActivityRow {
@@ -3181,24 +3503,50 @@ export function useRecentActivity(workspaceId: string | null, limit = 10) {
 }
 
 /** Counts of tasks assigned per member in a workspace (parent + child both count). */
+/**
+ * How much open work each person is carrying. Read by the Dashboard's Workload
+ * panel and by the Team screen, so both used to be wrong in the same two ways:
+ *
+ *  - **It double-counted.** Being the assignee of a task *and* on its
+ *    `task_members` row counted twice, so the busiest people looked busier
+ *    than they were.
+ *  - **It counted cancelled work.** The filter was `status != 'done'`, and
+ *    `cancelled` is not `done`.
+ *
+ * Both queries were also unpaged, so past a thousand open rows the counts
+ * silently stopped growing. The counting itself now lives in `lib/team.ts`,
+ * where it is tested.
+ */
 export function useTaskCountsByMember(workspaceId: string | null) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setCounts({}); setLoading(false); return; }
-    const { data: a } = await supabase
-      .from('pm_tasks').select('assignee_id').eq('workspace_id', workspaceId).neq('status', 'done');
-    const { data: tm } = await supabase
-      .from('task_members')
-      .select('user_id, task:pm_tasks!inner(workspace_id, status)')
-      .eq('task.workspace_id', workspaceId);
-    const c: Record<string, number> = {};
-    for (const r of (a || []) as any[]) if (r.assignee_id) c[r.assignee_id] = (c[r.assignee_id] ?? 0) + 1;
-    for (const r of (tm || []) as any[]) {
-      if (r.task?.status !== 'done' && r.user_id) c[r.user_id] = (c[r.user_id] ?? 0) + 1;
-    }
-    setCounts(c);
+
+    const [tasks, memberships] = await Promise.all([
+      selectAllRows<any>('useTaskCountsByMember tasks', () =>
+        supabase
+          .from('pm_tasks')
+          .select('id, assignee_id, status')
+          .eq('workspace_id', workspaceId)
+          .order('id', { ascending: true })),
+      selectAllRows<any>('useTaskCountsByMember members', () =>
+        supabase
+          .from('task_members')
+          .select('user_id, task_id, task:pm_tasks!inner(workspace_id, status)')
+          .eq('task.workspace_id', workspaceId)
+          .order('id', { ascending: true })),
+    ]);
+
+    setCounts(taskCounts({
+      tasks,
+      memberships: memberships.map((m) => ({
+        task_id: m.task_id,
+        user_id: m.user_id,
+        status: m.task?.status ?? null,
+      })),
+    }));
     setLoading(false);
   }, [workspaceId]);
 
@@ -3270,12 +3618,14 @@ export function useWorkspaceMembers(workspaceId: string | null) {
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setMembers([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('workspace_members')
-      .select('*, profile:profiles(id, full_name, avatar_url)')
-      .eq('workspace_id', workspaceId);
-    if (error) logSbError('useWorkspaceMembers', error, { workspaceId });
-    setMembers((data || []) as WorkspaceMemberRow[]);
+    setLoading(true);
+    const all = await selectAllRows<WorkspaceMemberRow>('useWorkspaceMembers', () =>
+      supabase
+        .from('workspace_members')
+        .select('*, profile:profiles(id, full_name, avatar_url)')
+        .eq('workspace_id', workspaceId)
+        .order('joined_at', { ascending: true }));
+    setMembers(all);
     setLoading(false);
   }, [workspaceId]);
 
@@ -3494,16 +3844,127 @@ export function useContractRequests(workspaceId: string | null, taskId?: string 
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    let q = supabase.from('contract_requests').select('*').eq('workspace_id', workspaceId);
-    if (taskId) q = q.eq('pm_task_id', taskId);
-    const { data, error } = await q.order('created_at', { ascending: false });
-    if (error) logSbError('useContractRequests', error, { workspaceId, taskId });
-    setItems((data || []) as ContractRequest[]);
+    // Paged. It was one unpaged select, so past the thousandth request the
+    // older ones silently stopped appearing — on a register whose whole job
+    // is that nothing goes missing.
+    const rows = await selectAllRows<ContractRequest>('useContractRequests', () => {
+      let q = supabase.from('contract_requests').select('*').eq('workspace_id', workspaceId);
+      if (taskId) q = q.eq('pm_task_id', taskId);
+      return q.order('created_at', { ascending: false });
+    });
+    setItems(rows);
     setLoading(false);
   }, [workspaceId, taskId]);
 
   useEffect(() => { fetch(); }, [fetch]);
   return { items, loading, refetch: fetch };
+}
+
+/**
+ * The legacy `generated_contracts` rows behind a set of contract IDs.
+ *
+ * This is the old contract app's table: no workspace column, no RLS, keyed
+ * by the text contract_id the backend mints. It is the only place that knows
+ * whether a PDF was actually produced — `contract_requests` records that a
+ * contract was generated, not what came out of it.
+ *
+ * Read in batches, because the ids go into a URL and a workspace with a few
+ * hundred generated contracts would otherwise build a request too long to
+ * send. A failure here is not fatal: the register renders with the file
+ * state unknown rather than not at all.
+ */
+export interface TaskStub {
+  id: string;
+  task_name: string | null;
+  title: string | null;
+  parent_task_id: string | null;
+}
+
+/**
+ * The pm_tasks rows behind a set of ids — name and parent only.
+ *
+ * The Contracts register needs this because a **vendor** contract request is
+ * made from the vendor booking, so `contract_requests.pm_task_id` is the
+ * booking's id: never a parent campaign, and so never in the parent-only
+ * list the page already holds. Without it the campaign column would show the
+ * brand name on most rows, which is a different fact wearing the same label.
+ *
+ * One batched `in()`. The parents themselves come free from the page's
+ * existing task list.
+ */
+export function useTaskStubs(taskIds: string[]) {
+  const [rows, setRows] = useState<TaskStub[]>([]);
+  const key = useMemo(() => [...new Set(taskIds)].sort().join(','), [taskIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = key ? key.split(',') : [];
+    if (ids.length === 0) { setRows([]); return; }
+
+    (async () => {
+      const out: TaskStub[] = [];
+      for (let i = 0; i < ids.length; i += CONTRACT_ID_BATCH) {
+        const batch = ids.slice(i, i + CONTRACT_ID_BATCH);
+        const { data, error } = await timed<any>('pm_tasks.stubs', async () => supabase
+          .from('pm_tasks')
+          .select('id, task_name, title, parent_task_id')
+          .in('id', batch));
+        if (error) { logSbError('useTaskStubs', error, { batch: batch.length }); break; }
+        out.push(...((data || []) as TaskStub[]));
+      }
+      if (!cancelled) setRows(out);
+    })();
+
+    return () => { cancelled = true; };
+  }, [key]);
+
+  return { rows };
+}
+
+export interface GeneratedContractFile {
+  contract_id: string;
+  pdf_path: string | null;
+  docx_path: string | null;
+  pdf_error: string | null;
+}
+
+const CONTRACT_ID_BATCH = 100;
+
+export function useGeneratedContractFiles(contractIds: string[]) {
+  const [rows, setRows] = useState<GeneratedContractFile[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // A stable key, so a re-render with an equal-but-new array does not refetch.
+  const key = useMemo(() => [...new Set(contractIds)].sort().join(','), [contractIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = key ? key.split(',') : [];
+    if (ids.length === 0) { setRows([]); setLoading(false); return; }
+
+    setLoading(true);
+    (async () => {
+      const out: GeneratedContractFile[] = [];
+      for (let i = 0; i < ids.length; i += CONTRACT_ID_BATCH) {
+        const batch = ids.slice(i, i + CONTRACT_ID_BATCH);
+        const { data, error } = await timed<any>('generated_contracts.in', async () => supabase
+          .from('generated_contracts')
+          .select('contract_id, pdf_path, docx_path, pdf_error')
+          .in('contract_id', batch));
+        if (error) {
+          // Keep whatever came back. The screen degrades to "file unknown".
+          logSbError('useGeneratedContractFiles', error, { batch: batch.length });
+          break;
+        }
+        out.push(...((data || []) as GeneratedContractFile[]));
+      }
+      if (!cancelled) { setRows(out); setLoading(false); }
+    })();
+
+    return () => { cancelled = true; };
+  }, [key]);
+
+  return { rows, loading };
 }
 
 export async function createContractRequest(input: Omit<ContractRequest,
@@ -3933,6 +4394,28 @@ export function useClients() {
 
   useEffect(() => { fetch(); }, [fetch]);
   return { clients, loading, refetch: () => fetch(true) };
+}
+
+/**
+ * Add a brand to a client, from wherever you happen to be.
+ *
+ * The New Task form used to stop dead here: pick a client with no brands on
+ * file and the Brand picker greys out saying so, with no way forward except
+ * leaving the form — and losing everything already typed. A brand is a name
+ * and a client id; there was never a reason to go somewhere else for it.
+ */
+export async function createClientBrand(
+  clientId: string, brandName: string,
+): Promise<ClientBrandRow | null> {
+  const name = (brandName ?? '').trim();
+  if (!clientId || !name) throw new Error('A brand needs a client and a name.');
+  const { data, error } = await timed<any>('client_brands.insert', async () =>
+    supabase.from('client_brands')
+      .insert({ client_id: clientId, brand_name: name, status: 'active' })
+      .select('id, client_id, brand_name, description, status')
+      .single());
+  if (error) { logSbError('createClientBrand', error, { clientId }); throw error; }
+  return (data as ClientBrandRow | null) ?? null;
 }
 
 export function useClientBrands(clientId: string | null) {
@@ -4457,27 +4940,92 @@ export interface CrmActivity {
   created_at: string;
 }
 
-/** All activities for the workspace, newest first. Used by the CRM
- *  dashboard "recent activity" feed. */
+/**
+ * The newest activities, with their bodies — for the **feed**, and only the
+ * feed. Cached, because three CRM panels mount at once and were each asking
+ * for their own copy.
+ *
+ * Do not use this for maths. Anything that asks "when did we last speak to X"
+ * or "how many contacts have gone quiet" needs `useCrmActivityIndex` below: a
+ * recent-N window cannot answer either question, and quietly answers them
+ * wrongly. See lib/crm.ts.
+ */
 export function useCrmRecentActivities(workspaceId: string | null, limit = 50) {
   const [items, setItems] = useState<CrmActivity[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('crm_activities')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('occurred_at', { ascending: false })
-      .limit(limit);
-    if (error) logSbError('useCrmRecentActivities', error, { workspaceId });
-    setItems((data || []) as CrmActivity[]);
+    const rows = await cachedFetch<CrmActivity[]>(
+      `crm_recent:${workspaceId}:${limit}`,
+      async () => {
+        const { data, error } = await supabase
+          .from('crm_activities')
+          .select('*')
+          .eq('workspace_id', workspaceId)
+          .order('occurred_at', { ascending: false })
+          .limit(limit);
+        if (error) logSbError('useCrmRecentActivities', error, { workspaceId });
+        return (data || []) as CrmActivity[];
+      },
+      force,
+    );
+    setItems(rows);
     setLoading(false);
   }, [workspaceId, limit]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { items, loading, refetch: fetch };
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { items, loading, refetch };
+}
+
+/** Just enough of an activity to do arithmetic with. */
+export interface CrmActivityStamp {
+  target_type: CrmTargetType;
+  target_id: string;
+  kind: CrmActivityKind;
+  occurred_at: string;
+}
+
+/**
+ * Every activity in the workspace, four columns wide, paged and cached.
+ *
+ * This replaces two separate 500-row `select('*')` reads (the CRM Dashboard's
+ * and Analytics'), and it exists because a *recent window* is the wrong shape
+ * for the questions those panels ask:
+ *
+ *   "Dormant contacts" read last-contact out of the 500 most recent
+ *   activities. A contact whose newest note was the 501st came back with
+ *   nothing, which the panel read as *never contacted* — and never sorts
+ *   first. The most-serviced accounts in the workspace were being listed as
+ *   the ones nobody had called.
+ *
+ * Four small columns page cheaply, and `selectAllRows` stops at its own
+ * runaway guard, so this stays honest as the table grows.
+ */
+export function useCrmActivityIndex(workspaceId: string | null) {
+  const [items, setItems] = useState<CrmActivityStamp[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async (force = false) => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const rows = await cachedFetch<CrmActivityStamp[]>(
+      `crm_activity_index:${workspaceId}`,
+      () => selectAllRows<CrmActivityStamp>('useCrmActivityIndex', () =>
+        supabase
+          .from('crm_activities')
+          .select('target_type, target_id, kind, occurred_at')
+          .eq('workspace_id', workspaceId)
+          .order('occurred_at', { ascending: false })),
+      force,
+    );
+    setItems(rows);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { items, loading, refetch };
 }
 
 /** Activities for one specific client/vendor, newest first. */
@@ -4534,12 +5082,31 @@ export async function addCrmActivity(input: {
     .select()
     .single();
   if (error) throw error;
+  // The feed and the activity index are cached for a minute. A note you have
+  // just written has to appear now, not in fifty seconds.
+  forgetCrmActivities(input.workspace_id);
   return data as CrmActivity;
 }
 
-export async function deleteCrmActivity(id: string) {
+export async function deleteCrmActivity(id: string, workspaceId?: string) {
   const { error } = await supabase.from('crm_activities').delete().eq('id', id);
   if (error) throw error;
+  forgetCrmActivities(workspaceId);
+}
+
+/**
+ * Drop every cached read of crm_activities for a workspace.
+ *
+ * The feed is keyed by limit, so there is one entry per caller — clearing by
+ * prefix rather than by exact key keeps this correct when a new caller picks a
+ * different limit.
+ */
+export function forgetCrmActivities(workspaceId?: string | null) {
+  if (!workspaceId) { invalidateRefCache(); return; }
+  invalidateRefCache(`crm_activity_index:${workspaceId}`);
+  for (const key of Array.from(REF_CACHE.keys())) {
+    if (key.startsWith(`crm_recent:${workspaceId}:`)) invalidateRefCache(key);
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────

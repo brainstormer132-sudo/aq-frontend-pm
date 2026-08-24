@@ -5,14 +5,35 @@ import {
   useWorkspaceStats, useRecentActivity, useTaskCountsByMember,
   useWorkflowTasks, useCrmTasks,
   usePmTaskCampaignRollup,
-  type Profile, type WorkspaceRole, type PmTaskCampaignRollup,
+  type Profile, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { countFollowUps } from '@/lib/crm-sync';
+import { attentionItems, attentionSummary, type AttentionItem, type Severity } from '@/lib/attention';
+import { SkeletonRows, SkeletonLine } from '@/components/Skeleton';
 import { FollowUps } from './FollowUps';
 
 /**
- * Home dashboard — replaces the role-default landing page.
- * Stat cards, my-tasks-at-a-glance, recent activity, member workload.
+ * Home.
+ *
+ * Rebuilt Aug 2026. It had grown seven stat tiles in two mismatched rows, a
+ * money table, a team roster and two lists — everything anyone had ever
+ * asked for, in the order they asked for it, with nothing more important
+ * than anything else. Siraj: *"show what you need to do and if any of the
+ * tasks have problems."*
+ *
+ * So, in order down the page:
+ *
+ *   1. What is wrong        — the new part. Ranked, one line each.
+ *   2. What is on your desk — your tasks and your follow-ups, one list.
+ *   3. How the work is going — four quiet numbers, not tiles.
+ *   4. Who is carrying what — last, and small.
+ *
+ * The campaign money table left for the Data view, which is where anyone
+ * looking for money already goes, and where it can be filtered.
+ *
+ * Every number here comes from rows the page already loads. Nothing added
+ * to this screen costs another request — it is the first thing anyone sees
+ * and the last thing that should be slow.
  */
 export function WorkflowDashboard({
   workspaceId, userId, userName, role, profiles, onOpenTask, onGoTo,
@@ -23,346 +44,337 @@ export function WorkflowDashboard({
   role: WorkspaceRole | null;
   profiles: (Profile & { role: WorkspaceRole })[];
   onOpenTask: (id: string) => void;
-  onGoTo: (view: 'inbox' | 'marketing-triage' | 'all-tasks' | 'team' | 'new-task') => void;
+  onGoTo: (view: 'inbox' | 'marketing-triage' | 'all-tasks' | 'team' | 'new-task' | 'crm' | 'data') => void;
 }) {
-  const roleLabel = (value: string | null | undefined) => value === 'key_account' ? 'Key account' : value;
-  const { stats } = useWorkspaceStats(workspaceId, userId);
-  const { items: activity } = useRecentActivity(workspaceId, 10);
+  const roleLabel = (v: string | null | undefined) => (v === 'key_account' ? 'Key account' : v);
+
+  const { stats, rows, loading } = useWorkspaceStats(workspaceId, userId);
+  const { items: activity } = useRecentActivity(workspaceId, 6);
   const { counts } = useTaskCountsByMember(workspaceId);
   const { tasks: allTasks } = useWorkflowTasks(workspaceId, 'all');
   const { rows: campaignRollup } = usePmTaskCampaignRollup(workspaceId);
-
-  const myTasks = useMemo(
-    () => allTasks
-      .filter((t: any) => t.assignee_id === userId || t.key_account_id === userId || t.creator_id === userId)
-      .filter((t: any) => t.status !== 'done')
-      .slice(0, 6),
-    [allTasks, userId],
-  );
-
-  // CRM follow-ups count as work. They were invisible outside the CRM
-  // screen, so "Overdue 0" could be true of campaigns and wrong about you.
   const { items: followUps } = useCrmTasks(workspaceId, { assignedTo: userId });
+
+  // Today is read after mount, never during render: the server does not know
+  // what day it is where you are, and the two renders disagreeing is a
+  // hydration error. The old greeting read the clock the same way.
   const [today, setToday] = useState<string | null>(null);
   useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+
   const crm = useMemo(
     () => (today ? countFollowUps(followUps || [], today) : { overdue: 0, today: 0, open: 0 }),
     [followUps, today],
   );
 
+  const attention = useMemo(
+    () => (today
+      ? attentionItems({ tasks: rows, rollup: campaignRollup, followUps }, today, { userId, limit: 7 })
+      : { items: [], hiddenCount: 0, counts: { urgent: 0, soon: 0, tidy: 0 } }),
+    [rows, campaignRollup, followUps, today, userId],
+  );
+
+  const myTasks = useMemo(
+    () => allTasks
+      .filter((t: any) => t.assignee_id === userId || t.key_account_id === userId || t.creator_id === userId)
+      .filter((t: any) => t.status !== 'done' && t.stage !== 'completed')
+      .slice(0, 6),
+    [allTasks, userId],
+  );
+
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
-  const greeting = makeGreeting();
+  const busiest = useMemo(
+    () => profiles
+      .map((p) => ({ ...p, count: counts[p.id] ?? 0 }))
+      .sort((a, b) => b.count - a.count),
+    [profiles, counts],
+  );
 
   return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <header>
-        <h2 style={{ fontSize: 24, fontWeight: 800 }}>{greeting}, {userName.split(' ')[0]}.</h2>
-        <p style={{ color: 'var(--aq-text-secondary)', marginTop: 4 }}>
-          Here's what's happening in {role ? `your ${roleLabel(role)} view of ` : ''}AQ Creativity.
+        <h2 style={{ fontSize: 24, fontWeight: 800 }}>Hello, {userName.split(' ')[0]}.</h2>
+        <p style={{ color: 'var(--aq-text-secondary)', marginTop: 4, fontSize: 14 }}>
+          {loading || !today
+            ? 'Working out what needs you…'
+            : attention.counts.urgent + attention.counts.soon === 0
+              ? `Nothing is overdue and nothing is stuck${role ? `, in your ${roleLabel(role)} view` : ''}.`
+              : attentionSummary(attention.counts)}
         </p>
       </header>
 
-      {/* Follow-ups moved here when My Tasks was retired — the counters above
-          already count them, so this is where they belong. */}
-      <FollowUps workspaceId={workspaceId} userId={userId} />
+      {/* ── 1. What is wrong ──────────────────────────────────────
+          The part that did not exist. A campaign with a vendor booked, no
+          price on it and no contract requested used to look exactly like a
+          campaign that was fine, and stayed that way until somebody opened
+          it. What counts as a problem lives in lib/attention.ts. */}
+      <section className="aq-card" style={{ padding: 20 }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Needs attention</h3>
+            <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+              Ranked. Longest-waiting first.
+            </p>
+          </div>
+          {attention.hiddenCount > 0 && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-ghost"
+              onClick={() => onGoTo('all-tasks')}
+              style={{ padding: '4px 10px', fontSize: 12 }}
+            >{attention.hiddenCount} more</button>
+          )}
+        </header>
 
-      {/* Stat cards */}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-        <Stat label="My tasks"          value={stats.mine + crm.open}  onClick={() => onGoTo('all-tasks')} />
-        <Stat label="Overdue"           value={stats.overdue + crm.overdue} tone={stats.overdue + crm.overdue ? 'error' : 'default'} />
-        <Stat label="Due today"         value={stats.dueToday + crm.today}  tone={stats.dueToday + crm.today ? 'warning' : 'default'} />
-        <Stat label="Pending triage"    value={stats.pendingMarketing} onClick={() => onGoTo('marketing-triage')} tone={stats.pendingMarketing ? 'info' : 'default'} />
+        {loading || !today ? (
+          <SkeletonRows rows={4} height={46} gap={0} label="Checking for problems" />
+        ) : attention.items.length === 0 ? (
+          <p style={{ fontSize: 13.5, color: 'var(--aq-text-muted)' }}>
+            Nothing needs chasing — no overdue dates, no unpriced bookings, and no
+            campaign whose vendors do not add up.
+          </p>
+        ) : (
+          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
+            {attention.items.map((item, i) => (
+              <li key={item.key}>
+                <AttentionRow item={item} first={i === 0} onOpen={() => onOpenTask(item.taskId)} />
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
-        <Stat label="Tasks completed"   value={stats.completed} sub={`of ${stats.total} total`} tone="success" />
-        <Stat label="In progress"       value={stats.inProgress} />
-        <Stat label="Total tasks"       value={stats.total}        onClick={() => onGoTo('all-tasks')} />
-      </section>
 
-      {/* Campaign rollup — sum of price/net/gross per parent campaign.
-          Reads the pm_task_campaign_rollup view from migration 028.
-          Hidden when no campaigns have any operations data yet. */}
-      {campaignRollup.length > 0 && (
-        <CampaignRollupSection rows={campaignRollup} onOpenTask={onOpenTask} />
-      )}
-
-      {/* My tasks + Activity */}
-      <section style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      {/* ── 2. What is on your desk ───────────────────────────────
+          Tasks and CRM follow-ups in one place. They are both things you
+          have to do, and keeping them on separate screens is how "Overdue
+          0" managed to be true of campaigns and wrong about the person
+          reading it. */}
+      <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(240px, 1fr)', gap: 16 }}>
         <div className="aq-card" style={{ padding: 20 }}>
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>My tasks</h3>
-            <button className="aq-btn aq-btn-ghost" onClick={() => onGoTo('all-tasks')} style={{ padding: '4px 10px', fontSize: 12 }}>
-              View all
-            </button>
+            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Your work</h3>
+            <button
+              className="aq-btn aq-btn-ghost"
+              onClick={() => onGoTo('all-tasks')}
+              style={{ padding: '4px 10px', fontSize: 12 }}
+            >All tasks</button>
           </header>
-          {myTasks.length === 0 ? (
+
+          {loading ? (
+            <SkeletonRows rows={4} height={44} gap={0} label="Loading your tasks" />
+          ) : myTasks.length === 0 && crm.open === 0 ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>
-              No active tasks assigned to you. Enjoy it.
+              Nothing assigned to you. Enjoy it.
             </p>
           ) : (
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {myTasks.map((t: any) => (
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
+              {myTasks.map((t: any, i: number) => (
                 <li key={t.id}>
-                  <button type="button" onClick={() => onOpenTask(t.id)}
-                          style={rowBtnStyle}>
-                    <div>
-                      <strong style={{ fontSize: 13 }}>{t.task_name || t.title}</strong>
-                      <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-                        {t.brand_name ? `${t.brand_name} · ` : ''}
-                        stage {String(t.stage).replace('_',' ')} · priority {t.priority}
-                      </div>
-                    </div>
-                    <span className={`aq-badge ${t.stage === 'completed' ? 'aq-badge-success' : 'aq-badge-info'}`}>
-                      {String(t.stage).replace('_',' ')}
+                  <button type="button" onClick={() => onOpenTask(t.id)} style={rowButton(i === 0)}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 600, display: 'block', ...ellipsis }}>
+                        {t.task_name || t.title}
+                      </span>
+                      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+                        {[t.brand_name, String(t.stage ?? '').replace(/_/g, ' ')].filter(Boolean).join(' · ')}
+                      </span>
                     </span>
+                    {t.due_date && (
+                      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', whiteSpace: 'nowrap' }}>
+                        {t.due_date}
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}
             </ul>
           )}
+
+          {/* The CRM's follow-ups, in the same list rather than a card of
+              their own above everything. Ticking one here ticks it there. */}
+          {crm.open > 0 && (
+            <div style={{ marginTop: myTasks.length ? 0 : 4 }}>
+              <FollowUps workspaceId={workspaceId} userId={userId} bare />
+            </div>
+          )}
         </div>
 
         <div className="aq-card" style={{ padding: 20 }}>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Recent activity</h3>
-          {activity.length === 0 ? (
-            <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>No recent activity.</p>
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[0, 1, 2, 3].map((i) => (
+                <SkeletonLine key={i} width={`${60 + ((i * 11) % 35)}%`} height={11} />
+              ))}
+            </div>
+          ) : activity.length === 0 ? (
+            <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>Nothing yet.</p>
           ) : (
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {activity.map((a) => {
-                const who = profileById.get(a.user_id);
-                return (
-                  <li key={a.id} style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>
-                    <strong>{who?.full_name ?? 'Someone'}</strong> {humanAction(a.action)}
-                    <span style={{ color: 'var(--aq-text-muted)', marginLeft: 6 }}>· {new Date(a.created_at).toLocaleDateString()}</span>
-                  </li>
-                );
-              })}
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>
+              {activity.map((a) => (
+                <li key={a.id} style={{ fontSize: 12, color: 'var(--aq-text-secondary)', lineHeight: 1.45 }}>
+                  <strong>{profileById.get(a.user_id)?.full_name ?? 'Someone'}</strong>{' '}
+                  {humanAction(a.action)}
+                  <span style={{ color: 'var(--aq-text-muted)' }}>
+                    {' · '}{new Date(a.created_at).toLocaleDateString()}
+                  </span>
+                </li>
+              ))}
             </ul>
           )}
         </div>
       </section>
 
-      {/* Team workload */}
-      {profiles.length > 0 && (
+      {/* ── 3. How the work is going ──────────────────────────────
+          Four numbers, deliberately quiet. Nothing happens as a result of
+          reading them, so they do not get the size or the colour of the
+          things that do. Triage keeps a button, because it has an action —
+          and it only appears when something is actually waiting. */}
+      <section className="aq-card" style={{ padding: '16px 20px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 28 }}>
+          <Figure label="In progress" value={stats.inProgress} loading={loading} />
+          <Figure label="Completed" value={stats.completed} sub={`of ${stats.total}`} loading={loading} />
+          <Figure
+            label="Overdue"
+            value={stats.overdue + crm.overdue}
+            loading={loading}
+            tone={stats.overdue + crm.overdue ? 'bad' : 'plain'}
+          />
+          <Figure label="Due today" value={stats.dueToday + crm.today} loading={loading} />
+          <div style={{ flex: 1 }} />
+          {stats.pendingMarketing > 0 && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              onClick={() => onGoTo('marketing-triage')}
+              style={{ fontSize: 13 }}
+            >
+              Triage {stats.pendingMarketing} waiting
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* ── 4. Who is carrying what ───────────────────────────────
+          A list, busiest first, so it answers "who is free" in one glance.
+          It was a grid of identical cards in database order, which answered
+          nothing until you had read all of them. */}
+      {busiest.length > 0 && (
         <section className="aq-card" style={{ padding: 20 }}>
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Team workload</h3>
-            <button className="aq-btn aq-btn-ghost" onClick={() => onGoTo('team')} style={{ padding: '4px 10px', fontSize: 12 }}>
-              Open team
-            </button>
+            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Workload</h3>
+            <button
+              className="aq-btn aq-btn-ghost"
+              onClick={() => onGoTo('team')}
+              style={{ padding: '4px 10px', fontSize: 12 }}
+            >Team</button>
           </header>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-            {profiles.map((p) => {
-              const c = counts[p.id] ?? 0;
+          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {busiest.map((p) => {
+              const max = Math.max(1, busiest[0].count);
               return (
-                <div key={p.id} style={{
-                  padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-                  border: '1px solid var(--aq-border-light)',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{p.full_name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{roleLabel(p.role)}</div>
-                  </div>
-                  <span className={`aq-badge ${c > 5 ? 'aq-badge-warning' : c > 0 ? 'aq-badge-info' : 'aq-badge-muted'}`}>
-                    {c} task{c === 1 ? '' : 's'}
+                <li key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{ width: 150, fontSize: 13, ...ellipsis }}>{p.full_name}</span>
+                  <span style={{ width: 92, fontSize: 11, color: 'var(--aq-text-muted)', ...ellipsis }}>
+                    {roleLabel(p.role)}
                   </span>
-                </div>
+                  {/* Length, not colour. How much someone is carrying is a
+                      quantity; colour here would read as a verdict on them. */}
+                  <span style={{ flex: 1, height: 8, background: 'var(--aq-bg-sunken)', borderRadius: 99 }}>
+                    <span style={{
+                      display: 'block', height: '100%', borderRadius: 99,
+                      width: `${(p.count / max) * 100}%`,
+                      background: p.count === 0 ? 'transparent' : 'var(--aq-text-muted)',
+                    }} />
+                  </span>
+                  <span style={{
+                    width: 54, textAlign: 'right', fontSize: 12,
+                    fontVariantNumeric: 'tabular-nums',
+                    color: p.count === 0 ? 'var(--aq-text-muted)' : 'var(--aq-text)',
+                  }}>
+                    {p.count === 0 ? 'free' : p.count}
+                  </span>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </section>
       )}
     </div>
   );
 }
 
-function Stat({
-  label, value, sub, tone = 'default', onClick,
-}: {
-  label: string; value: number | string; sub?: string;
-  tone?: 'default' | 'success' | 'warning' | 'error' | 'info';
-  onClick?: () => void;
-}) {
-  const palette = {
-    default: { bg: 'var(--aq-bg-elevated)', accent: 'var(--aq-text)' },
-    success: { bg: 'var(--aq-bg-elevated)', accent: 'var(--aq-accent)' },
-    warning: { bg: 'var(--aq-bg-elevated)', accent: '#ca8a04' },
-    error:   { bg: 'var(--aq-bg-elevated)', accent: 'var(--aq-error)' },
-    info:    { bg: 'var(--aq-bg-elevated)', accent: '#0284c7' },
-  }[tone];
+/* ─────────────────────────────────────────────────────────────── */
+
+const SEVERITY_STYLE: Record<Severity, { dot: string; label: string }> = {
+  urgent: { dot: '#dc2626', label: 'Urgent' },
+  soon:   { dot: '#ca8a04', label: 'Soon' },
+  tidy:   { dot: '#a8a29e', label: 'Tidy up' },
+};
+
+function AttentionRow({
+  item, first, onOpen,
+}: { item: AttentionItem; first: boolean; onOpen: () => void }) {
+  const s = SEVERITY_STYLE[item.severity];
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={!onClick}
-      className="aq-card"
-      style={{
-        padding: 18, textAlign: 'left',
-        background: palette.bg, fontFamily: 'inherit',
-        cursor: onClick ? 'pointer' : 'default',
-        border: '1px solid var(--aq-border-light)',
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>
-        {label}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 28, fontWeight: 800, color: palette.accent }}>
-        {value}
-      </div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginTop: 2 }}>{sub}</div>}
+    <button type="button" onClick={onOpen} style={rowButton(first)} data-severity={item.severity}>
+      {/* A dot AND the word. Colour alone would put the whole ranking out of
+          reach of anyone who cannot separate the red from the amber. */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 7, width: 88, flexShrink: 0 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.dot, flexShrink: 0 }} />
+        <span style={{
+          fontSize: 10.5, letterSpacing: '.06em', textTransform: 'uppercase',
+          color: 'var(--aq-text-muted)',
+        }}>{s.label}</span>
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600, display: 'block', ...ellipsis }}>
+          {item.title}
+          {item.context && (
+            <span style={{ fontWeight: 400, color: 'var(--aq-text-muted)' }}> · {item.context}</span>
+          )}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>{item.message}</span>
+      </span>
     </button>
   );
 }
 
-const rowBtnStyle: React.CSSProperties = {
-  width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-  padding: '10px 12px', borderRadius: 'var(--aq-radius)',
-  border: '1px solid var(--aq-border-light)', background: 'transparent',
-  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
-};
-
-function makeGreeting() {
-  const h = new Date().getHours();
-  return h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-}
-
-/**
- * Per-campaign rollup row. Reads from the `pm_task_campaign_rollup` view
- * (migration 028). One row per parent task with Σ price / Σ net /
- * Σ AQ gross / vendor count, plus a variance badge that lights up
- * when the sum of child prices doesn't match the parent's manually-
- * entered Total Amount (the same data-entry check the ops team currently
- * does by re-reading the Asana export).
- */
-function CampaignRollupSection({
-  rows, onOpenTask,
+function Figure({
+  label, value, sub, loading, tone = 'plain',
 }: {
-  rows: PmTaskCampaignRollup[];
-  onOpenTask: (id: string) => void;
+  label: string; value: number; sub?: string; loading?: boolean; tone?: 'plain' | 'bad';
 }) {
-  // Hide campaigns with zero vendors AND zero parent total — they're
-  // either blank parents that someone abandoned, or new ones with nothing
-  // entered yet. Show the rest sorted by Σ prices descending so the
-  // biggest deals are at the top.
-  const interesting = rows
-    .filter((r) => r.vendor_count > 0 || (r.parent_total_amount ?? 0) > 0)
-    .sort((a, b) => (b.sum_prices || 0) - (a.sum_prices || 0))
-    .slice(0, 8);
-
-  if (interesting.length === 0) return null;
-
-  const total = (key: 'sum_prices' | 'sum_nets' | 'sum_aq_gross') =>
-    interesting.reduce((acc, r) => acc + (r[key] || 0), 0);
-
-  const money = (n: number | null | undefined) =>
-    n == null ? '—' : `SAR ${Math.round(Number(n)).toLocaleString()}`;
-
   return (
-    <section className="aq-card" style={{ padding: 20 }}>
-      <header style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        marginBottom: 12, gap: 12, flexWrap: 'wrap',
-      }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700 }}>Active campaigns</h3>
-        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-          Σ prices <strong style={{ color: 'var(--aq-text)' }}>{money(total('sum_prices'))}</strong>
-          {' · '}Σ nets <strong style={{ color: 'var(--aq-text)' }}>{money(total('sum_nets'))}</strong>
-          {' · '}Σ AQ gross <strong style={{ color: 'var(--aq-accent)' }}>{money(total('sum_aq_gross'))}</strong>
-        </span>
-      </header>
-
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ color: 'var(--aq-text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              <th style={th}>Campaign</th>
-              <th style={th}>Vendors</th>
-              <th style={{ ...th, textAlign: 'right' }}>Σ Prices</th>
-              <th style={{ ...th, textAlign: 'right' }}>Σ Nets</th>
-              <th style={{ ...th, textAlign: 'right' }}>Σ AQ Gross</th>
-              <th style={{ ...th, textAlign: 'right' }}>Margin</th>
-              <th style={th}>Variance</th>
-              <th style={th}>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {interesting.map((r) => {
-              const margin = r.sum_prices > 0
-                ? Math.round((r.sum_aq_gross / r.sum_prices) * 100)
-                : null;
-              const variance = Number(r.price_vs_total_variance || 0);
-              const mismatch = Math.abs(variance) > 1;  // SAR 1 tolerance for rounding
-              return (
-                <tr
-                  key={r.parent_task_id}
-                  onClick={() => onOpenTask(r.parent_task_id)}
-                  style={{ cursor: 'pointer', borderTop: '1px solid var(--aq-border-light)' }}
-                >
-                  <td style={td}>
-                    <strong>{r.title}</strong>
-                    {r.brand_name && (
-                      <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{r.brand_name}</div>
-                    )}
-                  </td>
-                  <td style={td}>
-                    {r.vendors_done}/{r.vendor_count}
-                  </td>
-                  <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money(r.sum_prices)}</td>
-                  <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money(r.sum_nets)}</td>
-                  <td style={{
-                    ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-                    color: r.sum_aq_gross > 0 ? 'var(--aq-accent)' : 'var(--aq-text-muted)',
-                    fontWeight: 700,
-                  }}>{money(r.sum_aq_gross)}</td>
-                  <td style={{ ...td, textAlign: 'right' }}>
-                    {margin == null ? '—' : (
-                      <span className={`aq-badge ${margin >= 30 ? 'aq-badge-success' : margin >= 15 ? 'aq-badge-info' : 'aq-badge-warning'}`}>
-                        {margin}%
-                      </span>
-                    )}
-                  </td>
-                  <td style={td}>
-                    {mismatch ? (
-                      <span
-                        className="aq-badge aq-badge-warning"
-                        title={`Σ prices ${money(r.sum_prices)} vs Total ${money(r.parent_total_amount)} — someone forgot to update one of them`}
-                      >
-                        {variance > 0 ? '+' : ''}{money(variance)}
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>OK</span>
-                    )}
-                  </td>
-                  <td style={td}>
-                    {r.contract_status && (
-                      <span className="aq-badge aq-badge-muted" style={{ marginRight: 6 }}>
-                        {r.contract_status}
-                      </span>
-                    )}
-                    {r.client_payment_status && (
-                      <span className={`aq-badge ${r.client_payment_status === 'paid' ? 'aq-badge-success' : 'aq-badge-warning'}`}>
-                        {r.client_payment_status}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <div>
+      <div className="aq-label" style={{ marginBottom: 2 }}>{label}</div>
+      {loading ? (
+        <SkeletonLine width={44} height={22} />
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{
+            fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+            color: tone === 'bad' ? 'var(--aq-error)' : 'var(--aq-text)',
+          }}>{value}</span>
+          {sub && <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>{sub}</span>}
+        </div>
+      )}
+    </div>
   );
 }
 
-const th: React.CSSProperties = {
-  textAlign: 'left', padding: '8px 10px', fontWeight: 700,
-  borderBottom: '1px solid var(--aq-border-light)',
+const ellipsis = {
+  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
 };
-const td: React.CSSProperties = {
-  padding: '10px', verticalAlign: 'top',
-};
+
+/** Every row on this page has the same shape: full width, a rule between. */
+function rowButton(first: boolean): React.CSSProperties {
+  return {
+    width: '100%', textAlign: 'left', background: 'none', border: 'none',
+    borderTop: first ? 'none' : '1px solid var(--aq-border-light)',
+    padding: '10px 4px', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 12, font: 'inherit',
+  };
+}
 
 function humanAction(a: string) {
   const m: Record<string, string> = {

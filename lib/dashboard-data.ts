@@ -405,6 +405,15 @@ export interface TableModel { title: string; caption: string; columns: string[];
 export interface DashboardModel {
   kpis: Kpi[];
   months: MonthBar[];
+  /**
+   * Payment split, as three weighted slices.
+   *
+   * No longer rendered: the Data view's ledger (Aug 2026) shows the same
+   * split as a bar you can click to filter the rows behind it, which a
+   * donut cannot do. Kept because it is the tested home of the paid /
+   * partial / unpaid weighting, and because it is cheap — but if you are
+   * adding a panel, use the ledger, not this.
+   */
   donut: { title: string; caption: string; centre: [string, string]; slices: Slice[] };
   bars1: BarPanel;
   bars2: BarPanel;

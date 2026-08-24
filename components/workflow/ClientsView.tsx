@@ -7,6 +7,16 @@ import {
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import {
+  buildClients, sortRows, filterRows, nextSort, summarise, summaryLine,
+  emptyMessage, isFiltered, deleteWarning, deletedMessage, resetWarning,
+  CLIENT_COLUMNS, DEFAULT_SORT, EMPTY_FILTER,
+  type CampaignInput, type Filter, type RegistryRow, type RollupInput, type Sort,
+} from '@/lib/registry';
+import {
+  RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
+  Detail, DETAIL_GRID,
+} from './RegistryTable';
+import {
   brands as brandsApi, clientOps, manualCreate, zoho as zohoApi,
   type BrandRow, type ZohoImportJobStatus,
 } from '@/lib/contract-api';
@@ -15,7 +25,15 @@ import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalM
 
 const supabase = createSupabase();
 
-export function ClientsView({ role }: { role: WorkspaceRole | null }) {
+export function ClientsView({
+  role, campaigns = [], rollup = [],
+}: {
+  role: WorkspaceRole | null;
+  /** Campaigns the page already loaded, so a row can say how much work a
+   *  client has had and what it billed. No extra query. */
+  campaigns?: CampaignInput[];
+  rollup?: RollupInput[];
+}) {
   // Read approved clients directly from public.clients so manual-created
   // rows appear immediately. The legacy pending_clients flow still works
   // (approve_pending_client bridges those rows into public.clients), so
@@ -161,13 +179,41 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
       setImportBusy(false);
     }
   };
-  const clients = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return allClients.filter((c: any) => !q || [
-      c.company_name, c.cr_number, c.vat_number, c.signatory_name,
-      c.contact_email, c.company_email, c.contact_phone,
-    ].some((v) => String(v || '').toLowerCase().includes(q)));
-  }, [allClients, query]);
+  const [filter, setFilter] = useState<Filter>(EMPTY_FILTER);
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [message, setMessage] = useState('');
+  const [portalFor, setPortalFor] = useState<RegistryRow | null>(null);
+
+  const rows = useMemo(
+    () => buildClients({ clients: allClients, campaigns, rollup }),
+    [allClients, campaigns, rollup],
+  );
+  const shown = useMemo(
+    () => sortRows(filterRows(rows, { ...filter, query }), sort),
+    [rows, filter, query, sort],
+  );
+  const summary = summarise(rows, shown);
+  const deleting = confirmDeleteId ? rows.find((r) => r.id === confirmDeleteId) ?? null : null;
+
+  const removeClient = async (row: RegistryRow) => {
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await clientOps.remove(row.id);
+      setMessage(deletedMessage(row.name));
+      setConfirmDeleteId(null);
+      setExpandedId(null);
+      await refetch();
+    } catch (e: any) {
+      // A sentence, not a window.alert with SQL in it for somebody to paste
+      // into the Supabase editor.
+      setError(`Could not delete ${row.name}. ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     if (!form.company_name.trim()) {
@@ -215,46 +261,146 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
   };
 
   return (
-    <RegistryShell
-      title="Clients"
-      count={`${clients.length} client${clients.length === 1 ? '' : 's'}`}
-      search={query}
-      setSearch={setQuery}
-      actionLabel="+ Add Client"
-      canCreate={canCreate}
-      onAction={() => setOpen(true)}
-      secondaryActionLabel={importBusy ? 'Importing…' : 'Import from Zoho'}
-      onSecondaryAction={(e) => {
-        if (e?.shiftKey) return runZohoDebug();
-        if (e?.ctrlKey || e?.metaKey) return runZohoReset();
-        return runZohoImport();
-      }}
-      showSecondaryAction={canImport}
-      secondaryActionBusy={importBusy}
-    >
-      {error && <div className="aq-badge aq-badge-error">{error}</div>}
-
-      {clients.length === 0 ? (
-        <EmptyState
-          icon="🏢"
-          title="No clients yet"
-          body="Add your first client to start managing their projects and brands."
-          actionLabel="+ Add Client"
-          canCreate={canCreate}
-          onAction={() => setOpen(true)}
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <RegistryHeader title="Clients" line={summaryLine(summary, 'client')}>
+        {canImport && (
+          <button
+            type="button"
+            className="aq-btn aq-btn-secondary"
+            disabled={importBusy}
+            onClick={() => runZohoImport()}
+            style={{ fontSize: 12.5, padding: '6px 12px' }}
+          >{importBusy ? 'Importing…' : 'Import from Zoho'}</button>
+        )}
+        {/* Ink, not accent green — green already means "portal active" two
+            columns over, and a green button beside green pills makes the
+            colour stop meaning anything. */}
+        <AddButton
+          label="Add a client"
+          onClick={() => setOpen(true)}
+          disabled={!canCreate}
+          title={canCreate ? undefined : 'Only owners, admins, marketing and sales add clients'}
         />
-      ) : (
-        <div style={gridStyle}>
-          {clients.map((client) => (
-            <ClientCard
-              key={client.id}
-              client={client}
-              role={role}
-              onChanged={refetch}
-            />
-          ))}
-        </div>
+      </RegistryHeader>
+
+      {error && (
+        <div role="alert" style={{
+          padding: '10px 14px', borderRadius: 'var(--aq-radius)',
+          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+        }}>{error}</div>
       )}
+      {message && !error && (
+        <div role="status" style={{
+          padding: '10px 14px', borderRadius: 'var(--aq-radius)',
+          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+        }}>{message}</div>
+      )}
+
+      <RegistryToolbar
+        query={query}
+        onQuery={setQuery}
+        placeholder="Search name, CR, VAT, signatory, email or city…"
+      >
+        <Chip
+          label="Missing contract details"
+          count={summary.withGaps}
+          danger
+          on={filter.withGaps}
+          onClick={() => setFilter((f) => ({ ...f, withGaps: !f.withGaps }))}
+        />
+        <Chip
+          label="No portal"
+          count={summary.noPortal}
+          on={filter.noPortal}
+          onClick={() => setFilter((f) => ({ ...f, noPortal: !f.noPortal }))}
+        />
+        <Chip
+          label="No campaigns yet"
+          count={rows.filter((r) => r.count === 0).length}
+          on={filter.noWork}
+          onClick={() => setFilter((f) => ({ ...f, noWork: !f.noWork }))}
+        />
+        {isFiltered({ ...filter, query }) && (
+          <button
+            type="button"
+            className="aq-btn aq-btn-ghost"
+            onClick={() => { setFilter(EMPTY_FILTER); setQuery(''); }}
+            style={{ fontSize: 12.5, padding: '5px 10px', color: 'var(--aq-text-secondary)' }}
+          >Clear</button>
+        )}
+      </RegistryToolbar>
+
+      {/* The reset used to be Ctrl/Cmd + click on the Import button, with the
+          only documentation in that button's tooltip — and Cmd-click is what
+          a Mac user does to open something in a new tab. Its own named
+          control now, and it asks. */}
+      {canImport && (
+        confirmReset ? (
+          <Confirm
+            text={resetWarning(rows.length)}
+            confirmLabel="Yes, wipe and re-import"
+            busy={importBusy}
+            onConfirm={() => { setConfirmReset(false); runZohoReset(); }}
+            onCancel={() => setConfirmReset(false)}
+          />
+        ) : (
+          <div style={{ display: 'flex' }}>
+            <button
+              type="button"
+              className="aq-btn aq-btn-ghost"
+              onClick={() => setConfirmReset(true)}
+              disabled={importBusy}
+              style={{ marginLeft: 'auto', fontSize: 12, color: '#b91c1c', padding: '4px 8px' }}
+            >Wipe all clients and re-import from Zoho…</button>
+          </div>
+        )
+      )}
+
+      {deleting && (
+        <Confirm
+          text={deleteWarning(deleting, 'client')}
+          confirmLabel="Yes, delete"
+          busy={busy}
+          onConfirm={() => removeClient(deleting)}
+          onCancel={() => setConfirmDeleteId(null)}
+        />
+      )}
+
+      {loading && allClients.length === 0 ? (
+        <div className="aq-card" style={{ padding: 34 }} />
+      ) : shown.length === 0 ? (
+        <div className="aq-card" style={{
+          padding: 34, textAlign: 'center', color: 'var(--aq-text-muted)', fontSize: 13.5,
+        }}>{emptyMessage({ ...filter, query }, rows.length, 'client')}</div>
+      ) : (
+        <RegistryTable
+          rows={shown}
+          columns={CLIENT_COLUMNS}
+          sort={sort}
+          onSort={(k) => setSort((cur) => nextSort(cur, k))}
+          expandedId={expandedId}
+          onToggle={(id) => setExpandedId((cur) => (cur === id ? null : id))}
+          renderDetail={(r) => (
+            <ClientDetail
+              row={r}
+              isAdmin={role === 'owner' || role === 'admin'}
+              onPortal={() => setPortalFor(r)}
+              onDelete={() => setConfirmDeleteId(r.id)}
+            />
+          )}
+        />
+      )}
+
+      <AdminCreatePortalModal
+        open={portalFor != null}
+        target={portalFor ? {
+          role: 'client',
+          label: portalFor.name,
+          client_id: portalFor.id,
+          email: String(portalFor.raw.company_email ?? portalFor.raw.contact_email ?? '') || null,
+        } : null}
+        onClose={() => setPortalFor(null)}
+      />
 
       {(importResult || importError) && (
         <Modal title="Zoho Import" onClose={() => { setImportResult(null); setImportError(null); }}>
@@ -371,63 +517,6 @@ export function ClientsView({ role }: { role: WorkspaceRole | null }) {
           <Actions busy={busy} disabled={!form.company_name.trim()} submitLabel="Add Client" onCancel={() => setOpen(false)} onSubmit={submit} />
         </Modal>
       )}
-    </RegistryShell>
-  );
-}
-
-function RegistryShell({
-  title, count, search, setSearch, actionLabel, canCreate, onAction,
-  secondaryActionLabel, onSecondaryAction, showSecondaryAction, secondaryActionBusy,
-  children,
-}: {
-  title: string;
-  count: string;
-  search: string;
-  setSearch: (v: string) => void;
-  actionLabel: string;
-  canCreate: boolean;
-  onAction: () => void;
-  /** Optional secondary action (e.g. "Import from Zoho") rendered to the left of the primary button. */
-  secondaryActionLabel?: string;
-  onSecondaryAction?: (e?: React.MouseEvent) => void;
-  showSecondaryAction?: boolean;
-  secondaryActionBusy?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="animate-fade-in" style={{ minHeight: 'calc(100vh - 180px)' }}>
-      <div style={registryHeader}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-          <h2 style={{ fontSize: 24, fontWeight: 800 }}>{title}</h2>
-          <span style={{ color: 'var(--aq-text-muted)', fontSize: 15 }}>{count}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <label style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 10, top: 8, fontSize: 14 }}>🔍</span>
-            <input
-              className="aq-input"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search"
-              style={{ width: 220, paddingLeft: 34 }}
-            />
-          </label>
-          {showSecondaryAction && onSecondaryAction && secondaryActionLabel && (
-            <button
-              className="aq-btn aq-btn-ghost"
-              disabled={secondaryActionBusy}
-              onClick={(e) => onSecondaryAction(e)}
-              title="Click: import (safe to re-run, dedups by Zoho ID). Ctrl/Cmd+click: wipe all clients and re-import. Shift+click: inspect one Zoho contact's raw fields."
-            >
-              {secondaryActionLabel}
-            </button>
-          )}
-          <button className="aq-btn aq-btn-primary" disabled={!canCreate} onClick={onAction}>
-            {actionLabel}
-          </button>
-        </div>
-      </div>
-      {children}
     </div>
   );
 }
@@ -437,30 +526,6 @@ function ImportStat({ label, value, accent }: { label: string; value: number; ac
     <div className="aq-card" style={{ padding: 12, textAlign: 'center' }}>
       <div style={{ fontSize: 22, fontWeight: 800, color: accent || 'var(--aq-text)' }}>{value}</div>
       <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
-    </div>
-  );
-}
-
-function EmptyState({
-  icon, title, body, actionLabel, canCreate, onAction,
-}: {
-  icon: string;
-  title: string;
-  body: string;
-  actionLabel: string;
-  canCreate: boolean;
-  onAction: () => void;
-}) {
-  return (
-    <div style={emptyState}>
-      <div style={{ fontSize: 50, marginBottom: 24 }}>{icon}</div>
-      <h3 style={{ fontSize: 20, fontWeight: 800 }}>{title}</h3>
-      <p style={{ color: 'var(--aq-text-muted)', fontSize: 16, lineHeight: 1.5, marginTop: 14, maxWidth: 360 }}>
-        {body}
-      </p>
-      <button className="aq-btn aq-btn-primary" disabled={!canCreate} onClick={onAction} style={{ marginTop: 26, padding: '13px 22px', fontSize: 16 }}>
-        {actionLabel}
-      </button>
     </div>
   );
 }
@@ -507,49 +572,12 @@ function Actions({
   );
 }
 
-function Meta({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div>
-      <dt style={{ fontSize: 11, color: 'var(--aq-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>{label}</dt>
-      <dd style={{ fontSize: 13, marginTop: 2 }}>{value || '—'}</dd>
-    </div>
-  );
-}
-
-const registryHeader: React.CSSProperties = {
-  height: 58,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  borderBottom: '1px solid var(--aq-border-light)',
-  margin: '-4px -4px 0',
-  padding: '0 4px 14px',
-};
-const emptyState: React.CSSProperties = {
-  minHeight: 520,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  textAlign: 'center',
-};
-const gridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-  gap: 14,
-  paddingTop: 22,
-};
-const metaGrid: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: 12,
-  marginTop: 16,
-};
 const formGrid: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '1fr 1fr',
   gap: 14,
 };
+
 const modalBackdrop: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
@@ -560,6 +588,7 @@ const modalBackdrop: React.CSSProperties = {
   justifyContent: 'center',
   padding: 20,
 };
+
 const modalCard: React.CSSProperties = {
   width: '100%',
   maxWidth: 760,
@@ -573,119 +602,54 @@ const modalCard: React.CSSProperties = {
 // + admin/owner delete.
 // ───────────────────────────────────────────────────────────────────────────
 
-function ClientCard({
-  client, role, onChanged,
+/**
+ * What was behind the card, now behind the row.
+ *
+ * CR, VAT, phone and address stop being printed on eighty-five cards at once
+ * and live here — where a missing one can be called missing, because it will
+ * be missing in the contract too.
+ */
+function ClientDetail({
+  row, isAdmin, onPortal, onDelete,
 }: {
-  client: any;
-  role: WorkspaceRole | null;
-  onChanged: () => void | Promise<void>;
+  row: RegistryRow;
+  isAdmin: boolean;
+  onPortal: () => void;
+  onDelete: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [portalOpen, setPortalOpen] = useState(false);
-  const isAdmin = role === 'owner' || role === 'admin';
-
-  // Rows now come from public.clients directly, so the row's id IS the
-  // approved client id. No async resolution needed.
-  const approvedClientId: string | null = client?.id ? String(client.id) : null;
-  const resolveError = '';
-
-  const onDelete = async () => {
-    if (!approvedClientId) {
-      window.alert(
-        `Cannot delete "${client.company_name}".\n\n` +
-        `This row is in pending_clients but never got bridged into public.clients ` +
-        `(no row with pending_client_id=${client.id}).\n\n` +
-        `Either re-approve from the registration queue, or run this in Supabase SQL Editor:\n\n` +
-        `SELECT * FROM public.approve_pending_client(${client.id});`
-      );
-      return;
-    }
-    try {
-      await clientOps.remove(approvedClientId);
-      await onChanged();
-    } catch (err: any) {
-      window.alert(
-        `Could not delete "${client.company_name}".\n\n${err?.message ?? String(err)}\n\n` +
-        `If this says "not a member of any AQ workspace", the contract backend has not been restarted with the latest auth code. Restart uvicorn and try again.`
-      );
-    }
-  };
-
+  const c = row.raw as any;
+  const address = [c.street, c.city, c.postcode, c.country].filter(Boolean).join(', ');
   return (
-    <article className="aq-card" style={{ padding: 18 }}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: '100%', display: 'flex', justifyContent: 'space-between', gap: 12,
-          background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
-          textAlign: 'left', fontFamily: 'inherit',
-        }}
-      >
-        <div>
-          <h3 style={{ fontSize: 16, fontWeight: 800 }}>{client.company_name}</h3>
-          <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-            {client.signatory_name || 'No signatory'} · {client.company_email || client.email || 'No email'}
-          </p>
-        </div>
-        <span className="aq-badge aq-badge-success">{open ? 'open' : 'active'}</span>
-      </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={DETAIL_GRID}>
+        <Detail label="CR number" value={c.cr_number} missing />
+        <Detail label="VAT number" value={c.vat_number} missing />
+        <Detail label="Signatory" value={c.signatory_name} missing />
+        <Detail label="Contact" value={c.contact_name} />
+        <Detail label="Email" value={c.company_email || c.contact_email} />
+        <Detail label="Phone" value={c.contact_phone} />
+        <Detail label="Address" value={address} missing />
+      </div>
 
-      <dl style={metaGrid}>
-        <Meta label="CR" value={client.cr_number} />
-        <Meta label="VAT" value={client.vat_number} />
-        <Meta label="Phone" value={client.contact_phone} />
-        <Meta label="Address" value={[client.street, client.city, client.postcode, client.country].filter(Boolean).join(', ')} />
-      </dl>
+      <BrandManagerInline clientId={row.id} />
 
-      <AdminCreatePortalModal
-        open={portalOpen}
-        target={portalOpen && approvedClientId ? {
-          role: 'client',
-          label: client.company_name,
-          client_id: approvedClientId,
-          email: client.company_email || client.email || null,
-        } : null}
-        onClose={() => setPortalOpen(false)}
-      />
-
-      {open && (
-        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--aq-border-light)' }}>
-          {resolveError ? (
-            <p style={{ color: 'var(--aq-error)', fontSize: 13 }}>{resolveError}</p>
-          ) : !approvedClientId ? (
-            <p style={{ color: 'var(--aq-text-muted)', fontSize: 12 }}>
-              Looking up the brand record…
-            </p>
-          ) : (
-            <BrandManagerInline clientId={approvedClientId} />
-          )}
-
-          {isAdmin && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-              <button
-                type="button"
-                className="aq-btn aq-btn-secondary"
-                style={{ padding: '6px 12px', fontSize: 12 }}
-                disabled={!approvedClientId}
-                title={approvedClientId ? 'Set a password and create the client portal account' : 'Bridge the client first (see Delete error)'}
-                onClick={() => setPortalOpen(true)}
-              >
-                Make portal
-              </button>
-              <button
-                type="button"
-                className="aq-btn aq-btn-ghost"
-                style={{ padding: '6px 12px', fontSize: 12, color: 'var(--aq-error)' }}
-                onClick={onDelete}
-              >
-                Delete client
-              </button>
-            </div>
-          )}
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="aq-btn aq-btn-secondary"
+            onClick={onPortal}
+            style={{ fontSize: 12, padding: '5px 11px' }}
+          >{row.portal === 'active' ? 'Reset password' : 'Make portal'}</button>
+          <button
+            type="button"
+            className="aq-btn aq-btn-ghost"
+            onClick={onDelete}
+            style={{ fontSize: 12, padding: '5px 11px', color: '#b91c1c' }}
+          >Delete client…</button>
         </div>
       )}
-    </article>
+    </div>
   );
 }
 

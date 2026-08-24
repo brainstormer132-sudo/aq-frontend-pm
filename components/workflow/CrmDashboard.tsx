@@ -1,10 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  useClients, useLegacyVendors, useCrmRecentActivities,
+  useClients, useLegacyVendors, useCrmRecentActivities, useCrmActivityIndex,
   type CrmActivity, type ClientRow, type LegacyVendor,
 } from '@/hooks/use-workflow';
+import {
+  lastContactIndex, countsSince, kindCountsSince, countSince,
+  dormantContacts, dormantSummary, mostActive,
+  scopeContacts, scopeActivities, timeAgo, DAY_MS,
+} from '@/lib/crm';
 
 /**
  * CRM Dashboard — company-wide view.
@@ -39,9 +44,20 @@ export function CrmDashboard({
 
   const { clients } = useClients();
   const { vendors } = useLegacyVendors();
-  // Pull a large recent window once; everything else is derived client-side
-  // so the dashboard responds instantly to filter changes.
-  const { items: activities, loading } = useCrmRecentActivities(workspaceId, 500);
+
+  // Two reads, deliberately different shapes.
+  //
+  //   index — every activity in the workspace, four columns wide, paged. All
+  //           the arithmetic on this page comes from here.
+  //   feed  — the newest 25 WITH their bodies, for the list at the bottom.
+  //
+  // It used to be one read of the 500 most recent rows, used for both. That is
+  // fine for a feed and wrong for the maths: a contact whose newest note fell
+  // past row 500 came back with no last-contact date at all, which this page
+  // read as *never contacted* — and never sorts first, so the accounts we
+  // speak to most often were being listed as the ones nobody had called.
+  const { items: index, loading } = useCrmActivityIndex(workspaceId);
+  const { items: feed, loading: loadingFeed } = useCrmRecentActivities(workspaceId, 25);
 
   const contacts: NormalizedContact[] = useMemo(() => {
     const cs = (clients || []).map((c: ClientRow) => ({
@@ -61,85 +77,63 @@ export function CrmDashboard({
 
   // Apply the search filter
   const q = query.trim().toLowerCase();
-  const scopedContacts = useMemo(() => {
-    if (!q) return contacts;
-    return contacts.filter((c) =>
-      [c.name, c.meta, c.id].some((v) => String(v || '').toLowerCase().includes(q)),
-    );
-  }, [contacts, q]);
-
-  const scopeKey = useMemo(
-    () => new Set(scopedContacts.map((c) => `${c.type}:${c.id}`)),
-    [scopedContacts],
+  const scopedContacts = useMemo(() => scopeContacts(contacts, q), [contacts, q]);
+  const scopedIndex = useMemo(
+    () => scopeActivities(index, scopedContacts, q),
+    [index, scopedContacts, q],
+  );
+  const scopedFeed = useMemo(
+    () => scopeActivities(feed, scopedContacts, q),
+    [feed, scopedContacts, q],
   );
 
-  const scopedActivities = useMemo(() => {
-    if (!q) return activities;
-    return activities.filter((a) => scopeKey.has(`${a.target_type}:${a.target_id}`));
-  }, [activities, scopeKey, q]);
+  // The clock is read after mount, never during render: the server does not
+  // know what day it is where you are. It was `const now = Date.now()` in the
+  // render body, which also meant every window below it was a new number on
+  // every render, so none of these useMemos memoised anything.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => { setNowMs(Date.now()); }, []);
 
-  // Stats
-  const now = Date.now();
-  const activeWindow  = now - ACTIVE_WINDOW_DAYS * 86_400_000;
-  const dormantBefore = now - DORMANT_AFTER_DAYS * 86_400_000;
+  const activeWindow  = (nowMs ?? 0) - ACTIVE_WINDOW_DAYS * DAY_MS;
 
-  const recent = useMemo(
-    () => scopedActivities.filter((a) => new Date(a.occurred_at).getTime() >= activeWindow),
-    [scopedActivities, activeWindow],
+  const lastByContact = useMemo(() => lastContactIndex(scopedIndex), [scopedIndex]);
+  const countByContact = useMemo(
+    () => (nowMs ? countsSince(scopedIndex, activeWindow) : new Map<string, number>()),
+    [scopedIndex, activeWindow, nowMs],
+  );
+  const byKind = useMemo(
+    () => (nowMs ? kindCountsSince(scopedIndex, activeWindow) : {}),
+    [scopedIndex, activeWindow, nowMs],
+  );
+  const topContacts = useMemo(
+    () => mostActive(scopedContacts, countByContact, 6),
+    [scopedContacts, countByContact],
   );
 
-  // Map: contactKey → last activity timestamp (ms)
-  const lastByContact = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const a of scopedActivities) {
-      const k = `${a.target_type}:${a.target_id}`;
-      const t = new Date(a.occurred_at).getTime();
-      if (!m.has(k) || m.get(k)! < t) m.set(k, t);
-    }
-    return m;
-  }, [scopedActivities]);
-
-  // Map: contactKey → count of activities in last 30 days
-  const countByContact = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const a of recent) {
-      const k = `${a.target_type}:${a.target_id}`;
-      m.set(k, (m.get(k) ?? 0) + 1);
-    }
-    return m;
-  }, [recent]);
-
-  // Activity by kind (last 30d)
-  const byKind = useMemo(() => {
-    const m: Record<string, number> = { note: 0, call: 0, meeting: 0, email: 0, status_change: 0 };
-    for (const a of recent) m[a.kind] = (m[a.kind] ?? 0) + 1;
-    return m;
-  }, [recent]);
-
-  // Top contacts (sorted by activity count in last 30d, desc)
-  const mostActive = useMemo(() => {
-    return scopedContacts
-      .map((c) => ({ contact: c, count: countByContact.get(`${c.type}:${c.id}`) ?? 0 }))
-      .filter((r) => r.count > 0)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6);
-  }, [scopedContacts, countByContact]);
-
-  // Dormant contacts: never contacted, OR last contact older than 60d.
-  // Sort by oldest-last-contact-first.
-  const dormant = useMemo(() => {
-    return scopedContacts
-      .map((c) => ({ contact: c, lastMs: lastByContact.get(`${c.type}:${c.id}`) ?? 0 }))
-      .filter((r) => r.lastMs === 0 || r.lastMs < dormantBefore)
-      .sort((a, b) => a.lastMs - b.lastMs)
-      .slice(0, 6);
-  }, [scopedContacts, lastByContact, dormantBefore]);
+  // The whole dormant list, and the six shown beside it. Kept apart on
+  // purpose: the stat card used to read `dormant.length` on a list that had
+  // already been sliced to six, so a workspace with forty cold contacts
+  // reported six.
+  const dormantAll = useMemo(
+    () => (nowMs
+      ? dormantContacts({
+          contacts: scopedContacts, last: lastByContact,
+          nowMs, afterDays: DORMANT_AFTER_DAYS,
+        })
+      : []),
+    [scopedContacts, lastByContact, nowMs],
+  );
+  const dormant = useMemo(() => dormantAll.slice(0, 6), [dormantAll]);
+  const dormantLine = useMemo(
+    () => dormantSummary(dormantAll, DORMANT_AFTER_DAYS),
+    [dormantAll],
+  );
 
   // Stats numbers
   const totalClients = scopedContacts.filter((c) => c.type === 'client').length;
   const totalVendors = scopedContacts.filter((c) => c.type === 'vendor').length;
-  const totalRecent  = recent.length;
-  const totalDormant = dormant.length;
+  const totalRecent  = nowMs ? countSince(scopedIndex, activeWindow) : 0;
+  const totalDormant = dormantAll.length;
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -210,15 +204,15 @@ export function CrmDashboard({
               Top contacts by activity count in the last {ACTIVE_WINDOW_DAYS} days.
             </p>
           </header>
-          {loading ? (
+          {loading || !nowMs ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>Loading…</p>
-          ) : mostActive.length === 0 ? (
+          ) : topContacts.length === 0 ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>
               No activity in this window yet. Log a call or note on a contact to start tracking.
             </p>
           ) : (
             <BarList
-              rows={mostActive.map((r) => ({
+              rows={topContacts.map((r) => ({
                 label: r.contact.name,
                 sub: `${r.contact.type === 'client' ? '🏢' : '🧑‍💼'} ${r.contact.meta || r.contact.type}`,
                 value: r.count,
@@ -242,10 +236,13 @@ export function CrmDashboard({
           <header style={{ marginBottom: 14 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700 }}>Dormant contacts</h3>
             <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-              No activity in the last {DORMANT_AFTER_DAYS} days. These need a check-in.
+              {loading || !nowMs
+                ? `No activity in the last ${DORMANT_AFTER_DAYS} days. These need a check-in.`
+                : dormantLine.label}
+              {totalDormant > dormant.length && ` — showing the ${dormant.length} quietest.`}
             </p>
           </header>
-          {loading ? (
+          {loading || !nowMs ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>Loading…</p>
           ) : dormant.length === 0 ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>
@@ -266,9 +263,10 @@ export function CrmDashboard({
                         {r.contact.type} · {r.contact.meta || '—'}
                       </div>
                     </div>
-                    <span className="aq-badge aq-badge-warning" style={{ fontSize: 11 }}>
-                      {r.lastMs ? `${Math.floor((now - r.lastMs) / 86_400_000)}d quiet` : 'never contacted'}
-                    </span>
+                    <span
+                      className={`aq-badge ${r.state === 'never' ? 'aq-badge-muted' : 'aq-badge-warning'}`}
+                      style={{ fontSize: 11 }}
+                    >{r.label}</span>
                   </button>
                 </li>
               ))}
@@ -284,15 +282,15 @@ export function CrmDashboard({
               The last 10 things logged.
             </p>
           </header>
-          {loading ? (
+          {loadingFeed ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>Loading…</p>
-          ) : scopedActivities.length === 0 ? (
+          ) : scopedFeed.length === 0 ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>
               No activity yet for this scope.
             </p>
           ) : (
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {scopedActivities.slice(0, 10).map((a) => {
+              {scopedFeed.slice(0, 10).map((a) => {
                 const contact = contacts.find((c) => c.type === a.target_type && c.id === a.target_id);
                 return (
                   <li key={a.id} style={{
@@ -307,7 +305,7 @@ export function CrmDashboard({
                         {kindIcon(a.kind)} {contact?.name ?? `(${a.target_type} ${a.target_id})`}
                       </strong>
                       <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-                        {timeAgo(a.occurred_at)}
+                        {timeAgo(a.occurred_at, nowMs ?? 0)}
                       </span>
                     </div>
                     {a.body && (
@@ -476,14 +474,3 @@ function kindIcon(kind: string) {
   return m[kind] || '•';
 }
 
-function timeAgo(iso: string) {
-  const ms = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(ms / 60000);
-  if (m < 1)  return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7)  return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}

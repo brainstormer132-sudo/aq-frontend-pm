@@ -611,3 +611,15 @@ html, body {
   .portal-content      { padding: 20px; }
   .portal-topbar       { padding: 12px 20px; }
 }
+
+/* ── All Tasks table rows ────────────────────────────────────────
+   A whole row is the click target, so it has to look like one on the
+   way past. Keyboard focus gets its own outline rather than borrowing
+   the hover tint — a tint alone is invisible to anyone tabbing. */
+.aq-tr { transition: background var(--aq-transition); }
+.aq-tr:hover { background: var(--aq-bg-hover); }
+.aq-tr:focus-visible {
+  outline: 2px solid var(--aq-accent);
+  outline-offset: -2px;
+  background: var(--aq-bg-hover);
+}

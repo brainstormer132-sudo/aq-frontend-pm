@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  useCrmDeals, useCrmTasks, useCrmRecentActivities,
-  DEAL_STAGES, type CrmDeal, type DealStage, type CrmTask, type CrmActivity,
+  useCrmDeals, useCrmTasks, useCrmActivityIndex,
+  DEAL_STAGES, type CrmDeal, type DealStage, type CrmTask, type CrmActivityStamp,
 } from '@/hooks/use-workflow';
+import { kindCountsSince, weeklyBins, countSince, DAY_MS } from '@/lib/crm';
 
 /**
  * CRM Analytics — pipeline + activity reporting.
@@ -19,15 +20,29 @@ import {
  *   5. Tasks report — overdue count, due-this-week count, oldest open task.
  *
  * All maths is client-side from the existing hooks — no extra fetches.
+ *
+ * The activity numbers used to come from `useCrmRecentActivities(ws, 500)` —
+ * a second full-column read of the same rows the CRM Dashboard was already
+ * pulling. Both now share `useCrmActivityIndex`, which is four columns wide,
+ * paged and cached, so a 90-day report cannot end at whatever row 500 happened
+ * to be either.
  */
 export function CrmAnalytics({ workspaceId }: { workspaceId: string }) {
   const { items: deals, loading: dealsLoading } = useCrmDeals(workspaceId);
   const { items: tasks, loading: tasksLoading } = useCrmTasks(workspaceId, { includeCompleted: true });
-  const { items: activities, loading: actLoading } = useCrmRecentActivities(workspaceId, 500);
+  const { items: activities, loading: actLoading } = useCrmActivityIndex(workspaceId);
 
-  const m = useMemo(() => computeMetrics(deals, tasks, activities), [deals, tasks, activities]);
+  // After mount, never during render — the server does not know what day it is
+  // where you are, and computeMetrics used to call `new Date()` itself.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => { setNowMs(Date.now()); }, []);
 
-  if (dealsLoading || tasksLoading || actLoading) {
+  const m = useMemo(
+    () => (nowMs ? computeMetrics(deals, tasks, activities, nowMs) : null),
+    [deals, tasks, activities, nowMs],
+  );
+
+  if (dealsLoading || tasksLoading || actLoading || !m) {
     return <p style={{ color: 'var(--aq-text-muted)' }}>Loading analytics…</p>;
   }
 
@@ -283,10 +298,12 @@ interface Metrics {
   stuckDeals: CrmDeal[];
 }
 
-function computeMetrics(deals: CrmDeal[], tasks: CrmTask[], activities: CrmActivity[]): Metrics {
-  const now = new Date();
-  const cutoff90 = new Date(now.getTime() - 90 * 86_400_000);
-  const cutoff30 = new Date(now.getTime() - 30 * 86_400_000);
+function computeMetrics(
+  deals: CrmDeal[], tasks: CrmTask[], activities: CrmActivityStamp[], nowMs: number,
+): Metrics {
+  const now = new Date(nowMs);
+  const cutoff90 = new Date(nowMs - 90 * DAY_MS);
+  const cutoff30 = new Date(nowMs - 30 * DAY_MS);
   const endOfToday = new Date(now); endOfToday.setHours(23,59,59,999);
   const inOneWeek = new Date(now.getTime() + 7 * 86_400_000);
 
@@ -341,21 +358,11 @@ function computeMetrics(deals: CrmDeal[], tasks: CrmTask[], activities: CrmActiv
   }
   const owners = Array.from(ownerMap.values()).sort((a, b) => (b.openValue + b.wonValue90) - (a.openValue + a.wonValue90));
 
-  // Activity
-  const recentAct = activities.filter((a) => new Date(a.occurred_at) >= cutoff90);
-  const activityByKind: Record<string, number> = {};
-  for (const a of recentAct) activityByKind[a.kind] = (activityByKind[a.kind] || 0) + 1;
-
-  // Weekly bins: 13 weeks (~90d).
-  const weeks = 13;
-  const weeklyActivity = new Array(weeks).fill(0);
-  for (const a of recentAct) {
-    const wIdx = Math.min(
-      weeks - 1,
-      Math.floor((now.getTime() - new Date(a.occurred_at).getTime()) / (7 * 86_400_000))
-    );
-    weeklyActivity[weeks - 1 - wIdx] += 1;
-  }
+  // Activity — counted in lib/crm, where it is tested.
+  const since90 = cutoff90.getTime();
+  const activityByKind = kindCountsSince(activities, since90);
+  const activity90Total = countSince(activities, since90);
+  const weeklyActivity = weeklyBins(activities, nowMs, 13);
 
   // Tasks
   let tasksOpen = 0, tasksOverdue = 0, tasksDueWeek = 0, tasksCompleted30 = 0, tasksNoDate = 0;
@@ -393,7 +400,7 @@ function computeMetrics(deals: CrmDeal[], tasks: CrmTask[], activities: CrmActiv
     winRate, avgDealSize, avgCycleDays,
     byStage, maxStageValue,
     owners,
-    activity90Total: recentAct.length,
+    activity90Total,
     activityByKind,
     weeklyActivity,
     tasksOpen, tasksOverdue, tasksDueWeek, tasksCompleted30, tasksNoDate,

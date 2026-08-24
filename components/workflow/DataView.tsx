@@ -8,9 +8,18 @@ import {
 import { useDashboardRows } from '@/hooks/use-dashboard';
 import { SkeletonDashboard } from '@/components/Skeleton';
 import {
-  ALL_TIME, buildDashboard, searchEntities, compact, full, toCsv,
+  ALL_TIME, buildDashboard, scopeRows, sumMoney, searchEntities, compact, full, toCsv,
   type Cell, type DateRange, type Scope, type SearchHit, type Tone,
 } from '@/lib/dashboard-data';
+import {
+  clientLedger, vendorLedger, ledgerTotals, shares, filterLedger, sortLedger,
+  nextLedgerSort, isLedgerFiltered, ledgerLine, emptyLedgerMessage, ledgerCsv,
+  marginRate, ratePct, money as sar,
+  SIDES, PAY_KEYS, LEDGER_COLUMNS, EMPTY_LEDGER_FILTER, DEFAULT_LEDGER_SORT,
+  payLabel, payTone,
+  type LedgerFilter, type LedgerRow, type LedgerSort, type LedgerSortKey,
+  type LedgerTotals, type PayKey, type Side,
+} from '@/lib/money-ledger';
 
 /**
  * The Data view — one search box over everything, and the same page narrowed
@@ -105,6 +114,42 @@ export function DataView({
   const model = useMemo(() => buildDashboard({
     tasks: rows, clients, vendors, people: profiles, scope, range, lookups,
   }), [rows, clients, vendors, profiles, scope, range, lookups]);
+
+  /* ── Section 2: who owes us, and who do we owe ────────────────
+     Siraj, Aug 2026: "client owe and vendors owe — you need to be able to
+     search by unpaid or paid or partial." The old page could show the shape
+     of it and not the rows: SAR 712,000 outstanding, and no way to find out
+     from whom.
+
+     Built from the same scoped rows every other panel uses, so this costs
+     no extra request. */
+  const scoped = useMemo(() => scopeRows(rows, scope, range), [rows, scope, range]);
+  const clientNames = useMemo(
+    () => new Map(clients.map((c) => [c.id, c.company_name])), [clients]);
+  const vendorNames = useMemo(
+    () => new Map(vendors.map((v) => [String(v.id), v.name])), [vendors]);
+
+  const [side, setSide] = useState<Side>('clients');
+  const [ledgerFilter, setLedgerFilter] = useState<LedgerFilter>(EMPTY_LEDGER_FILTER);
+  const [ledgerSort, setLedgerSort] = useState<LedgerSort>(DEFAULT_LEDGER_SORT);
+
+  const ledger = useMemo(() => (side === 'clients'
+    ? clientLedger({ parents: scoped.parents, subtasks: scoped.allSubtasks, clientName: clientNames })
+    : vendorLedger({ subtasks: scoped.subtasks, parents: scoped.parents, vendorName: vendorNames })
+  ), [side, scoped, clientNames, vendorNames]);
+
+  const ledgerAll = useMemo(() => ledgerTotals(ledger, side), [ledger, side]);
+  const ledgerShown = useMemo(
+    () => sortLedger(filterLedger(ledger, ledgerFilter), ledgerSort),
+    [ledger, ledgerFilter, ledgerSort],
+  );
+
+  // The margin rate — the number this page never had. `Est AQ gross` is an
+  // absolute, and an absolute goes up whenever we do more work.
+  // Exactly the sum every model in lib/dashboard-data computes for its KPIs,
+  // so the rate and the figures above it can never disagree.
+  const totalMoney = useMemo(() => sumMoney(scoped.subtasks), [scoped]);
+  const rate = marginRate(totalMoney.price, totalMoney.net);
 
   const pick = (h: SearchHit) => {
     setScope({ kind: h.kind, id: h.id, name: h.name, meta: h.meta });
@@ -238,116 +283,258 @@ export function DataView({
         <SkeletonDashboard />
       ) : (
         <>
-          <div style={{
-            display: 'grid', gap: 12,
-            gridTemplateColumns: 'repeat(auto-fit, minmax(158px, 1fr))',
-          }}>
-            {model.kpis.map((k) => (
-              <div key={k.key} className="aq-card" style={{ padding: '14px 16px' }}>
-                <div style={{
-                  fontSize: 10.5, fontWeight: 700, letterSpacing: '.09em',
-                  textTransform: 'uppercase', color: 'var(--aq-text-muted)',
-                }}>{k.key}</div>
-                <div style={{
-                  fontSize: 26, fontWeight: 700, marginTop: 5,
-                  letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums',
-                }}>{k.value}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>{k.note}</div>
-              </div>
-            ))}
-          </div>
+          {/* ── 1. Did we make money ─────────────────────────────
+              People do not arrive here wanting "the data". They arrive with
+              one of three questions, so the page is three sections named
+              after them, in the order they get asked. */}
+          <Question title="Did we make money" note="on the work we billed" />
 
-          <div style={{
-            display: 'grid', gap: 14, alignItems: 'start',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
-          }}>
-            <Panel
-              title="Money by month"
-              caption="Price, net and AQ gross. One axis — all three are SAR. Dark to light, because each one sits inside the one before it."
-            >
+          <div className="aq-card" style={{ padding: '18px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
+              <span style={{
+                fontSize: 40, fontWeight: 800, letterSpacing: '-0.03em',
+                fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+              }}>{compact(totalMoney.gross)}</span>
+              <span style={{ fontSize: 14, color: 'var(--aq-text-muted)', fontWeight: 600 }}>
+                SAR AQ gross
+              </span>
+              {/* The rate, which this page never had. The absolute goes up
+                  whenever we do more work; the rate says whether the work
+                  was worth doing. */}
+              <span style={{
+                fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                color: rate == null ? 'var(--aq-text-muted)'
+                  : rate < 0 ? '#b91c1c' : 'var(--aq-text-secondary)',
+              }}>{ratePct(rate)} margin</span>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28, margin: '16px 0 4px' }}>
+              {model.kpis.filter((k) => k.key !== 'Est AQ gross').map((k) => (
+                <span key={k.key}>
+                  <span style={{
+                    display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
+                    textTransform: 'uppercase', color: 'var(--aq-text-muted)',
+                  }}>{k.key}</span>
+                  <span style={{
+                    display: 'block', fontSize: 17, fontWeight: 700, marginTop: 2,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>{k.value}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                    {k.note}
+                  </span>
+                </span>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 18 }}>
+              <h3 style={{ fontSize: 13.5, fontWeight: 700, margin: 0 }}>Money by month</h3>
+              <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', margin: '2px 0 12px' }}>
+                Price, net and AQ gross. One axis — all three are SAR, and each sits inside
+                the one before it. By the month the campaign was <strong>created</strong>,
+                which is not the month it was invoiced.
+              </p>
               <Legend items={[['Price', SERIES[0]], ['Net', SERIES[1]], ['AQ gross', SERIES[2]]]} />
               <Months bars={model.months} />
-            </Panel>
-
-            <Panel title={model.donut.title} caption={model.donut.caption}>
-              <Donut slices={model.donut.slices} centre={model.donut.centre} />
-            </Panel>
-
-            <Panel title={model.bars1.title} caption={model.bars1.caption}>
-              <Bars panel={model.bars1} />
-            </Panel>
-
-            <Panel title={model.bars2.title} caption={model.bars2.caption}>
-              <Bars panel={model.bars2} />
-            </Panel>
+            </div>
           </div>
 
-          <Panel
-            title={model.table.title}
-            caption={model.table.caption}
-            // Always rendered, disabled when there is nothing to export.
-            // Hiding it meant that on an empty workspace the export looked
-            // like a feature that had never been built — an absent control
-            // is indistinguishable from a missing one.
-            action={(
+          {/* ── 2. Who owes us, and who do we owe ────────────────
+              The section Siraj asked for. The bar is the shape; the ledger
+              under it is the rows, filterable by state and searchable. */}
+          <Question title="Who owes us, and who do we owe" note="the money still moving" />
+
+          <div className="aq-card" style={{ padding: '18px 20px' }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+              {SIDES.map((sd) => (
+                <button
+                  key={sd.key}
+                  type="button"
+                  aria-pressed={side === sd.key}
+                  onClick={() => {
+                    setSide(sd.key);
+                    // The state filter means different things on each side,
+                    // so carrying it across would silently answer a question
+                    // nobody asked.
+                    setLedgerFilter(EMPTY_LEDGER_FILTER);
+                  }}
+                  style={{
+                    font: 'inherit', fontSize: 13, fontWeight: side === sd.key ? 700 : 500,
+                    padding: '7px 14px', borderRadius: 'var(--aq-radius)', cursor: 'pointer',
+                    border: `1px solid ${side === sd.key ? INK : 'var(--aq-border-light)'}`,
+                    background: side === sd.key ? INK : 'transparent',
+                    color: side === sd.key ? '#fff' : 'var(--aq-text-secondary)',
+                  }}
+                >{sd.label}</button>
+              ))}
+              <span style={{
+                fontSize: 12, color: 'var(--aq-text-muted)', alignSelf: 'center', marginLeft: 4,
+              }}>{ledgerLine(ledgerAll, side)}</span>
+            </div>
+
+            <PayBar
+              totals={ledgerAll}
+              side={side}
+              active={ledgerFilter.state}
+              onPick={(k) => setLedgerFilter((f) => ({
+                ...f, state: f.state === k ? null : k, outstandingOnly: false,
+              }))}
+            />
+
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              flexWrap: 'wrap', margin: '16px 0 12px',
+            }}>
+              {PAY_KEYS.map((k) => {
+                const band = ledgerAll.states.find((x) => x.key === k);
+                return (
+                  <Chip
+                    key={k}
+                    on={ledgerFilter.state === k}
+                    onClick={() => setLedgerFilter((f) => ({
+                      ...f, state: f.state === k ? null : k, outstandingOnly: false,
+                    }))}
+                  >
+                    {payLabel(k, side)}
+                    {band ? ` ${band.count}` : ''}
+                  </Chip>
+                );
+              })}
+              {/* Not the same question as "unpaid": a partly-paid campaign
+                  is not unpaid, and somebody still has to chase it. */}
+              <Chip
+                on={ledgerFilter.outstandingOnly}
+                onClick={() => setLedgerFilter((f) => ({
+                  ...f, outstandingOnly: !f.outstandingOnly, state: null,
+                }))}
+              >Still owed</Chip>
+
+              <input
+                className="aq-input"
+                value={ledgerFilter.query}
+                onChange={(e) => setLedgerFilter((f) => ({ ...f, query: e.target.value }))}
+                placeholder={side === 'clients'
+                  ? 'Filter these rows — client or campaign'
+                  : 'Filter these rows — vendor or campaign'}
+                style={{ flex: '1 1 220px', minWidth: 180, fontSize: 12.5, padding: '6px 11px' }}
+              />
+
+              {isLedgerFiltered(ledgerFilter) && (
+                <button
+                  type="button"
+                  className="aq-btn aq-btn-ghost"
+                  onClick={() => setLedgerFilter(EMPTY_LEDGER_FILTER)}
+                  style={{ fontSize: 12.5, padding: '5px 10px', color: 'var(--aq-text-secondary)' }}
+                >Clear</button>
+              )}
+
               <button
                 type="button"
                 className="aq-btn aq-btn-secondary"
-                disabled={model.table.rows.length === 0}
-                title={model.table.rows.length === 0
-                  ? 'Nothing to export yet — this table is empty'
-                  : `Download these ${model.table.rows.length} rows as a CSV`}
-                onClick={() => downloadCsv(model.table, scope)}
+                disabled={ledgerShown.length === 0}
+                title={ledgerShown.length === 0
+                  ? 'Nothing to export — this list is empty'
+                  : `Download these ${ledgerShown.length} rows as a CSV`}
+                onClick={() => downloadLedger(ledgerShown, side, scope)}
                 style={{
                   fontSize: 12.5, padding: '5px 12px', whiteSpace: 'nowrap',
-                  opacity: model.table.rows.length === 0 ? 0.45 : 1,
-                  cursor: model.table.rows.length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: ledgerShown.length === 0 ? 0.45 : 1,
+                  cursor: ledgerShown.length === 0 ? 'not-allowed' : 'pointer',
                 }}
               >Download CSV</button>
-            )}
-          >
-            {model.table.rows.length === 0 ? (
-              <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>Nothing to show here.</p>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 560 }}>
-                  <thead>
-                    <tr>
-                      {model.table.columns.map((c, i) => (
-                        <th key={c} style={{
-                          textAlign: i === model.table.columns.length - 1 ? 'right' : 'left',
-                          fontSize: 10.5, letterSpacing: '.09em', textTransform: 'uppercase',
-                          color: 'var(--aq-text-muted)', padding: '7px 10px',
-                          borderBottom: '1px solid var(--aq-border-light)',
-                          whiteSpace: 'nowrap',
-                        }}>{c}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {model.table.rows.map((r) => (
-                      <tr
-                        key={r.id}
-                        onClick={onOpenTask ? () => onOpenTask(r.id) : undefined}
-                        style={{ cursor: onOpenTask ? 'pointer' : 'default' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--aq-bg-sunken)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                      >
-                        {r.cells.map((cell, i) => <TableCell key={i} cell={cell} />)}
+            </div>
+
+            <Ledger
+              rows={ledgerShown}
+              side={side}
+              sort={ledgerSort}
+              onSort={(k) => setLedgerSort((cur) => nextLedgerSort(cur, k))}
+              onOpen={onOpenTask}
+              empty={emptyLedgerMessage(ledgerFilter, side, ledger.length)}
+            />
+          </div>
+
+          {/* ── 3. Where does it come from ───────────────────────── */}
+          <Question title="Where does it come from" note="and who does the work" />
+
+          <div style={{
+            display: 'grid', gap: 14, alignItems: 'start',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
+          }}>
+            <Panel title={model.bars2.title} caption={model.bars2.caption}>
+              <Bars panel={model.bars2} />
+            </Panel>
+            <Panel title={model.bars1.title} caption={model.bars1.caption}>
+              <Bars panel={model.bars1} />
+            </Panel>
+          </div>
+
+          {/* The workspace table used to be a second "Needs attention" with
+              its own two rules, competing with the Dashboard panel of the
+              same name and ten. The Dashboard owns that question. A scoped
+              view still gets its table — for a vendor that is AQ's own
+              seventeen-column report, which is not a duplicate of anything. */}
+          {scope && (
+            <Panel
+              title={model.table.title}
+              caption={model.table.caption}
+              action={(
+                <button
+                  type="button"
+                  className="aq-btn aq-btn-secondary"
+                  disabled={model.table.rows.length === 0}
+                  title={model.table.rows.length === 0
+                    ? 'Nothing to export yet — this table is empty'
+                    : `Download these ${model.table.rows.length} rows as a CSV`}
+                  onClick={() => downloadCsv(model.table, scope)}
+                  style={{
+                    fontSize: 12.5, padding: '5px 12px', whiteSpace: 'nowrap',
+                    opacity: model.table.rows.length === 0 ? 0.45 : 1,
+                    cursor: model.table.rows.length === 0 ? 'not-allowed' : 'pointer',
+                  }}
+                >Download CSV</button>
+              )}
+            >
+              {model.table.rows.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>Nothing to show here.</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 560 }}>
+                    <thead>
+                      <tr>
+                        {model.table.columns.map((c, i) => (
+                          <th key={c} style={{
+                            textAlign: i === model.table.columns.length - 1 ? 'right' : 'left',
+                            fontSize: 10.5, letterSpacing: '.09em', textTransform: 'uppercase',
+                            color: 'var(--aq-text-muted)', padding: '7px 10px',
+                            borderBottom: '1px solid var(--aq-border-light)',
+                            whiteSpace: 'nowrap',
+                          }}>{c}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', lineHeight: 1.6, marginTop: 12 }}>
-              {model.note}
-            </p>
-            <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 6 }}>
-              Built from {full(model.counted.parents)} campaigns and {full(model.counted.subtasks)} subtasks
-              {loading ? ' · refreshing…' : ''}
-            </p>
-          </Panel>
+                    </thead>
+                    <tbody>
+                      {model.table.rows.map((r) => (
+                        <tr
+                          key={r.id}
+                          onClick={onOpenTask ? () => onOpenTask(r.id) : undefined}
+                          style={{ cursor: onOpenTask ? 'pointer' : 'default' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--aq-bg-sunken)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          {r.cells.map((cell, i) => <TableCell key={i} cell={cell} />)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          )}
+
+          <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+            Built from {full(model.counted.parents)} campaigns and {full(model.counted.subtasks)} subtasks
+            {loading ? ' · refreshing…' : ''}. {model.note}
+          </p>
         </>
       )}
     </div>
@@ -357,6 +544,243 @@ export function DataView({
 /* ────────────────────────────────────────────────────────────────
    Small pieces
    ──────────────────────────────────────────────────────────────── */
+
+/** A section heading written as the question people arrive with. */
+function Question({ title, note }: { title: string; note: string }) {
+  return (
+    <h2 style={{
+      display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap',
+      fontSize: 11, fontWeight: 700, letterSpacing: '.09em', textTransform: 'uppercase',
+      color: 'var(--aq-text-muted)', margin: '10px 0 0',
+    }}>
+      {title}
+      <span style={{
+        textTransform: 'none', letterSpacing: 0, fontWeight: 400, fontSize: 12.5,
+      }}>· {note}</span>
+    </h2>
+  );
+}
+
+/**
+ * Paid / partly paid / outstanding, as one bar.
+ *
+ * A bar, not a donut. Three parts of one total read across a line; as wedges
+ * you have to compare angles, and the centre number ends up repeating the
+ * caption. Each band is also the filter — clicking it is the same as
+ * clicking the chip underneath, because somebody who has just looked at the
+ * red part wants the red rows.
+ */
+function PayBar({
+  totals, side, active, onPick,
+}: {
+  totals: LedgerTotals;
+  side: Side;
+  active: PayKey | null;
+  onPick: (k: PayKey) => void;
+}) {
+  const pcts = shares(totals);
+  if (totals.total <= 0 || pcts.length === 0) {
+    return (
+      <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
+        {side === 'clients'
+          ? 'Nothing billed in this window.'
+          : 'No vendor bookings with a cost in this window.'}
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', height: 28, gap: 2, borderRadius: 6, overflow: 'hidden' }}>
+        {pcts.map(({ key, pct }) => {
+          const band = totals.states.find((x) => x.key === key)!;
+          const on = active === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onPick(key)}
+              title={`${payLabel(key, side)} — SAR ${sar(band.amount)} across ${band.count}`}
+              style={{
+                width: `${pct}%`, height: '100%', border: 'none', padding: 0, cursor: 'pointer',
+                background: TONE_FILL[payTone(key)],
+                // Selected is an inset outline, not a different hue: the hue
+                // already means the payment state and cannot mean two things.
+                boxShadow: on ? 'inset 0 0 0 2px var(--aq-text)' : 'none',
+                opacity: active && !on ? 0.45 : 1,
+              }}
+            >
+              <span style={SR_ONLY}>
+                {payLabel(key, side)}: SAR {sar(band.amount)} across {band.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {/* The key carries the money. Colour alone is never the label. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 10, fontSize: 11.5 }}>
+        {totals.states.map((b) => (
+          <span key={b.key} style={{ color: 'var(--aq-text-secondary)' }}>
+            <i style={{
+              width: 9, height: 9, borderRadius: 2, display: 'inline-block',
+              marginRight: 6, background: TONE_FILL[payTone(b.key)],
+            }} />
+            {payLabel(b.key, side)}{' '}
+            <strong style={{ fontVariantNumeric: 'tabular-nums' }}>SAR {sar(b.amount)}</strong>
+            <span style={{ color: 'var(--aq-text-muted)' }}> · {b.count}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The rows behind the bar. */
+function Ledger({
+  rows, side, sort, onSort, onOpen, empty,
+}: {
+  rows: LedgerRow[];
+  side: Side;
+  sort: LedgerSort;
+  onSort: (k: LedgerSortKey) => void;
+  onOpen?: (id: string) => void;
+  empty: string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <p style={{
+        fontSize: 13, color: 'var(--aq-text-muted)', padding: '22px 0', textAlign: 'center',
+      }}>{empty}</p>
+    );
+  }
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table data-ledger="" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 720 }}>
+        <thead>
+          <tr>
+            {LEDGER_COLUMNS.map((c) => {
+              const on = sort.key === c.key;
+              return (
+                <th
+                  key={c.key}
+                  scope="col"
+                  aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                  style={{
+                    textAlign: c.align, padding: 0,
+                    borderBottom: '1px solid var(--aq-border-light)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSort(c.key)}
+                    style={{
+                      display: 'flex', gap: 4, width: '100%',
+                      justifyContent: c.align === 'right' ? 'flex-end' : 'flex-start',
+                      padding: '7px 10px', border: 'none', background: 'none',
+                      font: 'inherit', fontSize: 10, fontWeight: 700,
+                      letterSpacing: '.08em', textTransform: 'uppercase',
+                      color: on ? 'var(--aq-text)' : 'var(--aq-text-muted)',
+                      cursor: 'pointer', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {c.label(side)}
+                    <span aria-hidden style={{ fontSize: 8, opacity: on ? 1 : 0 }}>
+                      {on && sort.dir === 'desc' ? '▼' : '▲'}
+                    </span>
+                  </button>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr
+              key={r.id}
+              onClick={onOpen ? () => onOpen(r.id) : undefined}
+              style={{ cursor: onOpen ? 'pointer' : 'default' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--aq-bg-sunken)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <LTd>
+                <strong style={{ fontWeight: 600 }}>{r.party}</strong>
+                {/* Somebody ticked one box and not the other. Not an error,
+                    but the sort of thing that becomes an argument with a
+                    client six weeks later. */}
+                {r.mismatch && (
+                  <span style={{
+                    display: 'block', fontSize: 11, color: '#a16207', fontWeight: 600, marginTop: 2,
+                    // The cell is nowrap so the money columns line up; this
+                    // sentence is prose and has to be allowed to wrap, or it
+                    // drags the whole table off the side of its card.
+                    whiteSpace: 'normal', maxWidth: 320,
+                  }}>{r.mismatch}</span>
+                )}
+              </LTd>
+              <LTd muted>{r.campaign}</LTd>
+              <LTd>
+                <span style={{
+                  display: 'inline-block', fontSize: 10.5, fontWeight: 700,
+                  padding: '3px 9px', borderRadius: 9999, whiteSpace: 'nowrap',
+                  background: TONE_BG[r.tone], color: TONE_FILL[r.tone],
+                }}>{r.stateLabel}</span>
+              </LTd>
+              <LTd align="right">{sar(r.total)}</LTd>
+              <LTd align="right" muted={r.paid <= 0}>{r.paid > 0 ? sar(r.paid) : '—'}</LTd>
+              <LTd align="right">
+                <span style={{
+                  fontWeight: r.outstanding > 0 ? 700 : 400,
+                  color: r.outstanding > 0 ? TONE_FILL.bad : 'var(--aq-text-muted)',
+                }}>{r.outstanding > 0 ? sar(r.outstanding) : '—'}</span>
+              </LTd>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LTd({
+  children, align = 'left', muted,
+}: { children: React.ReactNode; align?: 'left' | 'right'; muted?: boolean }) {
+  return (
+    <td style={{
+      padding: '9px 10px', textAlign: align,
+      borderBottom: '1px solid var(--aq-border-light)',
+      color: muted ? 'var(--aq-text-muted)' : 'var(--aq-text)',
+      whiteSpace: 'nowrap',
+      fontVariantNumeric: align === 'right' ? 'tabular-nums' : undefined,
+      verticalAlign: 'top',
+    }}>{children}</td>
+  );
+}
+
+/**
+ * The ledger as it stands, as a file — same rows, same filter, same order.
+ * A download that quietly ignored the filters would be worse than none,
+ * because the numbers would look authoritative and be wrong.
+ */
+function downloadLedger(rows: LedgerRow[], side: Side, scope: Scope | null) {
+  // A BOM, so Excel opens Arabic client and vendor names correctly.
+  const blob = new Blob(['\uFEFF' + ledgerCsv(rows, side)], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const who = (scope?.name ?? 'workspace').replace(/[^\w\u0600-\u06FF-]+/g, '-').slice(0, 40);
+  a.href = url;
+  a.download = `AQ-${who}-${side}-owed.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const SR_ONLY: React.CSSProperties = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+  overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+};
 
 function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -579,84 +1003,6 @@ function Months({ bars }: { bars: { key: string; label: string; short: string; p
                 <td style={{ padding: '7px 8px', textAlign: 'right' }}>{full(d.price)}</td>
                 <td style={{ padding: '7px 8px', textAlign: 'right' }}>{full(d.net)}</td>
                 <td style={{ padding: '7px 8px', textAlign: 'right' }}>{full(d.gross)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
-    </>
-  );
-}
-
-/* ── donut, three states, status colours ──────────────────────── */
-
-function Donut({
-  slices, centre,
-}: {
-  slices: { key: string; label: string; value: number; tone: Tone }[];
-  centre: [string, string];
-}) {
-  const { show, hide, node } = useTip();
-  const total = slices.reduce((a, b) => a + b.value, 0);
-  if (!total) {
-    return <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>Nothing to split up in this window.</p>;
-  }
-
-  const cx = 140, cy = 120, r = 84, w = 30;
-  let a0 = -Math.PI / 2;
-  const arcs = slices.map((s) => {
-    const frac = s.value / total;
-    const a1 = a0 + frac * Math.PI * 2;
-    const g = slices.length > 1 ? 0.018 : 0;
-    const start = a0 + g, end = a1 - g;
-    const large = end - start > Math.PI ? 1 : 0;
-    const pt = (ang: number, rad: number) => [cx + Math.cos(ang) * rad, cy + Math.sin(ang) * rad];
-    const [x1, y1] = pt(start, r), [x2, y2] = pt(end, r);
-    const [x3, y3] = pt(end, r - w), [x4, y4] = pt(start, r - w);
-    a0 = a1;
-    return {
-      ...s, frac,
-      d: `M${x1},${y1}A${r},${r} 0 ${large} 1 ${x2},${y2}L${x3},${y3}A${r - w},${r - w} 0 ${large} 0 ${x4},${y4}Z`,
-    };
-  });
-
-  return (
-    <>
-      {node}
-      <svg viewBox="0 0 520 240" width="100%" height={240} role="img" aria-label="Payment status"
-           style={{ display: 'block', overflow: 'visible' }}>
-        {arcs.map((a) => (
-          <path
-            key={a.key} d={a.d} fill={TONE_FILL[a.tone]} style={{ cursor: 'pointer' }}
-            onMouseMove={(e) => show(e, a.label, `SAR ${full(a.value)} · ${Math.round(a.frac * 100)}%`)}
-            onMouseLeave={hide}
-          />
-        ))}
-        <text x={cx} y={cy + 2} textAnchor="middle" fontSize={23} fontWeight={700} fill="var(--aq-text)">
-          {centre[0]}
-        </text>
-        <text x={cx} y={cy + 21} textAnchor="middle" fontSize={11} fill="var(--aq-text-muted)">
-          {centre[1]}
-        </text>
-        {arcs.map((a, i) => (
-          <g key={`l-${a.key}`}>
-            <rect x={272} y={78 + i * 30 - 9} width={11} height={11} rx={3} fill={TONE_FILL[a.tone]} />
-            <text x={292} y={78 + i * 30} fontSize={12} fill="var(--aq-text-secondary)">{a.label}</text>
-            <text x={500} y={78 + i * 30} textAnchor="end" fontSize={11} fontWeight={700} fill="var(--aq-text-secondary)">
-              {compact(a.value)}
-            </text>
-          </g>
-        ))}
-      </svg>
-      <details style={{ marginTop: 12 }}>
-        <summary style={{ fontSize: 12, color: 'var(--aq-text-muted)', cursor: 'pointer' }}>Show as a table</summary>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 6 }}>
-          <tbody>
-            {slices.map((s) => (
-              <tr key={s.key}>
-                <td style={{ padding: '7px 8px' }}>{s.label}</td>
-                <td style={{ padding: '7px 8px', textAlign: 'right' }}>{full(s.value)}</td>
-                <td style={{ padding: '7px 8px', textAlign: 'right' }}>{Math.round((s.value / total) * 100)}%</td>
               </tr>
             ))}
           </tbody>

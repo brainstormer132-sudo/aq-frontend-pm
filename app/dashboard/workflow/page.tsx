@@ -5,10 +5,9 @@ import { createClient } from '@/lib/supabase-browser';
 import { withBase } from '@/lib/paths';
 import {
   useMyRole, useServiceTypes, useWorkspaceProfiles, useWorkflowTasks,
-  displayName, needsRealName,
+  usePmTaskCampaignRollup, displayName, needsRealName,
 } from '@/hooks/use-workflow';
 import { useRealtime } from '@/hooks/use-realtime';
-import { useCalendarItems } from '@/hooks/use-calendar-items';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { SkeletonShell, SkeletonRows } from '@/components/Skeleton';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
@@ -21,16 +20,15 @@ import { TaskDetailPanel } from '@/components/workflow/TaskDetailPanel';
 import { InboxView } from '@/components/workflow/InboxView';
 import { CrmView } from '@/components/workflow/CrmView';
 import { WorkflowDashboard } from '@/components/workflow/WorkflowDashboard';
-import { TeamSettingsPanel } from '@/components/workflow/TeamSettingsPanel';
+import { SettingsView } from '@/components/workflow/SettingsView';
+import { TeamView } from '@/components/workflow/TeamView';
 import { ContractsView } from '@/components/workflow/ContractsView';
 import { ClientsView } from '@/components/workflow/ClientsView';
 import { VendorsView } from '@/components/workflow/VendorsView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
 import { DataView } from '@/components/workflow/DataView';
+import { AllTasksView } from '@/components/workflow/AllTasksView';
 import { prefillFromDeal, type CampaignPrefill } from '@/lib/crm-sync';
-import {
-  monthGrid, splitByDueDate, monthTitle, shiftMonth, isOverdue, WEEKDAYS,
-} from '@/lib/task-calendar';
 
 const supabase = createClient();
 
@@ -150,6 +148,8 @@ export default function WorkflowPage() {
   const { profiles, refetch: refetchProfiles } = useWorkspaceProfiles(wsId);
   const { serviceTypes, steps, refetch: refetchServiceTypes } = useServiceTypes(wsId);
   const { tasks: allTasks, loading: tasksLoading, refetch: refetchAll } = useWorkflowTasks(wsId, 'all');
+  // Cached and shared with the Dashboard and All Tasks — see the hook.
+  const { rows: clientRollup } = usePmTaskCampaignRollup(wsId);
 
   // Derived, not fetched. This used to be a second full scan of pm_tasks for
   // rows the first scan had already returned — twice the wait on every load
@@ -364,11 +364,10 @@ export default function WorkflowPage() {
         )}
 
         {view === 'all-tasks' && (
-          <AllTasks
+          <AllTasksView
             tasks={allTasks}
             loading={tasksLoading}
             profiles={profiles}
-            serviceTypes={serviceTypes}
             currentUserId={user.id}
             workspaceId={workspace.id}
             onOpen={(id) => setOpenTaskId(id)}
@@ -380,6 +379,10 @@ export default function WorkflowPage() {
             workspaceId={workspace.id}
             role={role}
             onOpenTask={(id) => setOpenTaskId(id)}
+            /* Already loaded — so a contract row can name its campaign
+               instead of repeating the brand. No extra query. */
+            tasks={allTasks}
+            profiles={profiles}
           />
         )}
 
@@ -389,24 +392,35 @@ export default function WorkflowPage() {
           <DataView workspaceId={workspace.id} onOpenTask={(id) => setOpenTaskId(id)} />
         )}
 
-        {view === 'clients'  && <ClientsView role={role} />}
+        {/* Campaigns and the rollup are already loaded for the Dashboard
+            and All Tasks, so the Clients register can say how much work each
+            client has had without a new query. */}
+        {view === 'clients'  && (
+          <ClientsView role={role} campaigns={allTasks} rollup={clientRollup} />
+        )}
         {view === 'vendors'  && <VendorsView role={role} userName={user.full_name} />}
         {view === 'tracking' && <TrackingListView workspaceId={workspace.id} role={role} />}
 
-        {view === 'team' && <TeamPanel profiles={profiles} />}
-
-        {view === 'settings' && (
-          <TeamSettingsPanel
+        {/* Team owns people: your own profile, the roster, roles and logins.
+            It used to be twenty lines printing a name and a badge, while the
+            real thing sat on Settings — which members cannot open. */}
+        {view === 'team' && (
+          <TeamView
             workspaceId={workspace.id}
             currentUserId={user.id}
             role={role}
-            // The header prints the name from boot. Without this it would go
-            // on printing the old one until a reload.
             onProfileSaved={(p) => {
               setUser((u) => (u ? { ...u, full_name: p.full_name } : u));
               refetchProfiles?.();
             }}
           />
+        )}
+
+        {/* Settings is configuration only — the vocabularies campaigns pick
+            from, and the numbers the app runs on. Your profile moved to Team,
+            which everybody can open. */}
+        {view === 'settings' && (
+          <SettingsView workspaceId={workspace.id} role={role} />
         )}
 
         {/* Slide-over task detail */}
@@ -575,359 +589,8 @@ function viewSubtitle(v: View) {
     : v === 'vendors'   ? 'Add vendors, bank details, and review pending registration requests.'
     : v === 'tracking'  ? 'Campaigns with a tracking sheet — open one to add and track vendors.'
     : v === 'data'      ? 'Everything, until you search for someone.'
-    : v === 'team'      ? 'People in this workspace and their roles.'
-    : 'Configuration and admin tools.';
-}
-
-function TeamPanel({ profiles }: { profiles: any[] }) {
-  const labelRole = (role: string) => role === 'key_account' ? 'Key account' : role;
-  return (
-    <div className="aq-card" style={{ padding: 28 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Team</h2>
-      <p style={{ color: 'var(--aq-text-muted)', marginTop: 6, fontSize: 14 }}>
-        {profiles.length} member{profiles.length === 1 ? '' : 's'}
-      </p>
-      <ul style={{ listStyle: 'none', marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {profiles.map((p) => (
-          <li key={p.id} style={rowStyle}>
-            <span style={{ fontSize: 14 }}>{p.full_name}</span>
-            <span className="aq-badge aq-badge-muted">{labelRole(p.role)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+    : v === 'team'      ? 'Your profile, and everyone in this workspace.'
+    : 'The lists campaigns pick from, and the numbers the app runs on.';
 }
 
 
-/**
- * Tasks on a month grid, with the ones nobody dated beside it.
- *
- * The rail is the point of this view as much as the grid is. A task with no
- * due date cannot be drawn on a calendar, and a calendar that simply omits it
- * is worse than no calendar: the work disappears and the page still looks
- * complete. So they sit to the right, in red, counted.
- *
- * All the date arithmetic is in lib/task-calendar.ts, which is pure and
- * tested — including February, year boundaries and months that start on a
- * Sunday, all of which look fine in whatever month you happen to build in.
- */
-
-/**
- * The calendar's own data.
- *
- * The list above it shows campaigns, which is what All Tasks has always been.
- * The calendar deliberately shows more: subtasks and the individual ads
- * inside a vendor booking carry their own due dates, and those are the dates
- * people actually work to. A calendar of campaign deadlines alone would look
- * complete while missing most of the work.
- */
-function CalendarPanel({
-  workspaceId, month, today, query, memberFilter, onMonth, onOpen,
-}: {
-  workspaceId: string;
-  month: string;
-  today: string;
-  query: string;
-  memberFilter: string;
-  onMonth: (m: string) => void;
-  onOpen: (id: string) => void;
-}) {
-  const { items, loading } = useCalendarItems(workspaceId);
-
-  const shown = items.filter((i) => {
-    if (memberFilter !== 'all' && i.assignee_id !== memberFilter) return false;
-    if (!query) return true;
-    return [i.title, i.context].some((v) => String(v || '').toLowerCase().includes(query));
-  });
-
-  if (loading) {
-    return (
-      <div className="aq-card" style={{ padding: 32, color: 'var(--aq-text-muted)' }}>
-        Loading campaigns, subtasks and ads…
-      </div>
-    );
-  }
-
-  return (
-    <TaskCalendar
-      tasks={shown.map((i) => ({
-        id: i.taskId,
-        key: i.id,
-        task_name: i.context && i.kind !== 'campaign' ? `${i.title}` : i.title,
-        brand_name: i.context,
-        due_date: i.due_date,
-        status: i.done ? 'done' : 'pending',
-        kind: i.kind,
-      }))}
-      month={month}
-      today={today}
-      onMonth={onMonth}
-      onOpen={onOpen}
-    />
-  );
-}
-
-function TaskCalendar({
-  tasks, month, today, onMonth, onOpen,
-}: {
-  tasks: any[];
-  month: string;
-  today: string;
-  onMonth: (m: string) => void;
-  onOpen: (id: string) => void;
-}) {
-  const { dated, undated } = splitByDueDate(tasks, (t: any) => t.due_date);
-  const weeks = monthGrid(month, dated, (t: any) => t.due_date, today);
-  const name = (t: any) => t.task_name || t.title || 'Untitled';
-
-  const chip = (t: any, overdue: boolean) => (
-    <button
-      key={t.key ?? t.id}
-      type="button"
-      onClick={() => onOpen(t.id)}
-      title={t.brand_name ? `${name(t)} — ${t.brand_name}` : name(t)}
-      style={{
-        display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
-        fontSize: 11, padding: '2px 5px', marginTop: 2, cursor: 'pointer',
-        borderRadius: 5, border: '1px solid var(--aq-border-light)',
-        background: overdue ? '#fee2e2' : 'var(--aq-bg-sunken)',
-        color: overdue ? '#b91c1c' : 'var(--aq-text)',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}
-    >{name(t)}</button>
-  );
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 3fr) minmax(220px, 1fr)', gap: 14, alignItems: 'start' }}>
-      <div className="aq-card" style={{ padding: 16 }}>
-        <header style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <button type="button" className="aq-btn aq-btn-secondary"
-                  onClick={() => onMonth(shiftMonth(month, -1))}
-                  style={{ fontSize: 12.5, padding: '4px 10px' }}>←</button>
-          <strong style={{ fontSize: 15 }}>{monthTitle(month)}</strong>
-          <button type="button" className="aq-btn aq-btn-secondary"
-                  onClick={() => onMonth(shiftMonth(month, 1))}
-                  style={{ fontSize: 12.5, padding: '4px 10px' }}>→</button>
-          <button type="button" className="aq-btn aq-btn-secondary"
-                  onClick={() => onMonth(today.slice(0, 7))}
-                  style={{ fontSize: 12.5, padding: '4px 10px', marginLeft: 'auto' }}>Today</button>
-        </header>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4 }}>
-          {WEEKDAYS.map((d) => (
-            <div key={d} style={{
-              fontSize: 10.5, fontWeight: 700, letterSpacing: '.08em',
-              textTransform: 'uppercase', color: 'var(--aq-text-muted)',
-              padding: '2px 4px',
-            }}>{d}</div>
-          ))}
-          {weeks.flat().map((cell) => (
-            <div key={cell.day} style={{
-              minHeight: 92, padding: 4, borderRadius: 8,
-              border: cell.isToday ? '1px solid var(--aq-text)' : '1px solid var(--aq-border-light)',
-              background: cell.inMonth ? 'transparent' : 'var(--aq-bg-sunken)',
-              opacity: cell.inMonth ? 1 : 0.55,
-            }}>
-              <div style={{
-                fontSize: 11, fontWeight: cell.isToday ? 700 : 500,
-                color: cell.inMonth ? 'var(--aq-text-secondary)' : 'var(--aq-text-muted)',
-              }}>{cell.dayOfMonth}</div>
-              {cell.items.slice(0, 3).map((t: any) =>
-                chip(t, isOverdue(t.due_date, today, t.status === 'done' || t.stage === 'completed')))}
-              {cell.items.length > 3 && (
-                <div style={{ fontSize: 10.5, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-                  +{cell.items.length - 3} more
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="aq-card" style={{ padding: 16, border: undated.length ? '1px solid #b91c1c' : undefined }}>
-        <h3 style={{ fontSize: 13, fontWeight: 700, color: undated.length ? '#b91c1c' : 'var(--aq-text)' }}>
-          No due date {undated.length ? `· ${undated.length}` : ''}
-        </h3>
-        <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '2px 0 10px' }}>
-          {undated.length
-            ? 'These cannot be placed on the calendar. Give them a due date and they move across.'
-            : 'Everything in view has a due date.'}
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 520, overflowY: 'auto' }}>
-          {undated.map((t: any) => (
-            <button
-              key={t.key ?? t.id}
-              type="button"
-              onClick={() => onOpen(t.id)}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
-                fontSize: 12.5, padding: '7px 9px', cursor: 'pointer',
-                border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
-                borderRadius: 7,
-              }}
-            >
-              <strong style={{ display: 'block', fontWeight: 600 }}>{name(t)}</strong>
-              <span style={{ fontSize: 11, opacity: 0.85 }}>
-                no due date{t.brand_name ? ` · ${t.brand_name}` : ''}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AllTasks({
-  tasks, loading, profiles, serviceTypes, onOpen, currentUserId, workspaceId,
-}: {
-  tasks: any[]; loading: boolean; profiles: any[]; serviceTypes: any[];
-  onOpen: (id: string) => void;
-  currentUserId: string;
-  workspaceId: string;
-}) {
-  const labelRole = (role: string) => role === 'key_account' ? 'Key account' : role;
-  const [query, setQuery] = useState('');
-  const [stageFilter, setStageFilter] = useState<string>('all');
-  const [memberFilter, setMemberFilter] = useState<string>('all');
-  const [mode, setMode] = useState<'list' | 'calendar'>('list');
-
-  // Today is read after mount, never during render: the server does not know
-  // what day it is where you are, and a mismatch between the two renders is a
-  // hydration error.
-  const [today, setToday] = useState<string | null>(null);
-  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
-  const [month, setMonth] = useState<string | null>(null);
-  useEffect(() => { if (today && !month) setMonth(today.slice(0, 7)); }, [today, month]);
-
-  const q = query.trim().toLowerCase();
-  const filtered = tasks.filter((t) => {
-    if (stageFilter !== 'all' && t.stage !== stageFilter) return false;
-    if (memberFilter !== 'all') {
-      const matches =
-        t.assignee_id     === memberFilter ||
-        t.key_account_id  === memberFilter ||
-        t.sales_closer_id === memberFilter ||
-        t.creator_id      === memberFilter;
-      if (!matches) return false;
-    }
-    if (!q) return true;
-    // Multi-field search: name, brand, client identifier, task id,
-    // assignee / KA / closer name (resolved via profiles).
-    return [
-      t.task_name, t.title, t.brand_name, t.legacy_client_id,
-      t.id, t.description, t.contract_request_id,
-      profiles.find((p: any) => p.id === t.assignee_id)?.full_name,
-      profiles.find((p: any) => p.id === t.key_account_id)?.full_name,
-      profiles.find((p: any) => p.id === t.sales_closer_id)?.full_name,
-    ].some((v) => String(v || '').toLowerCase().includes(q));
-  });
-
-  const completed = filtered.filter((t) => t.stage === 'completed').length;
-
-  return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="aq-card" style={{ padding: 16, display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 10 }}>
-        <input
-          className="aq-input"
-          placeholder="Search task name, brand, client, assignee, key account, ID…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <select className="aq-select" value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-          <option value="all">All stages</option>
-          <option value="pending_marketing">Pending marketing</option>
-          <option value="in_progress">In progress</option>
-          <option value="awaiting_review">Awaiting review</option>
-          <option value="completed">Completed</option>
-          <option value="draft">Draft</option>
-        </select>
-        <select className="aq-select" value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)}>
-          <option value="all">All members</option>
-          {/* What the My Tasks screen used to be, as one option here. */}
-          <option value={currentUserId}>Only mine</option>
-          {profiles.filter((p) => p.id !== currentUserId).map((p) => (
-            <option key={p.id} value={p.id}>{p.full_name} ({labelRole(p.role)})</option>
-          ))}
-        </select>
-        <span style={{ alignSelf: 'center', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span className="aq-badge aq-badge-muted">{filtered.length} · {completed} done</span>
-          <button
-            type="button"
-            className="aq-btn aq-btn-secondary"
-            onClick={() => setMode(mode === 'list' ? 'calendar' : 'list')}
-            style={{ fontSize: 12.5, padding: '5px 12px', whiteSpace: 'nowrap' }}
-          >{mode === 'list' ? 'Calendar' : 'List'}</button>
-        </span>
-      </div>
-
-      {mode === 'calendar' && today && month ? (
-        <CalendarPanel
-          workspaceId={workspaceId}
-          month={month}
-          today={today}
-          query={q}
-          memberFilter={memberFilter}
-          onMonth={setMonth}
-          onOpen={onOpen}
-        />
-      ) : loading && tasks.length === 0 ? (
-        // Not "no tasks yet" — that sentence was shown for the whole of every
-        // load, telling people with 400 campaigns that they had none.
-        <SkeletonRows rows={7} label="Loading tasks" />
-      ) : filtered.length === 0 ? (
-        <div className="aq-card" style={{ padding: 32, textAlign: 'center', color: 'var(--aq-text-muted)' }}>
-          {tasks.length === 0
-            ? 'No workflow tasks yet. Try the New Task screen.'
-            : 'No tasks match your filters.'}
-        </div>
-      ) : (
-        <div className="aq-card" style={{ padding: 20 }}>
-          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {filtered.map((t) => {
-              const closer = profiles.find((p) => p.id === t.sales_closer_id);
-              const ka = profiles.find((p) => p.id === t.key_account_id);
-              const st = serviceTypes.find((s) => s.id === t.service_type_id);
-              return (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(t.id)}
-                    style={{ ...(rowStyle as any), width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit' }}
-                  >
-                    <div>
-                      <strong style={{ fontSize: 14 }}>{t.task_name || t.title}</strong>
-                      <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-                        {t.brand_name ? `${t.brand_name} · ` : ''}
-                        {t.legacy_client_id ? `client ${t.legacy_client_id} · ` : ''}
-                        {st ? `${st.icon ?? ''} ${st.name} · ` : ''}
-                        priority {t.priority}
-                        {closer ? ` · sales ${closer.full_name}` : ''}
-                        {ka ? ` · KA ${ka.full_name}` : ''}
-                      </div>
-                    </div>
-                    <span className={`aq-badge ${
-                      t.stage === 'completed' ? 'aq-badge-success'
-                      : t.stage === 'pending_marketing' ? 'aq-badge-warning'
-                      : 'aq-badge-info'
-                    }`}>
-                      {t.stage.replace('_', ' ')}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const rowStyle: React.CSSProperties = {
-  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-  padding: '12px 14px', borderRadius: 'var(--aq-radius)',
-  border: '1px solid var(--aq-border-light)',
-  background: 'var(--aq-bg-elevated)',
-};
