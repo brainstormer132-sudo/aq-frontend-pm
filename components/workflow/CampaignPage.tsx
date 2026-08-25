@@ -27,9 +27,9 @@ import { useRealtime } from '@/hooks/use-realtime';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import {
-  moneyBar, postingStrip, stripTotals, bookingRows, campaignGaps, gapSummary,
+  moneyBar, stripTotals, bookingRows, campaignGaps, gapSummary,
   pageIndex, money, moneyRound, shortDate, longDate, initials, amountOrNull as pos,
-  type Gap, type StripBucket, type BookingRow,
+  type Gap, type BookingRow,
 } from '@/lib/campaign-page';
 
 /**
@@ -49,8 +49,6 @@ import {
  *  - **What is missing, on the campaign it belongs to.** The same rules as the
  *    Dashboard's Needs attention, so the two cannot disagree, phrased for
  *    somebody looking at this one campaign.
- *  - **When the ads go out.** The tracking sheet answers that one row at a
- *    time; nothing answered it as a shape.
  *
  * The fields are grouped by the question they answer rather than by the
  * migration that added them, and the two figures the app works out — vendor
@@ -277,10 +275,6 @@ export function CampaignPage({
     [view, vendorCost, rollup.breakdown],
   );
 
-  const strip = useMemo(
-    () => (today ? postingStrip(trackingRows as any, today) : []),
-    [trackingRows, today],
-  );
   const totals = useMemo(() => stripTotals(trackingRows as any), [trackingRows]);
   const adsWithoutDate = useMemo(
     () => (trackingRows as any[]).filter((r) => !r.posting_date).length,
@@ -745,30 +739,6 @@ export function CampaignPage({
             </Card>
           </section>
 
-          <section id="ads">
-            <Card
-              title="When the ads go out"
-              hint={`${trackingRows.length} ${trackingRows.length === 1 ? 'ad' : 'ads'} · ${totals.Posted} posted`}
-            >
-              {strip.length === 0 || trackingRows.length === 0 ? (
-                <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: 0 }}>
-                  No ads on the tracking sheet yet.
-                </p>
-              ) : (
-                <>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: `repeat(${Math.min(strip.length, 4)}, minmax(0, 1fr))`,
-                    gap: 8,
-                  }}>
-                    {strip.map((b) => <Week key={b.key} bucket={b} />)}
-                  </div>
-                  <Legend totals={totals} />
-                </>
-              )}
-            </Card>
-          </section>
-
           <CampaignPaperwork
             task={view as any}
             client={currentClient}
@@ -1102,66 +1072,6 @@ function GapRow({ gap }: { gap: Gap }) {
         border: '1px solid currentColor', borderRadius: 7, padding: '4px 11px',
         color: 'inherit', textDecoration: 'none',
       }}>{gap.action}</a>
-    </div>
-  );
-}
-
-const BEAD_COLOUR: Record<string, string> = {
-  Posted: 'var(--aq-accent)',
-  Shot: '#1e40af',
-  Scheduled: '#b45309',
-  'Not started': 'var(--aq-bg-sunken)',
-  Cancelled: 'var(--aq-bg-sunken)',
-};
-
-function Week({ bucket }: { bucket: StripBucket }) {
-  return (
-    <div style={{
-      border: `1px solid ${bucket.now ? 'var(--aq-text)' : 'var(--aq-border-light)'}`,
-      boxShadow: bucket.now ? '0 0 0 1px var(--aq-text)' : undefined,
-      borderRadius: 10, padding: '10px 11px', background: 'var(--aq-bg-elevated)',
-    }}>
-      <div style={{
-        fontSize: 10.5, fontWeight: 700, letterSpacing: '.07em',
-        textTransform: 'uppercase', color: 'var(--aq-text-muted)',
-      }}>{bucket.label}</div>
-      <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.02em', marginTop: 1 }}>
-        {bucket.count}{' '}
-        <small style={{ fontSize: 12, fontWeight: 500, color: 'var(--aq-text-muted)' }}>
-          {bucket.noun}
-        </small>
-      </div>
-      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 8 }}>
-        {bucket.beads.map((b, i) => (
-          <i key={i} aria-hidden style={{
-            width: 12, height: 12, borderRadius: 3, background: BEAD_COLOUR[b],
-          }} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Legend({ totals }: { totals: Record<string, number> }) {
-  const items = [
-    ['Posted', 'Posted'], ['Shot', 'Shot'],
-    ['Scheduled', 'Scheduled'], ['Not started', 'No date'],
-  ] as const;
-  return (
-    <div style={{
-      display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 12,
-      fontSize: 11.5, color: 'var(--aq-text-muted)',
-    }}>
-      {items.filter(([k]) => totals[k] > 0).map(([k, label]) => (
-        <span key={k}>
-          <i aria-hidden style={{
-            display: 'inline-block', width: 9, height: 9, borderRadius: 2,
-            marginRight: 6, background: BEAD_COLOUR[k],
-          }} />
-          <strong style={{ color: 'var(--aq-text-secondary)', fontWeight: 600 }}>{label}</strong>{' '}
-          {totals[k]}
-        </span>
-      ))}
     </div>
   );
 }

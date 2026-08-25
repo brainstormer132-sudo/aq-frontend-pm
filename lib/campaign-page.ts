@@ -15,9 +15,7 @@
  *    beside the amount — the absolute goes up whenever we do more work, the
  *    rate says whether the work was worth doing;
  *  - what is actually missing, on the campaign it belongs to, using the same
- *    rules as the Dashboard's Needs attention rather than a second opinion;
- *  - when the ads go out, which is the question the tracking sheet answers one
- *    row at a time and nothing answered as a shape.
+ *    rules as the Dashboard's Needs attention rather than a second opinion.
  */
 
 // ── Small shared helpers ────────────────────────────────────────────
@@ -222,6 +220,13 @@ export interface AdForStrip {
   ad_status?: string | null;
 }
 
+/**
+ * @deprecated Nothing renders this. The posting strip it fed was removed from
+ * the campaign page — Siraj: *"i dont need this"* — because the tracking sheet
+ * already answers when the ads go out, row by row, and the strip restated it
+ * as a shape nobody used. Kept only because it is pure and tested; delete it
+ * along with `postingStrip` if nothing has claimed it by the next clear-out.
+ */
 export interface StripBucket {
   key: string;
   /** "Wk of 3 Aug" / "This week" / "No date yet" */
@@ -257,6 +262,7 @@ export function weekStart(iso: string): string {
  * happening is not work waiting to be done, and leaving it in makes a finished
  * week look unfinished.
  */
+/** @deprecated See StripBucket — nothing renders the strip any more. */
 export function postingStrip(
   ads: AdForStrip[],
   today: string,
@@ -582,7 +588,7 @@ export function campaignGaps(input: {
       what: `${n} ${n === 1 ? 'ad has' : 'ads have'} no posting date.`,
       why: 'The client’s sheet cannot say when they go out.',
       action: 'Open the sheet',
-      anchor: '#ads',
+      anchor: '#tracking',
     });
   }
 
@@ -630,9 +636,13 @@ export function pageIndex(input: {
       key: 'contracts', label: 'Contracts', anchor: '#bookings',
       count: String(input.contractsTotal), flag: input.contractsWaiting > 0,
     },
-    { key: 'tracking', label: 'Tracking sheet', anchor: '#ads', count: String(input.trackingRows), flag: false },
+    // Both point at the tracking card. The posting strip that used to sit at
+    // #ads is gone — Siraj: *"i dont need this"* — but how many ads have gone
+    // out is still worth a line in the index, and the sheet is where you go
+    // to do something about it.
+    { key: 'tracking', label: 'Tracking sheet', anchor: '#tracking', count: String(input.trackingRows), flag: false },
     {
-      key: 'ads', label: 'Ads posted', anchor: '#ads',
+      key: 'ads', label: 'Ads posted', anchor: '#tracking',
       count: `${input.adsPosted}/${input.adsTotal}`,
       flag: input.adsTotal > 0 && input.adsPosted === 0,
     },
