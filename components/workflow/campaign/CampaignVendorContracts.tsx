@@ -9,6 +9,7 @@ import {
 import { Card, Note, Missing, inkButton } from './ui';
 import { LengthField, TrackRow } from './track';
 import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '@/lib/campaign-page';
+import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 /**
  * The vendors' contracts — every one of them, and one button that asks for
@@ -26,7 +27,7 @@ import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '
  * exactly like the ones it sent.
  */
 export function CampaignVendorContracts({
-  task, subtasks, bookings, client, role, currentUserId, today, onChanged,
+  task, subtasks, bookings, client, role, currentUserId, today, opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
@@ -35,6 +36,7 @@ export function CampaignVendorContracts({
   role: WorkspaceRole | null;
   currentUserId: string;
   today: string;
+  opt: OptimisticSave;
   onChanged: () => Promise<void> | void;
 }) {
   const { vendors, banks } = useLegacyVendors();
@@ -149,10 +151,15 @@ export function CampaignVendorContracts({
                 canEdit={canEdit && r.track.state !== 'done'}
                 n={(r.sub as any).contract_length}
                 unit={(r.sub as any).contract_length_unit}
-                onCommit={(n, u) => run(async () => {
-                  await updateTaskFields(r.sub.id, {
-                    contract_length: n, contract_length_unit: u,
-                  } as any);
+                onCommit={(n, u) => opt.setMany(r.sub.id, {
+                  contract_length: n, contract_length_unit: u,
+                }, {
+                  labels: { contract_length: 'Contract length', contract_length_unit: 'Contract length' },
+                  was: {
+                    contract_length: (r.sub as any).contract_length,
+                    contract_length_unit: (r.sub as any).contract_length_unit,
+                  },
+                  rowName: r.name,
                 })}
               />
               {canRequest && r.track.state === 'none' && (

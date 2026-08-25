@@ -264,3 +264,60 @@ export function Missing({ items }: { items: { label: string; hint?: string }[] }
     </ul>
   );
 }
+
+/**
+ * What was refused, and why.
+ *
+ * Saves happen behind the screen now, so a failure has to come and find you.
+ * It names the field, the row it was on, and what the server actually said —
+ * the old panel put the raw Postgres text in a `window.alert`, which stopped
+ * everything to show a constraint name nobody had heard of.
+ *
+ * Retry sends them again. Discard puts the server's values back on screen, so
+ * you are never left looking at a number that was never saved.
+ */
+export function FailureBanner({ failures, summary, lines, onRetry, onDiscard }: {
+  failures: unknown[];
+  summary: string;
+  lines: string[];
+  onRetry: () => void;
+  onDiscard: () => void;
+}) {
+  if (!failures.length) return null;
+  return (
+    <div role="alert" style={{
+      padding: '12px 15px', borderRadius: 10, marginBottom: 14,
+      background: '#fee2e2', color: '#991b1b',
+      border: '1px solid #fca5a5',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{summary}</strong>
+        <button type="button" onClick={onRetry} style={quietButton()}>Try again</button>
+        <button type="button" onClick={onDiscard} style={quietButton()}>
+          Put the old values back
+        </button>
+      </div>
+      {lines.length > 1 && (
+        <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12.5 }}>
+          {lines.map((l, i) => <li key={i} style={{ marginBottom: 2 }}>{l}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** A quiet "still saving" marker. Never a spinner that blocks anything. */
+export function SavingDot({ n }: { n: number }) {
+  if (!n) return null;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      fontSize: 11.5, color: 'var(--aq-text-muted)',
+    }}>
+      <span aria-hidden style={{
+        width: 6, height: 6, borderRadius: '50%', background: 'var(--aq-text-muted)',
+      }} />
+      saving {n === 1 ? 'a change' : `${n} changes`}…
+    </span>
+  );
+}

@@ -21,8 +21,16 @@ import {
 import {
   money, initials, parseMoney, bulkResultLine, bookingSubtitle,
 } from '@/lib/campaign-page';
+import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 const UNDO_MS = 4000;
+
+const BOOKING_LABELS: Record<string, string> = {
+  price: 'Price', net_amount: 'Net', platform: 'Platform', ad_type: 'Ad type',
+  vendor_payment_date: 'Paid on', insight_link: 'Insight link',
+  insight_attached: 'Insight file', proof_of_posting_link: 'Proof link',
+  proof_of_posting_attached: 'Proof file', vendor_id: 'Vendor',
+};
 
 /**
  * Bookings — the vendors on this campaign, and everything you do to them.
@@ -47,7 +55,7 @@ const UNDO_MS = 4000;
  */
 export function CampaignBookings({
   task, subtasks, adLinesBySubtask, bookings, role, currentUserId,
-  workspaceId, client, taskPlatforms, profiles, onChanged,
+  workspaceId, client, taskPlatforms, profiles, opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
@@ -59,6 +67,8 @@ export function CampaignBookings({
   client: any | null;
   taskPlatforms: { id: string; name: string }[];
   profiles: any[];
+  /** Saves land on screen first and go to the server behind them. */
+  opt: OptimisticSave;
   onChanged: () => Promise<void> | void;
 }) {
   const { vendors, banks } = useLegacyVendors();
@@ -163,8 +173,12 @@ export function CampaignBookings({
 
   /* ── One booking's fields ──────────────────────────────────────── */
 
-  const saveOn = (subtaskId: string, field: string, value: unknown) =>
-    run(async () => { await updateTaskFields(subtaskId, { [field]: value } as any); });
+  const saveOn = (subtaskId: string, field: string, value: unknown, was?: unknown) =>
+    opt.set(subtaskId, field, value, {
+      label: BOOKING_LABELS[field] ?? field,
+      was,
+      rowName: subtaskById.get(subtaskId)?.title ?? undefined,
+    });
 
   const changeVendor = (sub: PMTask, vendorId: string | null) => run(async () => {
     const id = vendorId ? Number(vendorId) : null;

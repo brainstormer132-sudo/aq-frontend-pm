@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   useTask, useTaskSubtasks, useAdLinesForSubtasks, useTrackingRows,
   useLegacyVendors, useClients, useClientBrands, useWorkspaceProfiles,
   useTaskSources, useClientCategories, useTaskPlatforms, useContractRequests,
   useTaskComments, useDocumentRequests, useServiceTypes,
-  updateTaskFields, rollupCampaignMoney, displayName,
+  updateTaskFields, markTaskCompleted, deleteTask, rollupCampaignMoney, displayName,
   AD_TYPES, AD_TYPE_NEEDS_DETAIL, APPROVAL_STAGES, TASK_STATUSES, labelFor,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -16,6 +17,9 @@ import { CampaignBookings } from './campaign/CampaignBookings';
 import { CampaignPaperwork } from './campaign/CampaignPaperwork';
 import { CampaignVendorContracts } from './campaign/CampaignVendorContracts';
 import { CampaignWork } from './campaign/CampaignWork';
+import { FailureBanner, SavingDot, UndoBar } from './campaign/ui';
+import { useOptimisticSave } from '@/hooks/use-optimistic-save';
+import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import {
   moneyBar, postingStrip, stripTotals, bookingRows, campaignGaps, gapSummary,
@@ -87,8 +91,21 @@ export function CampaignPage({
   const subtaskIds = useMemo(() => subtasks.map((s) => s.id), [subtasks]);
   const { bySubtask } = useAdLinesForSubtasks(subtaskIds);
 
-  const [saving, setSaving] = useState(false);
+  const router = useRouter();
   const [error, setError] = useState('');
+
+  // Saves do not block the screen any more. The value lands immediately, the
+  // write goes out behind it, and the page refetches once after a burst rather
+  // than once per field.
+  const opt = useOptimisticSave(async () => {
+    await refetch();
+    await refetchSubtasks();
+  });
+
+  // Everything below reads the campaign as the user believes it to be: what
+  // the server last sent, plus whatever is still in flight.
+  const view = task ? opt.view(task as any) : null;
+  const shownSubtasks = useMemo(() => opt.viewAll(subtasks as any), [opt, subtasks]);
 
   // Today after mount, never during render — the server does not know what day
   // it is where you are, and a date that differs is a hydration mismatch.
@@ -96,20 +113,56 @@ export function CampaignPage({
   useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
 
   const canEdit = role !== 'member';
+  // Same gate the drawer used: owners, admins and marketing, or the salesperson
+  // who raised it. Deleting a campaign takes everything under it.
+  const canDelete = !!role
+    && (['owner', 'admin', 'marketing'].includes(role)
+        || (role === 'sales' && (task as any)?.creator_id === currentUserId));
 
-  const save = async (field: string, value: unknown) => {
+  const save = (field: string, value: unknown) => {
     if (!task) return;
-    setSaving(true); setError('');
-    try {
-      await updateTaskFields(task.id, { [field]: value } as any);
-      await refetch();
-    } catch (e: any) {
-      // On the page, not in a browser dialog. The old panel used window.alert
-      // for exactly this, which stops everything to say something the field
-      // itself can say.
-      setError(e?.message ?? String(e));
-    } finally { setSaving(false); }
+    opt.set(task.id, field, value, {
+      label: FIELD_LABELS[field] ?? field,
+      was: (task as any)[field],
+      rowName: task.task_name ?? task.title ?? 'this campaign',
+    });
   };
+
+  /* ── Deleting the campaign ─────────────────────────────────────── */
+
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const deleteTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopDelete = () => {
+    if (deleteTimer.current) { clearInterval(deleteTimer.current); deleteTimer.current = null; }
+    setDeleting(null);
+  };
+
+  const commitDelete = async () => {
+    stopDelete();
+    if (!task) return;
+    try {
+      // Leave first: the row is going, and staying on its page to watch it
+      // vanish is how you end up looking at "That campaign is not here."
+      router.push(backHref);
+      await deleteTask(task.id);
+    } catch (e: any) {
+      setError(`The campaign was not deleted — ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const startDelete = () => {
+    setDeleting(5);
+    deleteTimer.current = setInterval(() => {
+      setDeleting((n) => {
+        if (n == null) return null;
+        if (n <= 1) { void commitDelete(); return null; }
+        return n - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => () => { if (deleteTimer.current) clearInterval(deleteTimer.current); }, []);
 
   const vendorNames = useMemo(() => {
     const m = new Map<number, string>();
@@ -124,8 +177,9 @@ export function CampaignPage({
   }, [requests]);
 
   const vendorSubtasks = useMemo(
-    () => subtasks.filter((s) => (s as any).subtask_kind === 'vendor' || (s as any).vendor_id != null),
-    [subtasks],
+    () => (shownSubtasks as any[]).filter(
+      (s) => s.subtask_kind === 'vendor' || s.vendor_id != null),
+    [shownSubtasks],
   );
 
   const allAdLines = useMemo(() => {
@@ -146,10 +200,10 @@ export function CampaignPage({
     [vendorSubtasks, allAdLines, vendorNames, contractStatusById],
   );
 
-  const rollup = useMemo(() => rollupCampaignMoney(subtasks), [subtasks]);
+  const rollup = useMemo(() => rollupCampaignMoney(shownSubtasks as any), [shownSubtasks]);
   const bar = useMemo(
-    () => moneyBar({ budget: (task as any)?.budget, vendorCost: rollup.breakdown }),
-    [task, rollup.breakdown],
+    () => moneyBar({ budget: (view as any)?.budget, vendorCost: rollup.breakdown }),
+    [view, rollup.breakdown],
   );
 
   const strip = useMemo(
@@ -163,18 +217,18 @@ export function CampaignPage({
   );
 
   const gaps = useMemo(
-    () => (today && task
+    () => (today && view
       ? campaignGaps({
-          budget: (task as any).budget,
-          invoiceNumbers: (task as any).invoice_numbers ?? [],
-          clientPaymentStatus: (task as any).client_payment_status,
-          dueDate: task.due_date,
+          budget: (view as any).budget,
+          invoiceNumbers: (view as any).invoice_numbers ?? [],
+          clientPaymentStatus: (view as any).client_payment_status,
+          dueDate: view.due_date,
           bookings,
           adsWithoutDate,
           today,
         })
       : []),
-    [task, bookings, adsWithoutDate, today],
+    [view, bookings, adsWithoutDate, today],
   );
 
   const index = useMemo(() => pageIndex({
@@ -188,7 +242,7 @@ export function CampaignPage({
     comments: comments.length,
   }), [bookings.length, requests, trackingRows.length, totals.Posted, docRequests, comments.length]);
 
-  if (loading || !task) {
+  if (loading || !task || !view) {
     return (
       <div style={{ padding: 40, color: 'var(--aq-text-muted)' }}>
         {loading ? 'Loading the campaign…' : 'That campaign is not here.'}
@@ -196,7 +250,7 @@ export function CampaignPage({
     );
   }
 
-  const name = task.task_name || task.title || 'Untitled campaign';
+  const name = view.task_name || view.title || 'Untitled campaign';
   const drawerHref = `${backHref}?task=${task.id}`;
 
   return (
@@ -211,15 +265,67 @@ export function CampaignPage({
           All Tasks
         </Link>
         <span style={{ opacity: .5 }}>›</span>
-        <span>{task.brand_name || 'No brand'}</span>
+        <span>{view.brand_name || 'No brand'}</span>
         <span style={{ opacity: .5 }}>›</span>
         <span style={{ color: 'var(--aq-text)' }}>{name}</span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <SavingDot n={opt.inFlight} />
           <Link href={drawerHref} className="aq-btn aq-btn-secondary" style={SMALL_BTN}>
             Open the old panel
           </Link>
+          {canEdit && task.status !== 'done' && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              style={SMALL_BTN}
+              onClick={() => {
+                opt.set(task.id, 'status', 'done', { label: 'Status', was: task.status });
+                void markTaskCompleted(task.id).then(() => refetch());
+              }}
+            >Mark complete</button>
+          )}
+          {canDelete && deleting == null && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              style={{ ...SMALL_BTN, color: '#b91c1c' }}
+              onClick={startDelete}
+            >Delete campaign</button>
+          )}
         </span>
       </div>
+
+      {/* Deleting takes the bookings, the ads, the tracking sheet and the
+          comments with it, so it says so — and gives you five seconds and a
+          way out rather than a dialog you learn to click through. */}
+      {deleting != null && (
+        <div style={{ maxWidth: 1280, margin: '12px auto 0', padding: '0 22px' }}>
+          <UndoBar
+            label={`Deleting ${name} — its ${subtasks.length} bookings, ads, tracking sheet and comments go too.`}
+            seconds={deleting}
+            onUndo={stopDelete}
+            onNow={() => { void commitDelete(); }}
+          />
+        </div>
+      )}
+
+      {(opt.failures.length > 0 || error) && (
+        <div style={{ maxWidth: 1280, margin: '12px auto 0', padding: '0 22px' }}>
+          {error && (
+            <div role="alert" style={{
+              padding: '12px 15px', borderRadius: 10, marginBottom: 10,
+              background: '#fee2e2', color: '#991b1b', fontSize: 13,
+            }}>{error}</div>
+          )}
+          <FailureBanner
+            failures={opt.failures}
+            summary={failureSummary(opt.failures)}
+            lines={opt.failures.map((f) => failureLine(f, name))}
+            onRetry={opt.retry}
+            onDiscard={opt.discard}
+          />
+        </div>
+      )}
 
       {/* ── Masthead ───────────────────────────────────────────── */}
       <header style={{ background: 'var(--aq-bg-elevated)', borderBottom: '1px solid var(--aq-border-light)' }}>
@@ -236,8 +342,8 @@ export function CampaignPage({
               display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
               marginTop: 9, fontSize: 13.5, color: 'var(--aq-text-secondary)',
             }}>
-              <StagePill stage={task.stage} />
-              <span>{[task.brand_name, (task as any).client_name].filter(Boolean).join(' · ') || '—'}</span>
+              <StagePill stage={view.stage} />
+              <span>{[view.brand_name, (view as any).client_name].filter(Boolean).join(' · ') || '—'}</span>
               <Dot />
               <span>
                 due <strong style={{ color: 'var(--aq-text)' }}>
@@ -342,29 +448,28 @@ export function CampaignPage({
                         value: c.id, label: c.company_name,
                         hint: c.cr_number ? `CR ${c.cr_number}` : null,
                       }))}
-                      value={task.client_id}
+                      value={view.client_id}
                       onChange={(v) => save('client_id', v || null)}
-                      disabled={saving}
                       placeholder="Search clients…"
                       emptyLabel="— No client —"
                     />
-                  ) : <Val>{(task as any).client_name ?? '—'}</Val>}
+                  ) : <Val>{(view as any).client_name ?? '—'}</Val>}
                 </F>
                 <F k="Brand">
                   {canEdit ? (
                     <SearchablePicker
                       options={(brands as any[]).map((b) => ({ value: b.id, label: b.brand_name }))}
-                      value={(task as any).brand_id}
+                      value={(view as any).brand_id}
                       onChange={(v) => save('brand_id', v || null)}
-                      disabled={saving || !task.client_id}
-                      placeholder={task.client_id ? 'Search brands…' : 'Pick a client first'}
+                      disabled={!view.client_id}
+                      placeholder={view.client_id ? 'Search brands…' : 'Pick a client first'}
                       emptyLabel="— No brand —"
                     />
-                  ) : <Val>{task.brand_name ?? '—'}</Val>}
+                  ) : <Val>{view.brand_name ?? '—'}</Val>}
                 </F>
                 <F k="Category">
                   <Pick
-                    value={(task as any).client_category_id}
+                    value={(view as any).client_category_id}
                     options={(clientCategories as any[]).map((c) => ({ v: c.id, l: c.name }))}
                     onChange={(v) => save('client_category_id', v)}
                     canEdit={canEdit}
@@ -372,7 +477,7 @@ export function CampaignPage({
                 </F>
                 <F k="Came from">
                   <Pick
-                    value={(task as any).source_id}
+                    value={(view as any).source_id}
                     options={(taskSources as any[]).map((s) => ({ v: s.id, l: s.name }))}
                     onChange={(v) => save('source_id', v)}
                     canEdit={canEdit}
@@ -380,7 +485,7 @@ export function CampaignPage({
                 </F>
                 <F k="Key account">
                   <Pick
-                    value={(task as any).key_account_id}
+                    value={(view as any).key_account_id}
                     options={(profiles as any[]).map((p) => ({ v: p.id, l: displayName(p) }))}
                     onChange={(v) => save('key_account_id', v)}
                     canEdit={canEdit}
@@ -409,25 +514,25 @@ export function CampaignPage({
                 {task.ad_type === AD_TYPE_NEEDS_DETAIL && (
                   <F k="Which services">
                     <Text
-                      value={(task as any).ad_type_custom}
+                      value={(view as any).ad_type_custom}
                       placeholder="Required for Multi Service"
                       onCommit={(v) => save('ad_type_custom', v || null)}
                       canEdit={canEdit}
-                      warn={!(task as any).ad_type_custom}
+                      warn={!(view as any).ad_type_custom}
                     />
                   </F>
                 )}
                 <F k="Platforms">
-                  <Val>{((task as any).platforms ?? []).join(' · ') || '—'}</Val>
+                  <Val>{((view as any).platforms ?? []).join(' · ') || '—'}</Val>
                 </F>
                 <F k="Due">
                   {canEdit
-                    ? <DateField aria-label="Due" value={task.due_date} onCommit={(v) => save('due_date', v)} />
-                    : <Val>{longDate(task.due_date)}</Val>}
+                    ? <DateField aria-label="Due" value={view.due_date} onCommit={(v) => save('due_date', v)} />
+                    : <Val>{longDate(view.due_date)}</Val>}
                 </F>
                 <F k="Approval">
                   <Pick
-                    value={(task as any).approval_stage}
+                    value={(view as any).approval_stage}
                     options={APPROVAL_STAGES.map((a) => ({ v: a, l: labelFor(a) }))}
                     onChange={(v) => save('approval_stage', v)}
                     canEdit={canEdit}
@@ -448,7 +553,7 @@ export function CampaignPage({
               <Fields>
                 <F k="Budget">
                   <Text
-                    value={(task as any).budget != null ? String((task as any).budget) : ''}
+                    value={(view as any).budget != null ? String((view as any).budget) : ''}
                     placeholder="0.00"
                     onCommit={(v) => save('budget', v === '' ? null : Number(v))}
                     canEdit={canEdit}
@@ -457,18 +562,18 @@ export function CampaignPage({
                 <F k="Client paid">
                   <Val>
                     {[
-                      (task as any).client_payment_status,
-                      (task as any).client_payment_amount != null
-                        ? money(Number((task as any).client_payment_amount)) : null,
+                      (view as any).client_payment_status,
+                      (view as any).client_payment_amount != null
+                        ? money(Number((view as any).client_payment_amount)) : null,
                     ].filter(Boolean).join(' · ') || '—'}
                   </Val>
                 </F>
                 <F k="Quotation">
-                  <Val mono>{((task as any).quotation_numbers ?? []).join(', ') || '—'}</Val>
+                  <Val mono>{((view as any).quotation_numbers ?? []).join(', ') || '—'}</Val>
                 </F>
                 <F k="Invoice">
-                  <Val mono warn={!((task as any).invoice_numbers ?? []).length}>
-                    {((task as any).invoice_numbers ?? []).join(', ') || 'none yet'}
+                  <Val mono warn={!((view as any).invoice_numbers ?? []).length}>
+                    {((view as any).invoice_numbers ?? []).join(', ') || 'none yet'}
                   </Val>
                 </F>
                 {/* Worked out from the bookings, never stored — so it cannot
@@ -511,41 +616,44 @@ export function CampaignPage({
           </section>
 
           <CampaignPaperwork
-            task={task}
+            task={view as any}
             client={currentClient}
             requests={requests as any}
             docRequests={docRequests as any}
             role={role}
             currentUserId={currentUserId}
             today={today ?? ''}
+            opt={opt}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
           />
 
           <CampaignVendorContracts
             task={task}
-            subtasks={subtasks}
+            subtasks={shownSubtasks as any}
             bookings={bookings}
             client={currentClient}
             role={role}
             currentUserId={currentUserId}
             today={today ?? ''}
+            opt={opt}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
           />
 
           <CampaignWork
             task={task}
-            subtasks={subtasks}
+            subtasks={shownSubtasks as any}
             role={role}
             currentUserId={currentUserId}
             workspaceId={workspaceId}
             profiles={profiles as any}
             serviceTypeSteps={steps as any}
+            opt={opt}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
           />
 
           <CampaignBookings
             task={task}
-            subtasks={subtasks}
+            subtasks={shownSubtasks as any}
             adLinesBySubtask={bySubtask}
             bookings={bookings}
             role={role}
@@ -554,6 +662,7 @@ export function CampaignPage({
             client={currentClient}
             taskPlatforms={taskPlatforms as any}
             profiles={profiles as any}
+            opt={opt}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
           />
         </main>
@@ -563,6 +672,19 @@ export function CampaignPage({
 }
 
 /* ── Pieces ─────────────────────────────────────────────────────── */
+
+/** What each column is called when a save for it fails. */
+const FIELD_LABELS: Record<string, string> = {
+  budget: 'Budget', due_date: 'Due date', task_name: 'Campaign name',
+  client_id: 'Client', brand_id: 'Brand', brand_name: 'Brand',
+  source: 'Came from', client_category_id: 'Category', priority: 'Priority',
+  ad_type: 'Ad type', ad_type_custom: 'Which services', approval_stage: 'Approval',
+  status: 'Status', platforms: 'Platforms', invoice_no: 'Invoice number',
+  quotation_no: 'Quotation number', client_payment_status: 'Client paid',
+  contract_status: 'Contract status', contract_length: 'Contract length',
+  contract_length_unit: 'Contract length', price: 'Price', net_amount: 'Net',
+  vendor_id: 'Vendor', has_tracking: 'Tracking sheet',
+};
 
 const SMALL_BTN: React.CSSProperties = { padding: '5px 11px', fontSize: 12.5, textDecoration: 'none' };
 

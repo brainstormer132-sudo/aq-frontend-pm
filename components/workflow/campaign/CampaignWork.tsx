@@ -16,8 +16,18 @@ import {
   inkButton, quietButton,
 } from './ui';
 import { requestStateLine } from '@/lib/campaign-page';
+import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 const UNDO_MS = 4000;
+
+const WORK_LABELS: Record<string, string> = {
+  status: 'Status', due_date: 'Due date', assignee_id: 'Assigned to',
+  complexity: 'Complexity', approval_stage: 'Approval', media_type: 'Media type',
+  brand_logo_attached: 'Brand logo', keyword_excel_attached: 'Keyword data',
+  data_issue_note: 'Data issues', deliverable_attached: 'File attached',
+  request_status: 'Request', quotation_no: 'Quotation number',
+  invoice_no: 'Invoice number', request_note: 'Note',
+};
 
 /**
  * The work that is not a vendor booking.
@@ -34,7 +44,7 @@ const UNDO_MS = 4000;
  */
 export function CampaignWork({
   task, subtasks, role, currentUserId, workspaceId, profiles,
-  serviceTypeSteps = [], onChanged,
+  serviceTypeSteps = [], opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
@@ -44,6 +54,7 @@ export function CampaignWork({
   profiles: any[];
   /** The catalogue, so only the kinds this campaign's services define are offered. */
   serviceTypeSteps?: { service_type_id: string; title: string }[];
+  opt: OptimisticSave;
   onChanged: () => Promise<void> | void;
 }) {
   const { items: taskServiceTypes } = useTaskServiceTypes(task.id);
@@ -99,7 +110,7 @@ export function CampaignWork({
   });
 
   const saveOn = (id: string, field: string, value: unknown) =>
-    run(async () => { await updateTaskFields(id, { [field]: value } as any); });
+    opt.set(id, field, value, { label: WORK_LABELS[field] ?? field });
 
   const startRemove = (id: string, title: string) => {
     setPending((p) => [...p, { id, title, left: UNDO_MS / 1000 }]);

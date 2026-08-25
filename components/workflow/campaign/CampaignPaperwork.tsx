@@ -11,6 +11,7 @@ import {
   docTrack, contractTrack, docLabel, lengthLabel,
   type Track, type DocLike,
 } from '@/lib/campaign-page';
+import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 import { LengthField, TrackRow } from './track';
 
 /**
@@ -28,7 +29,7 @@ import { LengthField, TrackRow } from './track';
  * without being able to say what it committed to.
  */
 export function CampaignPaperwork({
-  task, client, requests, docRequests, role, currentUserId, today, onChanged,
+  task, client, requests, docRequests, role, currentUserId, today, opt, onChanged,
 }: {
   task: PMTask;
   client: any | null;
@@ -37,6 +38,7 @@ export function CampaignPaperwork({
   role: WorkspaceRole | null;
   currentUserId: string;
   today: string;
+  opt: OptimisticSave;
   onChanged: () => Promise<void> | void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -106,10 +108,14 @@ export function CampaignPaperwork({
               canEdit={canEdit}
               n={(task as any).contract_length}
               unit={(task as any).contract_length_unit}
-              onCommit={(n, u) => run(async () => {
-                await updateTaskFields(task.id, {
-                  contract_length: n, contract_length_unit: u,
-                } as any);
+              onCommit={(n, u) => opt.setMany(task.id, {
+                contract_length: n, contract_length_unit: u,
+              }, {
+                labels: { contract_length: 'Contract length', contract_length_unit: 'Contract length' },
+                was: {
+                  contract_length: (task as any).contract_length,
+                  contract_length_unit: (task as any).contract_length_unit,
+                },
               })}
             />
             {canRequest && contract.state !== 'waiting' && contract.state !== 'done' && (
