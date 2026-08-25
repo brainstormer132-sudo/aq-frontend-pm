@@ -6,12 +6,15 @@ import {
   useTask, useTaskSubtasks, useAdLinesForSubtasks, useTrackingRows,
   useLegacyVendors, useClients, useClientBrands, useWorkspaceProfiles,
   useTaskSources, useClientCategories, useTaskPlatforms, useContractRequests,
-  useTaskComments, useDocumentRequests,
+  useTaskComments, useDocumentRequests, useServiceTypes,
   updateTaskFields, rollupCampaignMoney, displayName,
   AD_TYPES, AD_TYPE_NEEDS_DETAIL, APPROVAL_STAGES, TASK_STATUSES, labelFor,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { SearchablePicker } from './SearchablePicker';
+import { CampaignBookings } from './campaign/CampaignBookings';
+import { CampaignContracts } from './campaign/CampaignContracts';
+import { CampaignWork } from './campaign/CampaignWork';
 import { DateField } from './DateField';
 import {
   moneyBar, postingStrip, stripTotals, bookingRows, campaignGaps, gapSummary,
@@ -49,11 +52,12 @@ import {
  * change one field.
  */
 export function CampaignPage({
-  taskId, workspaceId, role, backHref = '/dashboard/workflow',
+  taskId, workspaceId, role, currentUserId, backHref = '/dashboard/workflow',
 }: {
   taskId: string;
   workspaceId: string;
   role: WorkspaceRole | null;
+  currentUserId: string;
   backHref?: string;
 }) {
   const { task, loading, refetch } = useTask(taskId);
@@ -68,8 +72,16 @@ export function CampaignPage({
   const { items: requests } = useContractRequests(workspaceId, taskId);
   const { comments } = useTaskComments(taskId);
   const { items: docRequests } = useDocumentRequests(taskId);
+  const { steps } = useServiceTypes(workspaceId);
 
   const { brands } = useClientBrands(task?.client_id ?? null);
+
+  // The client row itself, not just its name — a contract request needs its
+  // CR, VAT and signatory, and the readiness check reads them off this.
+  const currentClient = useMemo(
+    () => (clients as any[]).find((c) => String(c.id) === String(task?.client_id ?? '')) ?? null,
+    [clients, task?.client_id],
+  );
 
   const subtaskIds = useMemo(() => subtasks.map((s) => s.id), [subtasks]);
   const { bySubtask } = useAdLinesForSubtasks(subtaskIds);
@@ -497,17 +509,40 @@ export function CampaignPage({
             </Card>
           </section>
 
-          <section id="bookings">
-            <Card title="Bookings" hint={`${bookings.length} vendors · ${allAdLines.length} lines`}>
-              {bookings.length === 0 ? (
-                <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: 0 }}>
-                  Nobody is booked on this campaign yet.
-                </p>
-              ) : bookings.map((b, i) => (
-                <BookingLine key={b.id} row={b} first={i === 0} href={`${backHref}?task=${b.id}`} />
-              ))}
-            </Card>
-          </section>
+          <CampaignContracts
+            task={task}
+            client={currentClient}
+            requests={requests as any}
+            docRequests={docRequests as any}
+            role={role}
+            currentUserId={currentUserId}
+            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+          />
+
+          <CampaignWork
+            task={task}
+            subtasks={subtasks}
+            role={role}
+            currentUserId={currentUserId}
+            workspaceId={workspaceId}
+            profiles={profiles as any}
+            serviceTypeSteps={steps as any}
+            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+          />
+
+          <CampaignBookings
+            task={task}
+            subtasks={subtasks}
+            adLinesBySubtask={bySubtask}
+            bookings={bookings}
+            role={role}
+            currentUserId={currentUserId}
+            workspaceId={workspaceId}
+            client={currentClient}
+            taskPlatforms={taskPlatforms as any}
+            profiles={profiles as any}
+            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+          />
         </main>
       </div>
     </div>

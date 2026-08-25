@@ -582,3 +582,126 @@ export const CALCULATED_FIELDS = ['vendorCost', 'net'] as const;
 export function isCalculated(key: string): boolean {
   return (CALCULATED_FIELDS as readonly string[]).includes(key);
 }
+
+/* ── What the booking rows and their actions say ────────────────── */
+
+/**
+ * A typed money value, or null.
+ *
+ * `null` and `0` are different claims — 0 says the work is free, null says
+ * nobody has priced it — so a cleared box must not become a zero. Anything
+ * that is not a number at all is also null rather than NaN, which would reach
+ * Postgres as `NaN` and fail the insert with a message about JSON.
+ */
+export function parseMoney(v: unknown): number | null {
+  const s = txt(v).replace(/[, ]/g, '');
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/** The grey line under a booking's name: what is booked, and where it stands. */
+export function bookingSubtitle(
+  row: { ads?: unknown; adType?: unknown; contractNote?: unknown },
+  adLineCount: number,
+): string {
+  const parts: string[] = [];
+  const ads = Number(row.ads ?? adLineCount) || adLineCount;
+  parts.push(ads === 0 ? 'no ads yet' : `${ads} ad${ads === 1 ? '' : 's'}`);
+  const type = txt(row.adType);
+  if (type) parts.push(type);
+  const note = txt(row.contractNote);
+  if (note) parts.push(note);
+  return parts.join(' · ');
+}
+
+/**
+ * The sentence after a bulk contract request.
+ *
+ * The drawer reported only a count, so "Requested 4 contracts" out of nine
+ * selected left five vendors silently untouched and nothing said which. Every
+ * skipped one is named with its reason.
+ */
+export function bulkResultLine(
+  sent: number,
+  skipped: { title?: unknown; reason?: unknown }[],
+): string {
+  const head = sent === 0
+    ? 'No contracts were sent.'
+    : `Requested ${sent} contract${sent === 1 ? '' : 's'}.`;
+  if (!skipped.length) return head;
+  const names = skipped
+    .map((s) => `${txt(s.title) || 'a booking'} (${txt(s.reason) || 'not ready'})`)
+    .join('; ');
+  return `${head} Skipped ${skipped.length}: ${names}`;
+}
+
+/* ── Paperwork ──────────────────────────────────────────────────── */
+
+export interface DocLike {
+  id?: unknown;
+  doc_kind?: unknown;
+  status?: unknown;
+  document_number?: unknown;
+}
+
+/**
+ * Where one document request stands, in words.
+ *
+ * `cancelled` rows are ignored rather than counted: a cancelled quotation is
+ * not a quotation you have, and it is not one in flight either — it is the
+ * absence of one, and the row should offer to request another.
+ */
+export function docState(rows: DocLike[], kind: string): {
+  line: string; pending: boolean; issued: boolean; id: string | null;
+} {
+  const mine = (rows ?? []).filter(
+    (r) => txt(r.doc_kind) === kind && txt(r.status) !== 'cancelled',
+  );
+  const issued = mine.find((r) => txt(r.status) === 'issued');
+  if (issued) {
+    const num = txt(issued.document_number);
+    return {
+      line: num ? `issued · ${num}` : 'issued, but no number was recorded',
+      pending: false, issued: true, id: txt(issued.id) || null,
+    };
+  }
+  const pending = mine.find((r) => txt(r.status) === 'pending');
+  if (pending) {
+    return { line: 'requested, waiting on finance', pending: true, issued: false, id: txt(pending.id) || null };
+  }
+  return { line: 'not requested', pending: false, issued: false, id: null };
+}
+
+/** The card's one-line summary: what exists, and what is still outstanding. */
+export function contractStateLine(clientRequests: unknown[], docs: DocLike[]): string {
+  const parts: string[] = [];
+  const live = (clientRequests ?? []).filter((r: any) =>
+    !['rejected', 'cancelled'].includes(txt(r?.status)));
+  parts.push(live.length ? 'client contract raised' : 'no client contract');
+  for (const kind of ['quotation', 'invoice']) {
+    const st = docState(docs, kind);
+    if (st.issued) parts.push(`${kind} issued`);
+    else if (st.pending) parts.push(`${kind} waiting`);
+    else parts.push(`no ${kind}`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Where a quotation / invoice / contract request row stands.
+ *
+ * The four states are one field (`request_status`) and mean different things
+ * to different people, so the line says who the ball is with rather than
+ * printing the raw value — `not_requested` told nobody anything.
+ */
+export function requestStateLine(sub: {
+  request_status?: unknown; quotation_no?: unknown; invoice_no?: unknown;
+}): string {
+  const st = txt(sub.request_status) || 'not_requested';
+  const num = txt(sub.quotation_no) || txt(sub.invoice_no);
+  if (st === 'requested') return 'requested — waiting on finance';
+  if (st === 'fulfilled') return num ? `done · ${num}` : 'done, but no number was recorded';
+  return 'not requested yet';
+}

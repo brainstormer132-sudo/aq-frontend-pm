@@ -19,6 +19,7 @@ export default function CampaignRoute({ params }: { params: Promise<{ id: string
   const { id } = use(params);
   const router = useRouter();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const { role } = useMyRole(workspaceId);
 
@@ -34,15 +35,16 @@ export default function CampaignRoute({ params }: { params: Promise<{ id: string
         .limit(1)
         .maybeSingle();
       if (!alive) return;
+      setUserId(user.id);
       setWorkspaceId(data?.workspace_id ?? null);
       setReady(true);
     })();
     return () => { alive = false; };
   }, [router]);
 
-  if (!ready || !workspaceId) {
+  if (!ready || !workspaceId || !userId) {
     return <div style={{ padding: 40, color: 'var(--aq-text-muted)' }}>Loading…</div>;
   }
 
-  return <CampaignPage taskId={id} workspaceId={workspaceId} role={role} />;
+  return <CampaignPage taskId={id} workspaceId={workspaceId} role={role} currentUserId={userId} />;
 }
