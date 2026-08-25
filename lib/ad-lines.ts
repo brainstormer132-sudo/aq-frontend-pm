@@ -38,6 +38,15 @@ export interface AdLine {
   // An influencer booked for twelve pieces posts twelve times. One link on
   // the booking says "some of it happened" and nothing about which.
   proof_of_posting_link?: string | null;
+
+  // ── money, per ad (migration 067) ─────────────────────────────
+  // A vendor booked for ten ads is not paid in one lump: ads can be quoted
+  // separately and paid on different days, so a half-paid booking had no
+  // way to be described while all of this lived on the booking.
+  quotation_no?: string | null;
+  net_amount?: number | null;
+  net_payment_date?: string | null;
+  net_payment_status?: string | null;
   proof_of_posting_attached?: boolean | null;
   posted_on?: string | null;
 }

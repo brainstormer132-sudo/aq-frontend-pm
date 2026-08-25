@@ -251,6 +251,18 @@ export function AdLinesCard({
  * One ad, opened. This is its detail view — the same fields a booking has,
  * asked about the single piece of work rather than the whole package.
  */
+/** The same words the campaign uses for the client's side, so one term does
+ *  not mean two things depending on which row you are reading. */
+const AD_PAYMENT_STATES = [
+  { v: 'unpaid', l: 'Unpaid' },
+  { v: 'partial', l: 'Partial payment' },
+  { v: 'paid', l: 'Paid' },
+  { v: 'no_payment', l: 'No payment due' },
+  { v: 'refund', l: 'Refunded' },
+  { v: 'credit', l: 'Credit note' },
+  { v: 'adjustment', l: 'Adjustment' },
+];
+
 function AdDetail({
   line, canEdit, busy, platformOptions, defaultPlatform, onPatch, onRemove,
 }: {
@@ -399,6 +411,62 @@ function AdDetail({
             />
             File attached
           </label>
+        </div>
+      </div>
+
+      {/* ── What this one ad is worth ────────────────────────────────
+          Siraj asked for a quotation, a net, a payment date and a status
+          per line. They were only ever on the booking, so ten ads under one
+          vendor shared one number and one payment state — and a booking
+          half-paid across two months could not be described at all. */}
+      <div style={{ paddingTop: 9, borderTop: '1px dashed var(--aq-border-light)' }}>
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <Cell label="Quotation #" width={170}>
+            <TextCell
+              value={line.quotation_no ?? ''}
+              disabled={!canEdit}
+              placeholder="QT-…"
+              onCommit={(v) => onPatch({ quotation_no: v || null } as any)}
+            />
+          </Cell>
+          <Cell label="Net on this ad" width={140}>
+            <TextCell
+              value={line.net_amount == null ? '' : String(line.net_amount)}
+              disabled={!canEdit}
+              placeholder="0.00"
+              onCommit={(v) => {
+                // Blank clears it. A cleared net is "not worked out", which
+                // is a different claim from zero — zero says we made nothing.
+                const t = v.trim();
+                if (!t) { onPatch({ net_amount: null } as any); return; }
+                const n = Number(t.replace(/[, ]/g, ''));
+                if (Number.isFinite(n) && n >= 0) onPatch({ net_amount: n } as any);
+              }}
+            />
+          </Cell>
+          <Cell label="Net paid on" width={150}>
+            <DateField
+              value={line.net_payment_date ?? null}
+              disabled={!canEdit}
+              aria-label="Date the net on this ad was paid"
+              onCommit={(v) => onPatch({ net_payment_date: v } as any)}
+            />
+          </Cell>
+          <Cell label="Net payment" width={160}>
+            <select
+              className="aq-select"
+              aria-label="Net payment status for this ad"
+              value={line.net_payment_status ?? ''}
+              disabled={!canEdit}
+              onChange={(e) => onPatch({ net_payment_status: e.target.value || null } as any)}
+              style={{ width: '100%', fontSize: 12.5 }}
+            >
+              <option value="">— not set —</option>
+              {AD_PAYMENT_STATES.map((o) => (
+                <option key={o.v} value={o.v}>{o.l}</option>
+              ))}
+            </select>
+          </Cell>
         </div>
       </div>
 
