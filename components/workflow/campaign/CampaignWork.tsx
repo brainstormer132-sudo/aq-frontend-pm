@@ -13,7 +13,7 @@ import {
 import { DateField } from '../DateField';
 import {
   Card, Fields, F, Val, Pick, Text, Check, Note, UndoBar,
-  inkButton, quietButton,
+  inkButton, quietButton
 } from './ui';
 import { requestStateLine } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';

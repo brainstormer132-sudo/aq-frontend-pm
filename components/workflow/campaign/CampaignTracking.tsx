@@ -6,7 +6,8 @@ import {
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { TrackingSheetPanel } from '../TrackingSheetPanel';
-import { Card, Note, inkButton, quietButton } from './ui';
+import { Card, Note, inkButton, quietButton, TONE,
+} from './ui';
 import { publishLine } from '@/lib/campaign-page';
 
 /**
@@ -50,6 +51,9 @@ export function CampaignTracking({
   return (
     <>
       <Card
+        // Green only when what the client is reading matches what is here.
+        // A published-but-drifted sheet is the one case worth a colour.
+        bead={!on ? undefined : TONE[state.stale ? 'amber' : publishedAt ? 'green' : 'grey'].edge}
         id="tracking"
         title="Tracking sheet"
         hint={on ? state.line : 'not switched on for this campaign'}

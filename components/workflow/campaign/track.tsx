@@ -1,5 +1,6 @@
 'use client';
 
+import { TONE } from './ui';
 import React, { useEffect, useState } from 'react';
 import type { Track } from '@/lib/campaign-page';
 
@@ -56,11 +57,14 @@ export function TrackRow({ name, track, sub, detail, actions }: {
   );
 }
 
+// Was a private four-entry table with its own amber and its own red, which
+// meant a waiting contract here and a waiting contract on the bookings list
+// were two different yellows. Both now come off the shared TONE.
 const TONES: Record<string, { bg: string; fg: string; bead: string }> = {
-  none:    { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)', bead: 'var(--aq-border)' },
-  waiting: { bg: '#fef3c7', fg: '#78350f', bead: '#b45309' },
-  done:    { bg: 'var(--aq-accent-light)', fg: '#14603a', bead: 'var(--aq-accent)' },
-  blocked: { bg: '#fee2e2', fg: '#991b1b', bead: '#b91c1c' },
+  none:    { ...TONE.grey,  bead: TONE.grey.edge },
+  waiting: { ...TONE.amber, bead: TONE.amber.edge },
+  done:    { ...TONE.green, bead: TONE.green.edge },
+  blocked: { ...TONE.red,   bead: TONE.red.edge },
 };
 
 function Node({ label, on, tone }: { label: string; on: boolean; tone: { bead: string } }) {
@@ -185,7 +189,11 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
         aria-label="When the vendor is paid"
         value={t}
         onChange={(e) => set(e.target.value)}
-        style={{ fontSize: 12.5, padding: '5px 6px', width: 168 }}
+        style={{
+          fontSize: 12.5, padding: '5px 6px', width: 168,
+          // The same "answered" edge every other dropdown on the page wears.
+          borderLeft: `3px solid ${t ? 'var(--aq-accent)' : 'var(--aq-border)'}`,
+        }}
       >
         <option value="">— terms not set —</option>
         {TERMS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}

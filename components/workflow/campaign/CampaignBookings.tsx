@@ -16,7 +16,7 @@ import { SearchablePicker } from '../SearchablePicker';
 import { DateField } from '../DateField';
 import {
   Card, Group, Fields, F, Val, Pick, Text, Check, Note, UndoBar, Missing,
-  inkButton, quietButton, SMALL_BTN,
+  inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf,
 } from './ui';
 import {
   money, initials, parseMoney, bulkResultLine, bookingSubtitle,
@@ -219,6 +219,10 @@ export function CampaignBookings({
 
   return (
     <Card
+      // Amber while any booking is still without a contract, green once
+      // every one has been asked for. A card with nothing outstanding
+      // should not wear the same colour as one with three.
+      bead={TONE[tally.requested >= tally.total && tally.total > 0 ? 'green' : 'amber'].edge}
       id="bookings"
       title="Bookings"
       hint={`${bookings.length} vendor${bookings.length === 1 ? '' : 's'} · ${tally.requested} of ${tally.total} contracts requested`}
@@ -328,8 +332,16 @@ export function CampaignBookings({
                 }}
               >
                 <span style={{ display: 'block', fontWeight: 600, fontSize: 13.5 }}>{b.name}</span>
-                <span style={{ display: 'block', fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                  {bookingSubtitle(b as any, lines.length)}
+                {/* The contract's state as a colour rather than the third
+                    clause of a grey sentence — it is the thing that decides
+                    whether this booking can go anywhere, and it was reading
+                    exactly as quietly as the ad count beside it. */}
+                <span style={{
+                  display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap',
+                  fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2,
+                }}>
+                  <Chip label={b.contractLabel} tone={toneOf(b.contract)} />
+                  {bookingSubtitle({ ...(b as any), contractNote: '' }, lines.length)}
                 </span>
               </button>
 
@@ -337,7 +349,9 @@ export function CampaignBookings({
                 fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
                 color: b.price == null ? 'var(--aq-text-muted)' : undefined,
               }}>
-                {b.price == null ? 'no price yet' : money(b.price)}
+                {b.price == null
+                  ? <Chip label="no price yet" tone="amber" />
+                  : money(b.price)}
               </span>
             </div>
 

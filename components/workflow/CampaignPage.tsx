@@ -21,6 +21,8 @@ import { CampaignTracking } from './campaign/CampaignTracking';
 import { CampaignActivity } from './campaign/CampaignActivity';
 import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
+  Chip, toneOf, TONE,
+  Card, Group, Fields, F, Val, Pick, Text,
 } from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
@@ -515,7 +517,11 @@ export function CampaignPage({
 
         <main style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
           {gaps.length > 0 && (
-            <Card title="Needs answering" hint={gapSummary(gaps)}>
+            <Card
+              title="Needs answering"
+              hint={gapSummary(gaps)}
+              bead={TONE[gaps.some((g) => g.weight === 'blocking') ? 'red' : 'amber'].edge}
+            >
               {gaps.map((g) => <GapRow key={g.key} gap={g} />)}
             </Card>
           )}
@@ -577,6 +583,7 @@ export function CampaignPage({
                 <F k="Priority">
                   <Pick
                     value={task.priority}
+                    stateful
                     options={['urgent', 'high', 'medium', 'low'].map((p) => ({ v: p, l: labelFor(p) }))}
                     onChange={(v) => save('priority', v)}
                     canEdit={canEdit}
@@ -636,6 +643,7 @@ export function CampaignPage({
                 <F k="Approval">
                   <Pick
                     value={(view as any).approval_stage}
+                    stateful
                     options={APPROVAL_STAGES.map((a) => ({ v: a, l: labelFor(a) }))}
                     onChange={(v) => save('approval_stage', v)}
                     canEdit={canEdit}
@@ -643,6 +651,7 @@ export function CampaignPage({
                 </F>
                 <F k="Status">
                   <Pick
+                    stateful
                     value={task.status}
                     options={TASK_STATUSES.map((s) => ({ v: s, l: labelFor(s) }))}
                     onChange={(v) => save('status', v)}
@@ -664,6 +673,7 @@ export function CampaignPage({
                 </F>
                 <F k="Client paid">
                   <Pick
+                    stateful
                     value={(view as any).client_payment_status}
                     options={PAYMENT_STATES}
                     onChange={(v) => save('client_payment_status', v)}
@@ -908,151 +918,27 @@ function Fig({ k, v, sub, lead, bad }: {
   );
 }
 
+/**
+ * Where the campaign has got to, as a colour.
+ *
+ * It used to carry its own three-way switch, which meant this pill and the
+ * status field below it could disagree about what amber meant. Both now read
+ * STATE_TONE, so one word has one colour on the whole page.
+ */
 function StagePill({ stage }: { stage: string }) {
   const s = String(stage ?? '');
-  const style = s === 'completed'
-    ? { bg: 'var(--aq-accent-light)', fg: '#14603a' }
-    : s === 'pending_marketing'
-      ? { bg: '#fef3c7', fg: '#92400e' }
-      : { bg: '#dbeafe', fg: '#1e40af' };
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-      background: style.bg, color: style.fg, whiteSpace: 'nowrap',
-    }}>{labelFor(s)}</span>
-  );
+  return <Chip label={labelFor(s)} tone={toneOf(s, 'blue')} />;
 }
 
-function Card({ title, hint, children }: {
-  title: string; hint?: string; children: React.ReactNode;
-}) {
-  return (
-    <section className="aq-card">
-      <header style={{
-        display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
-        padding: '15px 18px 0',
-      }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>{title}</h2>
-        {hint && <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{hint}</span>}
-      </header>
-      <div style={{ padding: '14px 18px 18px' }}>{children}</div>
-    </section>
-  );
-}
-
-function Group({ title }: { title: string }) {
-  return (
-    <div style={{
-      fontSize: 10.5, fontWeight: 700, letterSpacing: '.09em', textTransform: 'uppercase',
-      color: 'var(--aq-text-muted)', margin: '20px 0 10px',
-      display: 'flex', alignItems: 'center', gap: 10,
-    }}>
-      {title}
-      <span aria-hidden style={{ flex: 1, height: 1, background: 'var(--aq-border-light)' }} />
-    </div>
-  );
-}
-
-function Fields({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-      gap: '10px 26px',
-    }}>{children}</div>
-  );
-}
-
-/**
- * One labelled field.
- *
- * The label is passed to the control as its accessible name as well as being
- * drawn beside it — a <span> next to an <input> is a caption, not a label, and
- * a screen reader reading this page would otherwise announce eighteen unnamed
- * boxes.
+/*
+ * Card, Group, Fields, F, Val, Pick and Text used to be defined here as well
+ * as in ./campaign/ui — copies made when the sections moved into their own
+ * files. A local function shadows an import, so this page kept using the
+ * stale seven while every other card used the shared ones: the coloured
+ * dropdowns landed everywhere except the page they were written for, and
+ * Text's `numeric` prop silently did nothing here. Deleted; the shared ones
+ * are a superset.
  */
-function F({ k, children }: { k: string; children: React.ReactNode }) {
-  const named = React.isValidElement(children)
-    ? React.cloneElement(children as React.ReactElement<any>, { label: k })
-    : children;
-  return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: '104px minmax(0, 1fr)',
-      gap: 10, alignItems: 'center',
-    }}>
-      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>{k}</span>
-      <span style={{ minWidth: 0 }}>{named}</span>
-    </div>
-  );
-}
-
-function Val({ children, calc, mono, warn, label }: {
-  children: React.ReactNode; calc?: boolean; mono?: boolean; warn?: boolean; label?: string;
-}) {
-  return (
-    <span data-field={label} data-calc={calc ? 'yes' : undefined} style={{
-      display: 'flex', alignItems: 'center', minHeight: 32,
-      border: `1px ${calc ? 'dashed' : 'solid'} ${warn ? '#b45309' : 'var(--aq-border)'}`,
-      borderRadius: 8, padding: '6px 10px', fontSize: 13,
-      background: calc ? 'var(--aq-bg-sunken)' : warn ? '#fef3c7' : 'var(--aq-bg-elevated)',
-      color: calc ? 'var(--aq-text-secondary)' : warn ? '#92400e' : 'var(--aq-text)',
-      fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
-      fontVariantNumeric: 'tabular-nums',
-    }}>{children}</span>
-  );
-}
-
-function Pick({ value, options, onChange, canEdit, clearable = true, label }: {
-  value: string | null | undefined;
-  options: { v: string; l: string }[];
-  onChange: (v: string | null) => void;
-  canEdit: boolean;
-  clearable?: boolean;
-  label?: string;
-}) {
-  const current = options.find((o) => o.v === value);
-  if (!canEdit) return <Val>{current?.l ?? '—'}</Val>;
-  return (
-    <select
-      className="aq-select"
-      aria-label={label}
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value || null)}
-      style={{ width: '100%', fontSize: 13 }}
-    >
-      {clearable && <option value="">— None —</option>}
-      {options.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
-    </select>
-  );
-}
-
-function Text({ value, placeholder, onCommit, canEdit, warn, label }: {
-  value: string | null | undefined;
-  placeholder?: string;
-  onCommit: (v: string) => void;
-  canEdit: boolean;
-  warn?: boolean;
-  label?: string;
-}) {
-  const [draft, setDraft] = useState(value ?? '');
-  useEffect(() => { setDraft(value ?? ''); }, [value]);
-  if (!canEdit) return <Val warn={warn}>{value || '—'}</Val>;
-  return (
-    <input
-      className="aq-input"
-      aria-label={label}
-      value={draft}
-      placeholder={placeholder}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => { if (draft !== (value ?? '')) onCommit(draft.trim()); }}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-      style={{
-        width: '100%', fontSize: 13,
-        borderColor: warn ? '#b45309' : undefined,
-        background: warn ? '#fef3c7' : undefined,
-      }}
-    />
-  );
-}
 
 function GapRow({ gap }: { gap: Gap }) {
   const blocking = gap.weight === 'blocking';

@@ -6,7 +6,8 @@ import {
   vendorContractReadiness, sendVendorContractRequest, sendVendorContractRequests,
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
-import { Card, Note, Missing, inkButton } from './ui';
+import { Card, Note, Missing, inkButton, TONE,
+} from './ui';
 import { LengthField, TrackRow, TermsField, termsLabel } from './track';
 import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
@@ -113,6 +114,9 @@ export function CampaignVendorContracts({
 
   return (
     <Card
+      // Red beats amber beats green: the worst thing on the card is what
+      // the bead reports, because that is what you came to find out.
+      bead={TONE[blocked.length ? 'red' : ready.length ? 'amber' : 'green'].edge}
       id="vendor-contracts"
       title="Vendor contracts"
       hint={[

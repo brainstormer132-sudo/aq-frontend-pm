@@ -12,6 +12,112 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 
+/* ── Colour, as a vocabulary ──────────────────────────────────────
+ *
+ * Siraj: *"add some color to the tasks and drop down it looks bland"*.
+ *
+ * The page was warm stone and one green, which reads as careful and also as
+ * undifferentiated: forty fields of the same grey box, and nothing on screen
+ * says which of them is waiting on somebody. So rather than tinting things
+ * decoratively, there are six tones and each one means one thing everywhere
+ * it appears:
+ *
+ *   grey    nothing entered yet
+ *   blue    in flight — somebody is doing it
+ *   amber   waiting on someone outside this screen
+ *   green   settled, and settled well
+ *   red     wrong, blocked, or money going backwards
+ *   violet  a deliberate exception — an adjustment, a credit
+ *
+ * Read a chip's colour anywhere on this page and it says the same thing. The
+ * accent green keeps its old job (a good state, never "this is a button"),
+ * and the palette stays on the warm ground the app is built on.
+ */
+export type ToneName = 'grey' | 'blue' | 'amber' | 'green' | 'red' | 'violet';
+
+export const TONE: Record<ToneName, { bg: string; fg: string; edge: string }> = {
+  grey:   { bg: 'var(--aq-bg-sunken)',    fg: 'var(--aq-text-muted)', edge: 'var(--aq-border)' },
+  blue:   { bg: '#dbeafe',                fg: '#1e40af',              edge: '#60a5fa' },
+  amber:  { bg: '#fef3c7',                fg: '#92400e',              edge: '#f59e0b' },
+  green:  { bg: 'var(--aq-accent-light)', fg: '#14603a',              edge: 'var(--aq-accent)' },
+  red:    { bg: '#fee2e2',                fg: '#991b1b',              edge: '#ef4444' },
+  violet: { bg: '#ede9fe',                fg: '#5b21b6',              edge: '#8b5cf6' },
+};
+
+/**
+ * What each state of each thing means, in one place.
+ *
+ * One table rather than a switch in every component: a status that gains a
+ * value gets its colour here and everywhere at once, and two screens cannot
+ * decide that "partial" is amber in one and red in the other.
+ */
+export const STATE_TONE: Record<string, ToneName> = {
+  // Task status
+  pending: 'blue', in_progress: 'blue', on_hold: 'amber',
+  done: 'green', completed: 'green', cancelled: 'red',
+  // Approval
+  ready_for_review: 'blue', changes_needed: 'amber', approved: 'green', hold: 'amber',
+  // Money, client and vendor alike
+  unpaid: 'grey', partial: 'amber', paid: 'green',
+  no_payment: 'grey', refund: 'red', credit: 'blue', adjustment: 'violet',
+  // Contracts and requests
+  none: 'grey', requested: 'amber', signed: 'green', generated: 'green',
+  waiting: 'amber', blocked: 'red', pending_marketing: 'amber',
+  // Priority
+  urgent: 'red', high: 'amber', medium: 'blue', low: 'grey',
+  // Where an ad has got to
+  Posted: 'green', Shot: 'blue', Scheduled: 'amber',
+  'Not started': 'grey', Cancelled: 'red',
+};
+
+export function toneOf(value: unknown, fallback: ToneName = 'grey'): ToneName {
+  const k = typeof value === 'string' ? value.trim() : '';
+  return STATE_TONE[k] ?? fallback;
+}
+
+/**
+ * The platforms, in colours people already associate with them.
+ *
+ * Pale grounds rather than the brand hues at full strength — eight saturated
+ * logos side by side is a toolbar, not a field. The hue is enough to find
+ * Snapchat in a row of six without reading any of them.
+ */
+const PLATFORM_TONE: Record<string, { bg: string; fg: string }> = {
+  instagram: { bg: '#fce7f3', fg: '#9d174d' },
+  snapchat:  { bg: '#fef9c3', fg: '#854d0e' },
+  tiktok:    { bg: '#e0f2f1', fg: '#134e4a' },
+  youtube:   { bg: '#fee2e2', fg: '#991b1b' },
+  x:         { bg: '#e7e5e4', fg: '#1c1917' },
+  twitter:   { bg: '#e0f2fe', fg: '#075985' },
+  facebook:  { bg: '#dbeafe', fg: '#1e3a8a' },
+  linkedin:  { bg: '#e0f2fe', fg: '#0c4a6e' },
+  whatsapp:  { bg: '#dcfce7', fg: '#14532d' },
+  telegram:  { bg: '#e0f2fe', fg: '#075985' },
+};
+
+export function platformTone(name: unknown): { bg: string; fg: string } {
+  const k = (typeof name === 'string' ? name : '').trim().toLowerCase();
+  return PLATFORM_TONE[k] ?? { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-secondary)' };
+}
+
+/** One pill. Every coloured label on this page is one of these. */
+export function Chip({ label, tone = 'grey', colours, title }: {
+  label: React.ReactNode;
+  tone?: ToneName;
+  /** Overrides the tone — for platforms, which have their own colours. */
+  colours?: { bg: string; fg: string };
+  title?: string;
+}) {
+  const c = colours ?? TONE[tone];
+  return (
+    <span title={title} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
+      background: c.bg, color: c.fg, whiteSpace: 'nowrap', lineHeight: 1.5,
+    }}>{label}</span>
+  );
+}
+
 export const SMALL_BTN: React.CSSProperties = {
   padding: '5px 11px', fontSize: 12.5, textDecoration: 'none',
 };
@@ -46,19 +152,27 @@ export function Dot() {
   return <span aria-hidden style={{ opacity: .4 }}>·</span>;
 }
 
-export function Card({ title, hint, right, id, children }: {
+export function Card({ title, hint, right, id, bead, children }: {
   title: string;
   hint?: string;
   right?: React.ReactNode;
   id?: string;
+  /** A colour for this section, so a long page reads as places rather than cards. */
+  bead?: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="aq-card" id={id}>
       <header style={{
-        display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
         padding: '15px 18px 0',
       }}>
+        {bead && (
+          <span aria-hidden style={{
+            width: 8, height: 8, borderRadius: 2, flex: '0 0 auto',
+            background: bead, transform: 'rotate(45deg)',
+          }} />
+        )}
         <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>{title}</h2>
         {hint && <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{hint}</span>}
         {right && <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>{right}</span>}
@@ -128,7 +242,21 @@ export function Val({ children, calc, mono, warn, label }: {
   );
 }
 
-export function Pick({ value, options, onChange, canEdit, clearable = true, label, disabled }: {
+/**
+ * A dropdown that admits whether it has been answered.
+ *
+ * A page of identical grey boxes cannot be skimmed: "— None —" and a real
+ * answer looked the same from two feet away, so finding the four fields
+ * nobody has filled in meant reading all forty.
+ *
+ * Now an empty one stays plain and an answered one carries a coloured left
+ * edge. Pass `stateful` where the VALUE means something — a status, a payment
+ * state — and the whole control takes that state's tone, so the row says
+ * "waiting" or "paid" before you have read the word.
+ */
+export function Pick({
+  value, options, onChange, canEdit, clearable = true, label, disabled, stateful,
+}: {
   value: string | null | undefined;
   options: { v: string; l: string }[];
   onChange: (v: string | null) => void;
@@ -136,9 +264,25 @@ export function Pick({ value, options, onChange, canEdit, clearable = true, labe
   clearable?: boolean;
   label?: string;
   disabled?: boolean;
+  /** The value is a state, so colour by what it says rather than just "set". */
+  stateful?: boolean;
 }) {
   const current = options.find((o) => o.v === value);
-  if (!canEdit) return <Val label={label}>{current?.l ?? '—'}</Val>;
+  const chosen = !!current;
+  const tone = TONE[toneOf(value)];
+
+  if (!canEdit) {
+    return stateful && chosen
+      ? <Chip label={current!.l} tone={toneOf(value)} />
+      : <Val label={label}>{current?.l ?? '—'}</Val>;
+  }
+
+  // Disabled is its own state, not a faded one: it reads as flat and quiet
+  // rather than as an answered field somebody has dimmed.
+  const edge = disabled ? 'var(--aq-border-light)'
+    : chosen ? (stateful ? tone.edge : 'var(--aq-accent)')
+    : 'var(--aq-border)';
+
   return (
     <select
       className="aq-select"
@@ -146,7 +290,13 @@ export function Pick({ value, options, onChange, canEdit, clearable = true, labe
       value={value ?? ''}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value || null)}
-      style={{ width: '100%', fontSize: 13 }}
+      style={{
+        width: '100%', fontSize: 13,
+        borderLeft: `3px solid ${edge}`,
+        background: stateful && chosen && !disabled ? tone.bg : undefined,
+        color: stateful && chosen && !disabled ? tone.fg : undefined,
+        fontWeight: stateful && chosen ? 600 : undefined,
+      }}
     >
       {clearable && <option value="">— None —</option>}
       {options.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
@@ -359,9 +509,19 @@ export function MultiPick({ values, options, onChange, canEdit, label }: {
     };
   }, [open]);
 
-  if (!canEdit) return <Val label={label}>{picked.join(' · ') || '—'}</Val>;
-
   const summary = picked.length ? picked.join(' · ') : 'Choose platforms';
+  // Chips rather than "a · b · c": six platforms in one line of text is a
+  // string to be parsed; six chips is something the eye lands on.
+  const chips = picked.length ? (
+    <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', minWidth: 0 }}>
+      {picked.map((v) => <Chip key={v} label={v} colours={platformTone(v)} />)}
+    </span>
+  ) : null;
+
+  if (!canEdit) {
+    return chips ?? <Val label={label}>—</Val>;
+  }
+
 
   return (
     <span ref={wrap} style={{ position: 'relative', display: 'block' }}>
@@ -374,15 +534,17 @@ export function MultiPick({ values, options, onChange, canEdit, label }: {
         style={{
           display: 'flex', alignItems: 'center', gap: 8, width: '100%',
           minHeight: 32, padding: '6px 10px', borderRadius: 8, fontSize: 13,
-          border: '1px solid var(--aq-border)', background: 'var(--aq-bg-elevated)',
+          border: '1px solid var(--aq-border)',
+          borderLeft: `3px solid ${picked.length ? 'var(--aq-accent)' : 'var(--aq-border)'}`,
+          background: 'var(--aq-bg-elevated)',
           color: picked.length ? 'var(--aq-text)' : 'var(--aq-text-muted)',
           font: 'inherit', cursor: 'pointer', textAlign: 'left',
         }}
       >
         <span style={{
           flex: 1, minWidth: 0, overflow: 'hidden',
-          textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13,
-        }}>{summary}</span>
+          display: 'flex', alignItems: 'center', gap: 5, fontSize: 13,
+        }} title={summary}>{chips ?? summary}</span>
         <span aria-hidden style={{ opacity: .5, fontSize: 11 }}>{open ? '▲' : '▼'}</span>
       </button>
 

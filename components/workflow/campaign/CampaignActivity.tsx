@@ -10,7 +10,8 @@ import {
 } from '@/hooks/use-workflow';
 import { MentionBox, CommentText } from '../MentionBox';
 import { TaskAssignees } from '../TaskAssignees';
-import { Card, Note, inkButton, quietButton, UndoBar } from './ui';
+import { Card, Note, inkButton, quietButton, UndoBar
+} from './ui';
 import { fileSize, whenAgo } from '@/lib/campaign-page';
 
 const UNDO_MS = 4000;
