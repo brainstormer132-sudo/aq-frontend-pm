@@ -176,6 +176,20 @@ const state = {
   // for the License/ID document tab, or { type: 'bank', localKey }
   // for a bank tab. Bank drafts are kept in state so we can batch
   // create/update/delete on save without one-at-a-time round-trips.
+  // ── Vendor subtasks: add several, and edit one ─────────────────
+  // The register could only be filled one form at a time, and a row on a
+  // task could never be edited at all — only created, paid or deleted.
+  // Both matter for the same reason: a campaign is booked before the
+  // vendors are known, so the rows have to exist before their details do.
+  bulkSubtaskOpen: false,
+  bulkSubtaskBusy: false,
+  bulkSubtaskError: "",
+  bulkSubtaskDone: 0,
+  bulkSubtaskTotal: 0,
+  bulkSubtaskFailed: [],
+  /** The subtask being edited, or null for the create flow. */
+  subtaskEditorTarget: null,
+
   // ── Add-many-vendors modal ─────────────────────────────────────
   // The PM app books ten influencers in one go and names them later;
   // this is the same idea for the vendor register. Placeholders are
@@ -1138,6 +1152,7 @@ async function renderTasksView() {
           ${state.clientMode ? `
             <button class="cs-btn" type="button" data-action="generate-client-contract" ${task ? "" : "disabled"} title="Generate client contract">Generate client contract</button>
           ` : `
+            <button class="cs-btn-ghost" type="button" data-action="open-bulk-subtasks" ${task ? "" : "disabled"}>+ Add several</button>
             <button class="cs-btn-ghost" type="button" data-action="open-add-subtask" ${task ? "" : "disabled"}>+ Add subtask</button>
             <div class="generate-menu" style="position:relative;">
               <button class="cs-btn" type="button" data-action="toggle-generate-menu" ${task && state.subtasks.length ? "" : "disabled"} aria-haspopup="menu" aria-expanded="false">Generate ▾</button>
@@ -1220,7 +1235,7 @@ async function renderTasksView() {
     <div class="cs-scrim" id="subtask-editor-overlay" data-dismiss-overlay>
       <div class="cs-modal is-wide" role="dialog" aria-modal="true" aria-labelledby="subtask-editor-title">
         <div class="cs-modal-head">
-          <div class="cs-modal-title" id="subtask-editor-title">Add vendor subtask</div>
+          <div class="cs-modal-title" id="subtask-editor-title">${state.subtaskEditorTarget ? "Edit vendor subtask" : "Add vendor subtask"}</div>
           <button type="button" class="cs-modal-close" data-action="close-add-subtask" aria-label="Close">✕</button>
         </div>
         <form id="subtask-form">
@@ -1228,12 +1243,12 @@ async function renderTasksView() {
             <div class="cs-field-group">
               <label class="cs-label">Vendor (license or name)</label>
               <div class="autocomplete-wrap">
-                <input id="sub-license" class="cs-input" autocomplete="off" placeholder="Type to search vendors…" />
+                <input id="sub-license" class="cs-input" autocomplete="off" placeholder="Type to search vendors…" value="${encodeAttr(state.subtaskEditorTarget?.license_number || "")}" />
                 <div id="sub-license-suggestions" class="autocomplete-suggestions" hidden></div>
               </div>
             </div>
-            <div class="cs-field-group"><label class="cs-label">Vendor Name</label><input id="sub-vendor" class="cs-input cs-bidi" readonly required placeholder="Autofills from license" /></div>
-            <div class="cs-field-group"><label class="cs-label">IBAN</label><select id="sub-iban" class="cs-select" disabled><option value="">Choose vendor license first</option></select></div>
+            <div class="cs-field-group"><label class="cs-label">Vendor Name</label><input id="sub-vendor" class="cs-input cs-bidi" readonly placeholder="Autofills from license" value="${encodeAttr(state.subtaskEditorTarget?.vendor || "")}" /></div>
+            <div class="cs-field-group"><label class="cs-label">IBAN</label><select id="sub-iban" class="cs-select" ${state.subtaskEditorTarget?.iban ? "" : "disabled"}>${state.subtaskEditorTarget?.iban ? `<option value="${encodeAttr(state.subtaskEditorTarget.iban)}" selected>${escapeHtml(state.subtaskEditorTarget.iban)}</option>` : `<option value="">Choose vendor license first</option>`}</select></div>
             <div id="sub-bank-preview" class="bank-preview" style="background:var(--cs-soft);border:1px solid var(--cs-card-bd);border-radius:9px;padding:10px 12px;margin-bottom:16px;font-size:12.5px;">
               <strong>Bank information</strong>
               <span>Choose a vendor license and IBAN.</span>
@@ -1245,7 +1260,7 @@ async function renderTasksView() {
                 <div class="platform-options">
                   ${PLATFORM_OPTIONS.map((platform) => `
                     <label class="checkbox-row">
-                      <input type="checkbox" class="platform-checkbox" value="${platform.key}" />
+                      <input type="checkbox" class="platform-checkbox" value="${platform.key}" ${String(state.subtaskEditorTarget?.platforms || "").split(",").map((x) => x.trim()).includes(platform.key) ? "checked" : ""} />
                       <span>${platform.label}</span>
                     </label>
                   `).join("")}
@@ -1255,32 +1270,31 @@ async function renderTasksView() {
             <div id="platform-handles" class="platform-handles">
               <p class="cs-form-hint">Select a platform to add its handle.</p>
             </div>
-            <input id="sub-channel" type="hidden" />
-            <input id="sub-platforms" type="hidden" />
+            <input id="sub-channel" type="hidden" value="${encodeAttr(state.subtaskEditorTarget?.channel || "")}" />
+            <input id="sub-platforms" type="hidden" value="${encodeAttr(state.subtaskEditorTarget?.platforms || "")}" />
             <div class="cs-field-group">
               <label class="cs-label">Ad Type</label>
               <select id="sub-ad-type" class="cs-select">
-                <option>Store Visit</option>
-                <option>Home Ad</option>
-                <option>Multi Service</option>
+                ${["Store Visit", "Home Ad", "Multi Service"].map((t) => `<option ${String(state.subtaskEditorTarget?.ad_type || "") === t ? "selected" : ""}>${t}</option>`).join("")}
               </select>
             </div>
             <div class="cs-field-group" id="sub-ad-type-custom-label" style="display:none">
               <label class="cs-label">Multi-service text</label>
-              <input id="sub-ad-type-custom" class="cs-input" placeholder="What does this multi-service cover?" />
+              <input id="sub-ad-type-custom" class="cs-input" placeholder="What does this multi-service cover?" value="${encodeAttr(state.subtaskEditorTarget?.ad_type_custom || "")}" />
             </div>
-            <div class="cs-field-group"><label class="cs-label">Qty</label><input id="sub-qty" class="cs-input" value="1" /></div>
-            <div class="cs-field-group"><label class="cs-label">Price</label><input id="sub-price" class="cs-input" value="0" /></div>
-            <div class="cs-field-group"><label class="cs-label">Details</label><textarea id="sub-details" class="cs-textarea" rows="3"></textarea></div>
+            <div class="cs-field-group"><label class="cs-label">Qty</label><input id="sub-qty" class="cs-input" value="${encodeAttr(String(state.subtaskEditorTarget?.qty ?? "1"))}" /></div>
+            <div class="cs-field-group"><label class="cs-label">Price</label><input id="sub-price" class="cs-input" value="${encodeAttr(String(state.subtaskEditorTarget?.price ?? "0"))}" /></div>
+            <div class="cs-field-group"><label class="cs-label">Details</label><textarea id="sub-details" class="cs-textarea" rows="3">${escapeHtml(state.subtaskEditorTarget?.details || "")}</textarea></div>
           </div>
           <div class="cs-modal-foot">
             <span class="cs-foot-spacer"></span>
             <button class="cs-btn-ghost" type="button" data-action="close-add-subtask">Cancel</button>
-            <button class="cs-btn" type="submit" ${task ? "" : "disabled"}>Add subtask</button>
+            <button class="cs-btn" type="submit" ${task ? "" : "disabled"}>${state.subtaskEditorTarget ? "Save changes" : "Add subtask"}</button>
           </div>
         </form>
       </div>
     </div>` : ""}
+    ${renderBulkSubtaskModal(task)}
   `;
 }
 
@@ -1305,6 +1319,7 @@ function renderSubtaskTable() {
         <div class="cs-rowact">
           <button class="cs-iconbtn" type="button" data-action="generate-one" data-id="${sub.id}" title="Generate contract for just this subtask">Generate</button>
           <button class="cs-iconbtn" type="button" data-action="mark-paid" data-id="${sub.id}">${sub.paid_at ? "Unpay" : "Paid"}</button>
+          <button class="cs-iconbtn" type="button" data-action="edit-subtask" data-id="${sub.id}">Edit</button>
           <button class="cs-iconbtn is-danger" type="button" data-action="delete-subtask" data-id="${sub.id}">Delete</button>
         </div>
       </div>
@@ -1844,6 +1859,138 @@ function captureVendorEditorTopFields() {
  * next week continues the run rather than restarting it and producing a
  * second "New vendor 1".
  */
+/**
+ * Create N empty vendor-subtask rows on the open task.
+ *
+ * Siraj: *"I want to add 20 vendors at the same time and then edit later to
+ * add the vendor name and data."* A campaign is booked before anybody knows
+ * which influencers will take it, so the rows have to exist first and be
+ * filled in as the names come back. Everything on a subtask is optional to
+ * the API except the task it belongs to, so an empty row is a legitimate row.
+ *
+ * Anything set in the modal — ad type, price, platforms — is copied onto all
+ * of them, because that is usually what the twenty have in common.
+ */
+async function createSubtasksBulk() {
+  const task = selectedTask();
+  if (!task) { showToast("Select a task first", "error"); return; }
+
+  const count = Number(document.querySelector("#bulk-sub-count")?.value || 0);
+  const adType = document.querySelector("#bulk-sub-ad-type")?.value || "Store Visit";
+  const qty = document.querySelector("#bulk-sub-qty")?.value || "1";
+  const price = document.querySelector("#bulk-sub-price")?.value || "0";
+  const platforms = [...document.querySelectorAll(".bulk-sub-platform:checked")]
+    .map((el) => el.value).join(",");
+
+  state.bulkSubtaskError = "";
+  state.bulkSubtaskFailed = [];
+  const n = Math.max(1, Math.min(100, Math.floor(count) || 0));
+  if (!Number.isFinite(count) || count < 1) {
+    state.bulkSubtaskError = "How many? It has to be at least one.";
+    await renderTasksView();
+    return;
+  }
+
+  state.bulkSubtaskBusy = true;
+  state.bulkSubtaskTotal = n;
+  state.bulkSubtaskDone = 0;
+  await renderTasksView();
+
+  const failed = [];
+  let made = 0;
+  const queue = Array.from({ length: n }, (_, i) => i + 1);
+
+  const worker = async () => {
+    while (queue.length) {
+      const index = queue.shift();
+      try {
+        await api("/api/subtasks/", {
+          method: "POST",
+          body: JSON.stringify({
+            task_id: task.id,
+            vendor: "", license_number: "", iban: "", channel: "",
+            platforms, ad_type: adType, ad_type_custom: "",
+            qty, price, details: "",
+          }),
+        });
+        made += 1;
+      } catch (err) {
+        failed.push({ name: `Row ${index}`, reason: (err && err.message) ? String(err.message) : "the server refused it" });
+      }
+      state.bulkSubtaskDone += 1;
+      const pill = document.querySelector("#bulk-sub-progress");
+      if (pill) pill.textContent = `Added ${state.bulkSubtaskDone} of ${state.bulkSubtaskTotal}…`;
+    }
+  };
+
+  await Promise.all([worker(), worker(), worker(), worker()]);
+
+  state.bulkSubtaskBusy = false;
+  state.bulkSubtaskFailed = failed;
+  state.bulkSubtaskOpen = failed.length > 0;
+  state.bulkSubtaskDone = 0;
+  await loadTasks();
+  await renderTasksView();
+  showToast(bulkVendorResultLine(made, failed).replace(/vendors?\./, made === 1 ? "row." : "rows."),
+            failed.length ? "error" : "");
+}
+
+function renderBulkSubtaskModal(task) {
+  if (!state.bulkSubtaskOpen) return "";
+  const failedBlock = (state.bulkSubtaskFailed || []).length
+    ? `<div style="margin-top:10px;font-size:12px;color:var(--cs-muted,#8a8a8a)">Did not make it:
+         <ul style="margin:4px 0 0;padding-left:18px">
+           ${state.bulkSubtaskFailed.map((f) => `<li>${escapeHtml(f.name)} — ${escapeHtml(f.reason)}</li>`).join("")}
+         </ul></div>`
+    : "";
+  return `
+    <div class="cs-scrim" id="bulk-subtask-overlay" data-dismiss-overlay>
+      <div class="cs-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-sub-title">
+        <div class="cs-modal-head">
+          <div class="cs-modal-title" id="bulk-sub-title">Add several vendor subtasks</div>
+          <button type="button" class="cs-modal-close" data-action="close-bulk-subtasks" aria-label="Close">✕</button>
+        </div>
+        <div class="cs-modal-body">
+          <p class="cs-form-hint" style="margin-top:0">
+            Creates the rows now with no vendor on them. Fill each one in from the
+            table as the names come back — click a row's <strong>Edit</strong>.
+            Anything you set here is copied onto all of them.
+          </p>
+          <div class="cs-field-group"><label class="cs-label">How many</label>
+            <input id="bulk-sub-count" class="cs-input" type="number" min="1" max="100" value="20" /></div>
+          <div class="cs-field-group"><label class="cs-label">Ad type (all of them)</label>
+            <select id="bulk-sub-ad-type" class="cs-select">
+              <option>Store Visit</option><option>Home Ad</option><option>Multi Service</option>
+            </select></div>
+          <div class="cs-field-group"><label class="cs-label">Platforms (all of them)</label>
+            <details class="platform-picker"><summary>Choose platforms</summary>
+              <div class="platform-options">
+                ${PLATFORM_OPTIONS.map((p) => `
+                  <label class="checkbox-row">
+                    <input type="checkbox" class="bulk-sub-platform" value="${p.key}" />
+                    <span>${p.label}</span>
+                  </label>`).join("")}
+              </div>
+            </details></div>
+          <div class="cs-field-group"><label class="cs-label">Qty each</label>
+            <input id="bulk-sub-qty" class="cs-input" value="1" /></div>
+          <div class="cs-field-group"><label class="cs-label">Price each</label>
+            <input id="bulk-sub-price" class="cs-input" value="0" /></div>
+          ${state.bulkSubtaskBusy ? `<div id="bulk-sub-progress" class="cs-form-hint">Added ${state.bulkSubtaskDone} of ${state.bulkSubtaskTotal}…</div>` : ""}
+          ${state.bulkSubtaskError ? `<div class="cs-form-hint" style="color:#e07a76">${escapeHtml(state.bulkSubtaskError)}</div>` : ""}
+          ${failedBlock}
+        </div>
+        <div class="cs-modal-foot">
+          <span class="cs-foot-spacer"></span>
+          <button class="cs-btn-ghost" type="button" data-action="close-bulk-subtasks" ${state.bulkSubtaskBusy ? "disabled" : ""}>Cancel</button>
+          <button class="cs-btn" type="button" data-action="bulk-create-subtasks" ${state.bulkSubtaskBusy || !task ? "disabled" : ""}>
+            ${state.bulkSubtaskBusy ? "Adding…" : "Add the rows"}
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function bulkVendorNames(count, prefix, startAt) {
   const n = Math.max(1, Math.min(100, Math.floor(Number(count) || 0)));
   const base = String(prefix || "").trim() || "New vendor";
@@ -3620,21 +3767,27 @@ async function addSubtask(event) {
   event.preventDefault();
   const task = selectedTask();
   if (!task) throw new Error("Select a task first");
-  const vendor = findVendorByLicense(getFormValue("#sub-license"));
-  if (!vendor) throw new Error("Choose a valid vendor license first");
-  const bank = findBank(vendor, getFormValue("#sub-iban"));
-  if (!bank) throw new Error("Choose an IBAN for this vendor");
-  syncPlatformPayload();
-  if (!getFormValue("#sub-platforms")) throw new Error("Choose at least one platform");
-  if (!getFormValue("#sub-channel")) throw new Error("Enter a handle for at least one selected platform");
+  const editing = state.subtaskEditorTarget;
 
-  await api("/api/subtasks/", {
-    method: "POST",
-    body: JSON.stringify({
-      task_id: task.id,
-      vendor: vendor.name || "",
-      license_number: vendor.license_number || "",
-      iban: bank.iban || "",
+  // A row added in bulk starts empty on purpose, so editing one has to be
+  // allowed to leave it empty. Only a brand-new row typed in by hand is
+  // held to the full set — that is the flow where a half-filled row is a
+  // mistake rather than a deliberate placeholder.
+  const vendor = findVendorByLicense(getFormValue("#sub-license"));
+  const bank = vendor ? findBank(vendor, getFormValue("#sub-iban")) : null;
+  syncPlatformPayload();
+
+  if (!editing) {
+    if (!vendor) throw new Error("Choose a valid vendor license first");
+    if (!bank) throw new Error("Choose an IBAN for this vendor");
+    if (!getFormValue("#sub-platforms")) throw new Error("Choose at least one platform");
+    if (!getFormValue("#sub-channel")) throw new Error("Enter a handle for at least one selected platform");
+  }
+
+  const body = {
+      vendor: vendor ? (vendor.name || "") : (editing?.vendor || ""),
+      license_number: vendor ? (vendor.license_number || "") : (editing?.license_number || ""),
+      iban: bank ? (bank.iban || "") : (getFormValue("#sub-iban") || ""),
       channel: getFormValue("#sub-channel"),
       platforms: getFormValue("#sub-platforms"),
       ad_type: getFormValue("#sub-ad-type"),
@@ -3642,6 +3795,25 @@ async function addSubtask(event) {
       qty: getFormValue("#sub-qty") || "1",
       details: getFormValue("#sub-details"),
       price: getFormValue("#sub-price") || "0",
+  };
+
+  if (editing) {
+    await api(`/api/subtasks/${encodeURIComponent(editing.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    state.subtaskEditorTarget = null;
+    await loadTasks();
+    await renderTasksView();
+    showToast("Subtask updated");
+    return;
+  }
+
+  await api("/api/subtasks/", {
+    method: "POST",
+    body: JSON.stringify({
+      task_id: task.id,
+      ...body,
     }),
   });
 
@@ -4365,6 +4537,7 @@ document.addEventListener("submit", async (event) => {
     } else if (event.target.id === "subtask-form") {
       await addSubtask(event);
       // Close slide-over after a successful add.
+      state.subtaskEditorTarget = null;
       state.subtaskEditorOpen = false;
       await renderTasksView();
     } else if (event.target.id === "vendor-form") {
@@ -4718,6 +4891,7 @@ document.addEventListener("keydown", async (event) => {
     return;
   }
   if (state.subtaskEditorOpen) {
+    state.subtaskEditorTarget = null;
     state.subtaskEditorOpen = false;
     await renderTasksView();
     return;
@@ -4849,7 +5023,12 @@ document.addEventListener("click", async (event) => {
       state.taskEditorOpen = false;
       await renderTasksView();
     } else if (overlay.id === "subtask-editor-overlay") {
+      state.subtaskEditorTarget = null;
       state.subtaskEditorOpen = false;
+      await renderTasksView();
+    } else if (overlay.id === "bulk-subtask-overlay") {
+      if (state.bulkSubtaskBusy) return;
+      state.bulkSubtaskOpen = false;
       await renderTasksView();
     }
     return;
@@ -5030,12 +5209,40 @@ document.addEventListener("click", async (event) => {
       await renderTasksView();
       return;
     }
+    if (action === "open-bulk-subtasks") {
+      state.bulkSubtaskOpen = true;
+      state.bulkSubtaskError = "";
+      state.bulkSubtaskFailed = [];
+      await renderTasksView();
+      return;
+    }
+    if (action === "close-bulk-subtasks") {
+      if (state.bulkSubtaskBusy) return;   // never close mid-run
+      state.bulkSubtaskOpen = false;
+      await renderTasksView();
+      return;
+    }
+    if (action === "bulk-create-subtasks") {
+      await createSubtasksBulk();
+      return;
+    }
+    if (action === "edit-subtask") {
+      const id = event.target.closest("[data-action='edit-subtask']")?.dataset.id;
+      const row = (state.subtasks || []).find((x) => String(x.id) === String(id));
+      if (!row) return;
+      state.subtaskEditorTarget = row;
+      state.subtaskEditorOpen = true;
+      await renderTasksView();
+      return;
+    }
     if (action === "open-add-subtask") {
+      state.subtaskEditorTarget = null;
       state.subtaskEditorOpen = true;
       await renderTasksView();
       return;
     }
     if (action === "close-add-subtask") {
+      state.subtaskEditorTarget = null;
       state.subtaskEditorOpen = false;
       await renderTasksView();
       return;
