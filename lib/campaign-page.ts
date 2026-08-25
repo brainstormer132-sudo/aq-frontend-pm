@@ -939,12 +939,20 @@ export function askAllLabel(ready: number, blocked: number): string {
   return blocked > 0 ? `${head} · ${blocked} blocked` : head;
 }
 
-/** "3 months", or nothing at all when the term was never recorded. */
+/**
+ * "90 days", or nothing at all when the term was never recorded.
+ *
+ * Weeks and months are gone from the input — Siraj asked for a plain number of
+ * days, because "2 weeks" and "14 days" are the same contract written two ways
+ * and only one of them can be added to a date without thinking. Rows entered
+ * before this still carry their old unit, so it is still read and printed
+ * rather than silently relabelled as days.
+ */
 export function lengthLabel(n: unknown, unit: unknown): string {
   // Not through txt(): it returns '' for a number, so a numeric 3 became ''.
   const num = typeof n === 'number' ? n : Number(txt(n));
-  const u = txt(unit);
-  if (!Number.isFinite(num) || num <= 0 || !u) return '';
+  const u = txt(unit) || 'days';
+  if (!Number.isFinite(num) || num <= 0) return '';
   const singular = num === 1 ? u.replace(/s$/, '') : u;
   return `${num} ${singular}`;
 }

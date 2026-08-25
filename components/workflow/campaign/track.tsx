@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Track } from '@/lib/campaign-page';
 
-const UNITS = ['days', 'weeks', 'months'] as const;
 
 /**
  * The two-bead track: asked on the left, answered on the right.
@@ -93,56 +92,51 @@ export function LengthField({ n, unit, canEdit, onCommit }: {
   onCommit: (n: number | null, unit: string | null) => void;
 }) {
   const [num, setNum] = useState(n == null ? '' : String(n));
-  const [u, setU] = useState(unit ?? 'months');
-
   useEffect(() => { setNum(n == null ? '' : String(n)); }, [n]);
-  useEffect(() => { setU(unit ?? 'months'); }, [unit]);
 
   if (!canEdit) return null;
 
-  const commit = (rawNum: string, rawUnit: string) => {
-    const parsed = Number(rawNum.trim());
+  const commit = (raw: string) => {
+    const parsed = Number(raw.trim());
     // Clearing the box clears both halves. A stray unit with no number would
-    // fail the check constraint rather than saving quietly.
-    if (!rawNum.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+    // fail the pair check in 066 rather than saving quietly.
+    if (!raw.trim() || !Number.isFinite(parsed) || parsed <= 0) {
       if (n != null) onCommit(null, null);
       return;
     }
-    if (parsed === n && rawUnit === unit) return;
-    onCommit(Math.round(parsed), rawUnit);
+    const days = Math.round(parsed);
+    if (days === n && unit === 'days') return;
+    onCommit(days, 'days');
   };
 
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <input
         className="aq-input"
-        aria-label="Contract length"
+        aria-label="Contract length in days"
         inputMode="numeric"
         placeholder="—"
         value={num}
         onChange={(e) => setNum(e.target.value)}
-        onBlur={() => commit(num, u)}
+        onBlur={() => commit(num)}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         style={{ width: 58, fontSize: 12.5, textAlign: 'right', padding: '5px 8px' }}
       />
-      <select
-        className="aq-select"
-        aria-label="Contract length unit"
-        value={u}
-        onChange={(e) => { setU(e.target.value); commit(num, e.target.value); }}
-        style={{ fontSize: 12.5, padding: '5px 6px', width: 88 }}
-      >
-        {UNITS.map((x) => <option key={x} value={x}>{x}</option>)}
-      </select>
+      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>days</span>
     </span>
   );
 }
 
+// Three kinds of contract, not four ways of describing one. Siraj: *"no
+// 50/50 is one contract type / prepay / and afterpay"*.
+//
+// 50/50 carries no percentage box any more — it is the type, and the type is
+// half and half. The database column still holds the 50 (067 constrains the
+// pair), so nothing downstream has to special-case it.
 const TERMS = [
-  { v: 'split', l: 'Part before, rest after' },
-  { v: 'in_advance', l: 'All of it in advance' },
-  { v: 'on_delivery', l: 'All of it on delivery' },
-  { v: 'net_days', l: 'Days after delivery' },
+  { v: 'split', l: '50/50' },
+  { v: 'in_advance', l: 'Prepay' },
+  { v: 'net_days', l: 'Afterpay' },
 ];
 
 /**
@@ -178,7 +172,8 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
     // leaving it behind would show "60 days" on a 50/50 contract.
     onCommit({
       payment_terms: next || null,
-      payment_split_pct: next === 'split' ? (splitPct ?? 50) : null,
+      // Always 50: it is what the type means, not something to be typed.
+      payment_split_pct: next === 'split' ? 50 : null,
       payment_net_days: next === 'net_days' ? (netDays ?? 30) : null,
     });
   };
@@ -196,23 +191,11 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
         {TERMS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
       </select>
 
-      {t === 'split' && (
-        <SmallNumber
-          label="Percent paid up front"
-          value={splitPct ?? 50}
-          suffix="% up front"
-          min={1}
-          max={99}
-          onCommit={(n) => onCommit({
-            payment_terms: 'split', payment_split_pct: n, payment_net_days: null,
-          })}
-        />
-      )}
       {t === 'net_days' && (
         <SmallNumber
           label="Days after delivery"
           value={netDays ?? 30}
-          suffix="days"
+          suffix="days after delivery"
           min={1}
           max={365}
           onCommit={(n) => onCommit({
@@ -224,7 +207,7 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
   );
 }
 
-/** "50/50", "60 days after delivery" — what was agreed, in words. */
+/** "50/50", "Afterpay — 60 days" — what was agreed, in words. */
 export function termsLabel(
   terms: string | null | undefined,
   splitPct: number | null | undefined,
@@ -232,12 +215,15 @@ export function termsLabel(
 ): string {
   switch (terms) {
     case 'split': {
+      // An older row may carry something other than 50. It is no longer
+      // possible to enter, but it is what was agreed, so it is what is shown.
       const up = Number(splitPct ?? 50);
-      return `${up}/${100 - up} — ${up}% up front`;
+      return up === 50 ? '50/50' : `${up}/${100 - up} — ${up}% up front`;
     }
-    case 'in_advance': return 'Paid in advance';
-    case 'on_delivery': return 'Paid on delivery';
-    case 'net_days': return `${netDays ?? 30} days after delivery`;
+    case 'in_advance': return 'Prepay';
+    case 'net_days': return `Afterpay — ${netDays ?? 30} days after delivery`;
+    // Retired from the picker; still readable on the rows that carry it.
+    case 'on_delivery': return 'Afterpay — on delivery';
     default: return 'Terms not set';
   }
 }

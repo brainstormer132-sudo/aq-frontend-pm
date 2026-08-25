@@ -12,7 +12,7 @@ import {
   type Track, type DocLike,
 } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
-import { LengthField, TrackRow } from './track';
+import { TrackRow } from './track';
 
 /**
  * The client's paperwork: the contract, the quotation, the invoice.
@@ -71,6 +71,11 @@ export function CampaignPaperwork({
     !latest && !readiness.ready ? 'Fill in the client details first' : null,
   );
 
+  // The client contract has no length control any more — Siraj asked for it
+  // gone here; it stays on the vendor rows, where the term is what is being
+  // agreed. A campaign that already recorded one still shows it rather than
+  // dropping a figure somebody entered, and a campaign without one shows
+  // nothing (filter(Boolean) below).
   const term = lengthLabel((task as any).contract_length, (task as any).contract_length_unit);
 
   const sendClient = () => run(async () => {
@@ -104,20 +109,6 @@ export function CampaignPaperwork({
         detail={contract.state === 'blocked' ? <Missing items={readiness.missing as any} /> : null}
         actions={
           <>
-            <LengthField
-              canEdit={canEdit}
-              n={(task as any).contract_length}
-              unit={(task as any).contract_length_unit}
-              onCommit={(n, u) => opt.setMany(task.id, {
-                contract_length: n, contract_length_unit: u,
-              }, {
-                labels: { contract_length: 'Contract length', contract_length_unit: 'Contract length' },
-                was: {
-                  contract_length: (task as any).contract_length,
-                  contract_length_unit: (task as any).contract_length_unit,
-                },
-              })}
-            />
             {canRequest && contract.state !== 'waiting' && contract.state !== 'done' && (
               <button
                 type="button"
