@@ -288,6 +288,8 @@ export function stripTotals(ads: AdForStrip[]): Record<AdStatusKey, number> {
 // ── The bookings list ───────────────────────────────────────────────
 
 export interface BookingSubtask {
+  /** Typed on the booking only when it has no ads to be priced by. */
+  net_amount?: unknown;
   id: string;
   vendor_id?: number | null;
   title?: string | null;
@@ -302,12 +304,21 @@ export interface BookingAd {
   ad_type?: string | null;
   quantity?: unknown;
   status?: string | null;
+  // An influencer is priced per piece, not per booking: twelve ads at
+  // different rates is one booking whose price is a sum, not a number
+  // somebody types.
+  unit_price?: unknown;
+  net_amount?: unknown;
 }
 
 export interface BookingRow {
   id: string;
   name: string;
   initials: string;
+  /** What AQ nets on the booking — summed from the ads when they carry it. */
+  net?: number | null;
+  /** True when the ads below are where the money is typed. */
+  pricedPerLine?: boolean;
   /** How many ads the booking holds, counting quantity. */
   ads: number;
   posted: number;
@@ -351,9 +362,29 @@ export function bookingRows(input: {
     }
     if (!lines.length && txt(s.ad_type)) types.push(txt(s.ad_type));
 
+    // Where the money is typed depends on whether the booking has ads.
+    //
+    // With ads — the influencer case — the price is the ads added up, and
+    // typing over it on the booking was pointless: syncBookingPriceFromAds
+    // overwrote it the next time anybody touched a line. So the lines are
+    // the source and the booking only reports them.
+    const adsTotal = lines.reduce(
+      (sum, l) => sum + (Math.max(1, num(l.quantity) ?? 1) * (num(l.unit_price) ?? 0)), 0);
+    const adsNet = lines.reduce((sum, l) => sum + (num(l.net_amount) ?? 0), 0);
+    const anyLineNet = lines.some((l) => num(l.net_amount) != null);
+
     const name = txt(s.vendor_id != null ? input.vendorNames?.get(s.vendor_id) : '')
       || txt(s.task_name) || txt(s.title) || 'No vendor yet';
-    const price = pos(s.price);
+    // Only once the lines actually carry prices. A booking with ten unpriced
+    // ads and a number typed on it still shows that number — otherwise every
+    // booking made before per-line pricing existed would suddenly read "no
+    // price yet" while its money sat there in plain sight.
+    const anyLinePrice = lines.some((l) => (num(l.unit_price) ?? 0) > 0);
+    const pricedPerLine = lines.length > 0 && anyLinePrice;
+    const price = pricedPerLine ? pos(adsTotal) : pos(s.price);
+    const net = pricedPerLine
+      ? (anyLineNet ? adsNet : pos(s.net_amount))
+      : pos(s.net_amount);
 
     const requestId = txt(s.contract_request_id);
     const status = requestId ? txt(input.contractStatusById?.get(requestId)) : '';
@@ -379,6 +410,9 @@ export function bookingRows(input: {
       progressPct: ads ? Math.round((posted / ads) * 100) : 0,
       adTypes: types.join(', '),
       price,
+      net,
+      /** True when the ads below are the source of the money, not the booking. */
+      pricedPerLine,
       contract,
       contractLabel: contractLabelFor(contract),
       problem,

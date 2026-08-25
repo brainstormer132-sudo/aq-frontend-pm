@@ -358,27 +358,37 @@ export function CampaignBookings({
                       />
                     ) : <Val>{vendor?.name ?? '— none —'}</Val>}
                   </F>
+                  {/* An influencer is priced per piece, so once the ads below
+                      carry prices they are the source and this only reports
+                      them. Typing here was worse than useless: the next edit
+                      to any line called syncBookingPriceFromAds and wiped it. */}
                   <F k="Price">
-                    <Text
-                      numeric canEdit={canEdit}
-                      value={(sub as any).price ?? ''}
-                      placeholder="0.00"
-                      onCommit={(v) => saveOn(sub.id, 'price', parseMoney(v))}
-                    />
+                    {b.pricedPerLine ? (
+                      <Val calc>{b.price == null ? '—' : money(b.price)} · from the {lines.length} ads below</Val>
+                    ) : (
+                      <Text
+                        numeric canEdit={canEdit}
+                        value={(sub as any).price ?? ''}
+                        placeholder="0.00"
+                        onCommit={(v) => saveOn(sub.id, 'price', parseMoney(v), (sub as any).price)}
+                      />
+                    )}
                   </F>
                   <F k="Net">
-                    <Text
-                      numeric canEdit={canEdit}
-                      value={(sub as any).net_amount ?? ''}
-                      placeholder="0.00"
-                      onCommit={(v) => saveOn(sub.id, 'net_amount', parseMoney(v))}
-                    />
+                    {b.pricedPerLine && b.net != null ? (
+                      <Val calc>{money(b.net)} · added up from the ads</Val>
+                    ) : (
+                      <Text
+                        numeric canEdit={canEdit}
+                        value={(sub as any).net_amount ?? ''}
+                        placeholder="0.00"
+                        onCommit={(v) => saveOn(sub.id, 'net_amount', parseMoney(v), (sub as any).net_amount)}
+                      />
+                    )}
                   </F>
                   <F k="AQ gross">
                     <Val calc>{
-                      (sub as any).price != null && (sub as any).net_amount != null
-                        ? money(Number((sub as any).price) - Number((sub as any).net_amount))
-                        : '—'
+                      b.price != null && b.net != null ? money(b.price - b.net) : '—'
                     }</Val>
                   </F>
                   <F k="Platform">
@@ -386,7 +396,7 @@ export function CampaignBookings({
                       canEdit={canEdit}
                       value={(sub as any).platform}
                       options={platformNames.map((p) => ({ v: p, l: p }))}
-                      onChange={(v) => saveOn(sub.id, 'platform', v)}
+                      onChange={(v) => saveOn(sub.id, 'platform', v, (sub as any).platform)}
                     />
                   </F>
                   <F k="Ad type">
@@ -394,7 +404,7 @@ export function CampaignBookings({
                       canEdit={canEdit}
                       value={(sub as any).ad_type}
                       options={[...AD_TYPES].map((a) => ({ v: String(a), l: labelFor(String(a)) }))}
-                      onChange={(v) => saveOn(sub.id, 'ad_type', v)}
+                      onChange={(v) => saveOn(sub.id, 'ad_type', v, (sub as any).ad_type)}
                     />
                   </F>
                   <F k="Paid on">
@@ -402,7 +412,7 @@ export function CampaignBookings({
                       ? <DateField
                           aria-label="Paid on"
                           value={(sub as any).vendor_payment_date}
-                          onCommit={(v) => saveOn(sub.id, 'vendor_payment_date', v)}
+                          onCommit={(v) => saveOn(sub.id, 'vendor_payment_date', v, (sub as any).vendor_payment_date)}
                         />
                       : <Val>{(sub as any).vendor_payment_date ?? '—'}</Val>}
                   </F>
@@ -413,14 +423,14 @@ export function CampaignBookings({
                           canEdit={canEdit}
                           value={(sub as any).insight_link}
                           placeholder="https://…"
-                          onCommit={(v) => saveOn(sub.id, 'insight_link', v || null)}
+                          onCommit={(v) => saveOn(sub.id, 'insight_link', v || null, (sub as any).insight_link)}
                         />
                       </F>
                       <F k="Insight file">
                         <Check
                           canEdit={canEdit}
                           checked={!!(sub as any).insight_attached}
-                          onChange={(v) => saveOn(sub.id, 'insight_attached', v)}
+                          onChange={(v) => saveOn(sub.id, 'insight_attached', v, (sub as any).insight_attached)}
                         />
                       </F>
                     </>
@@ -433,14 +443,14 @@ export function CampaignBookings({
                           canEdit={canEdit}
                           value={(sub as any).proof_of_posting_link}
                           placeholder="https://…"
-                          onCommit={(v) => saveOn(sub.id, 'proof_of_posting_link', v || null)}
+                          onCommit={(v) => saveOn(sub.id, 'proof_of_posting_link', v || null, (sub as any).proof_of_posting_link)}
                         />
                       </F>
                       <F k="Proof file">
                         <Check
                           canEdit={canEdit}
                           checked={!!(sub as any).proof_of_posting_attached}
-                          onChange={(v) => saveOn(sub.id, 'proof_of_posting_attached', v)}
+                          onChange={(v) => saveOn(sub.id, 'proof_of_posting_attached', v, (sub as any).proof_of_posting_attached)}
                         />
                       </F>
                     </>

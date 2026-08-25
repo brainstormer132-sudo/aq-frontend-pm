@@ -8,7 +8,7 @@ import {
   useLegacyVendors, useClients, useClientBrands, useWorkspaceProfiles,
   useTaskSources, useClientCategories, useTaskPlatforms, useContractRequests,
   useTaskComments, useDocumentRequests, useServiceTypes, usePublishedTrackingRows,
-  updateTaskFields, markTaskCompleted, deleteTask, rollupCampaignMoney, displayName,
+  updateTaskFields, markTaskCompleted, deleteTask, displayName,
   AD_TYPES, AD_TYPE_NEEDS_DETAIL, APPROVAL_STAGES, TASK_STATUSES, labelFor,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -240,7 +240,20 @@ export function CampaignPage({
     [vendorSubtasks, allAdLines, vendorNames, contractStatusById],
   );
 
-  const rollup = useMemo(() => rollupCampaignMoney(shownSubtasks as any), [shownSubtasks]);
+  // The masthead adds up the SAME rows the Bookings card shows, rather than
+  // reading price off each subtask separately. rollupCampaignMoney reads the
+  // stored booking price, which for a per-line booking is only correct once
+  // syncBookingPriceFromAds has run — so the top of the page and the list
+  // underneath it could disagree for a round trip. Now they cannot.
+  const rollup = useMemo(() => {
+    let breakdown = 0;
+    let net = 0;
+    for (const b of bookings) {
+      if (b.price != null) breakdown += b.price;
+      if (b.net != null) net += b.net;
+    }
+    return { breakdown, net, vendorCount: bookings.length };
+  }, [bookings]);
   const bar = useMemo(
     () => moneyBar({ budget: (view as any)?.budget, vendorCost: rollup.breakdown }),
     [view, rollup.breakdown],
