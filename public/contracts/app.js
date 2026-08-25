@@ -176,6 +176,17 @@ const state = {
   // for the License/ID document tab, or { type: 'bank', localKey }
   // for a bank tab. Bank drafts are kept in state so we can batch
   // create/update/delete on save without one-at-a-time round-trips.
+  // ── Add-many-vendors modal ─────────────────────────────────────
+  // The PM app books ten influencers in one go and names them later;
+  // this is the same idea for the vendor register. Placeholders are
+  // created with a name and a category and nothing else, then filled
+  // in from the directory as the details arrive.
+  bulkVendorOpen: false,
+  bulkVendorBusy: false,
+  bulkVendorError: "",
+  bulkVendorDone: 0,
+  bulkVendorTotal: 0,
+  bulkVendorFailed: [],
   vendorEditorOpen: false,
   vendorEditorTarget: null,
   vendorEditorTab: { type: "id" },
@@ -1824,6 +1835,197 @@ function captureVendorEditorTopFields() {
  * listeners. State changes (open/close/tab switch/bank add/remove)
  * call renderVendorsView() to repaint.
  */
+/**
+ * The names the placeholders get.
+ *
+ * They must be distinguishable in a dropdown that only shows "name /
+ * license", so a row of twenty identical "New vendor" entries would be
+ * useless. Numbered from the count already on file, so adding ten more
+ * next week continues the run rather than restarting it and producing a
+ * second "New vendor 1".
+ */
+function bulkVendorNames(count, prefix, startAt) {
+  const n = Math.max(1, Math.min(100, Math.floor(Number(count) || 0)));
+  const base = String(prefix || "").trim() || "New vendor";
+  const from = Math.max(1, Math.floor(Number(startAt) || 1));
+  const out = [];
+  for (let i = 0; i < n; i += 1) out.push(`${base} ${from + i}`);
+  return out;
+}
+
+/** How many of the existing vendors already use this prefix, so numbering continues. */
+function bulkVendorNextNumber(vendors, prefix) {
+  const base = (String(prefix || "").trim() || "New vendor").toLowerCase();
+  let highest = 0;
+  for (const v of vendors || []) {
+    const name = String(v?.name || "").trim().toLowerCase();
+    if (!name.startsWith(base + " ")) continue;
+    const tail = name.slice(base.length + 1).trim();
+    const num = Number(tail);
+    if (Number.isInteger(num) && num > highest) highest = num;
+  }
+  return highest + 1;
+}
+
+/** What to say when some of them did not make it. */
+function bulkVendorResultLine(made, failed) {
+  const head = made === 0
+    ? "No vendors were created."
+    : `Added ${made} vendor${made === 1 ? "" : "s"}.`;
+  if (!failed || !failed.length) return head;
+  const reasons = [...new Set(failed.map((f) => f.reason))];
+  const why = reasons.length === 1 ? reasons[0] : `${reasons.length} different problems`;
+  return `${head} ${failed.length} failed — ${why}.`;
+}
+
+function renderBulkVendorModal() {
+  if (!state.bulkVendorOpen) return "";
+  const count = state.bulkVendorCount ?? 10;
+  const prefix = state.bulkVendorPrefix ?? "New vendor";
+  const startAt = bulkVendorNextNumber(state.vendors, prefix);
+  const preview = bulkVendorNames(Math.min(count, 3), prefix, startAt);
+  const categoryOptions = (state.vendorCategories || [])
+    .map((c) => `<option value="${encodeAttr(c.id)}" ${String(c.id) === String(state.bulkVendorCategory || "") ? "selected" : ""}>${escapeHtml(c.name)}</option>`)
+    .join("");
+
+  const progress = state.bulkVendorBusy || state.bulkVendorDone
+    ? `<div class="pill" style="margin-top:10px">Created ${state.bulkVendorDone} of ${state.bulkVendorTotal}…</div>`
+    : "";
+  const errBlock = state.bulkVendorError
+    ? `<div class="pill" style="background:#fde2e1; color:#7c1d1c; margin-top:10px">${escapeHtml(state.bulkVendorError)}</div>`
+    : "";
+  const failedBlock = (state.bulkVendorFailed || []).length
+    ? `<div style="margin-top:10px; font-size:12px; color:var(--muted)">
+         Did not make it:
+         <ul style="margin:4px 0 0; padding-left:18px">
+           ${state.bulkVendorFailed.map((f) => `<li>${escapeHtml(f.name)} — ${escapeHtml(f.reason)}</li>`).join("")}
+         </ul>
+       </div>`
+    : "";
+
+  return `
+    <div class="modal-backdrop" data-action="bulk-close-bg">
+      <div class="modal-panel" data-stop-card-click style="max-width:520px">
+        <header style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--line)">
+          <h3 style="margin:0; font-size:18px">Add several vendors</h3>
+          <button type="button" class="ghost-button" data-action="bulk-close" aria-label="Close" style="font-size:18px">×</button>
+        </header>
+        <div style="flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:14px">
+          <p style="margin:0; color:var(--muted); font-size:13px">
+            Creates the rows now with a placeholder name so you can fill in the
+            real name, ID and bank later. They show as <strong>Incomplete</strong>
+            in the directory until they have a name, an ID and an IBAN — filter on
+            that to find them again.
+          </p>
+          <div style="display:grid; grid-template-columns:110px 1fr; gap:10px">
+            <label>How many
+              <input id="bulk-vendor-count" type="number" min="1" max="100" value="${encodeAttr(String(count))}" />
+            </label>
+            <label>Category
+              <select id="bulk-vendor-category">
+                <option value="">Choose a category…</option>
+                ${categoryOptions}
+              </select>
+            </label>
+            <label style="grid-column:1 / -1">Name them
+              <input id="bulk-vendor-prefix" value="${encodeAttr(prefix)}" placeholder="New vendor" />
+            </label>
+          </div>
+          <div style="font-size:12px; color:var(--muted)">
+            They will be called ${preview.map((n) => `<strong>${escapeHtml(n)}</strong>`).join(", ")}${count > 3 ? ", and so on" : ""}.
+          </div>
+          ${progress}
+          ${failedBlock}
+          ${errBlock}
+        </div>
+        <footer style="display:flex; justify-content:flex-end; gap:8px; padding:12px 18px; border-top:1px solid var(--line)">
+          <button type="button" class="secondary-button" data-action="bulk-close" ${state.bulkVendorBusy ? "disabled" : ""}>Cancel</button>
+          <button type="button" class="primary-button" data-action="bulk-create" ${state.bulkVendorBusy ? "disabled" : ""}>
+            ${state.bulkVendorBusy ? "Creating…" : `Create ${bulkVendorNames(count, prefix, startAt).length} vendors`}
+          </button>
+        </footer>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Create the placeholders.
+ *
+ * There is no bulk endpoint, so this is N calls — but four at a time
+ * rather than one after another, which is the difference between twenty
+ * vendors taking a moment and taking most of a minute. Each failure is
+ * kept with its reason and named in the modal; the ones that worked are
+ * kept, because losing nineteen good rows because the twentieth was
+ * refused would be worse.
+ */
+async function createVendorsBulk() {
+  const countEl = document.querySelector("#bulk-vendor-count");
+  const prefixEl = document.querySelector("#bulk-vendor-prefix");
+  const catEl = document.querySelector("#bulk-vendor-category");
+  const count = Number(countEl?.value || 0);
+  const prefix = prefixEl?.value || "New vendor";
+  const categoryId = catEl?.value || "";
+
+  state.bulkVendorCount = count;
+  state.bulkVendorPrefix = prefix;
+  state.bulkVendorCategory = categoryId;
+  state.bulkVendorError = "";
+  state.bulkVendorFailed = [];
+
+  if (!categoryId) {
+    state.bulkVendorError = "Pick a category — it decides which details each vendor is asked for.";
+    renderVendorsView();
+    return;
+  }
+  const names = bulkVendorNames(count, prefix, bulkVendorNextNumber(state.vendors, prefix));
+  if (!names.length) {
+    state.bulkVendorError = "How many? It has to be at least one.";
+    renderVendorsView();
+    return;
+  }
+
+  state.bulkVendorBusy = true;
+  state.bulkVendorTotal = names.length;
+  state.bulkVendorDone = 0;
+  renderVendorsView();
+
+  const made = [];
+  const failed = [];
+  const queue = names.slice();
+
+  const worker = async () => {
+    while (queue.length) {
+      const name = queue.shift();
+      try {
+        const created = await api("/api/vendors/", {
+          method: "POST",
+          body: JSON.stringify({ name, category_id: categoryId }),
+        });
+        made.push({ ...created, bank_accounts: created.bank_accounts || [] });
+      } catch (err) {
+        failed.push({ name, reason: (err && err.message) ? String(err.message) : "the server refused it" });
+      }
+      state.bulkVendorDone += 1;
+      // Repaint the count without rebuilding the whole view on every
+      // single response — the modal is the only thing that changed.
+      const pill = document.querySelector(".modal-panel .pill");
+      if (pill && state.bulkVendorBusy) pill.textContent = `Created ${state.bulkVendorDone} of ${state.bulkVendorTotal}…`;
+    }
+  };
+
+  await Promise.all([worker(), worker(), worker(), worker()]);
+
+  // Newest first, matching what createVendor does for a single one.
+  state.vendors = [...made.reverse(), ...state.vendors];
+  state.bulkVendorBusy = false;
+  state.bulkVendorFailed = failed;
+  state.bulkVendorOpen = failed.length > 0;   // stay open only to show what failed
+  state.bulkVendorDone = 0;
+  renderVendorsView();
+  showToast(bulkVendorResultLine(made.length, failed), failed.length ? "error" : "");
+}
+
 function renderVendorEditorModal() {
   if (!state.vendorEditorOpen) return "";
   const vendor = state.vendorEditorTarget;
@@ -2004,6 +2206,7 @@ function renderVendorsView() {
   els.viewRoot.innerHTML = `
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:18px;">
       <button class="cs-btn-ghost" type="button" data-action="load-vendors">Refresh</button>
+      <button class="cs-btn-ghost" type="button" data-action="open-bulk-vendors">+ Add Several</button>
       <button class="cs-btn" type="button" data-action="open-new-vendor">+ Add Vendor</button>
     </div>
 
@@ -2048,6 +2251,7 @@ function renderVendorsView() {
 
     ${renderPendingPanel("vendors")}
     ${renderVendorEditorModal()}
+    ${renderBulkVendorModal()}
   `;
 }
 
@@ -4578,6 +4782,24 @@ document.addEventListener("click", async (event) => {
   }
   if (veAction === "open-new-vendor") {
     openVendorEditor(null);
+    return;
+  }
+  if (veAction === "open-bulk-vendors") {
+    state.bulkVendorOpen = true;
+    state.bulkVendorError = "";
+    state.bulkVendorFailed = [];
+    renderVendorsView();
+    return;
+  }
+  if (veAction === "bulk-close"
+      || (veAction === "bulk-close-bg" && event.target.classList.contains("modal-backdrop"))) {
+    if (state.bulkVendorBusy) return;   // do not close mid-run
+    state.bulkVendorOpen = false;
+    renderVendorsView();
+    return;
+  }
+  if (veAction === "bulk-create") {
+    await createVendorsBulk();
     return;
   }
   if (veAction === "ve-trigger-upload") {
