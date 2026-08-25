@@ -28,7 +28,7 @@ import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import {
   moneyBar, postingStrip, stripTotals, bookingRows, campaignGaps, gapSummary,
-  pageIndex, money, moneyRound, shortDate, longDate, initials,
+  pageIndex, money, moneyRound, shortDate, longDate, initials, amountOrNull as pos,
   type Gap, type StripBucket, type BookingRow,
 } from '@/lib/campaign-page';
 
@@ -245,18 +245,36 @@ export function CampaignPage({
   // stored booking price, which for a per-line booking is only correct once
   // syncBookingPriceFromAds has run — so the top of the page and the list
   // underneath it could disagree for a round trip. Now they cannot.
+  //
+  // `breakdown` is the sum of what the CLIENT is charged per booking; `cost`
+  // is the sum of what the VENDORS take. They are not the same number and the
+  // bar used to be handed the first one under the second one's name.
   const rollup = useMemo(() => {
     let breakdown = 0;
-    let net = 0;
+    let cost = 0;
+    let anyCost = false;
     for (const b of bookings) {
       if (b.price != null) breakdown += b.price;
-      if (b.net != null) net += b.net;
+      if (b.net != null) { cost += b.net; anyCost = true; }
     }
-    return { breakdown, net, vendorCount: bookings.length };
+    // Null, not 0: a campaign where nobody has entered what the vendors take
+    // has an unknown cost, and calling it zero prints a full margin on work
+    // we have not costed.
+    return { breakdown, cost: anyCost ? cost : null, vendorCount: bookings.length };
   }, [bookings]);
+
+  // An override is a number somebody typed instead of the sum, so it stands
+  // in for the sum everywhere below — the bar, the margin and the figure.
+  const vendorCostOverride = pos((view as any)?.vendor_cost_override);
+  const vendorCost = vendorCostOverride ?? rollup.cost;
+
   const bar = useMemo(
-    () => moneyBar({ budget: (view as any)?.budget, vendorCost: rollup.breakdown }),
-    [view, rollup.breakdown],
+    () => moneyBar({
+      budget: (view as any)?.budget,
+      vendorCost,
+      breakdown: rollup.breakdown,
+    }),
+    [view, vendorCost, rollup.breakdown],
   );
 
   const strip = useMemo(
@@ -406,11 +424,29 @@ export function CampaignPage({
             </div>
           </div>
 
+          {/* Three numbers, and each one is a different question:
+              what the client pays, what the vendors take, what is left.
+              Breakdown sits beside Budget rather than replacing it, because
+              the two disagreeing is itself worth seeing. */}
           <div style={{ display: 'flex', gap: 30, flexWrap: 'wrap' }}>
-            <Fig k="Budget" v={moneyRound(bar.budget)} />
+            <Fig
+              k="Budget"
+              v={moneyRound(bar.budget)}
+              sub={bar.budgetFromBreakdown ? 'from the bookings' : undefined}
+            />
+            <Fig
+              k="Breakdown"
+              v={moneyRound(bar.breakdown)}
+              sub={
+                bar.breakdownVariance == null || bar.breakdownVariance === 0
+                  ? undefined
+                  : `${bar.breakdownVariance > 0 ? 'under' : 'over'} by ${moneyRound(Math.abs(bar.breakdownVariance))}`
+              }
+              bad={!!bar.breakdownVariance}
+            />
             <Fig k="Vendors cost" v={moneyRound(bar.vendorCost)} />
             <Fig
-              k="Net"
+              k="AQ net"
               v={moneyRound(bar.net)}
               sub={bar.marginRate == null ? undefined : `${bar.marginRate}%`}
               lead
@@ -444,7 +480,7 @@ export function CampaignPage({
                 flex: 1, display: 'flex', alignItems: 'center', padding: '0 12px',
                 fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden',
                 background: 'var(--aq-accent-light)', color: '#14603a',
-              }}>{moneyRound(bar.net)} net</span>
+              }}>{moneyRound(bar.net)} AQ</span>
             )}
           </div>
           <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', margin: '9px 0 0' }}>
@@ -688,15 +724,19 @@ export function CampaignPage({
                     total is how the money stops adding up with nobody able to
                     see where. */}
                 <F k="Vendors cost">
+                  {/* `computed` is the sum of the bookings' NETS — what the
+                      vendors take. Feeding it bar.vendorCost would feed the
+                      override back into itself and the field could never be
+                      cleared back to the sum. */}
                   <OverridableMoney
-                    computed={bar.vendorCost ?? 0}
+                    computed={rollup.cost ?? 0}
                     override={(view as any).vendor_cost_override}
                     onCommit={(v) => save('vendor_cost_override', v)}
                     canEdit={canEdit}
                     format={money}
                   />
                 </F>
-                <F k="Net">
+                <F k="AQ net">
                   <Val calc>
                     {money(bar.net)}{bar.marginRate == null ? '' : ` · ${bar.marginRate}%`}
                   </Val>

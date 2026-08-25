@@ -38,6 +38,13 @@ function pos(v: unknown): number | null {
   return n != null && n > 0 ? n : null;
 }
 
+/**
+ * The same reading of "a figure somebody actually entered", for callers
+ * outside this file. Anything blank, unparseable or zero comes back null so
+ * they do not have to invent their own rule and disagree with this one.
+ */
+export const amountOrNull = pos;
+
 export const DAY_MS = 86_400_000;
 
 export function money(v: number | null | undefined): string {
@@ -105,8 +112,16 @@ export function initials(name: unknown): string {
 // ── The money bar ───────────────────────────────────────────────────
 
 export interface MoneyBar {
+  /** What the campaign is worth to the client. Falls back to the breakdown. */
   budget: number | null;
+  /** True when `budget` came from adding the bookings up, not from a typed figure. */
+  budgetFromBreakdown: boolean;
+  /** What the vendors take — the sum of every booking's NET, not its price. */
   vendorCost: number | null;
+  /** What the client is charged, added up per booking. */
+  breakdown: number | null;
+  /** budget − breakdown. Non-zero means the breakdown does not add up to the budget. */
+  breakdownVariance: number | null;
   net: number | null;
   /** Net ÷ budget, as a percentage. Null when there is no revenue to divide by. */
   marginRate: number | null;
@@ -121,20 +136,49 @@ export interface MoneyBar {
 /**
  * What the bar draws.
  *
- * `marginRate` is null rather than 0 when there is no budget: a campaign
+ * Two different numbers were being called the same thing, so the bar was
+ * arithmetic that could not be wrong and still was:
+ *
+ *   price      — what the CLIENT is charged for that vendor's work
+ *   net_amount — what the VENDOR takes for doing it
+ *   aq_gross   — price − net_amount, what AQ keeps (028, generated column)
+ *
+ * The bar was fed the sum of PRICES and labelled it "vendors cost", so net
+ * came out as budget minus the client's own breakdown — a number that is
+ * near zero on any campaign whose bookings add up to its budget, which is
+ * every campaign entered correctly. Siraj: *"price is treated as net"*.
+ *
+ * The rest of the app never had this wrong: money-ledger bills the client on
+ * `price` and pays the vendor on `net_amount`. Only this bar disagreed.
+ *
+ * `marginRate` is null rather than 0 when there is no revenue: a campaign
  * nobody has priced has no margin, and printing "0%" says we made nothing on
  * work that might be very profitable.
  */
 export function moneyBar(input: {
   budget?: unknown;
+  /** Sum of the bookings' net_amount. What leaves the agency. */
   vendorCost?: unknown;
+  /** Sum of the bookings' price. What the client is billed, line by line. */
+  breakdown?: unknown;
 }): MoneyBar {
-  const budget = pos(input.budget);
+  const typedBudget = pos(input.budget);
   const vendorCost = pos(input.vendorCost);
+  const breakdown = pos(input.breakdown);
+
+  // A campaign whose bookings are priced but whose budget nobody typed still
+  // has revenue — it is sitting in the breakdown. Using it beats showing a
+  // margin of "unknown" next to a list of priced bookings.
+  const budget = typedBudget ?? breakdown;
+  const budgetFromBreakdown = typedBudget == null && breakdown != null;
+  const breakdownVariance =
+    typedBudget != null && breakdown != null ? typedBudget - breakdown : null;
 
   if (budget == null) {
     return {
-      budget: null, vendorCost, net: null, marginRate: null,
+      budget: null, budgetFromBreakdown: false, vendorCost,
+      breakdown, breakdownVariance,
+      net: null, marginRate: null,
       costPct: vendorCost == null ? 0 : 100,
       overspent: false,
       sentence: vendorCost == null
@@ -149,16 +193,23 @@ export function moneyBar(input: {
   const costPct = Math.max(0, Math.min(100, (cost / budget) * 100));
   const overspent = cost > budget;
 
+  const worth = budgetFromBreakdown
+    ? `${moneyRound(budget)} of bookings`
+    : `a ${moneyRound(budget)} budget`;
+
   return {
     budget,
+    budgetFromBreakdown,
     vendorCost,
+    breakdown,
+    breakdownVariance,
     net,
     marginRate: rate,
     costPct,
     overspent,
     sentence: overspent
-      ? `Vendors cost ${moneyRound(cost)}, which is more than the ${moneyRound(budget)} budget.`
-      : `Of a ${moneyRound(budget)} budget, ${moneyRound(cost)} goes to vendors and ${moneyRound(net)} is net.`,
+      ? `Vendors take ${moneyRound(cost)}, which is more than the ${moneyRound(budget)} this campaign is worth.`
+      : `Of ${worth}, ${moneyRound(cost)} goes to vendors and ${moneyRound(net)} is AQ's.`,
   };
 }
 

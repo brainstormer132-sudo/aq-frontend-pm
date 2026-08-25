@@ -20,13 +20,14 @@ import {
 } from './ui';
 import {
   money, initials, parseMoney, bulkResultLine, bookingSubtitle,
+  type BookingRow,
 } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 const UNDO_MS = 4000;
 
 const BOOKING_LABELS: Record<string, string> = {
-  price: 'Price', net_amount: 'Net', platform: 'Platform', ad_type: 'Ad type',
+  price: 'Client price', net_amount: 'Vendors cost', platform: 'Platform', ad_type: 'Ad type',
   vendor_payment_date: 'Paid on', insight_link: 'Insight link',
   insight_attached: 'Insight file', proof_of_posting_link: 'Proof link',
   proof_of_posting_attached: 'Proof file', vendor_id: 'Vendor',
@@ -60,7 +61,11 @@ export function CampaignBookings({
   task: PMTask;
   subtasks: PMTask[];
   adLinesBySubtask: Map<string, any[]>;
-  bookings: { id: string; name: string; [k: string]: any }[];
+  // Typed, not `[k: string]: any`. The loose index signature let `b.amount`
+  // — a field BookingRow has never had — typecheck as `any` and come back
+  // undefined, so every row read "no price yet" and every contract
+  // readiness check believed the booking was unpriced.
+  bookings: BookingRow[];
   role: WorkspaceRole | null;
   currentUserId: string;
   workspaceId: string;
@@ -284,7 +289,7 @@ export function CampaignBookings({
         const vendor = (vendors as any[]).find((v) => Number(v.id) === Number((sub as any).vendor_id)) ?? null;
         const bank = (banks as any[]).find((x) => Number(x.vendor_id) === Number((sub as any).vendor_id)) ?? null;
         const already = !!(sub as any).contract_request_id;
-        const readiness = vendorContractReadiness(sub, vendor, bank, b.amount ?? null);
+        const readiness = vendorContractReadiness(sub, vendor, bank, b.price ?? null);
         const requirements = vendorDataRequirements(sub, vendor);
 
         return (
@@ -330,9 +335,9 @@ export function CampaignBookings({
 
               <span style={{
                 fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
-                color: b.amount == null ? 'var(--aq-text-muted)' : undefined,
+                color: b.price == null ? 'var(--aq-text-muted)' : undefined,
               }}>
-                {b.amount == null ? 'no price yet' : money(b.amount)}
+                {b.price == null ? 'no price yet' : money(b.price)}
               </span>
             </div>
 
@@ -362,7 +367,7 @@ export function CampaignBookings({
                       carry prices they are the source and this only reports
                       them. Typing here was worse than useless: the next edit
                       to any line called syncBookingPriceFromAds and wiped it. */}
-                  <F k="Price">
+                  <F k="Client price">
                     {b.pricedPerLine ? (
                       <Val calc>{b.price == null ? '—' : money(b.price)} · from the {lines.length} ads below</Val>
                     ) : (
@@ -374,7 +379,7 @@ export function CampaignBookings({
                       />
                     )}
                   </F>
-                  <F k="Net">
+                  <F k="Vendors cost">
                     {b.pricedPerLine && b.net != null ? (
                       <Val calc>{money(b.net)} · added up from the ads</Val>
                     ) : (
@@ -386,7 +391,7 @@ export function CampaignBookings({
                       />
                     )}
                   </F>
-                  <F k="AQ gross">
+                  <F k="AQ net">
                     <Val calc>{
                       b.price != null && b.net != null ? money(b.price - b.net) : '—'
                     }</Val>

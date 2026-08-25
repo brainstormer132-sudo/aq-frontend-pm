@@ -2176,7 +2176,22 @@ export async function syncBookingPriceFromAds(subtaskId: string): Promise<number
   const lines = await fetchVendorAdLines(subtaskId);
   if (!lines.length) return null;
   const { amount } = totalsOf(lines);
-  await updateTaskFields(subtaskId, { price: amount } as any);
+
+  // Both sides, not just the price. 067 put a net on each ad, and writing
+  // only the price left the booking claiming the client's total against a
+  // vendor cost from before the ads existed — which is how AQ's margin came
+  // out of that booking wrong in every screen that reads the stored figures.
+  //
+  // A net of null on every line is "nobody has worked it out yet", which is
+  // not zero, so the booking's own net is left alone in that case.
+  const anyNet = lines.some((l: any) => l.net_amount != null);
+  const netSum = lines.reduce(
+    (sum: number, l: any) => sum + (Number(l.net_amount) || 0), 0);
+
+  await updateTaskFields(subtaskId, {
+    price: amount,
+    ...(anyNet ? { net_amount: netSum } : {}),
+  } as any);
   return amount;
 }
 
