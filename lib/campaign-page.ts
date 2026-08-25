@@ -870,3 +870,97 @@ export function docLabel(kind: unknown): string {
   const k = txt(kind);
   return DOC_LABELS[k] ?? (k ? k[0].toUpperCase() + k.slice(1) : '—');
 }
+
+/* ── Small human formats ────────────────────────────────────────── */
+
+/**
+ * A file size a person can read.
+ *
+ * The drawer printed raw bytes, so a 1.3 MB deck read as "1363148" — a number
+ * nobody can compare to the 10 MB limit it is being measured against.
+ */
+export function fileSize(bytes: unknown): string {
+  // An absent size is not a zero-byte file — one is unknown, the other is
+  // empty, and Number('') is 0 which would quietly conflate them.
+  if (bytes == null) return '';
+  const raw = typeof bytes === 'number' ? bytes : txt(bytes);
+  if (raw === '') return '';
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  const mb = n / (1024 * 1024);
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
+/**
+ * How long ago, without a clock being passed in.
+ *
+ * The only place in this file that reads the current time, and it is
+ * deliberate: a comment timestamp is never rendered on the server (the card
+ * only exists on the client), and threading `now` through every comment row
+ * to satisfy a rule about hydration would be noise. `nowMs` is still an
+ * argument so the tests can pin it.
+ */
+export function whenAgo(iso: unknown, nowMs?: number): string {
+  const t = Date.parse(txt(iso));
+  if (!Number.isFinite(t)) return '';
+  const now = nowMs ?? Date.now();
+  const secs = Math.max(0, Math.floor((now - t) / 1000));
+  if (secs < 45) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * What the client is currently being shown, and whether it is still true.
+ *
+ * "Published" on its own is not enough. The published copy is a snapshot: rows
+ * added, changed or deleted since then are not in it, so a sheet can be
+ * published and out of date at the same time, and the client is reading the
+ * old one. The drawer showed a timestamp — a timestamp cannot see a deletion.
+ */
+export function publishLine(input: {
+  publishedAt?: unknown;
+  rowCount: number;
+  publishedCount: number;
+}): { line: string; detail: string; stale: boolean } {
+  const rows = Math.max(0, Number(input.rowCount) || 0);
+  const published = Math.max(0, Number(input.publishedCount) || 0);
+  const ever = !!txt(input.publishedAt);
+
+  if (!ever) {
+    return {
+      line: rows ? `${rows} row${rows === 1 ? '' : 's'} · not published` : 'no rows yet',
+      detail: rows
+        ? 'The client cannot see any of this yet.'
+        : 'Nothing on the sheet yet. Booking a vendor adds their ads to it.',
+      stale: false,
+    };
+  }
+
+  if (rows === published) {
+    return {
+      line: `${published} row${published === 1 ? '' : 's'} · client is up to date`,
+      detail: 'What the client is reading matches what is here.',
+      stale: false,
+    };
+  }
+
+  const diff = rows - published;
+  return {
+    line: `${published} published · ${Math.abs(diff)} ${diff > 0 ? 'not sent' : 'removed since'}`,
+    detail: diff > 0
+      ? `The client is reading ${published} row${published === 1 ? '' : 's'}. ${diff} newer one${diff === 1 ? '' : 's'} ${diff === 1 ? 'is' : 'are'} not in it yet.`
+      : `The client is still reading ${published} row${published === 1 ? '' : 's'}, ${Math.abs(diff)} of which ${Math.abs(diff) === 1 ? 'has' : 'have'} been removed here.`,
+    stale: true,
+  };
+}

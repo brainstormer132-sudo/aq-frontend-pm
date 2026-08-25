@@ -7,7 +7,7 @@ import {
   useTask, useTaskSubtasks, useAdLinesForSubtasks, useTrackingRows,
   useLegacyVendors, useClients, useClientBrands, useWorkspaceProfiles,
   useTaskSources, useClientCategories, useTaskPlatforms, useContractRequests,
-  useTaskComments, useDocumentRequests, useServiceTypes,
+  useTaskComments, useDocumentRequests, useServiceTypes, usePublishedTrackingRows,
   updateTaskFields, markTaskCompleted, deleteTask, rollupCampaignMoney, displayName,
   AD_TYPES, AD_TYPE_NEEDS_DETAIL, APPROVAL_STAGES, TASK_STATUSES, labelFor,
   type WorkspaceRole,
@@ -17,6 +17,8 @@ import { CampaignBookings } from './campaign/CampaignBookings';
 import { CampaignPaperwork } from './campaign/CampaignPaperwork';
 import { CampaignVendorContracts } from './campaign/CampaignVendorContracts';
 import { CampaignWork } from './campaign/CampaignWork';
+import { CampaignTracking } from './campaign/CampaignTracking';
+import { CampaignActivity } from './campaign/CampaignActivity';
 import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
 } from './campaign/ui';
@@ -81,6 +83,7 @@ export function CampaignPage({
   const { comments, refetch: refetchComments } = useTaskComments(taskId);
   const { items: docRequests, refetch: refetchDocs } = useDocumentRequests(taskId);
   const { steps } = useServiceTypes(workspaceId);
+  const { rows: publishedRows } = usePublishedTrackingRows(taskId);
 
   const { brands } = useClientBrands(task?.client_id ?? null);
 
@@ -749,6 +752,15 @@ export function CampaignPage({
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
           />
 
+          <CampaignTracking
+            task={view as any}
+            rowCount={trackingRows.length}
+            publishedCount={(publishedRows as any[]).length}
+            role={role}
+            brandName={view.brand_name}
+            onChanged={async () => { await refetch(); await refetchTracking(); }}
+          />
+
           <CampaignBookings
             task={task}
             subtasks={shownSubtasks as any}
@@ -762,6 +774,15 @@ export function CampaignPage({
             profiles={profiles as any}
             opt={opt}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+          />
+          <CampaignActivity
+            task={task}
+            workspaceId={workspaceId}
+            currentUserId={currentUserId}
+            role={role}
+            profiles={profiles as any}
+            comments={comments as any}
+            onChanged={async () => { await refetchComments(); }}
           />
         </main>
       </div>

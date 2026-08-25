@@ -137,3 +137,136 @@ export function LengthField({ n, unit, canEdit, onCommit }: {
     </span>
   );
 }
+
+const TERMS = [
+  { v: 'split', l: 'Part before, rest after' },
+  { v: 'in_advance', l: 'All of it in advance' },
+  { v: 'on_delivery', l: 'All of it on delivery' },
+  { v: 'net_days', l: 'Days after delivery' },
+];
+
+/**
+ * When the vendor gets paid.
+ *
+ * Siraj: *"contracts for vendors are usually 50/50 pre or after after we input
+ * a date for example 30-90 days."* The terms only ever existed as prose inside
+ * the generated .docx, so the app could show a signed contract without being
+ * able to say what had been agreed or when the second half fell due.
+ *
+ * The second control changes meaning with the first — a percentage for a
+ * split, a number of days for net terms — rather than showing both greyed out.
+ */
+export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
+  terms: string | null | undefined;
+  splitPct: number | null | undefined;
+  netDays: number | null | undefined;
+  canEdit: boolean;
+  onCommit: (fields: {
+    payment_terms: string | null;
+    payment_split_pct: number | null;
+    payment_net_days: number | null;
+  }) => void;
+}) {
+  const t = terms ?? '';
+  if (!canEdit) {
+    return <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{termsLabel(t, splitPct, netDays)}</span>;
+  }
+
+  const set = (next: string) => {
+    // Switching terms clears the number that belonged to the old one — the
+    // pair check in 067 refuses a split percentage on net-days terms, and
+    // leaving it behind would show "60 days" on a 50/50 contract.
+    onCommit({
+      payment_terms: next || null,
+      payment_split_pct: next === 'split' ? (splitPct ?? 50) : null,
+      payment_net_days: next === 'net_days' ? (netDays ?? 30) : null,
+    });
+  };
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <select
+        className="aq-select"
+        aria-label="When the vendor is paid"
+        value={t}
+        onChange={(e) => set(e.target.value)}
+        style={{ fontSize: 12.5, padding: '5px 6px', width: 168 }}
+      >
+        <option value="">— terms not set —</option>
+        {TERMS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+      </select>
+
+      {t === 'split' && (
+        <SmallNumber
+          label="Percent paid up front"
+          value={splitPct ?? 50}
+          suffix="% up front"
+          min={1}
+          max={99}
+          onCommit={(n) => onCommit({
+            payment_terms: 'split', payment_split_pct: n, payment_net_days: null,
+          })}
+        />
+      )}
+      {t === 'net_days' && (
+        <SmallNumber
+          label="Days after delivery"
+          value={netDays ?? 30}
+          suffix="days"
+          min={1}
+          max={365}
+          onCommit={(n) => onCommit({
+            payment_terms: 'net_days', payment_split_pct: null, payment_net_days: n,
+          })}
+        />
+      )}
+    </span>
+  );
+}
+
+/** "50/50", "60 days after delivery" — what was agreed, in words. */
+export function termsLabel(
+  terms: string | null | undefined,
+  splitPct: number | null | undefined,
+  netDays: number | null | undefined,
+): string {
+  switch (terms) {
+    case 'split': {
+      const up = Number(splitPct ?? 50);
+      return `${up}/${100 - up} — ${up}% up front`;
+    }
+    case 'in_advance': return 'Paid in advance';
+    case 'on_delivery': return 'Paid on delivery';
+    case 'net_days': return `${netDays ?? 30} days after delivery`;
+    default: return 'Terms not set';
+  }
+}
+
+function SmallNumber({ label, value, suffix, min, max, onCommit }: {
+  label: string; value: number; suffix: string; min: number; max: number;
+  onCommit: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <input
+        className="aq-input"
+        aria-label={label}
+        inputMode="numeric"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const n = Math.round(Number(draft.trim()));
+          // Out of range goes back rather than through: the database would
+          // refuse it and the row would silently roll back anyway.
+          if (!Number.isFinite(n) || n < min || n > max) { setDraft(String(value)); return; }
+          if (n !== value) onCommit(n);
+        }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        style={{ width: 54, fontSize: 12.5, textAlign: 'right', padding: '5px 8px' }}
+      />
+      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>{suffix}</span>
+    </span>
+  );
+}

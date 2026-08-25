@@ -7,7 +7,7 @@ import {
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { Card, Note, Missing, inkButton } from './ui';
-import { LengthField, TrackRow } from './track';
+import { LengthField, TrackRow, TermsField, termsLabel } from './track';
 import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
@@ -141,6 +141,10 @@ export function CampaignVendorContracts({
           sub={[
             r.booking?.amount == null ? 'no price yet' : money(r.booking.amount),
             lengthLabel((r.sub as any).contract_length, (r.sub as any).contract_length_unit),
+            (r.sub as any).payment_terms
+              ? termsLabel((r.sub as any).payment_terms, (r.sub as any).payment_split_pct,
+                           (r.sub as any).payment_net_days)
+              : null,
           ].filter(Boolean).join(' · ')}
           detail={r.track.state === 'blocked'
             ? <Missing items={r.readiness.missing as any} />
@@ -158,6 +162,25 @@ export function CampaignVendorContracts({
                   was: {
                     contract_length: (r.sub as any).contract_length,
                     contract_length_unit: (r.sub as any).contract_length_unit,
+                  },
+                  rowName: r.name,
+                })}
+              />
+              <TermsField
+                canEdit={canEdit && r.track.state !== 'done'}
+                terms={(r.sub as any).payment_terms}
+                splitPct={(r.sub as any).payment_split_pct}
+                netDays={(r.sub as any).payment_net_days}
+                onCommit={(fields) => opt.setMany(r.sub.id, fields as any, {
+                  labels: {
+                    payment_terms: 'Payment terms',
+                    payment_split_pct: 'Payment terms',
+                    payment_net_days: 'Payment terms',
+                  },
+                  was: {
+                    payment_terms: (r.sub as any).payment_terms,
+                    payment_split_pct: (r.sub as any).payment_split_pct,
+                    payment_net_days: (r.sub as any).payment_net_days,
                   },
                   rowName: r.name,
                 })}

@@ -10,7 +10,7 @@
  * becoming the next 3,700-line file.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 export const SMALL_BTN: React.CSSProperties = {
   padding: '5px 11px', fontSize: 12.5, textDecoration: 'none',
@@ -322,7 +322,15 @@ export function SavingDot({ n }: { n: number }) {
   );
 }
 
-/** Several values from a list — platforms, mostly. Chips, not a stacked list of checkboxes. */
+/**
+ * Several values from a list — platforms, mostly.
+ *
+ * Was a row of chips, which wrapped to three lines on seven platforms and
+ * pushed everything under it down the page. Siraj: *"a drop down with a check
+ * depending on the platform is cleaner."* So it is a menu that stays one line
+ * shut, and the button says what is picked rather than "3 selected" — the
+ * names are the thing you are checking at a glance.
+ */
 export function MultiPick({ values, options, onChange, canEdit, label }: {
   values: string[];
   options: string[];
@@ -330,29 +338,99 @@ export function MultiPick({ values, options, onChange, canEdit, label }: {
   canEdit: boolean;
   label?: string;
 }) {
-  const set = new Set(values.map((v) => String(v)));
-  if (!canEdit) return <Val label={label}>{values.join(' · ') || '—'}</Val>;
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLSpanElement | null>(null);
+  const picked = (values ?? []).map((v) => String(v));
+  const set = new Set(picked);
+
+  // Click-away and Escape. Without these the menu stays open behind whatever
+  // you click next, which on a page of fields is most things.
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+
+  if (!canEdit) return <Val label={label}>{picked.join(' · ') || '—'}</Val>;
+
+  const summary = picked.length ? picked.join(' · ') : 'Choose platforms';
+
   return (
-    <span role="group" aria-label={label} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-      {options.map((o) => {
-        const on = set.has(o);
-        return (
-          <button
-            key={o}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onChange(on ? values.filter((v) => v !== o) : [...values, o])}
-            style={{
-              font: 'inherit', fontSize: 12.5, padding: '5px 11px', borderRadius: 999,
-              cursor: 'pointer',
-              border: `1px solid ${on ? 'var(--aq-text)' : 'var(--aq-border)'}`,
-              background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
-              color: on ? '#fff' : 'var(--aq-text-secondary)',
-            }}
-          >{o}</button>
-        );
-      })}
-      {!options.length && <Val label={label}>No platforms are set up yet</Val>}
+    <span ref={wrap} style={{ position: 'relative', display: 'block' }}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          minHeight: 32, padding: '6px 10px', borderRadius: 8, fontSize: 13,
+          border: '1px solid var(--aq-border)', background: 'var(--aq-bg-elevated)',
+          color: picked.length ? 'var(--aq-text)' : 'var(--aq-text-muted)',
+          font: 'inherit', cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <span style={{
+          flex: 1, minWidth: 0, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13,
+        }}>{summary}</span>
+        <span aria-hidden style={{ opacity: .5, fontSize: 11 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <span
+          role="listbox"
+          aria-multiselectable
+          aria-label={label}
+          style={{
+            position: 'absolute', zIndex: 30, top: 'calc(100% + 4px)', left: 0,
+            minWidth: '100%', maxHeight: 260, overflowY: 'auto',
+            display: 'flex', flexDirection: 'column',
+            border: '1px solid var(--aq-border)', borderRadius: 10,
+            background: 'var(--aq-bg-elevated)', boxShadow: 'var(--aq-shadow-lg)',
+            padding: 4,
+          }}
+        >
+          {options.map((o) => {
+            const on = set.has(o);
+            return (
+              <label
+                key={o}
+                role="option"
+                aria-selected={on}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 9,
+                  padding: '7px 9px', borderRadius: 7, fontSize: 13,
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                  background: on ? 'var(--aq-bg-sunken)' : 'transparent',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => onChange(on ? picked.filter((v) => v !== o) : [...picked, o])}
+                  style={{ width: 15, height: 15 }}
+                />
+                {o}
+              </label>
+            );
+          })}
+          {!options.length && (
+            <span style={{ padding: '7px 9px', fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+              No platforms are set up yet — Settings adds them.
+            </span>
+          )}
+        </span>
+      )}
     </span>
   );
 }
