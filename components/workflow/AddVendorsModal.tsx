@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { inkButton } from './campaign/ui';
 import {
   createVendorBatch, batchVendorTitle,
   MEDIA_TYPES, VENDOR_FORMATS, VENDOR_FORMAT_LABELS, formatIsTrackable,
@@ -358,11 +359,14 @@ export function AddVendorsModal({
             <button type="button" className="aq-btn aq-btn-ghost" onClick={onClose} disabled={busy}>
               Cancel
             </button>
+            {/* Ink, not the accent green. Green means a live state across this
+                app — a selected platform chip two rows up is green — and a green
+                button beside green chips makes the colour stop meaning anything. */}
             <button
               type="button"
-              className="aq-btn aq-btn-primary"
               onClick={handleCreate}
               disabled={busy || n < 1 || !priceValid}
+              style={inkButton(busy || n < 1 || !priceValid)}
             >
               {busy ? 'Creating…' : `Create ${n} vendor${n === 1 ? '' : 's'}`}
             </button>

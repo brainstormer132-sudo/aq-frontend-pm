@@ -13,7 +13,8 @@ import {
 } from '@/hooks/use-workflow';
 import { SearchablePicker } from './SearchablePicker';
 import { CampaignBookings } from './campaign/CampaignBookings';
-import { CampaignContracts } from './campaign/CampaignContracts';
+import { CampaignPaperwork } from './campaign/CampaignPaperwork';
+import { CampaignVendorContracts } from './campaign/CampaignVendorContracts';
 import { CampaignWork } from './campaign/CampaignWork';
 import { DateField } from './DateField';
 import {
@@ -509,13 +510,25 @@ export function CampaignPage({
             </Card>
           </section>
 
-          <CampaignContracts
+          <CampaignPaperwork
             task={task}
             client={currentClient}
             requests={requests as any}
             docRequests={docRequests as any}
             role={role}
             currentUserId={currentUserId}
+            today={today ?? ''}
+            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+          />
+
+          <CampaignVendorContracts
+            task={task}
+            subtasks={subtasks}
+            bookings={bookings}
+            client={currentClient}
+            role={role}
+            currentUserId={currentUserId}
+            today={today ?? ''}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
           />
 

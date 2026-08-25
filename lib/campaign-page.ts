@@ -705,3 +705,168 @@ export function requestStateLine(sub: {
   if (st === 'fulfilled') return num ? `done · ${num}` : 'done, but no number was recorded';
   return 'not requested yet';
 }
+
+/* ── Asked, then answered ───────────────────────────────────────── */
+
+export type TrackState = 'none' | 'waiting' | 'done' | 'blocked';
+
+export interface Track {
+  state: TrackState;
+  /** The pill: what this document is, in one or two words. */
+  badge: string;
+  /** The left bead. */
+  askedLabel: string;
+  /** The right bead. Empty when there is nothing to draw yet. */
+  answeredLabel: string;
+  /** How many whole days it has been waiting, or null when it is not waiting. */
+  waitingDays: number | null;
+}
+
+/** Whole days between two ISO dates. Never negative — a future ask is 0 days old. */
+export function daysBetween(fromIso: unknown, toIso: unknown): number | null {
+  const a = Date.parse(txt(fromIso));
+  const b = Date.parse(txt(toIso));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.max(0, Math.floor((b - a) / DAY_MS));
+}
+
+/**
+ * One document's journey: you ask, then somebody answers.
+ *
+ * The waiting time is the whole point of drawing it. An invoice requested
+ * eleven days ago and still unanswered is a different situation from one
+ * requested this morning, and the old card said "requested" for both.
+ */
+export function docTrack(
+  rows: DocLike[],
+  kind: string,
+  today: string,
+): Track {
+  const mine = (rows ?? []).filter(
+    (r) => txt((r as any).doc_kind) === kind && txt((r as any).status) !== 'cancelled',
+  );
+
+  const issued = mine.find((r) => txt((r as any).status) === 'issued');
+  if (issued) {
+    const num = txt((issued as any).document_number);
+    return {
+      state: 'done',
+      badge: num || 'Issued',
+      askedLabel: askedOn((issued as any).requested_at, today),
+      answeredLabel: `Issued ${shortDate((issued as any).issued_at, today)}`,
+      waitingDays: null,
+    };
+  }
+
+  const pending = mine.find((r) => txt((r as any).status) === 'pending');
+  if (pending) {
+    const days = daysBetween((pending as any).requested_at, today);
+    return {
+      state: 'waiting',
+      badge: days == null ? 'Waiting' : days === 0 ? 'Asked today' : `Waiting ${days} day${days === 1 ? '' : 's'}`,
+      askedLabel: askedOn((pending as any).requested_at, today),
+      answeredLabel: 'Not issued',
+      waitingDays: days,
+    };
+  }
+
+  return {
+    state: 'none',
+    badge: 'Not asked for',
+    askedLabel: 'Not asked for yet',
+    answeredLabel: '',
+    waitingDays: null,
+  };
+}
+
+function askedOn(iso: unknown, today: string): string {
+  const d = shortDate(iso, today);
+  return d === '—' ? 'Asked' : `Asked ${d}`;
+}
+
+/**
+ * The same journey for a contract request, whose columns are named differently
+ * and whose states are Legal's rather than finance's.
+ */
+export function contractTrack(
+  req: { status?: unknown; created_at?: unknown; generated_at?: unknown } | null,
+  today: string,
+  blockedReason?: string | null,
+): Track {
+  const reason = txt(blockedReason);
+  if (!req) {
+    return reason
+      ? { state: 'blocked', badge: reason, askedLabel: `${reason} — then this can be asked for`, answeredLabel: '', waitingDays: null }
+      : { state: 'none', badge: 'Ready to ask', askedLabel: 'Not asked for yet', answeredLabel: '', waitingDays: null };
+  }
+
+  const status = txt(req.status);
+  if (status === 'generated') {
+    return {
+      state: 'done', badge: 'Signed',
+      askedLabel: askedOn(req.created_at, today),
+      answeredLabel: `Signed ${shortDate(req.generated_at, today)}`,
+      waitingDays: null,
+    };
+  }
+  // Rejected and cancelled are not "in flight" — they are a reason to ask again.
+  if (status === 'rejected' || status === 'cancelled') {
+    return {
+      state: 'none', badge: status === 'rejected' ? 'Rejected' : 'Cancelled',
+      askedLabel: askedOn(req.created_at, today),
+      answeredLabel: 'Ask again', waitingDays: null,
+    };
+  }
+  const days = daysBetween(req.created_at, today);
+  return {
+    state: 'waiting',
+    badge: days == null ? 'With Legal' : days === 0 ? 'Sent today' : `With Legal ${days} day${days === 1 ? '' : 's'}`,
+    askedLabel: askedOn(req.created_at, today),
+    answeredLabel: 'Not back yet',
+    waitingDays: days,
+  };
+}
+
+/**
+ * The ask-everything button.
+ *
+ * Named for what it will actually do. "Request all contracts" on a campaign
+ * where two of five are blocked is a promise the button cannot keep, and the
+ * drawer's version quietly sent three and reported a number.
+ */
+export function askAllLabel(ready: number, blocked: number): string {
+  if (ready === 0) {
+    return blocked > 0
+      ? `Nothing ready — ${blocked} blocked`
+      : 'Every contract is asked for';
+  }
+  const head = ready === 1 ? "Ask for the 1 that's ready" : `Ask for the ${ready} that are ready`;
+  return blocked > 0 ? `${head} · ${blocked} blocked` : head;
+}
+
+/** "3 months", or nothing at all when the term was never recorded. */
+export function lengthLabel(n: unknown, unit: unknown): string {
+  // Not through txt(): it returns '' for a number, so a numeric 3 became ''.
+  const num = typeof n === 'number' ? n : Number(txt(n));
+  const u = txt(unit);
+  if (!Number.isFinite(num) || num <= 0 || !u) return '';
+  const singular = num === 1 ? u.replace(/s$/, '') : u;
+  return `${num} ${singular}`;
+}
+
+/** The document kinds, spelled the way a person writes them. */
+const DOC_LABELS: Record<string, string> = {
+  quotation: 'Quotation',
+  invoice: 'Invoice',
+  client: 'Client contract',
+  vendor: 'Vendor contract',
+};
+
+/**
+ * `labelFor` in use-workflow has no entry for the document kinds, so it
+ * returned them raw and the card read "quotation" and "invoice" in lowercase.
+ */
+export function docLabel(kind: unknown): string {
+  const k = txt(kind);
+  return DOC_LABELS[k] ?? (k ? k[0].toUpperCase() + k.slice(1) : '—');
+}

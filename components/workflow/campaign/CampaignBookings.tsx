@@ -6,7 +6,7 @@ import {
   updateTaskFields, updateTasksBulk, removeSubtask, syncBookingPriceFromAds,
   ensureTrackingRowsForBooking, isTrackableVendorCategory, vendorNeedsInsight,
   vendorDataRequirements, vendorContractReadiness, contractTally,
-  sendVendorContractRequest, sendVendorContractRequests,
+  sendVendorContractRequests,
   displayName, labelFor, AD_TYPES, TASK_STATUSES,
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -185,14 +185,6 @@ export function CampaignBookings({
     }
   });
 
-  const requestOne = (sub: PMTask) => run(async () => {
-    const vendor = (vendors as any[]).find((v) => Number(v.id) === Number((sub as any).vendor_id)) ?? null;
-    const bank = (banks as any[]).find((b) => Number(b.vendor_id) === Number((sub as any).vendor_id)) ?? null;
-    await sendVendorContractRequest({
-      subtask: sub, parent: task, vendor, bank, client, requestedBy: currentUserId,
-    });
-    setNotice(`Contract requested for ${vendor?.name ?? 'the vendor'}.`);
-  });
 
   const vendorOptions = useMemo(
     () => (vendors as any[]).map((v) => ({
@@ -229,32 +221,10 @@ export function CampaignBookings({
         }}>
           <strong style={{ fontSize: 12.5 }}>{selected.size} selected</strong>
 
-          <select
-            className="aq-select" aria-label="Set status on the selected bookings"
-            value="" disabled={busy} style={{ fontSize: 12.5, width: 150 }}
-            onChange={(e) => e.target.value && bulkEdit({ status: e.target.value } as any)}
-          >
-            <option value="">Set status…</option>
-            {[...TASK_STATUSES].map((st) => <option key={String(st)} value={String(st)}>{labelFor(String(st))}</option>)}
-          </select>
-
-          <select
-            className="aq-select" aria-label="Assign the selected bookings"
-            value="" disabled={busy} style={{ fontSize: 12.5, width: 160 }}
-            onChange={(e) => e.target.value && bulkEdit({ assignee_id: e.target.value } as any)}
-          >
-            <option value="">Assign to…</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>{displayName(p)}</option>
-            ))}
-          </select>
-
-          <DateField
-            aria-label="Due date for the selected bookings"
-            value={null}
-            onCommit={(v) => bulkEdit({ due_date: v } as any)}
-          />
-
+          {/* Status, assignee and a due date used to live here. Siraj: they were
+              never the reason anyone multi-selected bookings — asking for the
+              contracts was. Bulk-setting a status across ten vendors mostly
+              produced ten wrong statuses. */}
           {canRequestContract && (
             <button type="button" style={inkButton(busy)} disabled={busy} onClick={bulkRequestContracts}>
               Request {selected.size} contract{selected.size === 1 ? '' : 's'}
@@ -487,15 +457,10 @@ export function CampaignBookings({
                   }}
                 />
 
+                {/* Asking for the contract is not here any more — it is on the
+                    Vendor contracts card, where every vendor's stands together
+                    and one button asks for all of them. */}
                 <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 14 }}>
-                  {canRequestContract && !already && (
-                    <button
-                      type="button"
-                      style={inkButton(busy || !readiness.ready)}
-                      disabled={busy || !readiness.ready}
-                      onClick={() => requestOne(sub)}
-                    >Request the contract</button>
-                  )}
                   {canEdit && (
                     <button
                       type="button"
