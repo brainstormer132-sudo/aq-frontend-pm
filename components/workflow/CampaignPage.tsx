@@ -17,8 +17,11 @@ import { CampaignBookings } from './campaign/CampaignBookings';
 import { CampaignPaperwork } from './campaign/CampaignPaperwork';
 import { CampaignVendorContracts } from './campaign/CampaignVendorContracts';
 import { CampaignWork } from './campaign/CampaignWork';
-import { FailureBanner, SavingDot, UndoBar } from './campaign/ui';
+import {
+  FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
+} from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
+import { useRealtime } from '@/hooks/use-realtime';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import {
@@ -67,16 +70,16 @@ export function CampaignPage({
 }) {
   const { task, loading, refetch } = useTask(taskId);
   const { subtasks, refetch: refetchSubtasks } = useTaskSubtasks(taskId);
-  const { rows: trackingRows } = useTrackingRows(taskId);
+  const { rows: trackingRows, refetch: refetchTracking } = useTrackingRows(taskId);
   const { vendors } = useLegacyVendors();
   const { clients } = useClients();
   const { profiles } = useWorkspaceProfiles(workspaceId);
   const { items: taskSources } = useTaskSources(workspaceId);
   const { items: clientCategories } = useClientCategories(workspaceId);
   const { items: taskPlatforms } = useTaskPlatforms(workspaceId);
-  const { items: requests } = useContractRequests(workspaceId, taskId);
-  const { comments } = useTaskComments(taskId);
-  const { items: docRequests } = useDocumentRequests(taskId);
+  const { items: requests, refetch: refetchRequests } = useContractRequests(workspaceId, taskId);
+  const { comments, refetch: refetchComments } = useTaskComments(taskId);
+  const { items: docRequests, refetch: refetchDocs } = useDocumentRequests(taskId);
   const { steps } = useServiceTypes(workspaceId);
 
   const { brands } = useClientBrands(task?.client_id ?? null);
@@ -106,6 +109,40 @@ export function CampaignPage({
   // the server last sent, plus whatever is still in flight.
   const view = task ? opt.view(task as any) : null;
   const shownSubtasks = useMemo(() => opt.viewAll(subtasks as any), [opt, subtasks]);
+
+  /* ── Nobody should have to press refresh ───────────────────────── */
+  //
+  // Siraj: *"Quotation and invoice doesnt show it was asked until a refresh
+  // make sure everything in the task updates for the person and others
+  // without a refresh same thing for lines added."*
+  //
+  // 055 published only pm_tasks, so a quotation raised by somebody else, a
+  // contract coming back from Legal and an ad line added by a colleague were
+  // all invisible until the page was reloaded. 067 publishes the rest; these
+  // subscriptions are what listen to them.
+  //
+  // The refetches are the hooks' own, so a change made by anyone — including
+  // this person in another tab — lands the same way.
+  const refetchAll = React.useCallback(() => {
+    void refetch();
+    void refetchSubtasks();
+    void refetchDocs();
+    void refetchRequests();
+    void refetchTracking();
+    void refetchComments();
+  }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, refetchTracking, refetchComments]);
+
+  // The campaign row and everything hanging off it.
+  useRealtime({ table: 'pm_tasks', filter: `id=eq.${taskId}`, onChange: refetchAll });
+  useRealtime({ table: 'pm_tasks', filter: `parent_task_id=eq.${taskId}`, onChange: refetchAll });
+  useRealtime({ table: 'document_requests', filter: `pm_task_id=eq.${taskId}`, onChange: refetchAll });
+  useRealtime({ table: 'tracking_rows', filter: `task_id=eq.${taskId}`, onChange: refetchAll });
+  useRealtime({ table: 'comments', filter: `task_id=eq.${taskId}`, onChange: refetchAll });
+  // Ad lines belong to a SUBTASK, so there is no column here to filter on —
+  // the subscription is workspace-wide and the refetch is cheap and debounced
+  // by the hooks themselves.
+  useRealtime({ table: 'vendor_ad_lines', onChange: refetchAll });
+  useRealtime({ table: 'contract_requests', filter: `pm_task_id=eq.${taskId}`, onChange: refetchAll });
 
   // Today after mount, never during render — the server does not know what day
   // it is where you are, and a date that differs is a hydration mismatch.
@@ -523,7 +560,27 @@ export function CampaignPage({
                   </F>
                 )}
                 <F k="Platforms">
-                  <Val>{((view as any).platforms ?? []).join(' · ') || '—'}</Val>
+                  <MultiPick
+                    values={((view as any).platforms ?? []) as string[]}
+                    options={(taskPlatforms as any[]).map((p) => String(p.name ?? '')).filter(Boolean)}
+                    onChange={(next) => save('platforms', next)}
+                    canEdit={canEdit}
+                  />
+                </F>
+                {/* One date could not say when a campaign runs — only when it
+                    was due. Both are kept: the run is start → end, and the due
+                    date stays as the deadline everything else already sorts by. */}
+                <F k="Runs from">
+                  {canEdit
+                    ? <DateField aria-label="Runs from" value={(view as any).package_start_date}
+                        onCommit={(v) => save('package_start_date', v)} />
+                    : <Val>{longDate((view as any).package_start_date)}</Val>}
+                </F>
+                <F k="Runs to">
+                  {canEdit
+                    ? <DateField aria-label="Runs to" value={(view as any).package_end_date}
+                        onCommit={(v) => save('package_end_date', v)} />
+                    : <Val>{longDate((view as any).package_end_date)}</Val>}
                 </F>
                 <F k="Due">
                   {canEdit
@@ -560,27 +617,68 @@ export function CampaignPage({
                   />
                 </F>
                 <F k="Client paid">
-                  <Val>
-                    {[
-                      (view as any).client_payment_status,
-                      (view as any).client_payment_amount != null
-                        ? money(Number((view as any).client_payment_amount)) : null,
-                    ].filter(Boolean).join(' · ') || '—'}
-                  </Val>
+                  <Pick
+                    value={(view as any).client_payment_status}
+                    options={PAYMENT_STATES}
+                    onChange={(v) => save('client_payment_status', v)}
+                    canEdit={canEdit}
+                  />
+                </F>
+                <F k="Paid on">
+                  {canEdit
+                    ? <DateField aria-label="Paid on" value={(view as any).client_payment_date}
+                        onCommit={(v) => save('client_payment_date', v)} />
+                    : <Val>{longDate((view as any).client_payment_date)}</Val>}
+                </F>
+                <F k="Amount paid">
+                  <Text
+                    value={(view as any).client_payment_amount != null
+                      ? String((view as any).client_payment_amount) : ''}
+                    placeholder="0.00"
+                    onCommit={(v) => save('client_payment_amount', v === '' ? null : Number(v))}
+                    canEdit={canEdit}
+                  />
+                </F>
+                <F k="Breakdown">
+                  <Pick
+                    value={(view as any).quotation_breakdown}
+                    options={[
+                      { v: 'With Breakdown', l: 'With breakdown' },
+                      { v: 'Without Breakdown', l: 'Without breakdown' },
+                    ]}
+                    onChange={(v) => save('quotation_breakdown', v)}
+                    canEdit={canEdit}
+                  />
                 </F>
                 <F k="Quotation">
-                  <Val mono>{((view as any).quotation_numbers ?? []).join(', ') || '—'}</Val>
+                  <StringList
+                    values={((view as any).quotation_numbers ?? []) as string[]}
+                    onChange={(next) => save('quotation_numbers', next)}
+                    canEdit={canEdit}
+                    placeholder="QT-2026-118, then Enter"
+                  />
                 </F>
                 <F k="Invoice">
-                  <Val mono warn={!((view as any).invoice_numbers ?? []).length}>
-                    {((view as any).invoice_numbers ?? []).join(', ') || 'none yet'}
-                  </Val>
+                  <StringList
+                    values={((view as any).invoice_numbers ?? []) as string[]}
+                    onChange={(next) => save('invoice_numbers', next)}
+                    canEdit={canEdit}
+                    placeholder="INV-2026-004, then Enter"
+                  />
                 </F>
-                {/* Worked out from the bookings, never stored — so it cannot
-                    drift from the lines it came from. Drawn read-only for the
-                    same reason. */}
+                {/* Added up from the bookings, but not locked: Siraj asked for
+                    it to be automatic and still editable. An override says so
+                    on its face and offers the way back — a silently overruled
+                    total is how the money stops adding up with nobody able to
+                    see where. */}
                 <F k="Vendors cost">
-                  <Val calc>{money(bar.vendorCost)}{rollup.vendorCount ? ` · from ${rollup.vendorCount} bookings` : ''}</Val>
+                  <OverridableMoney
+                    computed={bar.vendorCost ?? 0}
+                    override={(view as any).vendor_cost_override}
+                    onCommit={(v) => save('vendor_cost_override', v)}
+                    canEdit={canEdit}
+                    format={money}
+                  />
                 </F>
                 <F k="Net">
                   <Val calc>
@@ -673,17 +771,58 @@ export function CampaignPage({
 
 /* ── Pieces ─────────────────────────────────────────────────────── */
 
+/**
+ * What the client's payment can be.
+ *
+ * The drawer offered three (pending / partial / paid), which could not
+ * describe a refund, a credit note, an adjustment, or a campaign that was
+ * never going to be invoiced at all — so those all sat as "pending" forever
+ * and the Dashboard chased them.
+ */
+const PAYMENT_STATES = [
+  { v: 'unpaid', l: 'Unpaid' },
+  { v: 'partial', l: 'Partial payment' },
+  { v: 'paid', l: 'Paid' },
+  { v: 'no_payment', l: 'No payment due' },
+  { v: 'refund', l: 'Refunded' },
+  { v: 'credit', l: 'Credit note' },
+  { v: 'adjustment', l: 'Adjustment' },
+];
+
 /** What each column is called when a save for it fails. */
 const FIELD_LABELS: Record<string, string> = {
-  budget: 'Budget', due_date: 'Due date', task_name: 'Campaign name',
-  client_id: 'Client', brand_id: 'Brand', brand_name: 'Brand',
-  source: 'Came from', client_category_id: 'Category', priority: 'Priority',
-  ad_type: 'Ad type', ad_type_custom: 'Which services', approval_stage: 'Approval',
-  status: 'Status', platforms: 'Platforms', invoice_no: 'Invoice number',
-  quotation_no: 'Quotation number', client_payment_status: 'Client paid',
-  contract_status: 'Contract status', contract_length: 'Contract length',
-  contract_length_unit: 'Contract length', price: 'Price', net_amount: 'Net',
-  vendor_id: 'Vendor', has_tracking: 'Tracking sheet',
+  budget: 'Budget',
+  due_date: 'Due date',
+  task_name: 'Campaign name',
+  client_id: 'Client',
+  brand_id: 'Brand',
+  brand_name: 'Brand',
+  source: 'Came from',
+  client_category_id: 'Category',
+  priority: 'Priority',
+  ad_type: 'Ad type',
+  ad_type_custom: 'Which services',
+  approval_stage: 'Approval',
+  status: 'Status',
+  platforms: 'Platforms',
+  invoice_no: 'Invoice number',
+  quotation_no: 'Quotation number',
+  client_payment_status: 'Client paid',
+  contract_status: 'Contract status',
+  contract_length: 'Contract length',
+  contract_length_unit: 'Contract length',
+  price: 'Price',
+  net_amount: 'Net',
+  vendor_id: 'Vendor',
+  has_tracking: 'Tracking sheet',
+  quotation_numbers: 'Quotation numbers',
+  invoice_numbers: 'Invoice numbers',
+  quotation_breakdown: 'Breakdown',
+  vendor_cost_override: 'Vendors cost',
+  client_payment_date: 'Paid on',
+  client_payment_amount: 'Amount paid',
+  package_start_date: 'Runs from',
+  package_end_date: 'Runs to',
 };
 
 const SMALL_BTN: React.CSSProperties = { padding: '5px 11px', fontSize: 12.5, textDecoration: 'none' };

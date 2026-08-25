@@ -321,3 +321,173 @@ export function SavingDot({ n }: { n: number }) {
     </span>
   );
 }
+
+/** Several values from a list — platforms, mostly. Chips, not a stacked list of checkboxes. */
+export function MultiPick({ values, options, onChange, canEdit, label }: {
+  values: string[];
+  options: string[];
+  onChange: (next: string[]) => void;
+  canEdit: boolean;
+  label?: string;
+}) {
+  const set = new Set(values.map((v) => String(v)));
+  if (!canEdit) return <Val label={label}>{values.join(' · ') || '—'}</Val>;
+  return (
+    <span role="group" aria-label={label} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {options.map((o) => {
+        const on = set.has(o);
+        return (
+          <button
+            key={o}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(on ? values.filter((v) => v !== o) : [...values, o])}
+            style={{
+              font: 'inherit', fontSize: 12.5, padding: '5px 11px', borderRadius: 999,
+              cursor: 'pointer',
+              border: `1px solid ${on ? 'var(--aq-text)' : 'var(--aq-border)'}`,
+              background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
+              color: on ? '#fff' : 'var(--aq-text-secondary)',
+            }}
+          >{o}</button>
+        );
+      })}
+      {!options.length && <Val label={label}>No platforms are set up yet</Val>}
+    </span>
+  );
+}
+
+/**
+ * A repeatable list of short strings — quotation and invoice numbers.
+ *
+ * A campaign is often quoted twice and invoiced in parts, which is why these
+ * are `text[]` columns rather than one box. The page could only display them.
+ */
+export function StringList({ values, onChange, canEdit, label, placeholder }: {
+  values: string[];
+  onChange: (next: string[]) => void;
+  canEdit: boolean;
+  label?: string;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState('');
+  const clean = (values ?? []).filter((v) => String(v ?? '').trim());
+  if (!canEdit) return <Val mono label={label}>{clean.join(', ') || '—'}</Val>;
+
+  const add = () => {
+    const v = draft.trim();
+    if (!v || clean.includes(v)) { setDraft(''); return; }
+    onChange([...clean, v]);
+    setDraft('');
+  };
+
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {clean.length > 0 && (
+        <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {clean.map((v) => (
+            <span key={v} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 12.5, padding: '4px 6px 4px 10px', borderRadius: 999,
+              border: '1px solid var(--aq-border)', background: 'var(--aq-bg-elevated)',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            }}>
+              {v}
+              <button
+                type="button"
+                aria-label={`Remove ${v}`}
+                onClick={() => onChange(clean.filter((x) => x !== v))}
+                style={{
+                  font: 'inherit', fontSize: 13, lineHeight: 1, border: 'none',
+                  background: 'none', cursor: 'pointer', color: 'var(--aq-text-muted)',
+                  padding: '0 3px',
+                }}
+              >×</button>
+            </span>
+          ))}
+        </span>
+      )}
+      <input
+        className="aq-input"
+        aria-label={label}
+        value={draft}
+        placeholder={placeholder ?? 'Type it and press Enter'}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={add}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); add(); }
+        }}
+        style={{ width: '100%', fontSize: 13 }}
+      />
+    </span>
+  );
+}
+
+/**
+ * A worked-out number you are still allowed to overrule.
+ *
+ * Siraj: *"vendors cost should be automatic but still not locked it can be
+ * edited."* So it shows the rollup until somebody types something, and then it
+ * shows what they typed — plus a line saying what the rollup would have said
+ * and a way back, because a silently overridden total is how the money stops
+ * adding up and nobody can see why.
+ */
+export function OverridableMoney({
+  computed, override, onCommit, canEdit, label, format,
+}: {
+  computed: number;
+  override: number | null | undefined;
+  onCommit: (v: number | null) => void;
+  canEdit: boolean;
+  label?: string;
+  format: (n: number) => string;
+}) {
+  const overridden = override != null;
+  const shown = overridden ? Number(override) : computed;
+  const [draft, setDraft] = useState(overridden ? String(override) : '');
+  useEffect(() => { setDraft(overridden ? String(override) : ''); }, [override, overridden]);
+
+  if (!canEdit) {
+    return <Val calc={!overridden} label={label}>{format(shown)}</Val>;
+  }
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <input
+        className="aq-input"
+        aria-label={label}
+        inputMode="decimal"
+        value={draft}
+        placeholder={format(computed)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const t = draft.trim();
+          if (!t) { if (overridden) onCommit(null); return; }
+          const n = Number(t.replace(/[, ]/g, ''));
+          if (!Number.isFinite(n) || n < 0) { setDraft(overridden ? String(override) : ''); return; }
+          if (n !== override) onCommit(n);
+        }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        style={{
+          width: '100%', fontSize: 13, fontVariantNumeric: 'tabular-nums',
+          borderStyle: overridden ? 'solid' : 'dashed',
+        }}
+      />
+      <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+        {overridden ? (
+          <>
+            Overruled. The bookings add up to {format(computed)}.{' '}
+            <button
+              type="button"
+              onClick={() => onCommit(null)}
+              style={{
+                font: 'inherit', fontSize: 11, border: 'none', background: 'none',
+                padding: 0, cursor: 'pointer', textDecoration: 'underline',
+                color: 'var(--aq-text-secondary)',
+              }}
+            >Use that instead</button>
+          </>
+        ) : 'Added up from the bookings. Type over it if it is wrong.'}
+      </span>
+    </span>
+  );
+}

@@ -6,8 +6,14 @@ import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
 const supabase = createClient();
 
+// The tables anything in this app subscribes to. Adding one here is only half
+// the job — it also has to be in the supabase_realtime publication, or the
+// subscription is created, accepted, and silently never fires. 055 published
+// pm_tasks; 067 published the rest of these.
 type TableName = 'pm_tasks' | 'tasks' | 'comments' | 'notifications' | 'projects'
-               | 'activity_log' | 'vendors' | 'subtasks';
+               | 'activity_log' | 'vendors' | 'subtasks'
+               | 'vendor_ad_lines' | 'document_requests' | 'contract_requests'
+               | 'tracking_rows' | 'task_comments' | 'task_attachments';
 
 interface UseRealtimeOptions {
   table: TableName;
