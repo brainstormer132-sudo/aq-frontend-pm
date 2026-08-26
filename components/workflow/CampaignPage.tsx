@@ -30,8 +30,9 @@ import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import {
   moneyBar, stripTotals, bookingRows, campaignGaps, gapSummary,
-  pageIndex, money, moneyRound, shortDate, longDate, initials, amountOrNull as pos,
-  type Gap, type BookingRow,
+  pageIndex, PAGE_SECTION_IDS, indexProgress, money, moneyRound, shortDate, longDate, initials,
+  amountOrNull as pos,
+  type Gap, type BookingRow, type IndexEntry,
 } from '@/lib/campaign-page';
 
 /**
@@ -307,7 +308,71 @@ export function CampaignPage({
     adsTotal: trackingRows.length,
     reports: (docRequests as any[]).length,
     comments: comments.length,
-  }), [bookings.length, requests, trackingRows.length, totals.Posted, docRequests, comments.length]);
+    // A booking that has no price, or no contract asked for, is the reason
+    // somebody opens this page. The index says so before you scroll to it.
+    bookingsUnready: bookings.filter((b) => b.price == null || b.contract === 'none').length,
+    // The campaign's own fields, judged by the same rules the "Needs
+    // answering" card uses — so the tick and the card can never disagree.
+    campaignMissing: gaps.filter((g) => g.anchor === '#fields').length,
+    trackingPublished: !!(view as any)?.tracking_published_at,
+    trackingStale: !!(view as any)?.tracking_published_at
+      && publishedRows.length !== trackingRows.length,
+    // Client contract, quotation, invoice — how many of the three are done.
+    paperworkTotal: 3,
+    paperworkDone:
+      ((view as any)?.contract_status === 'signed_attached' ? 1 : 0)
+      + (((view as any)?.quotation_numbers ?? []).length ? 1 : 0)
+      + (((view as any)?.invoice_numbers ?? []).length ? 1 : 0),
+  }), [bookings, requests, trackingRows.length, totals.Posted, docRequests,
+       comments.length, view, gaps, publishedRows.length]);
+
+  const progress = useMemo(() => indexProgress(index), [index]);
+
+  /* ── Where am I on the page ───────────────────────────────────── */
+  //
+  // The list down the left was seven pieces of static text: no hover, nothing
+  // saying which section you were looking at, and — worse — two of its links
+  // pointed at ids that have never existed, so clicking Reports or Comments
+  // did nothing whatsoever. Siraj: *"its bland and not usable"*.
+  //
+  // An observer rather than a scroll handler: it fires only when a section
+  // crosses the line, not on every pixel of every scroll.
+  const [here, setHere] = useState<string>('fields');
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const seen = new Map<string, number>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) seen.set(e.target.id, e.intersectionRatio);
+        // The section showing the most of itself wins. Picking "the first one
+        // intersecting" makes the highlight jitter between two neighbours
+        // whenever a short card sits above a long one.
+        let best = ''; let ratio = 0;
+        for (const [id, r] of seen) if (r > ratio) { best = id; ratio = r; }
+        if (best) setHere(best);
+      },
+      // Ignores the top 12% and bottom 55%, so "here" means the band you are
+      // actually reading rather than whatever is clipping the viewport edge.
+      { rootMargin: '-12% 0px -55% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] },
+    );
+    for (const id of PAGE_SECTION_IDS) {
+      const el = document.getElementById(id);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+    // Sections mount as their data arrives, so this re-runs when the counts move.
+  }, [index.length, bookings.length, trackingRows.length]);
+
+  const goTo = (anchor: string) => {
+    const el = document.getElementById(anchor.replace('#', ''));
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Move the keyboard as well as the eye, or tabbing after a jump carries
+    // on from the link rather than from where you have just landed.
+    el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: true });
+    setHere(el.id);
+  };
 
   if (loading || !task || !view) {
     return (
@@ -499,13 +564,18 @@ export function CampaignPage({
         display: 'grid', gridTemplateColumns: 'minmax(0, 194px) minmax(0, 1fr)',
         gap: 26, alignItems: 'start',
       }}>
-        <nav style={{ position: 'sticky', top: 16, display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <nav
+          aria-label="Sections of this campaign"
+          style={{ position: 'sticky', top: 16, display: 'flex', flexDirection: 'column', gap: 1 }}
+        >
+          <Progress done={progress.done} total={progress.total} line={progress.line} />
           {index.map((e) => (
-            <a key={e.key} href={e.anchor} style={IX}>
-              {e.flag && <i style={FLAG} aria-hidden />}
-              <span>{e.label}</span>
-              {e.count && <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--aq-text-muted)' }}>{e.count}</span>}
-            </a>
+            <IndexLink
+              key={e.key}
+              entry={e}
+              active={here === e.anchor.replace('#', '')}
+              onGo={goTo}
+            />
           ))}
           <p style={{
             fontSize: 11, color: 'var(--aq-text-muted)', padding: '12px 11px 0',
@@ -881,13 +951,159 @@ const FIELD_LABELS: Record<string, string> = {
 
 const SMALL_BTN: React.CSSProperties = { padding: '5px 11px', fontSize: 12.5, textDecoration: 'none' };
 
-const IX: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 9, padding: '8px 11px',
-  borderRadius: 9, fontSize: 13, color: 'var(--aq-text-secondary)', textDecoration: 'none',
-};
-const FLAG: React.CSSProperties = {
-  width: 6, height: 6, borderRadius: '50%', background: '#b45309', flex: '0 0 auto',
-};
+/**
+ * How far through, as a ring.
+ *
+ * The figure counts only the sections that have a finished state — Comments
+ * and Work do not, and including them would leave a fully settled campaign
+ * reading "6 of 8" forever. A progress figure that cannot reach its end is
+ * one nobody looks at twice.
+ */
+function Progress({ done, total, line }: { done: number; total: number; line: string }) {
+  const r = 17;
+  const circ = 2 * Math.PI * r;
+  const pct = total === 0 ? 0 : done / total;
+  const all = total > 0 && done === total;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 10px 14px' }}>
+      <svg width="42" height="42" viewBox="0 0 42 42" aria-hidden style={{ flex: '0 0 auto' }}>
+        <circle cx="21" cy="21" r={r} fill="none" stroke="var(--aq-border-light)" strokeWidth="5" />
+        <circle
+          cx="21" cy="21" r={r} fill="none"
+          stroke={all ? 'var(--aq-accent)' : 'var(--aq-text)'}
+          strokeWidth="5" strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={circ * (1 - pct)}
+          transform="rotate(-90 21 21)"
+          style={{ transition: 'stroke-dashoffset 320ms ease' }}
+        />
+      </svg>
+      <span>
+        <strong style={{
+          display: 'block', fontSize: 17, fontWeight: 800,
+          letterSpacing: '-0.02em', lineHeight: 1.1,
+          color: all ? 'var(--aq-accent)' : 'var(--aq-text)',
+        }}>{all ? 'Done' : line}</strong>
+        <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+          {all ? 'nothing outstanding' : 'settled'}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The marker in front of a section: ticked, next, still to do, or nothing.
+ *
+ * `none` draws an empty space of the same width rather than an empty circle.
+ * A circle says "not done yet", and Comments is not a job somebody has failed
+ * to finish. The width is held either way so the labels do not shuffle
+ * sideways as a campaign settles.
+ */
+function Step({ step, flag, tone }: {
+  step: IndexEntry['step'];
+  flag: boolean;
+  tone: { bg: string; fg: string; edge: string };
+}) {
+  const box: React.CSSProperties = {
+    width: 15, height: 15, borderRadius: '50%', flex: '0 0 auto',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 9, fontWeight: 800, lineHeight: 1,
+  };
+
+  if (step === 'none') return <i aria-hidden style={box} />;
+
+  if (step === 'done') {
+    return (
+      <i aria-hidden title="settled" style={{
+        ...box, background: 'var(--aq-accent-light)', color: '#14603a',
+      }}>✓</i>
+    );
+  }
+
+  if (step === 'next') {
+    return (
+      <i aria-hidden title="next" style={{
+        ...box, background: tone.bg, color: tone.fg,
+      }}>›</i>
+    );
+  }
+
+  // Still to do. A flagged one wears its tone so an amber section is visible
+  // from the ring downwards, not only from its own count.
+  return (
+    <i aria-hidden title="not settled" style={{
+      ...box,
+      background: 'transparent',
+      border: `1.5px dashed ${flag ? tone.edge : 'var(--aq-border)'}`,
+    }} />
+  );
+}
+
+/**
+ * One line of the index.
+ *
+ * Three states rather than one: resting, hovered, and the section you are
+ * looking at. The active one gets a solid left rail and its label goes to
+ * full ink — the rail rather than a filled background because the sidebar
+ * sits on the page ground, and a filled pill there reads as a button you
+ * have already pressed.
+ *
+ * It is a real <a href> underneath, so middle-click, ⌘-click and "copy link"
+ * all still work; the click handler only takes over to scroll smoothly and
+ * move focus with it.
+ */
+function IndexLink({ entry, active, onGo }: {
+  entry: IndexEntry;
+  active: boolean;
+  onGo: (anchor: string) => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const tone = TONE[entry.tone];
+
+  return (
+    <a
+      href={entry.anchor}
+      aria-current={active ? 'true' : undefined}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={(ev) => {
+        // Let a modified click do what the browser would.
+        if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+        ev.preventDefault();
+        onGo(entry.anchor);
+      }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9,
+        padding: '8px 11px 8px 10px',
+        borderRadius: 9, fontSize: 13, textDecoration: 'none',
+        borderLeft: `3px solid ${active ? 'var(--aq-text)' : 'transparent'}`,
+        background: active ? 'var(--aq-bg-elevated)'
+          : hover ? 'var(--aq-bg-hover)' : 'transparent',
+        color: active ? 'var(--aq-text)'
+          : entry.step === 'done' ? 'var(--aq-text-muted)'
+          : 'var(--aq-text-secondary)',
+        fontWeight: active ? 700 : entry.step === 'next' ? 600 : 500,
+        transition: 'background 120ms ease, color 120ms ease',
+      }}
+    >
+      <Step step={entry.step} flag={entry.flag} tone={tone} />
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {entry.label}
+      </span>
+      {entry.count && (
+        <span style={{
+          marginLeft: 'auto', fontSize: 11, fontWeight: 700,
+          padding: '1px 7px', borderRadius: 999,
+          fontVariantNumeric: 'tabular-nums',
+          background: entry.tone === 'grey' ? 'transparent' : tone.bg,
+          color: entry.tone === 'grey' ? 'var(--aq-text-muted)' : tone.fg,
+        }}>{entry.count}</span>
+      )}
+    </a>
+  );
+}
 
 function Dot() {
   return <span aria-hidden style={{ opacity: .4 }}>·</span>;

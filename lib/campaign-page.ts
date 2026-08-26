@@ -610,16 +610,53 @@ export function gapSummary(gaps: Gap[]): string {
 
 // ── The left index ──────────────────────────────────────────────────
 
+export type IndexStep = 'done' | 'next' | 'todo' | 'none';
+
 export interface IndexEntry {
   key: string;
   label: string;
+  /** An id that exists on the page. Every one of these is asserted by a test. */
   anchor: string;
   count: string;
-  /** Draws the amber dot. */
+  /** Draws the dot, in the tone below. Something here wants attention. */
   flag: boolean;
+  /** Which of the six tones the dot and the count take. */
+  tone: 'grey' | 'blue' | 'amber' | 'green' | 'red';
+  /**
+   * Where this section is in the run-through.
+   *
+   * `none` is the important one. Comments and Work have no state at which
+   * they are *finished* — a campaign with no comments is not a campaign with
+   * an outstanding job — so they carry no tick, no empty circle, and are not
+   * counted in the progress. Inventing a done state for them would make the
+   * ring say "6 of 8" on a campaign that is entirely settled, and a
+   * completion figure that never reaches the end is one nobody trusts twice.
+   */
+  step: IndexStep;
 }
 
-export function pageIndex(input: {
+/**
+ * The list down the left.
+ *
+ * Every anchor here has to be an id that something on the page actually
+ * renders, and for a while three of them were not: **Reports** pointed at
+ * `#reports` and **Comments** at `#comments`, neither of which has ever
+ * existed, so both did nothing at all when clicked. **Contracts** counted the
+ * vendor contract requests and then jumped you to the bookings list instead
+ * of to the contracts card. And two whole sections — the client's paperwork,
+ * and the non-vendor work — were not in the list, so there was no way to
+ * reach them except scrolling.
+ *
+ * The ids on the page are: fields · bookings · contracts · vendor-contracts ·
+ * work · tracking · activity. Seven sections, seven reachable, and the test
+ * beside this file checks that set against this list rather than trusting
+ * anybody to keep them in step by hand.
+ */
+export const PAGE_SECTION_IDS = [
+  'fields', 'bookings', 'contracts', 'vendor-contracts', 'work', 'tracking', 'activity',
+] as const;
+
+export interface PageIndexInput {
   bookings: number;
   contractsWaiting: number;
   contractsTotal: number;
@@ -628,27 +665,124 @@ export function pageIndex(input: {
   adsTotal: number;
   reports: number;
   comments: number;
-}): IndexEntry[] {
-  return [
-    { key: 'campaign', label: 'Campaign', anchor: '#fields', count: '', flag: false },
-    { key: 'bookings', label: 'Bookings', anchor: '#bookings', count: String(input.bookings), flag: false },
+  /** Client contract, quotation and invoice — how many of the three are settled. */
+  paperworkDone?: number;
+  paperworkTotal?: number;
+  /** Bookings with no price or no contract yet. */
+  bookingsUnready?: number;
+  /** Fields on the campaign itself that something downstream is waiting on. */
+  campaignMissing?: number;
+  /** The client is reading the sheet, and what they are reading is current. */
+  trackingPublished?: boolean;
+  trackingStale?: boolean;
+}
+
+export function pageIndex(input: PageIndexInput): IndexEntry[] {
+  const paperTotal = input.paperworkTotal ?? 3;
+  const paperDone = Math.min(input.paperworkDone ?? 0, paperTotal);
+  const unready = input.bookingsUnready ?? 0;
+  const missing = input.campaignMissing ?? 0;
+
+  // `settled` is null where the section has no such thing — see IndexEntry.step.
+  const rows: (Omit<IndexEntry, 'step'> & { settled: boolean | null })[] = [
     {
-      key: 'contracts', label: 'Contracts', anchor: '#bookings',
-      count: String(input.contractsTotal), flag: input.contractsWaiting > 0,
+      key: 'campaign', label: 'Campaign', anchor: '#fields', count: '',
+      flag: missing > 0,
+      tone: missing > 0 ? 'amber' : 'green',
+      settled: missing === 0,
     },
-    // Both point at the tracking card. The posting strip that used to sit at
-    // #ads is gone — Siraj: *"i dont need this"* — but how many ads have gone
-    // out is still worth a line in the index, and the sheet is where you go
-    // to do something about it.
-    { key: 'tracking', label: 'Tracking sheet', anchor: '#tracking', count: String(input.trackingRows), flag: false },
+    {
+      key: 'bookings', label: 'Bookings', anchor: '#bookings',
+      count: String(input.bookings),
+      // A campaign with no bookings at all is not yet a problem; one with
+      // bookings that are missing a price or a contract is.
+      flag: unready > 0,
+      tone: unready > 0 ? 'amber' : input.bookings > 0 ? 'green' : 'grey',
+      settled: input.bookings > 0 && unready === 0,
+    },
+    {
+      key: 'paperwork', label: 'Paperwork', anchor: '#contracts',
+      count: `${paperDone}/${paperTotal}`,
+      flag: paperDone < paperTotal,
+      tone: paperDone >= paperTotal ? 'green' : paperDone > 0 ? 'amber' : 'grey',
+      settled: paperDone >= paperTotal,
+    },
+    {
+      key: 'contracts', label: 'Vendor contracts', anchor: '#vendor-contracts',
+      count: String(input.contractsTotal),
+      flag: input.contractsWaiting > 0,
+      tone: input.contractsWaiting > 0 ? 'amber'
+        : input.contractsTotal > 0 ? 'green' : 'grey',
+      settled: input.contractsTotal > 0 && input.contractsWaiting === 0,
+    },
+    {
+      key: 'work', label: 'Work & reports', anchor: '#work',
+      count: String(input.reports), flag: false,
+      tone: input.reports > 0 ? 'blue' : 'grey',
+      // No finished state: a campaign with no reports requested is not
+      // waiting on one.
+      settled: null,
+    },
+    {
+      key: 'tracking', label: 'Tracking sheet', anchor: '#tracking',
+      count: String(input.trackingRows),
+      flag: !!input.trackingStale,
+      tone: input.trackingStale ? 'amber'
+        : input.trackingPublished ? 'green'
+        : input.trackingRows > 0 ? 'blue' : 'grey',
+      // Rows existing is not the job. The client reading a current sheet is.
+      settled: !!input.trackingPublished && !input.trackingStale,
+    },
     {
       key: 'ads', label: 'Ads posted', anchor: '#tracking',
       count: `${input.adsPosted}/${input.adsTotal}`,
       flag: input.adsTotal > 0 && input.adsPosted === 0,
+      tone: input.adsTotal === 0 ? 'grey'
+        : input.adsPosted === 0 ? 'amber'
+        : input.adsPosted >= input.adsTotal ? 'green' : 'blue',
+      settled: input.adsTotal > 0 && input.adsPosted >= input.adsTotal,
     },
-    { key: 'reports', label: 'Reports', anchor: '#reports', count: String(input.reports), flag: false },
-    { key: 'comments', label: 'Comments', anchor: '#comments', count: String(input.comments), flag: false },
+    {
+      key: 'comments', label: 'Comments', anchor: '#activity',
+      count: String(input.comments), flag: false,
+      tone: input.comments > 0 ? 'blue' : 'grey',
+      settled: null,
+    },
   ];
+
+  // The first unsettled one is what to do next. Exactly one row can be
+  // `next`, so the marker points somewhere rather than at four places at once.
+  let nextTaken = false;
+  return rows.map(({ settled, ...rest }) => {
+    let step: IndexStep;
+    if (settled === null) step = 'none';
+    else if (settled) step = 'done';
+    else if (!nextTaken) { step = 'next'; nextTaken = true; }
+    else step = 'todo';
+    return { ...rest, step };
+  });
+}
+
+/**
+ * How far through the campaign is, for the ring.
+ *
+ * Counts only the sections that have a finished state, so a campaign with
+ * everything done reads "6 of 6" rather than stalling at "6 of 8" forever on
+ * two sections that were never going anywhere.
+ */
+export function indexProgress(entries: IndexEntry[]): {
+  done: number; total: number; pct: number; line: string;
+} {
+  const counted = (entries ?? []).filter((e) => e.step !== 'none');
+  const done = counted.filter((e) => e.step === 'done').length;
+  const total = counted.length;
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  return {
+    done, total, pct,
+    line: total === 0 ? 'nothing to settle'
+      : done === total ? 'all settled'
+      : `${done} of ${total}`,
+  };
 }
 
 // ── Field groups ────────────────────────────────────────────────────
