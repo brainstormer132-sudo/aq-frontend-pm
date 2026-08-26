@@ -11,9 +11,10 @@ const supabase = createClient();
 /**
  * A campaign's own page.
  *
- * The drawer on /dashboard/workflow stays — it is still the right thing for a
- * subtask and for a four-second fix from All Tasks. This is where you go to
- * work on a campaign, and it is a link you can send somebody.
+ * The only place a campaign is edited. The slide-over drawer this replaced is
+ * gone; /dashboard/workflow?task=<id> now resolves the id to its campaign and
+ * redirects here, so every link in every notification already sent still
+ * works — including the ones pointing at a booking rather than a campaign.
  */
 export default function CampaignRoute({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

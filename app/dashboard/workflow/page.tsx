@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { withBase } from '@/lib/paths';
 import {
   useMyRole, useServiceTypes, useWorkspaceProfiles, useWorkflowTasks,
-  usePmTaskCampaignRollup, displayName, needsRealName,
+  usePmTaskCampaignRollup, displayName, needsRealName, resolveCampaignId,
 } from '@/hooks/use-workflow';
 import { useRealtime } from '@/hooks/use-realtime';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
@@ -14,7 +14,6 @@ import { SkeletonShell, SkeletonRows } from '@/components/Skeleton';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
 import { MarketingInbox } from '@/components/workflow/MarketingInbox';
-import { TaskDetailPanel } from '@/components/workflow/TaskDetailPanel';
 // NotificationsBell removed from topbar 2026-05-17 — the inbox is now an
 // item in the left sidebar (see WorkflowSidebar "Inbox" entry) which opens
 // a searchable list view backed by the same notifications + mentions data.
@@ -56,8 +55,19 @@ export default function WorkflowPage() {
   const [bootError, setBootError] = useState('');
   const [booting, setBooting] = useState(true);
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  // Slide-over task detail panel — null when closed.
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  /**
+   * Open a task — which now means going to its campaign's page.
+   *
+   * The slide-over is gone. Every one of these callers can hand us a SUBTASK
+   * id (a booking from the Dashboard, a contract row, a notification), and
+   * the campaign page renders campaigns, so the id is resolved to the
+   * campaign it belongs to before we navigate. The booking is on that page.
+   */
+  const openTask = useCallback(async (id: string) => {
+    const campaignId = await resolveCampaignId(id);
+    if (!campaignId) { setToast({ kind: 'err', text: 'That campaign no longer exists.' }); return; }
+    router.push(withBase(`/dashboard/campaign/${campaignId}`));
+  }, [router]);
   // Set when a CRM deal is won: the New Task form opens filled in from it.
   const [taskPrefill, setTaskPrefill] = useState<CampaignPrefill | null>(null);
 
@@ -88,13 +98,21 @@ export default function WorkflowPage() {
       }
       const params = new URLSearchParams(window.location.search);
 
-      // Deep link: /dashboard/workflow?task=<uuid> opens that task in the
-      // slide-over panel. This is the link format the DB notification
-      // triggers write (migrations 037 / 038), so an Ops user notified of a
-      // quotation request can actually click through to it. Read it BEFORE
-      // the invite branch below, which replaceState's the query string away.
+      // Deep link: /dashboard/workflow?task=<uuid>. This is the format the DB
+      // notification triggers write (037 / 038 / 041 / 048) and they point at
+      // SUBTASK ids, which is why the slide-over had to exist. It is resolved
+      // to the campaign and redirected instead of being rendered here — the
+      // links in every notification already sent keep working, and land
+      // somewhere better than they used to. Read BEFORE the invite branch
+      // below, which replaceState's the query string away.
       const taskParam = params.get('task');
-      if (taskParam && UUID_RE.test(taskParam)) setOpenTaskId(taskParam);
+      if (taskParam && UUID_RE.test(taskParam)) {
+        const campaignId = await resolveCampaignId(taskParam);
+        if (campaignId) {
+          router.replace(withBase(`/dashboard/campaign/${campaignId}`));
+          return;
+        }
+      }
 
       const inviteToken = params.get('invite') || localStorage.getItem('aq_pending_invite');
       if (inviteToken) {
@@ -168,22 +186,6 @@ export default function WorkflowPage() {
     setView('dashboard');
     setInitialViewSet(true);
   }, [role, initialViewSet]);
-
-  // Keep the URL in step with the open panel, so a task can be linked to and
-  // a refresh doesn't reopen something the user already closed. Gated on
-  // `booting` — otherwise this would strip ?task= off the URL before the
-  // (async) boot effect has had a chance to read it.
-  useEffect(() => {
-    if (booting || typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    if (openTaskId) params.set('task', openTaskId);
-    else params.delete('task');
-    const qs = params.toString();
-    const next = `${window.location.pathname}${qs ? `?${qs}` : ''}`;
-    if (next !== window.location.pathname + window.location.search) {
-      window.history.replaceState({}, '', next);
-    }
-  }, [openTaskId, booting]);
 
   // Auto-dismiss toast.
   useEffect(() => {
@@ -319,7 +321,7 @@ export default function WorkflowPage() {
             userName={user.full_name}
             role={role}
             profiles={profiles}
-            onOpenTask={(id) => setOpenTaskId(id)}
+            onOpenTask={(id) => { void openTask(id); }}
             onGoTo={(v) => setView(v)}
           />
         )}
@@ -340,7 +342,7 @@ export default function WorkflowPage() {
         )}
 
         {view === 'inbox' && (
-          <InboxView onOpenTask={(id) => setOpenTaskId(id)} />
+          <InboxView onOpenTask={(id) => { void openTask(id); }} />
         )}
 
         {view === 'crm' && (
@@ -385,7 +387,7 @@ export default function WorkflowPage() {
           <ContractsView
             workspaceId={workspace.id}
             role={role}
-            onOpenTask={(id) => setOpenTaskId(id)}
+            onOpenTask={(id) => { void openTask(id); }}
             /* Already loaded — so a contract row can name its campaign
                instead of repeating the brand. No extra query. */
             tasks={allTasks}
@@ -396,7 +398,7 @@ export default function WorkflowPage() {
         {/* One search box over every client and vendor; the same panels
             narrowed to whoever is picked. Read-only — it writes nothing. */}
         {view === 'data' && (
-          <DataView workspaceId={workspace.id} onOpenTask={(id) => setOpenTaskId(id)} />
+          <DataView workspaceId={workspace.id} onOpenTask={(id) => { void openTask(id); }} />
         )}
 
         {/* Campaigns and the rollup are already loaded for the Dashboard
@@ -429,18 +431,6 @@ export default function WorkflowPage() {
         {view === 'settings' && (
           <SettingsView workspaceId={workspace.id} role={role} />
         )}
-
-        {/* Slide-over task detail */}
-        <TaskDetailPanel
-          taskId={openTaskId}
-          workspaceId={workspace.id}
-          currentUserId={user.id}
-          role={role}
-          profiles={profiles}
-          serviceTypeSteps={steps}
-          onClose={() => setOpenTaskId(null)}
-          onChanged={scheduleSync}
-        />
 
         {/* Floating toast */}
         {toast && (

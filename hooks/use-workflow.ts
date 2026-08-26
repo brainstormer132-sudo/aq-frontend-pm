@@ -2929,6 +2929,87 @@ export function useTaskComments(taskId: string | null) {
   return { comments, loading, refetch: fetch };
 }
 
+/**
+ * Comments and files across a campaign AND every booking under it.
+ *
+ * The drawer was the only screen that could open a subtask, so anything said
+ * or attached against a booking lived at an id nothing else fetched. Deleting
+ * the drawer without this would not have lost that data — it would have made
+ * it invisible, which is worse, because nobody would know to go looking.
+ *
+ * One query with `.in()` rather than one per booking: a campaign with twenty
+ * vendors would otherwise open twenty-one requests to draw one card.
+ */
+/**
+ * The campaign a task id belongs to.
+ *
+ * A subtask id resolves to its parent; a campaign id resolves to itself; an
+ * id for a row that no longer exists resolves to null.
+ *
+ * This exists because the DB notification triggers deep-link to SUBTASK ids
+ * — `/dashboard/workflow?task=<id>` on a request subtask (038), on a contract
+ * request's `pm_task_id` (041) and on a field-set request (048). The drawer
+ * was the only screen that could render a subtask, so those links had nowhere
+ * else to go. Now they resolve to the campaign the subtask sits on, which is
+ * the screen the work is actually done on.
+ */
+export async function resolveCampaignId(taskId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('pm_tasks')
+    .select('id, parent_task_id')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (error) { logSbError('resolveCampaignId', error, { taskId }); return null; }
+  if (!data) return null;
+  return (data as any).parent_task_id ?? (data as any).id ?? null;
+}
+
+export function useCommentsForTasks(taskIds: string[]) {
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  // Sorted and joined so the identity is the SET, not the array — a parent
+  // whose subtasks arrive in a different order must not refetch forever.
+  const key = [...new Set(taskIds.filter(Boolean))].sort().join(',');
+
+  const fetch = useCallback(async () => {
+    const ids = key ? key.split(',') : [];
+    if (!ids.length) { setComments([]); setLoading(false); return; }
+    const rows = await selectAllRows<TaskComment>('useCommentsForTasks', () =>
+      supabase
+        .from('comments')
+        .select('*, author:profiles(id, full_name, avatar_url)')
+        .in('task_id', ids)
+        .order('created_at', { ascending: true }));
+    setComments(rows);
+    setLoading(false);
+  }, [key]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { comments, loading, refetch: fetch };
+}
+
+export function useAttachmentsForTasks(taskIds: string[]) {
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const key = [...new Set(taskIds.filter(Boolean))].sort().join(',');
+
+  const fetch = useCallback(async () => {
+    const ids = key ? key.split(',') : [];
+    if (!ids.length) { setAttachments([]); setLoading(false); return; }
+    const rows = await selectAllRows<TaskAttachment>('useAttachmentsForTasks', () =>
+      supabase
+        .from('task_attachments')
+        .select('*')
+        .in('task_id', ids)
+        .order('created_at', { ascending: false }));
+    setAttachments(rows);
+    setLoading(false);
+  }, [key]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { attachments, loading, refetch: fetch };
+}
+
 export async function addComment(taskId: string, authorId: string, content: string) {
   const { error } = await supabase
     .from('comments')

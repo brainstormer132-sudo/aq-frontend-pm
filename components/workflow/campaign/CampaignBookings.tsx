@@ -4,8 +4,10 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   useLegacyVendors, useVendorAdLines,
   updateTaskFields, updateTasksBulk, removeSubtask, syncBookingPriceFromAds,
-  ensureTrackingRowsForBooking, isTrackableVendorCategory, vendorNeedsInsight,
+  ensureTrackingRowsForBooking, shouldTrackVendorOnSheet, vendorNeedsInsight,
+  vendorCategoryKey,
   vendorDataRequirements, vendorContractReadiness, contractTally,
+  vendorSubtaskTitle, isAutoVendorTitle,
   sendVendorContractRequests,
   displayName, labelFor, AD_TYPES, TASK_STATUSES,
   type PMTask, type WorkspaceRole,
@@ -26,8 +28,15 @@ import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 const UNDO_MS = 4000;
 
+/** The campaign's platform list as one string, for a tracking row's prefill. */
+function campaignPlatformText(t: any): string | null {
+  const list = t?.platforms ?? [];
+  return Array.isArray(list) && list.length ? list.join(', ') : null;
+}
+
 const BOOKING_LABELS: Record<string, string> = {
   price: 'Client price', net_amount: 'Vendors cost', platform: 'Platform', ad_type: 'Ad type',
+  title: 'Name', assignee_id: 'Assigned to', due_date: 'Due date',
   vendor_payment_date: 'Paid on', insight_link: 'Insight link',
   insight_attached: 'Insight file', proof_of_posting_link: 'Proof link',
   proof_of_posting_attached: 'Proof file', vendor_id: 'Vendor',
@@ -185,23 +194,71 @@ export function CampaignBookings({
       rowName: subtaskById.get(subtaskId)?.title ?? undefined,
     });
 
+  /**
+   * Assign a vendor, and put their ads on the client's sheet.
+   *
+   * This read `vendor.category ?? vendor.service_type` — and `LegacyVendor`
+   * has neither. The column is `vendor_category`, which `useLegacyVendors`
+   * backfills from the 029 `category_id` FK before anything sees it. The
+   * vendor object is typed `any` at the find() above, so nothing caught it:
+   * the expression was `undefined` for every vendor in the book, the gate was
+   * therefore always false, and **picking a vendor never once put a row on
+   * the tracking sheet or switched it on**. `service_type` is not even on
+   * this table — it belongs to `managed_vendors`.
+   *
+   * Gated on shouldTrackVendorOnSheet, not isTrackableVendorCategory. They
+   * differ on the unknown case and the difference matters: an uncategorised
+   * vendor should reach the sheet, because a row nobody wanted is deleted in
+   * a second and a row that never appeared is invisible. That is the drawer's
+   * rule and it was arrived at the hard way.
+   */
   const changeVendor = (sub: PMTask, vendorId: string | null) => run(async () => {
     const id = vendorId ? Number(vendorId) : null;
     await updateTaskFields(sub.id, { vendor_id: id } as any);
+    if (id == null) return;
+
     const vendor = (vendors as any[]).find((v) => Number(v.id) === id);
-    if (vendor && isTrackableVendorCategory(vendor.category ?? vendor.service_type)) {
-      await ensureTrackingRowsForBooking({
-        parent_task_id: task.id,
-        subtask_id: sub.id,
-        vendor_name: String(vendor.name ?? ''),
-        platform: (sub as any).platform ?? (task as any).platform ?? null,
-        price_excl: (sub as any).price ?? null,
-      });
-      if (!(task as any).has_tracking) {
-        await updateTaskFields(task.id, { has_tracking: true } as any);
-      }
-      setNotice(`${vendor.name} is on the tracking sheet.`);
+    if (!vendor) return;
+
+    // Name the booking after the vendor, unless somebody has named it
+    // themselves. Same update as vendor_id in the drawer, and for the same
+    // reason: the contract request copies the title into its details, so a
+    // rename afterwards arrives too late to reach the document.
+    const brand = (task as any).brand_name ?? null;
+    if (isAutoVendorTitle((sub as any).title, brand)) {
+      await updateTaskFields(sub.id, {
+        title: vendorSubtaskTitle(brand, String(vendor.name ?? '')),
+      } as any);
     }
+
+    const category = vendorCategoryKey(vendor);
+
+    if (!shouldTrackVendorOnSheet(category)) {
+      // Say so out loud. Silence here is what made this look broken even
+      // before the bug: the vendor saved, nothing appeared, and there was no
+      // way to tell whether it had failed or been skipped on purpose.
+      setNotice(`${vendor.name} was not added to the tracking sheet — ${category ?? 'that'} work is not tracked there. Add a row by hand if you need one.`);
+      return;
+    }
+
+    // The flag first: a sheet that is switched off used to swallow the rows.
+    if (!(task as any).has_tracking) {
+      await updateTaskFields(task.id, { has_tracking: true } as any);
+    }
+    const added = await ensureTrackingRowsForBooking({
+      parent_task_id: task.id,
+      subtask_id: sub.id,
+      vendor_name: String(vendor.name ?? ''),
+      // Prefill from whatever is already known, the campaign included.
+      platform: (sub as any).platform ?? campaignPlatformText(task) ?? null,
+      type_of_ad: (sub as any).ad_type ?? (task as any).ad_type ?? null,
+      profile_link: vendor.platforms ?? null,
+      product: (task as any).brand_name ?? null,
+      price_excl: (sub as any).price ?? null,
+    } as any);
+    setNotice(added > 0
+      ? `${added} ${added === 1 ? 'row' : 'rows'} added to the tracking sheet — one per ad.`
+      : `${vendor.name}'s ads are already on the tracking sheet.`);
   });
 
 
@@ -209,7 +266,7 @@ export function CampaignBookings({
     () => (vendors as any[]).map((v) => ({
       value: String(v.id),
       label: String(v.name ?? ''),
-      hint: String(v.category ?? v.service_type ?? ''),
+      hint: String(vendorCategoryKey(v) ?? ''),
     })),
     [vendors],
   );
@@ -410,6 +467,34 @@ export function CampaignBookings({
                       b.price != null && b.net != null ? money(b.price - b.net) : '—'
                     }</Val>
                   </F>
+                  {/* Three fields the drawer had on a booking and the page
+                      did not, so a booking could not be named, assigned or
+                      dated without going back to the old panel. */}
+                  <F k="Name">
+                    <Text
+                      canEdit={canEdit}
+                      value={(sub as any).title ?? ''}
+                      placeholder="Named after the vendor"
+                      onCommit={(v) => saveOn(sub.id, 'title', v || null, (sub as any).title)}
+                    />
+                  </F>
+                  <F k="Assigned to">
+                    <Pick
+                      canEdit={canEdit}
+                      value={(sub as any).assignee_id}
+                      options={(profiles as any[]).map((p) => ({ v: p.id, l: displayName(p) }))}
+                      onChange={(v) => saveOn(sub.id, 'assignee_id', v, (sub as any).assignee_id)}
+                    />
+                  </F>
+                  <F k="Due">
+                    {canEdit
+                      ? <DateField
+                          aria-label="Due"
+                          value={(sub as any).due_date}
+                          onCommit={(v) => saveOn(sub.id, 'due_date', v, (sub as any).due_date)}
+                        />
+                      : <Val>{(sub as any).due_date ?? '—'}</Val>}
+                  </F>
                   <F k="Platform">
                     <Pick
                       canEdit={canEdit}
@@ -435,7 +520,7 @@ export function CampaignBookings({
                         />
                       : <Val>{(sub as any).vendor_payment_date ?? '—'}</Val>}
                   </F>
-                  {vendorNeedsInsight(vendor?.category ?? vendor?.service_type) && (
+                  {vendorNeedsInsight(vendorCategoryKey(vendor)) && (
                     <>
                       <F k="Insight link">
                         <Text

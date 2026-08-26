@@ -7,7 +7,7 @@ import {
 } from '@/hooks/use-workflow';
 
 /**
- * Section embedded in TaskDetailPanel that shows + manages
+ * Who is on a task: shows and manages
  * `task_members` for this task.
  */
 export function TaskAssignees({

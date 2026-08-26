@@ -7,9 +7,11 @@ import {
   useTask, useTaskSubtasks, useAdLinesForSubtasks, useTrackingRows,
   useLegacyVendors, useClients, useClientBrands, useWorkspaceProfiles,
   useTaskSources, useClientCategories, useTaskPlatforms, useContractRequests,
-  useTaskComments, useDocumentRequests, useServiceTypes, usePublishedTrackingRows,
+  useCommentsForTasks, useAttachmentsForTasks,
+  useDocumentRequests, useServiceTypes, usePublishedTrackingRows,
   updateTaskFields, markTaskCompleted, deleteTask, displayName,
-  AD_TYPES, AD_TYPE_NEEDS_DETAIL, APPROVAL_STAGES, TASK_STATUSES, labelFor,
+  AD_TYPES, AD_TYPE_NEEDS_DETAIL, APPROVAL_STAGES, TASK_STATUSES,
+  CONTRACT_STATUSES, labelFor,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { SearchablePicker } from './SearchablePicker';
@@ -28,6 +30,7 @@ import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
+import { closerKey, closerFields, closerOptions } from '@/lib/sales-closer';
 import {
   moneyBar, stripTotals, bookingRows, campaignGaps, gapSummary,
   pageIndex, PAGE_SECTION_IDS, indexProgress, money, moneyRound, shortDate, longDate, initials,
@@ -58,9 +61,12 @@ import {
  * cost and net — are drawn read-only, so it is obvious which numbers a person
  * is expected to type.
  *
- * The drawer stays for subtasks and for a four-second fix from All Tasks. This
- * is where you go to work on a campaign, not where you are forced to go to
- * change one field.
+ * The drawer is now deleted. Everything it could do that this could not has
+ * moved here — the campaign's name and brief, the closer, the client contract
+ * status, a booking's assignee, due date and name, a report's priority and
+ * platforms — and comments and files left against a BOOKING are shown on this
+ * page with the booking named on them, rather than being stranded at an id no
+ * screen fetches.
  */
 export function CampaignPage({
   taskId, workspaceId, role, currentUserId, backHref = '/dashboard/workflow',
@@ -81,7 +87,16 @@ export function CampaignPage({
   const { items: clientCategories } = useClientCategories(workspaceId);
   const { items: taskPlatforms } = useTaskPlatforms(workspaceId);
   const { items: requests, refetch: refetchRequests } = useContractRequests(workspaceId, taskId);
-  const { comments, refetch: refetchComments } = useTaskComments(taskId);
+  // The campaign AND everything under it. Comments and files stored against
+  // a booking were only ever reachable through the drawer; with the drawer
+  // gone they would have become invisible rather than deleted, which is the
+  // worse of the two because nothing would say so.
+  const activityIds = useMemo(
+    () => [taskId, ...subtasks.map((s) => s.id)],
+    [taskId, subtasks],
+  );
+  const { comments, refetch: refetchComments } = useCommentsForTasks(activityIds);
+  const { attachments, refetch: refetchFiles } = useAttachmentsForTasks(activityIds);
   const { items: docRequests, refetch: refetchDocs } = useDocumentRequests(taskId);
   const { steps } = useServiceTypes(workspaceId);
   const { rows: publishedRows } = usePublishedTrackingRows(taskId);
@@ -134,14 +149,20 @@ export function CampaignPage({
     void refetchRequests();
     void refetchTracking();
     void refetchComments();
-  }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, refetchTracking, refetchComments]);
+    void refetchFiles();
+  }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, refetchTracking,
+      refetchComments, refetchFiles]);
 
   // The campaign row and everything hanging off it.
   useRealtime({ table: 'pm_tasks', filter: `id=eq.${taskId}`, onChange: refetchAll });
   useRealtime({ table: 'pm_tasks', filter: `parent_task_id=eq.${taskId}`, onChange: refetchAll });
   useRealtime({ table: 'document_requests', filter: `pm_task_id=eq.${taskId}`, onChange: refetchAll });
   useRealtime({ table: 'tracking_rows', filter: `task_id=eq.${taskId}`, onChange: refetchAll });
-  useRealtime({ table: 'comments', filter: `task_id=eq.${taskId}`, onChange: refetchAll });
+  // No filter: a comment on a BOOKING carries the booking's id, not the
+  // campaign's, so filtering on task_id here would miss exactly the rows
+  // this card exists to keep visible.
+  useRealtime({ table: 'comments', onChange: refetchAll });
+  useRealtime({ table: 'task_attachments', onChange: refetchAll });
   // Ad lines belong to a SUBTASK, so there is no column here to filter on —
   // the subscription is workspace-wide and the refetch is cheap and debounced
   // by the hooks themselves.
@@ -326,6 +347,17 @@ export function CampaignPage({
   }), [bookings, requests, trackingRows.length, totals.Posted, docRequests,
        comments.length, view, gaps, publishedRows.length]);
 
+  // Named after the vendor where there is one, so a comment says which
+  // booking it was left on rather than showing a uuid.
+  const subtaskNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of bookings) m.set(b.id, b.name);
+    for (const st of subtasks) {
+      if (!m.has(st.id)) m.set(st.id, (st as any).title || 'a booking');
+    }
+    return m;
+  }, [bookings, subtasks]);
+
   const progress = useMemo(() => indexProgress(index), [index]);
 
   /* ── Where am I on the page ───────────────────────────────────── */
@@ -363,6 +395,57 @@ export function CampaignPage({
     // Sections mount as their data arrives, so this re-runs when the counts move.
   }, [index.length, bookings.length, trackingRows.length]);
 
+  /* ── Fields that are not one column ──────────────────────────── */
+  //
+  // `pm_tasks` has no `client_name`. The page was reading `view.client_name`
+  // in the masthead and as the read-only client value, and there is no such
+  // column on the table — it exists on `contract_requests` — so both rendered
+  // blank on every campaign, for every user without edit rights.
+  const clientName = currentClient?.company_name ?? null;
+
+  // Picking a client invalidates the brand: brands belong to clients, and
+  // leaving brand_id pointing at the previous client's brand is how a
+  // contract goes out naming somebody else's brand. The category follows the
+  // client when the client carries one, and never blanks a manual choice.
+  const changeClient = (v: string | null) => {
+    const c = (clients as any[]).find((x) => String(x.id) === String(v ?? ''));
+    opt.setMany(taskId, {
+      client_id: v || null,
+      legacy_client_id: c ? (c.cr_number || c.id) : null,
+      brand_id: null,
+      brand_name: null,
+      ...(c?.client_category_id ? { client_category_id: c.client_category_id } : {}),
+    }, {
+      labels: {
+        client_id: 'Client', legacy_client_id: 'Client',
+        brand_id: 'Brand', brand_name: 'Brand', client_category_id: 'Category',
+      },
+      was: {
+        client_id: view?.client_id,
+        legacy_client_id: (view as any)?.legacy_client_id,
+        brand_id: (view as any)?.brand_id,
+        brand_name: (view as any)?.brand_name,
+        client_category_id: (view as any)?.client_category_id,
+      },
+    });
+  };
+
+  // `brand_name` is a real column and nothing syncs it from `brand_id` —
+  // there is no trigger; I checked every migration. The page was writing only
+  // the id, and `clientContractReadiness` tests the NAME, so a brand picked
+  // here left the client contract blocked with no way on this screen to
+  // unblock it, while the masthead went on showing the old brand.
+  const changeBrand = (v: string | null) => {
+    const b = (brands as any[]).find((x) => String(x.id) === String(v ?? ''));
+    opt.setMany(taskId, {
+      brand_id: v || null,
+      brand_name: b?.brand_name ?? null,
+    }, {
+      labels: { brand_id: 'Brand', brand_name: 'Brand' },
+      was: { brand_id: (view as any)?.brand_id, brand_name: (view as any)?.brand_name },
+    });
+  };
+
   const goTo = (anchor: string) => {
     const el = document.getElementById(anchor.replace('#', ''));
     if (!el) return;
@@ -374,16 +457,32 @@ export function CampaignPage({
     setHere(el.id);
   };
 
-  if (loading || !task || !view) {
+  /**
+   * A booking is not a campaign.
+   *
+   * Nothing here has ever guarded on `parent_task_id`, so handing this page a
+   * subtask id drew that subtask as though it were a campaign — its title in
+   * the masthead, its price as the budget, and a Bookings card listing
+   * nothing. The drawer used to absorb those ids; it is gone, so the guard
+   * lives here. Stale links, bookmarks and any notification that slipped
+   * past the redirect land on the campaign the booking belongs to.
+   */
+  useEffect(() => {
+    const parent = (task as any)?.parent_task_id;
+    if (parent) router.replace(`/dashboard/campaign/${parent}`);
+  }, [task, router]);
+
+  if (loading || !task || !view || (task as any).parent_task_id) {
     return (
       <div style={{ padding: 40, color: 'var(--aq-text-muted)' }}>
-        {loading ? 'Loading the campaign…' : 'That campaign is not here.'}
+        {loading || (task as any)?.parent_task_id
+          ? 'Loading the campaign…'
+          : 'That campaign is not here.'}
       </div>
     );
   }
 
   const name = view.task_name || view.title || 'Untitled campaign';
-  const drawerHref = `${backHref}?task=${task.id}`;
 
   return (
     <div style={{ background: 'var(--aq-bg)', minHeight: '100vh' }}>
@@ -402,9 +501,6 @@ export function CampaignPage({
         <span style={{ color: 'var(--aq-text)' }}>{name}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <SavingDot n={opt.inFlight} />
-          <Link href={drawerHref} className="aq-btn aq-btn-secondary" style={SMALL_BTN}>
-            Open the old panel
-          </Link>
           {canEdit && task.status !== 'done' && (
             <button
               type="button"
@@ -475,7 +571,7 @@ export function CampaignPage({
               marginTop: 9, fontSize: 13.5, color: 'var(--aq-text-secondary)',
             }}>
               <StagePill stage={view.stage} />
-              <span>{[view.brand_name, (view as any).client_name].filter(Boolean).join(' · ') || '—'}</span>
+              <span>{[view.brand_name, clientName].filter(Boolean).join(' · ') || '—'}</span>
               <Dot />
               <span>
                 due <strong style={{ color: 'var(--aq-text)' }}>
@@ -600,6 +696,25 @@ export function CampaignPage({
             <Card title="The campaign" hint={canEdit ? 'click any value to change it' : 'read only'}>
               <Group title="Who it's for" />
               <Fields>
+                {/* The campaign's own name. The page could show it and not
+                    change it, which meant a typo in a campaign title was a
+                    reason to go back to the drawer. Both columns move
+                    together — the app reads task_name and falls back to
+                    title, and leaving the two disagreeing is how a campaign
+                    is called one thing here and another on the Dashboard. */}
+                <F k="Name">
+                  <Text
+                    canEdit={canEdit}
+                    value={(view as any).task_name ?? view.title ?? ''}
+                    placeholder="Campaign name"
+                    onCommit={(v) => opt.setMany(taskId, {
+                      task_name: v || null, title: v || null,
+                    }, {
+                      labels: { task_name: 'Campaign name', title: 'Campaign name' },
+                      was: { task_name: (view as any).task_name, title: view.title },
+                    })}
+                  />
+                </F>
                 <F k="Client">
                   {canEdit ? (
                     <SearchablePicker
@@ -608,18 +723,18 @@ export function CampaignPage({
                         hint: c.cr_number ? `CR ${c.cr_number}` : null,
                       }))}
                       value={view.client_id}
-                      onChange={(v) => save('client_id', v || null)}
+                      onChange={changeClient}
                       placeholder="Search clients…"
                       emptyLabel="— No client —"
                     />
-                  ) : <Val>{(view as any).client_name ?? '—'}</Val>}
+                  ) : <Val>{clientName ?? '—'}</Val>}
                 </F>
                 <F k="Brand">
                   {canEdit ? (
                     <SearchablePicker
                       options={(brands as any[]).map((b) => ({ value: b.id, label: b.brand_name }))}
                       value={(view as any).brand_id}
-                      onChange={(v) => save('brand_id', v || null)}
+                      onChange={changeBrand}
                       disabled={!view.client_id}
                       placeholder={view.client_id ? 'Search brands…' : 'Pick a client first'}
                       emptyLabel="— No brand —"
@@ -650,6 +765,33 @@ export function CampaignPage({
                     canEdit={canEdit}
                   />
                 </F>
+                {/* Who closed it. Three columns behind one picker, and
+                    closerFields() always returns all three — writing only
+                    the one that changed leaves a row with two closers and
+                    the CHECK constraint rejects the save. */}
+                <F k="Closed by">
+                  <Pick
+                    value={closerKey(view as any) || null}
+                    options={closerOptions(profiles as any, vendors as any, view as any)
+                      .map((o) => ({ v: o.key, l: o.label }))}
+                    onChange={(v) => {
+                      const f = closerFields(v ?? '');
+                      opt.setMany(taskId, f as any, {
+                        labels: {
+                          sales_closer_id: 'Closed by',
+                          sales_closer_vendor_id: 'Closed by',
+                          sales_closer_influencer: 'Closed by',
+                        },
+                        was: {
+                          sales_closer_id: (view as any).sales_closer_id,
+                          sales_closer_vendor_id: (view as any).sales_closer_vendor_id,
+                          sales_closer_influencer: (view as any).sales_closer_influencer,
+                        },
+                      });
+                    }}
+                    canEdit={canEdit}
+                  />
+                </F>
                 <F k="Priority">
                   <Pick
                     value={task.priority}
@@ -667,7 +809,16 @@ export function CampaignPage({
                   <Pick
                     value={task.ad_type}
                     options={AD_TYPES.map((t) => ({ v: t, l: t }))}
-                    onChange={(v) => save('ad_type', v)}
+                    // Moving off Multi Service takes its detail with it.
+                    // Leaving a stale ad_type_custom behind means the
+                    // generated contract reads "Reel" and lists three
+                    // services underneath it.
+                    onChange={(v) => (v === AD_TYPE_NEEDS_DETAIL
+                      ? save('ad_type', v)
+                      : opt.setMany(task.id, { ad_type: v, ad_type_custom: null }, {
+                          labels: { ad_type: 'Ad type', ad_type_custom: 'Which services' },
+                          was: { ad_type: task.ad_type, ad_type_custom: (view as any).ad_type_custom },
+                        }))}
                     canEdit={canEdit}
                   />
                 </F>
@@ -719,6 +870,19 @@ export function CampaignPage({
                     canEdit={canEdit}
                   />
                 </F>
+                {/* The campaign's contract with the CLIENT. The page could
+                    only read this — and the progress ring counts it — so the
+                    one section the ring waits on could never be settled from
+                    the page it is drawn on. */}
+                <F k="Contract">
+                  <Pick
+                    stateful
+                    value={(view as any).contract_status}
+                    options={CONTRACT_STATUSES.map((c) => ({ v: c, l: labelFor(c) }))}
+                    onChange={(v) => save('contract_status', v)}
+                    canEdit={canEdit}
+                  />
+                </F>
                 <F k="Status">
                   <Pick
                     stateful
@@ -730,6 +894,16 @@ export function CampaignPage({
                   />
                 </F>
               </Fields>
+
+              {/* The client's own words. It is the one field on a campaign
+                  that is not a value but a paragraph, so it gets its own
+                  full-width row rather than being squeezed into the grid. */}
+              <Group title="The brief" />
+              <Brief
+                value={(view as any).description ?? ''}
+                canEdit={canEdit}
+                onCommit={(v) => save('description', v || null)}
+              />
 
               <Group title="Money & paperwork" />
               <Fields>
@@ -764,6 +938,15 @@ export function CampaignPage({
                     onCommit={(v) => save('client_payment_amount', v === '' ? null : Number(v))}
                     canEdit={canEdit}
                   />
+                </F>
+                {/* When AQ's own share landed. Not the same date as the
+                    client's payment and not the same as the vendors' —
+                    it is the one the drawer had and the page dropped. */}
+                <F k="Net paid on">
+                  {canEdit
+                    ? <DateField aria-label="Net paid on" value={(view as any).net_payment_date}
+                        onCommit={(v) => save('net_payment_date', v)} />
+                    : <Val>{longDate((view as any).net_payment_date)}</Val>}
                 </F>
                 <F k="Breakdown">
                   <Pick
@@ -850,6 +1033,7 @@ export function CampaignPage({
             currentUserId={currentUserId}
             workspaceId={workspaceId}
             profiles={profiles as any}
+            taskPlatforms={taskPlatforms as any}
             serviceTypeSteps={steps as any}
             opt={opt}
             onChanged={async () => { await refetch(); await refetchSubtasks(); }}
@@ -885,6 +1069,9 @@ export function CampaignPage({
             role={role}
             profiles={profiles as any}
             comments={comments as any}
+            attachments={attachments as any}
+            refetchFiles={refetchFiles}
+            subtaskNames={subtaskNames}
             onChanged={async () => { await refetchComments(); }}
           />
         </main>
@@ -915,6 +1102,13 @@ const PAYMENT_STATES = [
 
 /** What each column is called when a save for it fails. */
 const FIELD_LABELS: Record<string, string> = {
+  title: 'Campaign name',
+  description: 'The brief',
+  net_payment_date: 'Net paid on',
+  legacy_client_id: 'Client',
+  sales_closer_id: 'Closed by',
+  sales_closer_vendor_id: 'Closed by',
+  sales_closer_influencer: 'Closed by',
   budget: 'Budget',
   due_date: 'Due date',
   task_name: 'Campaign name',
@@ -959,6 +1153,48 @@ const SMALL_BTN: React.CSSProperties = { padding: '5px 11px', fontSize: 12.5, te
  * reading "6 of 8" forever. A progress figure that cannot reach its end is
  * one nobody looks at twice.
  */
+/**
+ * The client's brief, in their words.
+ *
+ * A textarea rather than a Text row: this is the field somebody pastes an
+ * email into, and a one-line input that scrolls sideways is how a brief gets
+ * skimmed instead of read. Commits on blur like every other field on the
+ * page, so it joins the same write queue and the same undo.
+ */
+function Brief({ value, canEdit, onCommit }: {
+  value: string;
+  canEdit: boolean;
+  onCommit: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+
+  if (!canEdit) {
+    return (
+      <p style={{
+        fontSize: 13, lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap',
+        color: value ? 'var(--aq-text)' : 'var(--aq-text-muted)',
+      }}>{value || 'Nothing written yet.'}</p>
+    );
+  }
+
+  return (
+    <textarea
+      className="aq-input"
+      aria-label="The brief"
+      value={draft}
+      rows={4}
+      placeholder="What the client asked for."
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== value) onCommit(draft.trim()); }}
+      style={{
+        width: '100%', fontSize: 13, lineHeight: 1.6, resize: 'vertical',
+        minHeight: 84, padding: '9px 11px', fontFamily: 'inherit',
+      }}
+    />
+  );
+}
+
 function Progress({ done, total, line }: { done: number; total: number; line: string }) {
   const r = 17;
   const circ = 2 * Math.PI * r;

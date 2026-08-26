@@ -2,7 +2,6 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  useTaskAttachments,
   addComment, deleteComment, encodeMentions, parseCommentSegments,
   uploadTaskAttachment, getAttachmentDownloadUrl, deleteAttachment,
   displayName,
@@ -28,17 +27,26 @@ const UNDO_MS = 4000;
  * comments addressing a name that no longer exists (migration 049).
  */
 export function CampaignActivity({
-  task, workspaceId, currentUserId, role, profiles, comments, onChanged,
+  task, workspaceId, currentUserId, role, profiles, comments, attachments,
+  refetchFiles, subtaskNames, onChanged,
 }: {
   task: PMTask;
   workspaceId: string;
   currentUserId: string;
   role: WorkspaceRole | null;
   profiles: any[];
+  /** The campaign's, AND every booking's — see subtaskNames. */
   comments: any[];
+  attachments: any[];
+  refetchFiles: () => Promise<void> | void;
+  /**
+   * Booking id → its name. Anything said or attached against a booking used
+   * to be reachable only through the drawer, which is now gone; rather than
+   * letting it disappear, it is shown here with the booking named on it.
+   */
+  subtaskNames: Map<string, string>;
   onChanged: () => Promise<void> | void;
 }) {
-  const { attachments, refetch: refetchFiles } = useTaskAttachments(task.id);
 
   const [draft, setDraft] = useState('');
   const [picks, setPicks] = useState<MentionPick[]>([]);
@@ -124,6 +132,21 @@ export function CampaignActivity({
   const shownComments = (comments ?? []).filter((c: any) => !pendingIds.has(String(c.id)));
   const shownFiles = (attachments ?? []).filter((f: any) => !pendingIds.has(String(f.id)));
 
+  /** Nothing for the campaign's own rows; the booking's name for the rest. */
+  const on = (taskId: unknown) => {
+    const id = String(taskId ?? '');
+    if (!id || id === task.id) return null;
+    const name = subtaskNames.get(id);
+    return (
+      <span title={name ? `On the ${name} booking` : 'On a booking'} style={{
+        fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+        background: 'var(--aq-bg-sunken)', color: 'var(--aq-text-secondary)',
+        whiteSpace: 'nowrap', maxWidth: 160, overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}>{name ?? 'a booking'}</span>
+    );
+  };
+
   return (
     <Card
       id="activity"
@@ -202,6 +225,7 @@ export function CampaignActivity({
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}
               >{f.file_name || 'Untitled file'}</button>
+              {on(f.task_id)}
               <span style={{ fontSize: 12, color: 'var(--aq-text-muted)', whiteSpace: 'nowrap' }}>
                 {fileSize(f.file_size)}
               </span>
@@ -266,6 +290,7 @@ export function CampaignActivity({
                 <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
                   {whenAgo(c.created_at)}
                 </span>
+                {on(c.task_id)}
                 {(mine || isPrivileged) && (
                   <button
                     type="button"

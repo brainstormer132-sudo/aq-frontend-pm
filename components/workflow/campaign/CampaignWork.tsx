@@ -13,7 +13,7 @@ import {
 import { DateField } from '../DateField';
 import {
   Card, Fields, F, Val, Pick, Text, Check, Note, UndoBar,
-  inkButton, quietButton
+  inkButton, quietButton, MultiPick,
 } from './ui';
 import { requestStateLine } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
@@ -27,6 +27,8 @@ const WORK_LABELS: Record<string, string> = {
   data_issue_note: 'Data issues', deliverable_attached: 'File attached',
   request_status: 'Request', quotation_no: 'Quotation number',
   invoice_no: 'Invoice number', request_note: 'Note',
+  requested_at: 'Requested', requested_by: 'Requested by',
+  priority: 'Priority', platforms: 'Platforms', title: 'Name',
 };
 
 /**
@@ -43,7 +45,7 @@ const WORK_LABELS: Record<string, string> = {
  * should be asked the other's questions.
  */
 export function CampaignWork({
-  task, subtasks, role, currentUserId, workspaceId, profiles,
+  task, subtasks, role, currentUserId, workspaceId, profiles, taskPlatforms = [],
   serviceTypeSteps = [], opt, onChanged,
 }: {
   task: PMTask;
@@ -52,6 +54,8 @@ export function CampaignWork({
   currentUserId: string;
   workspaceId: string;
   profiles: any[];
+  /** The workspace's configured platforms, for a report's own list. */
+  taskPlatforms?: { id: string; name: string }[];
   /** The catalogue, so only the kinds this campaign's services define are offered. */
   serviceTypeSteps?: { service_type_id: string; title: string }[];
   opt: OptimisticSave;
@@ -111,6 +115,14 @@ export function CampaignWork({
 
   const saveOn = (id: string, field: string, value: unknown) =>
     opt.set(id, field, value, { label: WORK_LABELS[field] ?? field });
+
+  // Grouped, so the three columns of "this was requested" land as one write.
+  const saveMany = (id: string, fields: Record<string, unknown>) =>
+    opt.setMany(id, fields, {
+      labels: Object.fromEntries(
+        Object.keys(fields).map((k) => [k, WORK_LABELS[k] ?? k]),
+      ),
+    });
 
   const startRemove = (id: string, title: string) => {
     setPending((p) => [...p, { id, title, left: UNDO_MS / 1000 }]);
@@ -217,10 +229,14 @@ export function CampaignWork({
                 {isRequestSubtaskKind(kind)
                   ? <RequestFields
                       sub={s} kind={kind} canRequest={isPrivileged} canFulfil={canFulfil}
-                      busy={busy} save={saveOn}
+                      busy={busy} save={saveOn} saveMany={saveMany}
+                      currentUserId={currentUserId}
+                      nowIso={() => new Date().toISOString()}
                     />
                   : <GeneralFields
                       sub={s} kind={kind} canEdit={canEdit} profiles={profiles} save={saveOn}
+                      taskPlatforms={taskPlatforms}
+                      campaignPlatforms={((task as any).platforms ?? []) as string[]}
                     />}
 
                 {canEdit && (
@@ -244,15 +260,29 @@ export function CampaignWork({
 
 /* ── A quotation / invoice / contract request row ───────────────── */
 
-function RequestFields({ sub, kind, canRequest, canFulfil, busy, save }: {
+function RequestFields({
+  sub, kind, canRequest, canFulfil, busy, save, saveMany, currentUserId, nowIso,
+}: {
   sub: PMTask; kind: string; canRequest: boolean; canFulfil: boolean; busy: boolean;
   save: (id: string, field: string, value: unknown) => void;
+  saveMany: (id: string, fields: Record<string, unknown>) => void;
+  currentUserId: string;
+  /** Passed in rather than called here: this file stays free of argless Date. */
+  nowIso: () => string;
 }) {
   const status = String((sub as any).request_status ?? 'not_requested');
   const numberField = kind === 'quotation' ? 'quotation_no' : kind === 'invoice' ? 'invoice_no' : null;
 
+  // Sending stamps who asked and when. The page wrote request_status alone,
+  // so every quotation and invoice raised from here had no requester and no
+  // timestamp — and the card that chases them sorts on age.
   const setStatus = (next: string) => {
-    save(sub.id, 'request_status', next);
+    if (next !== 'requested') { save(sub.id, 'request_status', next); return; }
+    saveMany(sub.id, {
+      request_status: next,
+      requested_at: nowIso(),
+      requested_by: currentUserId,
+    });
   };
 
   return (
@@ -299,11 +329,20 @@ function RequestFields({ sub, kind, canRequest, canFulfil, busy, save }: {
 
 /* ── An analysis report, or a plain deliverable ─────────────────── */
 
-function GeneralFields({ sub, kind, canEdit, profiles, save }: {
+function GeneralFields({ sub, kind, canEdit, profiles, save, taskPlatforms, campaignPlatforms }: {
   sub: PMTask; kind: string; canEdit: boolean; profiles: any[];
   save: (id: string, field: string, value: unknown) => void;
+  taskPlatforms: { id: string; name: string }[];
+  /** The campaign's own list, which a report starts from. */
+  campaignPlatforms: string[];
 }) {
   const isReport = kind === 'analysis_report';
+  // A report with no list of its own runs on the campaign's. Overriding it
+  // here narrows or extends it for this report only — which is why the note
+  // below says so rather than leaving somebody to discover it.
+  const own = ((sub as any).platforms ?? []) as string[];
+  const platforms = own.length ? own : campaignPlatforms;
+  const inherited = own.length === 0 && campaignPlatforms.length > 0;
   return (
     <Fields>
       <F k="Status">
@@ -330,6 +369,31 @@ function GeneralFields({ sub, kind, canEdit, profiles, save }: {
       </F>
       {isReport ? (
         <>
+          {/* Two fields the drawer had on a report and the page did not. */}
+          <F k="Priority">
+            <Pick
+              canEdit={canEdit} stateful
+              value={(sub as any).priority}
+              options={['urgent', 'high', 'medium', 'low'].map((p) => ({ v: p, l: labelFor(p) }))}
+              onChange={(v) => save(sub.id, 'priority', v)}
+            />
+          </F>
+          <F k="Platforms">
+            <MultiPick
+              canEdit={canEdit}
+              values={platforms}
+              options={taskPlatforms.map((p) => p.name)}
+              onChange={(next: string[]) => save(sub.id, 'platforms', next)}
+            />
+          </F>
+          {inherited && (
+            <F k="">
+              <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                Inherited from the campaign. Changing it here overrides it for
+                this report only.
+              </span>
+            </F>
+          )}
           <F k="Complexity">
             <Pick
               canEdit={canEdit}
