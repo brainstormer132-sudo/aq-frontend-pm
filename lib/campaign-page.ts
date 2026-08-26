@@ -107,6 +107,52 @@ export function initials(name: unknown): string {
   return (first + second).toUpperCase();
 }
 
+// ── The brand mark ──────────────────────────────────────────────────
+
+/**
+ * Ten pairs, hand-picked rather than generated.
+ *
+ * A hue worked out from a hash lands on olive and mustard as often as on
+ * anything good, and a 22px square of olive on near-black reads as a smudge.
+ * These are all mid-to-vivid, all legible on the ink masthead, and no two are
+ * close enough to be confused across a list of campaigns.
+ */
+const BRAND_PAIRS: [string, string][] = [
+  ['#e0447a', '#f59e0b'],   // rose → amber
+  ['#7c3aed', '#2dd4bf'],   // violet → teal
+  ['#0ea5e9', '#22c55e'],   // sky → green
+  ['#f43f5e', '#8b5cf6'],   // red → violet
+  ['#f59e0b', '#ef4444'],   // amber → red
+  ['#06b6d4', '#6366f1'],   // cyan → indigo
+  ['#84cc16', '#0ea5e9'],   // lime → sky
+  ['#ec4899', '#f97316'],   // pink → orange
+  ['#14b8a6', '#a3e635'],   // teal → lime
+  ['#6366f1', '#ec4899'],   // indigo → pink
+];
+
+/**
+ * A campaign's colour, from its client's name.
+ *
+ * The database has no brand colour and inventing a column for one is a bigger
+ * ask than this is worth. So the mark is *derived*: the same client always
+ * gets the same pair, which is the property that matters — a swatch that
+ * changed between page loads would be noise rather than identity.
+ *
+ * Deliberately hashed on the CLIENT, not the campaign, so every campaign for
+ * one client wears the same colour and a list of them reads as belonging
+ * together. Nothing to store, nothing to keep in step.
+ */
+export function brandMark(name: unknown): { from: string; to: string } {
+  const s = txt(name);
+  if (!s) return { from: '#78716c', to: '#a8a29e' };   // no client yet: stone
+  // djb2. Small, stable, and — unlike a sum of char codes — it does not give
+  // "Ripplr" and "Rlpprri" the same colour.
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  const [from, to] = BRAND_PAIRS[h % BRAND_PAIRS.length];
+  return { from, to };
+}
+
 // ── The money bar ───────────────────────────────────────────────────
 
 export interface MoneyBar {

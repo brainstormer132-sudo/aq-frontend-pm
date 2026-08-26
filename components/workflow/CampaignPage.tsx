@@ -23,7 +23,7 @@ import { CampaignTracking } from './campaign/CampaignTracking';
 import { CampaignActivity } from './campaign/CampaignActivity';
 import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
-  Chip, toneOf, TONE,
+  TONE,
   Card, Group, Fields, F, Val, Pick, Text,
 } from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
@@ -34,7 +34,7 @@ import { closerKey, closerFields, closerOptions } from '@/lib/sales-closer';
 import {
   moneyBar, stripTotals, bookingRows, campaignGaps, gapSummary,
   pageIndex, PAGE_SECTION_IDS, indexProgress, money, moneyRound, shortDate, longDate, initials,
-  amountOrNull as pos,
+  amountOrNull as pos, brandMark,
   type Gap, type BookingRow, type IndexEntry,
 } from '@/lib/campaign-page';
 
@@ -483,6 +483,8 @@ export function CampaignPage({
   }
 
   const name = view.task_name || view.title || 'Untitled campaign';
+  // Keyed on the client so every campaign of theirs wears the same colour.
+  const mark = brandMark(clientName ?? view.brand_name);
 
   return (
     <div style={{ background: 'var(--aq-bg)', minHeight: '100vh' }}>
@@ -556,36 +558,54 @@ export function CampaignPage({
       )}
 
       {/* ── Masthead ───────────────────────────────────────────── */}
-      <header style={{ background: 'var(--aq-bg-elevated)', borderBottom: '1px solid var(--aq-border-light)' }}>
-        <div style={{
-          maxWidth: 1280, margin: '0 auto', padding: '26px 22px 0',
-          display: 'flex', gap: 28, alignItems: 'flex-start', flexWrap: 'wrap',
-        }}>
-          <div style={{ flex: '1 1 320px', minWidth: 0 }}>
-            <h1 style={{
-              fontSize: 'clamp(24px, 3.2vw, 36px)', fontWeight: 800,
-              letterSpacing: '-0.03em', lineHeight: 1.06, margin: 0,
-            }}>{name}</h1>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
-              marginTop: 9, fontSize: 13.5, color: 'var(--aq-text-secondary)',
-            }}>
-              <StagePill stage={view.stage} />
-              <span>{[view.brand_name, clientName].filter(Boolean).join(' · ') || '—'}</span>
-              <Dot />
-              <span>
-                due <strong style={{ color: 'var(--aq-text)' }}>
-                  {today ? shortDate(task.due_date, today) : longDate(task.due_date)}
-                </strong>
-              </span>
-            </div>
+      {/*
+          Ink, not paper.
+
+          Siraj: *"the whole task page is really bland especially that we are
+          a marketing and creative agency"*. The band is the answer: one
+          decisive move at the top, and everything below stays the quiet tool
+          it already is. A page of stone-grey cards with a stone-grey header
+          reads as a spreadsheet no matter how well the cards are made.
+
+          The money is the headline here rather than four small labels in the
+          corner, because it is the thing anybody opening a campaign is
+          checking, and the swatch is the client's — the same colour on every
+          campaign of theirs, so a list of them reads as belonging together.
+      */}
+      <header style={{ background: INK, color: '#fff' }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 22px 22px' }}>
+
+          {/* Who it is for, and when it is due. Quiet, above the name. */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            fontSize: 12.5, color: '#a8a29e', marginBottom: 12,
+          }}>
+            <span aria-hidden style={{
+              width: 22, height: 22, borderRadius: 6, flex: '0 0 auto',
+              background: `linear-gradient(135deg, ${mark.from}, ${mark.to})`,
+            }} />
+            <span>{[view.brand_name, clientName].filter(Boolean).join(' · ') || 'No client yet'}</span>
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
+              background: '#2c2825', color: '#d6d3d1', whiteSpace: 'nowrap',
+            }}>{labelFor(String(view.stage ?? ''))}</span>
+            <span style={{ opacity: .45 }}>·</span>
+            <span>due <strong style={{ color: '#f5f5f4', fontWeight: 700 }}>
+              {today ? shortDate(task.due_date, today) : longDate(task.due_date)}
+            </strong></span>
           </div>
 
-          {/* Three numbers, and each one is a different question:
-              what the client pays, what the vendors take, what is left.
+          <h1 style={{
+            fontSize: 'clamp(28px, 4vw, 46px)', fontWeight: 800,
+            letterSpacing: '-0.035em', lineHeight: 1.02, margin: 0,
+            maxWidth: 22 + 'ch', textWrap: 'balance',
+          } as React.CSSProperties}>{name}</h1>
+
+          {/* Four numbers, each a different question: what the client agreed,
+              what the bookings come to, what the vendors take, what is left.
               Breakdown sits beside Budget rather than replacing it, because
               the two disagreeing is itself worth seeing. */}
-          <div style={{ display: 'flex', gap: 30, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 34, flexWrap: 'wrap', marginTop: 20 }}>
             <Fig
               k="Budget"
               v={moneyRound(bar.budget)}
@@ -601,46 +621,38 @@ export function CampaignPage({
               }
               bad={!!bar.breakdownVariance}
             />
-            <Fig k="Vendors cost" v={moneyRound(bar.vendorCost)} />
+            <Fig k="Vendors" v={moneyRound(bar.vendorCost)} />
             <Fig
-              k="AQ net"
+              k={bar.marginRate == null ? 'AQ net' : `AQ net · ${bar.marginRate}%`}
               v={moneyRound(bar.net)}
-              sub={bar.marginRate == null ? undefined : `${bar.marginRate}%`}
               lead
               bad={bar.overspent}
             />
           </div>
-        </div>
 
-        {/* The one flourish: what the agency lives on, as a shape. */}
-        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '20px 22px 22px' }}>
+          {/* The one flourish: what the agency lives on, as a shape. Thin
+              here — on ink it does not need labels inside it to be read, and
+              the sentence underneath says it in words anyway. */}
           <div
             role="img"
             aria-label={bar.sentence}
             title={bar.sentence}
             style={{
-              display: 'flex', height: 34, borderRadius: 9, overflow: 'hidden',
-              background: 'var(--aq-bg-sunken)',
+              display: 'flex', height: 8, borderRadius: 99, overflow: 'hidden',
+              background: '#2c2825', marginTop: 20,
             }}
           >
             {bar.vendorCost != null && (
               <span style={{
-                flex: `0 0 ${bar.costPct}%`, display: 'flex', alignItems: 'center',
-                padding: '0 12px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                background: bar.overspent ? '#b91c1c' : 'var(--aq-text)',
-                color: '#fff',
-              }}>{moneyRound(bar.vendorCost)} to vendors</span>
+                flex: `0 0 ${bar.costPct}%`,
+                background: bar.overspent ? '#f87171' : '#57534e',
+              }} />
             )}
             {!bar.overspent && bar.net != null && bar.net > 0 && (
-              <span style={{
-                flex: 1, display: 'flex', alignItems: 'center', padding: '0 12px',
-                fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden',
-                background: 'var(--aq-accent-light)', color: '#14603a',
-              }}>{moneyRound(bar.net)} AQ</span>
+              <span style={{ flex: 1, background: WIN }} />
             )}
           </div>
-          <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', margin: '9px 0 0' }}>
+          <p style={{ fontSize: 11.5, color: '#a8a29e', margin: '9px 0 0' }}>
             {bar.sentence}
           </p>
         </div>
@@ -1341,9 +1353,11 @@ function IndexLink({ entry, active, onGo }: {
   );
 }
 
-function Dot() {
-  return <span aria-hidden style={{ opacity: .4 }}>·</span>;
-}
+
+/** Near-black, not pure: #000 against a warm stone page reads as a hole. */
+const INK = '#141210';
+/** The accent green is too dark on ink. This is the same idea, lit. */
+const WIN = '#4ade80';
 
 function Fig({ k, v, sub, lead, bad }: {
   k: string; v: string; sub?: string; lead?: boolean; bad?: boolean;
@@ -1351,36 +1365,21 @@ function Fig({ k, v, sub, lead, bad }: {
   return (
     <div>
       <div style={{
-        fontSize: 10.5, fontWeight: 700, letterSpacing: '.09em',
-        textTransform: 'uppercase', color: 'var(--aq-text-muted)',
-      }}>{k}</div>
+        fontSize: 26, fontWeight: 800, letterSpacing: '-0.03em',
+        lineHeight: 1, fontVariantNumeric: 'tabular-nums',
+        color: bad ? '#f87171' : lead ? WIN : '#fff',
+      }}>{v}</div>
       <div style={{
-        fontSize: 25, fontWeight: 700, letterSpacing: '-0.025em', marginTop: 2,
-        lineHeight: 1.1, fontVariantNumeric: 'tabular-nums',
-        color: bad ? '#b91c1c' : lead ? 'var(--aq-accent)' : undefined,
+        fontSize: 10.5, fontWeight: 700, letterSpacing: '.09em',
+        textTransform: 'uppercase', color: '#a8a29e', marginTop: 5,
       }}>
-        {v}
-        {sub && (
-          <small style={{ fontSize: 13, fontWeight: 600, color: 'var(--aq-text-muted)', letterSpacing: 0 }}>
-            {' '}{sub}
-          </small>
-        )}
+        {k}
+        {sub && <span style={{ letterSpacing: 0, textTransform: 'none', fontWeight: 600 }}> · {sub}</span>}
       </div>
     </div>
   );
 }
 
-/**
- * Where the campaign has got to, as a colour.
- *
- * It used to carry its own three-way switch, which meant this pill and the
- * status field below it could disagree about what amber meant. Both now read
- * STATE_TONE, so one word has one colour on the whole page.
- */
-function StagePill({ stage }: { stage: string }) {
-  const s = String(stage ?? '');
-  return <Chip label={labelFor(s)} tone={toneOf(s, 'blue')} />;
-}
 
 /*
  * Card, Group, Fields, F, Val, Pick and Text used to be defined here as well
