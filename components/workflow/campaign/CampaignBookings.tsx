@@ -21,7 +21,7 @@ import {
   inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf,
 } from './ui';
 import {
-  money, initials, parseMoney, bulkResultLine, bookingSubtitle,
+  money, initials, parseMoney, bulkResultLine, bookingSubtitle, brandMark,
   type BookingRow,
 } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
@@ -271,8 +271,36 @@ export function CampaignBookings({
     [vendors],
   );
 
+  // Tiles by default; rows for a campaign with a lot of vendors, or for
+  // anybody who would rather read a list. Nothing differs but the drawing.
+  const [asGrid, setAsGrid] = useState(true);
+
   const pendingIds = new Set(pending.map((p) => p.id));
   const shown = bookings.filter((b) => !pendingIds.has(b.id));
+
+  // Everything the opened booking's form needs, worked out once. It used to
+  // be computed inside the map for all of them, which meant running the
+  // contract-readiness check on twenty vendors to draw one form.
+  const openCtx = useMemo(() => {
+    if (!openId) return null;
+    const row = shown.find((b) => b.id === openId);
+    const sub = row ? subtaskById.get(row.id) : null;
+    if (!row || !sub) return null;
+    const vendorId = Number((sub as any).vendor_id);
+    const vendor = (vendors as any[]).find((v) => Number(v.id) === vendorId) ?? null;
+    const bank = (banks as any[]).find((x) => Number(x.vendor_id) === vendorId) ?? null;
+    return {
+      row,
+      sub,
+      lines: adLinesBySubtask.get(row.id) ?? [],
+      vendor,
+      bank,
+      already: !!(sub as any).contract_request_id,
+      readiness: vendorContractReadiness(sub, vendor, bank, row.price ?? null),
+      requirements: vendorDataRequirements(sub, vendor),
+      mark: brandMark(row.name),
+    };
+  }, [openId, shown, subtaskById, vendors, banks, adLinesBySubtask]);
 
   return (
     <Card
@@ -283,11 +311,23 @@ export function CampaignBookings({
       id="bookings"
       title="Bookings"
       hint={`${bookings.length} vendor${bookings.length === 1 ? '' : 's'} · ${tally.requested} of ${tally.total} contracts requested`}
-      right={canEdit ? (
-        <button type="button" style={inkButton(busy)} disabled={busy} onClick={() => setAdding(true)}>
-          Add vendors
-        </button>
-      ) : null}
+      right={
+        <>
+          {shown.length > 1 && (
+            <button
+              type="button"
+              style={quietButton()}
+              aria-pressed={!asGrid}
+              onClick={() => setAsGrid((g) => !g)}
+            >{asGrid ? 'As a list' : 'As tiles'}</button>
+          )}
+          {canEdit && (
+            <button type="button" style={inkButton(busy)} disabled={busy} onClick={() => setAdding(true)}>
+              Add vendors
+            </button>
+          )}
+        </>
+      }
     >
       {error && <Note tone="bad">{error}</Note>}
       {notice && !error && <Note tone="good">{notice}</Note>}
@@ -342,267 +382,284 @@ export function CampaignBookings({
       )}
 
       {/* ── The bookings ─────────────────────────────────────────── */}
-      {shown.map((b, i) => {
-        const sub = subtaskById.get(b.id);
-        if (!sub) return null;
-        const open = openId === b.id;
-        const lines = adLinesBySubtask.get(b.id) ?? [];
-        const vendor = (vendors as any[]).find((v) => Number(v.id) === Number((sub as any).vendor_id)) ?? null;
-        const bank = (banks as any[]).find((x) => Number(x.vendor_id) === Number((sub as any).vendor_id)) ?? null;
-        const already = !!(sub as any).contract_request_id;
-        const readiness = vendorContractReadiness(sub, vendor, bank, b.price ?? null);
-        const requirements = vendorDataRequirements(sub, vendor);
+      {/*
+          Tiles, not rows.
 
-        return (
-          <div key={b.id} style={{
-            borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
-            padding: '11px 0',
+          Siraj: *"the whole task page is really bland especially that we are
+          a marketing and creative agency"*. The vendors ARE the campaign, and
+          they were eight words of grey text each. A tile gives the vendor a
+          face — a monogram in their own colour, their price at size, and a pip
+          per ad that fills in as each one posts, so how far along a booking is
+          reads without being counted.
+
+          The colour is keyed on the VENDOR, through the same brandMark() the
+          masthead swatch uses, so Bright Studios is the same green here and
+          anywhere else that draws them.
+
+          A campaign with twenty vendors is a lot of tiles, so the header
+          carries a toggle back to rows. Nothing is hidden in either — the
+          same bookings, drawn two ways.
+      */}
+      {asGrid ? (
+        <div style={{
+          display: 'grid', gap: 11,
+          gridTemplateColumns: 'repeat(auto-fill, minmax(214px, 1fr))',
+        }}>
+          {shown.map((b) => (
+            <VendorTile
+              key={b.id}
+              row={b}
+              ads={adLinesBySubtask.get(b.id)?.length ?? 0}
+              open={openId === b.id}
+              canEdit={canEdit}
+              selected={selected.has(b.id)}
+              onSelect={(on) => setSelected((prev) => {
+                const n = new Set(prev);
+                if (on) n.add(b.id); else n.delete(b.id);
+                return n;
+              })}
+              onOpen={() => setOpenId(openId === b.id ? null : b.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        shown.map((b, i) => (
+          <VendorRow
+            key={b.id}
+            row={b}
+            ads={adLinesBySubtask.get(b.id)?.length ?? 0}
+            first={i === 0}
+            open={openId === b.id}
+            canEdit={canEdit}
+            selected={selected.has(b.id)}
+            onSelect={(on) => setSelected((prev) => {
+              const n = new Set(prev);
+              if (on) n.add(b.id); else n.delete(b.id);
+              return n;
+            })}
+            onOpen={() => setOpenId(openId === b.id ? null : b.id)}
+          />
+        ))
+      )}
+
+      {/* The opened booking, full width under the grid.
+          A booking's detail is thirty fields; squeezing it into a 214px
+          column would be a worse form than the one we started with. */}
+      {openCtx && (
+        <div style={{
+          marginTop: 14, paddingTop: 14,
+          borderTop: '2px solid var(--aq-text)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 11, marginBottom: 4,
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {canEdit && (
-                <input
-                  type="checkbox"
-                  aria-label={`Select ${b.name}`}
-                  checked={selected.has(b.id)}
-                  onChange={(e) => setSelected((s) => {
-                    const n = new Set(s);
-                    if (e.target.checked) n.add(b.id); else n.delete(b.id);
-                    return n;
-                  })}
-                />
-              )}
+            <span aria-hidden style={{
+              width: 26, height: 26, borderRadius: 8, flex: '0 0 auto',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 10.5, fontWeight: 800, color: '#fff',
+              background: `linear-gradient(135deg, ${openCtx.mark.from}, ${openCtx.mark.to})`,
+            }}>{initials(openCtx.row.name)}</span>
+            <strong style={{ fontSize: 14.5 }}>{openCtx.row.name}</strong>
+            <Chip label={openCtx.row.contractLabel} tone={toneOf(openCtx.row.contract)} />
+            <button
+              type="button"
+              style={{ ...quietButton(), marginLeft: 'auto' }}
+              onClick={() => setOpenId(null)}
+            >Close</button>
+          </div>
+          {(() => {
+            const { row: b, sub, lines, vendor, already, readiness, requirements } = openCtx;
+            return (
+          <div style={{ paddingLeft: canEdit ? 26 : 0, marginTop: 12 }}>
+            {/* The one thing that blocks the contract, said before the fields. */}
+            {canRequestContract && !already && !readiness.ready && (
+              <Note tone="warn">
+                <strong>The contract cannot be requested yet.</strong>
+                <Missing items={readiness.missing as any} />
+              </Note>
+            )}
+            {already && <Note tone="good">A contract has been requested for this booking.</Note>}
 
-              <span aria-hidden style={{
-                width: 30, height: 30, borderRadius: '50%', flex: '0 0 auto',
-                background: 'var(--aq-bg-sunken)', color: 'var(--aq-text-secondary)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, fontWeight: 700,
-              }}>{initials(b.name)}</span>
-
-              <button
-                type="button"
-                onClick={() => setOpenId(open ? null : b.id)}
-                aria-expanded={open}
-                style={{
-                  flex: 1, minWidth: 0, textAlign: 'left', background: 'none',
-                  border: 'none', padding: 0, font: 'inherit', cursor: 'pointer',
-                }}
-              >
-                <span style={{ display: 'block', fontWeight: 600, fontSize: 13.5 }}>{b.name}</span>
-                {/* The contract's state as a colour rather than the third
-                    clause of a grey sentence — it is the thing that decides
-                    whether this booking can go anywhere, and it was reading
-                    exactly as quietly as the ad count beside it. */}
-                <span style={{
-                  display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap',
-                  fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2,
-                }}>
-                  <Chip label={b.contractLabel} tone={toneOf(b.contract)} />
-                  {bookingSubtitle({ ...(b as any), contractNote: '' }, lines.length)}
-                </span>
-              </button>
-
-              <span style={{
-                fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
-                color: b.price == null ? 'var(--aq-text-muted)' : undefined,
-              }}>
-                {b.price == null
-                  ? <Chip label="no price yet" tone="amber" />
-                  : money(b.price)}
-              </span>
-            </div>
-
-            {open && (
-              <div style={{ paddingLeft: canEdit ? 26 : 0, marginTop: 12 }}>
-                {/* The one thing that blocks the contract, said before the fields. */}
-                {canRequestContract && !already && !readiness.ready && (
-                  <Note tone="warn">
-                    <strong>The contract cannot be requested yet.</strong>
-                    <Missing items={readiness.missing as any} />
-                  </Note>
+            <Fields>
+              <F k="Vendor">
+                {canEdit && !already ? (
+                  <SearchablePicker
+                    options={vendorOptions}
+                    value={(sub as any).vendor_id != null ? String((sub as any).vendor_id) : null}
+                    onChange={(v) => changeVendor(sub, v)}
+                    placeholder="Search vendors…"
+                  />
+                ) : <Val>{vendor?.name ?? '— none —'}</Val>}
+              </F>
+              {/* An influencer is priced per piece, so once the ads below
+                  carry prices they are the source and this only reports
+                  them. Typing here was worse than useless: the next edit
+                  to any line called syncBookingPriceFromAds and wiped it. */}
+              <F k="Client price">
+                {b.pricedPerLine ? (
+                  <Val calc>{b.price == null ? '—' : money(b.price)} · from the {lines.length} ads below</Val>
+                ) : (
+                  <Text
+                    numeric canEdit={canEdit}
+                    value={(sub as any).price ?? ''}
+                    placeholder="0.00"
+                    onCommit={(v) => saveOn(sub.id, 'price', parseMoney(v), (sub as any).price)}
+                  />
                 )}
-                {already && <Note tone="good">A contract has been requested for this booking.</Note>}
-
-                <Fields>
-                  <F k="Vendor">
-                    {canEdit && !already ? (
-                      <SearchablePicker
-                        options={vendorOptions}
-                        value={(sub as any).vendor_id != null ? String((sub as any).vendor_id) : null}
-                        onChange={(v) => changeVendor(sub, v)}
-                        placeholder="Search vendors…"
-                      />
-                    ) : <Val>{vendor?.name ?? '— none —'}</Val>}
-                  </F>
-                  {/* An influencer is priced per piece, so once the ads below
-                      carry prices they are the source and this only reports
-                      them. Typing here was worse than useless: the next edit
-                      to any line called syncBookingPriceFromAds and wiped it. */}
-                  <F k="Client price">
-                    {b.pricedPerLine ? (
-                      <Val calc>{b.price == null ? '—' : money(b.price)} · from the {lines.length} ads below</Val>
-                    ) : (
-                      <Text
-                        numeric canEdit={canEdit}
-                        value={(sub as any).price ?? ''}
-                        placeholder="0.00"
-                        onCommit={(v) => saveOn(sub.id, 'price', parseMoney(v), (sub as any).price)}
-                      />
-                    )}
-                  </F>
-                  <F k="Vendors cost">
-                    {b.pricedPerLine && b.net != null ? (
-                      <Val calc>{money(b.net)} · added up from the ads</Val>
-                    ) : (
-                      <Text
-                        numeric canEdit={canEdit}
-                        value={(sub as any).net_amount ?? ''}
-                        placeholder="0.00"
-                        onCommit={(v) => saveOn(sub.id, 'net_amount', parseMoney(v), (sub as any).net_amount)}
-                      />
-                    )}
-                  </F>
-                  <F k="AQ net">
-                    <Val calc>{
-                      b.price != null && b.net != null ? money(b.price - b.net) : '—'
-                    }</Val>
-                  </F>
-                  {/* Three fields the drawer had on a booking and the page
-                      did not, so a booking could not be named, assigned or
-                      dated without going back to the old panel. */}
-                  <F k="Name">
+              </F>
+              <F k="Vendors cost">
+                {b.pricedPerLine && b.net != null ? (
+                  <Val calc>{money(b.net)} · added up from the ads</Val>
+                ) : (
+                  <Text
+                    numeric canEdit={canEdit}
+                    value={(sub as any).net_amount ?? ''}
+                    placeholder="0.00"
+                    onCommit={(v) => saveOn(sub.id, 'net_amount', parseMoney(v), (sub as any).net_amount)}
+                  />
+                )}
+              </F>
+              <F k="AQ net">
+                <Val calc>{
+                  b.price != null && b.net != null ? money(b.price - b.net) : '—'
+                }</Val>
+              </F>
+              {/* Three fields the drawer had on a booking and the page
+                  did not, so a booking could not be named, assigned or
+                  dated without going back to the old panel. */}
+              <F k="Name">
+                <Text
+                  canEdit={canEdit}
+                  value={(sub as any).title ?? ''}
+                  placeholder="Named after the vendor"
+                  onCommit={(v) => saveOn(sub.id, 'title', v || null, (sub as any).title)}
+                />
+              </F>
+              <F k="Assigned to">
+                <Pick
+                  canEdit={canEdit}
+                  value={(sub as any).assignee_id}
+                  options={(profiles as any[]).map((p) => ({ v: p.id, l: displayName(p) }))}
+                  onChange={(v) => saveOn(sub.id, 'assignee_id', v, (sub as any).assignee_id)}
+                />
+              </F>
+              <F k="Due">
+                {canEdit
+                  ? <DateField
+                      aria-label="Due"
+                      value={(sub as any).due_date}
+                      onCommit={(v) => saveOn(sub.id, 'due_date', v, (sub as any).due_date)}
+                    />
+                  : <Val>{(sub as any).due_date ?? '—'}</Val>}
+              </F>
+              <F k="Platform">
+                <Pick
+                  canEdit={canEdit}
+                  value={(sub as any).platform}
+                  options={platformNames.map((p) => ({ v: p, l: p }))}
+                  onChange={(v) => saveOn(sub.id, 'platform', v, (sub as any).platform)}
+                />
+              </F>
+              <F k="Ad type">
+                <Pick
+                  canEdit={canEdit}
+                  value={(sub as any).ad_type}
+                  options={[...AD_TYPES].map((a) => ({ v: String(a), l: labelFor(String(a)) }))}
+                  onChange={(v) => saveOn(sub.id, 'ad_type', v, (sub as any).ad_type)}
+                />
+              </F>
+              <F k="Paid on">
+                {canEdit
+                  ? <DateField
+                      aria-label="Paid on"
+                      value={(sub as any).vendor_payment_date}
+                      onCommit={(v) => saveOn(sub.id, 'vendor_payment_date', v, (sub as any).vendor_payment_date)}
+                    />
+                  : <Val>{(sub as any).vendor_payment_date ?? '—'}</Val>}
+              </F>
+              {vendorNeedsInsight(vendorCategoryKey(vendor)) && (
+                <>
+                  <F k="Insight link">
                     <Text
                       canEdit={canEdit}
-                      value={(sub as any).title ?? ''}
-                      placeholder="Named after the vendor"
-                      onCommit={(v) => saveOn(sub.id, 'title', v || null, (sub as any).title)}
+                      value={(sub as any).insight_link}
+                      placeholder="https://…"
+                      onCommit={(v) => saveOn(sub.id, 'insight_link', v || null, (sub as any).insight_link)}
                     />
                   </F>
-                  <F k="Assigned to">
-                    <Pick
+                  <F k="Insight file">
+                    <Check
                       canEdit={canEdit}
-                      value={(sub as any).assignee_id}
-                      options={(profiles as any[]).map((p) => ({ v: p.id, l: displayName(p) }))}
-                      onChange={(v) => saveOn(sub.id, 'assignee_id', v, (sub as any).assignee_id)}
+                      checked={!!(sub as any).insight_attached}
+                      onChange={(v) => saveOn(sub.id, 'insight_attached', v, (sub as any).insight_attached)}
                     />
                   </F>
-                  <F k="Due">
-                    {canEdit
-                      ? <DateField
-                          aria-label="Due"
-                          value={(sub as any).due_date}
-                          onCommit={(v) => saveOn(sub.id, 'due_date', v, (sub as any).due_date)}
-                        />
-                      : <Val>{(sub as any).due_date ?? '—'}</Val>}
-                  </F>
-                  <F k="Platform">
-                    <Pick
+                </>
+              )}
+              {/* Proof lives on the ad once there are ads to hang it on. */}
+              {!lines.length && (
+                <>
+                  <F k="Proof link">
+                    <Text
                       canEdit={canEdit}
-                      value={(sub as any).platform}
-                      options={platformNames.map((p) => ({ v: p, l: p }))}
-                      onChange={(v) => saveOn(sub.id, 'platform', v, (sub as any).platform)}
+                      value={(sub as any).proof_of_posting_link}
+                      placeholder="https://…"
+                      onCommit={(v) => saveOn(sub.id, 'proof_of_posting_link', v || null, (sub as any).proof_of_posting_link)}
                     />
                   </F>
-                  <F k="Ad type">
-                    <Pick
+                  <F k="Proof file">
+                    <Check
                       canEdit={canEdit}
-                      value={(sub as any).ad_type}
-                      options={[...AD_TYPES].map((a) => ({ v: String(a), l: labelFor(String(a)) }))}
-                      onChange={(v) => saveOn(sub.id, 'ad_type', v, (sub as any).ad_type)}
+                      checked={!!(sub as any).proof_of_posting_attached}
+                      onChange={(v) => saveOn(sub.id, 'proof_of_posting_attached', v, (sub as any).proof_of_posting_attached)}
                     />
                   </F>
-                  <F k="Paid on">
-                    {canEdit
-                      ? <DateField
-                          aria-label="Paid on"
-                          value={(sub as any).vendor_payment_date}
-                          onCommit={(v) => saveOn(sub.id, 'vendor_payment_date', v, (sub as any).vendor_payment_date)}
-                        />
-                      : <Val>{(sub as any).vendor_payment_date ?? '—'}</Val>}
-                  </F>
-                  {vendorNeedsInsight(vendorCategoryKey(vendor)) && (
-                    <>
-                      <F k="Insight link">
-                        <Text
-                          canEdit={canEdit}
-                          value={(sub as any).insight_link}
-                          placeholder="https://…"
-                          onCommit={(v) => saveOn(sub.id, 'insight_link', v || null, (sub as any).insight_link)}
-                        />
-                      </F>
-                      <F k="Insight file">
-                        <Check
-                          canEdit={canEdit}
-                          checked={!!(sub as any).insight_attached}
-                          onChange={(v) => saveOn(sub.id, 'insight_attached', v, (sub as any).insight_attached)}
-                        />
-                      </F>
-                    </>
-                  )}
-                  {/* Proof lives on the ad once there are ads to hang it on. */}
-                  {!lines.length && (
-                    <>
-                      <F k="Proof link">
-                        <Text
-                          canEdit={canEdit}
-                          value={(sub as any).proof_of_posting_link}
-                          placeholder="https://…"
-                          onCommit={(v) => saveOn(sub.id, 'proof_of_posting_link', v || null, (sub as any).proof_of_posting_link)}
-                        />
-                      </F>
-                      <F k="Proof file">
-                        <Check
-                          canEdit={canEdit}
-                          checked={!!(sub as any).proof_of_posting_attached}
-                          onChange={(v) => saveOn(sub.id, 'proof_of_posting_attached', v, (sub as any).proof_of_posting_attached)}
-                        />
-                      </F>
-                    </>
-                  )}
-                </Fields>
+                </>
+              )}
+            </Fields>
 
-                {requirements.length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
-                      Still needed for this vendor
-                    </span>
-                    <Missing items={requirements as any} />
-                  </div>
-                )}
-
-                <Group title="The ads" />
-                <AdLinesCard
-                  subtaskId={sub.id}
-                  canEdit={canEdit}
-                  lines={lines}
-                  loading={false}
-                  refetch={onChanged}
-                  platformOptions={platformNames}
-                  defaultPlatform={(sub as any).platform ?? (task as any).platform ?? null}
-                  onTotalChanged={async () => {
-                    await syncBookingPriceFromAds(sub.id);
-                    await onChanged();
-                  }}
-                />
-
-                {/* Asking for the contract is not here any more — it is on the
-                    Vendor contracts card, where every vendor's stands together
-                    and one button asks for all of them. */}
-                <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 14 }}>
-                  {canEdit && (
-                    <button
-                      type="button"
-                      style={{ ...quietButton(busy), color: '#991b1b', marginLeft: 'auto' }}
-                      disabled={busy}
-                      onClick={() => { setOpenId(null); startRemove(sub.id, b.name); }}
-                    >Remove this booking</button>
-                  )}
-                </div>
+            {requirements.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+                  Still needed for this vendor
+                </span>
+                <Missing items={requirements as any} />
               </div>
             )}
+
+            <Group title="The ads" />
+            <AdLinesCard
+              subtaskId={sub.id}
+              canEdit={canEdit}
+              lines={lines}
+              loading={false}
+              refetch={onChanged}
+              platformOptions={platformNames}
+              defaultPlatform={(sub as any).platform ?? (task as any).platform ?? null}
+              onTotalChanged={async () => {
+                await syncBookingPriceFromAds(sub.id);
+                await onChanged();
+              }}
+            />
+
+            {/* Asking for the contract is not here any more — it is on the
+                Vendor contracts card, where every vendor's stands together
+                and one button asks for all of them. */}
+            <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginTop: 14 }}>
+              {canEdit && (
+                <button
+                  type="button"
+                  style={{ ...quietButton(busy), color: '#991b1b', marginLeft: 'auto' }}
+                  disabled={busy}
+                  onClick={() => { setOpenId(null); startRemove(sub.id, b.name); }}
+                >Remove this booking</button>
+              )}
+            </div>
           </div>
-        );
-      })}
+            );
+          })()}
+        </div>
+      )}
 
       {adding && (
         <AddVendorsModal
@@ -626,5 +683,181 @@ export function CampaignBookings({
         />
       )}
     </Card>
+  );
+}
+
+/* ── One vendor, as a tile ──────────────────────────────────────── */
+
+/**
+ * The pips.
+ *
+ * One per ad, filled as each posts. A number ("2 of 4 posted") is read; a row
+ * of pips is seen, and the whole grid can be scanned for the booking that has
+ * not started. Above twelve ads they would be slivers, so it falls back to
+ * a bar — the same information at a size that still means something.
+ */
+function Pips({ total, done }: { total: number; done: number }) {
+  if (total <= 0) return null;
+  const pct = Math.round((Math.min(done, total) / total) * 100);
+
+  if (total > 12) {
+    return (
+      <span
+        aria-label={`${done} of ${total} posted`}
+        style={{
+          display: 'block', height: 4, borderRadius: 2, marginTop: 9,
+          background: 'var(--aq-border)', overflow: 'hidden',
+        }}
+      >
+        <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: 'var(--aq-accent)' }} />
+      </span>
+    );
+  }
+
+  return (
+    <span aria-label={`${done} of ${total} posted`} style={{ display: 'flex', gap: 3, marginTop: 9 }}>
+      {Array.from({ length: total }, (_, i) => (
+        <i key={i} aria-hidden style={{
+          height: 4, flex: 1, borderRadius: 2,
+          background: i < done ? 'var(--aq-accent)' : 'var(--aq-border)',
+        }} />
+      ))}
+    </span>
+  );
+}
+
+function VendorTile({ row, ads, open, canEdit, selected, onSelect, onOpen }: {
+  row: BookingRow;
+  ads: number;
+  open: boolean;
+  canEdit: boolean;
+  selected: boolean;
+  onSelect: (on: boolean) => void;
+  onOpen: () => void;
+}) {
+  const mark = brandMark(row.name);
+  const tone = TONE[toneOf(row.contract)];
+
+  return (
+    <div style={{
+      position: 'relative', overflow: 'hidden',
+      border: `1px solid ${open ? 'var(--aq-text)' : 'var(--aq-border-light)'}`,
+      boxShadow: open ? '0 0 0 1px var(--aq-text)' : undefined,
+      borderRadius: 12, padding: 13, background: 'var(--aq-bg)',
+    }}>
+      {/* The contract's state as a stripe: the whole grid says which
+          bookings are stuck without a word being read. */}
+      <span aria-hidden style={{
+        position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, background: tone.edge,
+      }} />
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 9 }}>
+        <span aria-hidden style={{
+          width: 38, height: 38, borderRadius: 11, flex: '0 0 auto',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 13, fontWeight: 800, color: '#fff',
+          background: `linear-gradient(135deg, ${mark.from}, ${mark.to})`,
+        }}>{initials(row.name)}</span>
+        {canEdit && (
+          <input
+            type="checkbox"
+            aria-label={`Select ${row.name}`}
+            checked={selected}
+            onChange={(e) => onSelect(e.target.checked)}
+            style={{ marginLeft: 'auto' }}
+          />
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-expanded={open}
+        style={{
+          display: 'block', width: '100%', textAlign: 'left', background: 'none',
+          border: 'none', padding: 0, font: 'inherit', cursor: 'pointer',
+        }}
+      >
+        <span style={{
+          display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 5,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }} title={row.name}>{row.name}</span>
+        <Chip label={row.contractLabel} tone={toneOf(row.contract)} />
+        <span style={{
+          display: 'block', fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em',
+          margin: '7px 0 0', fontVariantNumeric: 'tabular-nums',
+          color: row.price == null ? 'var(--aq-text-muted)' : undefined,
+        }}>{row.price == null ? '—' : money(row.price)}</span>
+        <span style={{ display: 'block', fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
+          {bookingSubtitle({ ...(row as any), contractNote: '' }, ads)}
+        </span>
+      </button>
+
+      <Pips total={row.ads} done={row.posted} />
+    </div>
+  );
+}
+
+/* ── The same booking, as a row ─────────────────────────────────── */
+
+function VendorRow({ row, ads, first, open, canEdit, selected, onSelect, onOpen }: {
+  row: BookingRow;
+  ads: number;
+  first: boolean;
+  open: boolean;
+  canEdit: boolean;
+  selected: boolean;
+  onSelect: (on: boolean) => void;
+  onOpen: () => void;
+}) {
+  const mark = brandMark(row.name);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '11px 0',
+      borderTop: first ? 'none' : '1px solid var(--aq-border-light)',
+      background: open ? 'var(--aq-bg-sunken)' : undefined,
+    }}>
+      {canEdit && (
+        <input
+          type="checkbox"
+          aria-label={`Select ${row.name}`}
+          checked={selected}
+          onChange={(e) => onSelect(e.target.checked)}
+        />
+      )}
+      <span aria-hidden style={{
+        width: 30, height: 30, borderRadius: 9, flex: '0 0 auto',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 11, fontWeight: 800, color: '#fff',
+        background: `linear-gradient(135deg, ${mark.from}, ${mark.to})`,
+      }}>{initials(row.name)}</span>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-expanded={open}
+        style={{
+          flex: 1, minWidth: 0, textAlign: 'left', background: 'none',
+          border: 'none', padding: 0, font: 'inherit', cursor: 'pointer',
+        }}
+      >
+        <span style={{ display: 'block', fontWeight: 600, fontSize: 13.5 }}>{row.name}</span>
+        <span style={{
+          display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap',
+          fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2,
+        }}>
+          <Chip label={row.contractLabel} tone={toneOf(row.contract)} />
+          {bookingSubtitle({ ...(row as any), contractNote: '' }, ads)}
+        </span>
+      </button>
+      <span style={{ width: 84, flex: '0 0 auto' }}>
+        <Pips total={row.ads} done={row.posted} />
+      </span>
+      <span style={{
+        fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+        color: row.price == null ? 'var(--aq-text-muted)' : undefined,
+      }}>
+        {row.price == null ? <Chip label="no price yet" tone="amber" /> : money(row.price)}
+      </span>
+    </div>
   );
 }
