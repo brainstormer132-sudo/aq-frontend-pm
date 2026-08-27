@@ -24,12 +24,12 @@ import { CampaignActivity } from './campaign/CampaignActivity';
 import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
   TONE,
-  Card, Group, Fields, F, Val, Pick, Text,
-} from './campaign/ui';
+  Card, Group, Fields, F, Val, Pick, Text, HILITE } from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
+import { CampaignLoading } from './CampaignSkeleton';
 import { closerKey, closerFields, closerOptions } from '@/lib/sales-closer';
 import {
   moneyBar, stripTotals, bookingRows, campaignGaps, gapSummary,
@@ -472,12 +472,15 @@ export function CampaignPage({
     if (parent) router.replace(`/dashboard/campaign/${parent}`);
   }, [task, router]);
 
-  if (loading || !task || !view || (task as any).parent_task_id) {
+  // A campaign is seven fetches. Until they land, the page's own shape plus
+  // the mark drawing itself — see CampaignLoading for why the overlay waits a
+  // quarter of a second before it appears at all.
+  if (loading || (task as any)?.parent_task_id) return <CampaignLoading />;
+
+  if (!task || !view) {
     return (
       <div style={{ padding: 40, color: 'var(--aq-text-muted)' }}>
-        {loading || (task as any)?.parent_task_id
-          ? 'Loading the campaign…'
-          : 'That campaign is not here.'}
+        That campaign is not here.
       </div>
     );
   }
@@ -494,10 +497,25 @@ export function CampaignPage({
         padding: '11px 22px', borderBottom: '1px solid var(--aq-border-light)',
         background: 'var(--aq-bg-elevated)', fontSize: 12.5, color: 'var(--aq-text-muted)',
       }}>
-        <Link href={backHref} style={{ color: 'var(--aq-text-secondary)', textDecoration: 'none' }}>
-          All Tasks
+        {/* A way out, drawn as one.
+            The only exit used to be the word "All Tasks" set in muted grey at
+            the same weight as the two crumbs after it — Siraj asked for
+            something obvious, and he was right that a breadcrumb is a label
+            people read rather than a control they see. */}
+        <Link
+          href={backHref}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 7,
+            padding: '5px 12px 5px 9px', borderRadius: 8,
+            border: '1px solid var(--aq-border)',
+            background: 'var(--aq-bg-elevated)',
+            color: 'var(--aq-text)', textDecoration: 'none',
+            fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap',
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 14, lineHeight: 1, marginTop: -1 }}>←</span>
+          All tasks
         </Link>
-        <span style={{ opacity: .5 }}>›</span>
         <span>{view.brand_name || 'No brand'}</span>
         <span style={{ opacity: .5 }}>›</span>
         <span style={{ color: 'var(--aq-text)' }}>{name}</span>
@@ -1219,7 +1237,7 @@ function Progress({ done, total, line }: { done: number; total: number; line: st
         <circle cx="21" cy="21" r={r} fill="none" stroke="var(--aq-border-light)" strokeWidth="5" />
         <circle
           cx="21" cy="21" r={r} fill="none"
-          stroke={all ? 'var(--aq-accent)' : 'var(--aq-text)'}
+          stroke={all ? HILITE : 'var(--aq-text)'}
           strokeWidth="5" strokeLinecap="round"
           strokeDasharray={circ}
           strokeDashoffset={circ * (1 - pct)}
@@ -1231,7 +1249,7 @@ function Progress({ done, total, line }: { done: number; total: number; line: st
         <strong style={{
           display: 'block', fontSize: 17, fontWeight: 800,
           letterSpacing: '-0.02em', lineHeight: 1.1,
-          color: all ? 'var(--aq-accent)' : 'var(--aq-text)',
+          color: all ? HILITE : 'var(--aq-text)',
         }}>{all ? 'Done' : line}</strong>
         <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
           {all ? 'nothing outstanding' : 'settled'}
@@ -1356,8 +1374,8 @@ function IndexLink({ entry, active, onGo }: {
 
 /** Near-black, not pure: #000 against a warm stone page reads as a hole. */
 const INK = '#141210';
-/** The accent green is too dark on ink. This is the same idea, lit. */
-const WIN = '#4ade80';
+/** The highlight, lit for ink. Was a bright green — Siraj: *"tacky"*. */
+const WIN = '#60a5fa';
 
 function Fig({ k, v, sub, lead, bad }: {
   k: string; v: string; sub?: string; lead?: boolean; bad?: boolean;
@@ -1433,7 +1451,7 @@ function BookingLine({ row, first, href }: { row: BookingRow; first: boolean; hr
         }}>{row.meta}</span>
       </span>
       <span style={{ width: 74, height: 5, borderRadius: 3, background: 'var(--aq-bg-sunken)', overflow: 'hidden' }}>
-        <i style={{ display: 'block', height: '100%', width: `${row.progressPct}%`, background: 'var(--aq-accent)' }} />
+        <i style={{ display: 'block', height: '100%', width: `${row.progressPct}%`, background: HILITE }} />
       </span>
       <span style={{
         fontSize: 13.5, fontWeight: 600, textAlign: 'right', whiteSpace: 'nowrap',

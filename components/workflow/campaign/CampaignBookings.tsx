@@ -18,8 +18,7 @@ import { SearchablePicker } from '../SearchablePicker';
 import { DateField } from '../DateField';
 import {
   Card, Group, Fields, F, Val, Pick, Text, Check, Note, UndoBar, Missing,
-  inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf,
-} from './ui';
+  inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf, HILITE } from './ui';
 import {
   money, initials, parseMoney, bulkResultLine, bookingSubtitle, brandMark,
   type BookingRow,
@@ -709,7 +708,7 @@ function Pips({ total, done }: { total: number; done: number }) {
           background: 'var(--aq-border)', overflow: 'hidden',
         }}
       >
-        <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: 'var(--aq-accent)' }} />
+        <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: HILITE }} />
       </span>
     );
   }
@@ -719,7 +718,7 @@ function Pips({ total, done }: { total: number; done: number }) {
       {Array.from({ length: total }, (_, i) => (
         <i key={i} aria-hidden style={{
           height: 4, flex: 1, borderRadius: 2,
-          background: i < done ? 'var(--aq-accent)' : 'var(--aq-border)',
+          background: i < done ? HILITE : 'var(--aq-border)',
         }} />
       ))}
     </span>

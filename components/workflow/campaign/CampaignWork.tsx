@@ -146,7 +146,7 @@ export function CampaignWork({
   return (
     <Card
       id="work"
-      title="The rest of the work"
+      title="Tasks"
       hint={`${others.length} item${others.length === 1 ? '' : 's'}`}
       right={canEdit ? (
         <span style={{ display: 'flex', gap: 8 }}>
@@ -189,7 +189,7 @@ export function CampaignWork({
 
       {!shown.length && !pending.length && (
         <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: '4px 0' }}>
-          No reports, designs or document requests on this campaign yet.
+          No tasks on this campaign yet.
         </p>
       )}
 

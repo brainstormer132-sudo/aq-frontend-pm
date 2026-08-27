@@ -1,6 +1,6 @@
 'use client';
 
-import { TONE } from './ui';
+import { TONE, HILITE } from './ui';
 import React, { useEffect, useState } from 'react';
 import type { Track } from '@/lib/campaign-page';
 
@@ -192,7 +192,7 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
         style={{
           fontSize: 12.5, padding: '5px 6px', width: 168,
           // The same "answered" edge every other dropdown on the page wears.
-          borderLeft: `3px solid ${t ? 'var(--aq-accent)' : 'var(--aq-border)'}`,
+          borderLeft: `3px solid ${t ? HILITE : 'var(--aq-border)'}`,
         }}
       >
         <option value="">— terms not set —</option>

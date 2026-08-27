@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { useMyRole } from '@/hooks/use-workflow';
 import { CampaignPage } from '@/components/workflow/CampaignPage';
+import { CampaignLoading } from '@/components/workflow/CampaignSkeleton';
 
 const supabase = createClient();
 
@@ -43,9 +44,10 @@ export default function CampaignRoute({ params }: { params: Promise<{ id: string
     return () => { alive = false; };
   }, [router]);
 
-  if (!ready || !workspaceId || !userId) {
-    return <div style={{ padding: 40, color: 'var(--aq-text-muted)' }}>Loading…</div>;
-  }
+  // The same screen the page itself shows, so signing-in and fetching the
+  // campaign look like one wait rather than a bare "Loading…" that jumps into
+  // a skeleton a moment later.
+  if (!ready || !workspaceId || !userId) return <CampaignLoading />;
 
   return <CampaignPage taskId={id} workspaceId={workspaceId} role={role} currentUserId={userId} />;
 }

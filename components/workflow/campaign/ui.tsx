@@ -35,6 +35,21 @@ import React, { useEffect, useRef, useState } from 'react';
  */
 export type ToneName = 'grey' | 'blue' | 'amber' | 'green' | 'red' | 'violet';
 
+/**
+ * The highlight — "this has been answered", "this is selected", "this is how
+ * far along" — is blue, not the accent green.
+ *
+ * Siraj: *"change highlighting to blue the green is tacky"*. He is right, and
+ * it was also doing two jobs at once: green already means SETTLED in the tone
+ * table below, so a green edge on an answered dropdown said "done" about a
+ * field that had merely been filled in. Blue is the tone for in-flight, which
+ * is what an answered field is.
+ *
+ * Green keeps the one job it is good at: a state that is finished.
+ */
+export const HILITE = '#2563eb';
+export const HILITE_SOFT = '#93c5fd';
+
 export const TONE: Record<ToneName, { bg: string; fg: string; edge: string }> = {
   grey:   { bg: 'var(--aq-bg-sunken)',    fg: 'var(--aq-text-muted)', edge: 'var(--aq-border)' },
   blue:   { bg: '#dbeafe',                fg: '#1e40af',              edge: '#60a5fa' },
@@ -280,7 +295,7 @@ export function Pick({
   // Disabled is its own state, not a faded one: it reads as flat and quiet
   // rather than as an answered field somebody has dimmed.
   const edge = disabled ? 'var(--aq-border-light)'
-    : chosen ? (stateful ? tone.edge : 'var(--aq-accent)')
+    : chosen ? (stateful ? tone.edge : HILITE)
     : 'var(--aq-border)';
 
   return (
@@ -535,7 +550,7 @@ export function MultiPick({ values, options, onChange, canEdit, label }: {
           display: 'flex', alignItems: 'center', gap: 8, width: '100%',
           minHeight: 32, padding: '6px 10px', borderRadius: 8, fontSize: 13,
           border: '1px solid var(--aq-border)',
-          borderLeft: `3px solid ${picked.length ? 'var(--aq-accent)' : 'var(--aq-border)'}`,
+          borderLeft: `3px solid ${picked.length ? HILITE : 'var(--aq-border)'}`,
           background: 'var(--aq-bg-elevated)',
           color: picked.length ? 'var(--aq-text)' : 'var(--aq-text-muted)',
           font: 'inherit', cursor: 'pointer', textAlign: 'left',

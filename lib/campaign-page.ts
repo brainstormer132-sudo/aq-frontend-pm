@@ -762,11 +762,11 @@ export function pageIndex(input: PageIndexInput): IndexEntry[] {
       settled: input.contractsTotal > 0 && input.contractsWaiting === 0,
     },
     {
-      key: 'work', label: 'Work & reports', anchor: '#work',
+      key: 'work', label: 'Tasks', anchor: '#work',
       count: String(input.reports), flag: false,
       tone: input.reports > 0 ? 'blue' : 'grey',
-      // No finished state: a campaign with no reports requested is not
-      // waiting on one.
+      // No finished state: a campaign with no tasks on it is not waiting
+      // for one.
       settled: null,
     },
     {
