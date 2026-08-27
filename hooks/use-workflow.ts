@@ -10,6 +10,10 @@ import {
   totalsOf, adTypeSummary, contractDetails,
   adsExpectingProof, adsMissingProof, type AdLine,
 } from '@/lib/ad-lines';
+import {
+  vendorContractNeeds, contractPlan, contractCoverage,
+  type SplitMode, type ContractGroup,
+} from '@/lib/vendor-contracts';
 import { avatarProblems, avatarPath, avatarStoragePath } from '@/lib/profile';
 import { taskCounts } from '@/lib/team';
 import {
@@ -4662,6 +4666,10 @@ export function vendorSubtaskAmount(subtask: PMTask | null): number | null {
 /**
  * What a VENDOR contract needs. Bank details matter here and don't for a
  * client — this is the side AQ pays.
+ *
+ * The rules themselves live in `lib/vendor-contracts` so they can be tested
+ * without a database; this resolves the arguments they need. See that file
+ * for why signatory name is gone and what replaced it.
  */
 export function vendorContractReadiness(
   subtask: PMTask | null,
@@ -4669,14 +4677,14 @@ export function vendorContractReadiness(
   bank: LegacyBankAccount | null,
   /** Sum of the subtask's ad lines, when the caller has them. */
   linesTotal?: number | null,
+  /** The campaign above it — where the brand name usually lives. */
+  parent?: PMTask | null,
+  /** The ads inside the booking, when the caller has them. */
+  lines?: AdLine[],
 ): ContractReadiness {
-  const missing: MissingRequirement[] = [];
-  const has = (v: unknown) => typeof v === 'string' ? v.trim().length > 0 : v != null;
-
   if (!subtask) return { ready: false, missing: [{ label: 'A vendor subtask', where: '' }] };
-
   if (!subtask.vendor_id || !vendor) {
-    missing.push({ label: 'Vendor', where: 'this subtask' });
+    return { ready: false, missing: [{ label: 'Vendor', where: 'this subtask' }] };
   }
 
   // Money can come from either place: a single price on the subtask, or the
@@ -4684,26 +4692,34 @@ export function vendorContractReadiness(
   // already loaded them — a booking priced entirely through its lines has no
   // subtask price, and asking for one would be asking for the same number
   // twice.
-  const money = linesTotal != null && linesTotal > 0
+  const amount = linesTotal != null && linesTotal > 0
     ? linesTotal
     : vendorSubtaskAmount(subtask);
-  if (money == null) {
-    missing.push({ label: 'Price, or at least one ad line', where: 'this subtask' });
+
+  // The ads outrank the booking's single fields: one vendor can be booked
+  // for a Home Ad on TikTok and a Store Visit on Instagram, which no single
+  // dropdown can say.
+  const adTypes: string[] = [];
+  const platformList: string[] = [];
+  for (const l of lines ?? []) {
+    const t = (l.ad_type ?? '').trim();
+    if (t && !adTypes.includes(t)) adTypes.push(t);
+    const p = (l.platform ?? '').trim();
+    if (p && !platformList.includes(p)) platformList.push(p);
   }
 
-  if (vendor) {
-    const where = `Vendors → ${vendor.name}`;
-    const { kind, value } = vendorIdentifier(vendor as any);
-    if (!value) {
-      missing.push({ label: kind === 'license' ? 'Licence number' : 'ID number', where });
-    }
-    if (!has(vendor.signatory_name)) missing.push({ label: 'Signatory name', where });
-    if (!bank) {
-      missing.push({ label: 'Bank account', where });
-    } else if (!has(bank.iban)) {
-      missing.push({ label: 'IBAN', where });
-    }
-  }
+  const missing = vendorContractNeeds({
+    booking: subtask as any,
+    campaign: (parent ?? null) as any,
+    vendor: vendor as any,
+    identifier: vendorIdentifier(vendor as any),
+    bank: bank as any,
+    amount,
+    // A van rental has no handle on a platform; an influencer does.
+    posts: isTrackableVendorCategory(vendorCategoryKey(vendor as any)),
+    adTypes,
+    platformList,
+  });
 
   return { ready: missing.length === 0, missing };
 }
@@ -4821,9 +4837,22 @@ function buildVendorContractPayload(opts: {
     client_name: txt(client?.company_name),
     client_id_legacy: parent.legacy_client_id ?? null,
     pending_client_id: null,
-    cr_number: null, vat_number: null, signatory_name: txt(vendor.signatory_name),
+    // Signatory is a CLIENT idea — the person authorised to bind a company.
+    // Siraj: *"vendor contracts dont need a signatory name"*. An influencer
+    // has none, nothing ever filled it, and requiring it blocked every
+    // vendor contract on a field with no source. What a vendor contract
+    // does need is below: the person, their handle, and the terms.
+    cr_number: null, vat_number: null, signatory_name: null,
     street: null, city: null, postcode: null, country: null,
     email: null, phone: null,
+
+    // 070. All three come from records that already exist, so none of this
+    // is a new thing for anybody to type.
+    contact_name: txt(vendor.contact_name),
+    platform_handle: txt(vendor.platforms),
+    payment_terms: txt((subtask as any).payment_terms),
+    payment_split_pct: (subtask as any).payment_split_pct ?? null,
+    payment_net_days: (subtask as any).payment_net_days ?? null,
 
     pending_vendor_id: null,
     vendor_id: vendor.id,
@@ -4856,16 +4885,41 @@ function buildVendorContractPayload(opts: {
   };
 }
 
-/** Insert the request and link it back onto the subtask so it can't re-fire. */
+/**
+ * Insert the request, link the ads it covers, and link it back onto the
+ * subtask so it can't re-fire.
+ *
+ * Two links, deliberately. `pm_tasks.contract_request_id` is the old one and
+ * everything that reads it keeps working; `vendor_ad_lines.contract_request_id`
+ * (070) is the one that can express a HALF-contracted booking, which is what
+ * splitting produces. On a split, the booking-level link points at the first
+ * contract — enough to stop the auto-fire, and the ads carry the truth.
+ */
 async function insertVendorContractRequest(
   subtask: PMTask,
   payload: ReturnType<typeof buildVendorContractPayload>,
+  /** The ads this contract covers. Empty = the booking has no lines. */
+  lineIds: string[] = [],
 ): Promise<string> {
   const created = await createContractRequest(payload as any);
-  await supabase
-    .from('pm_tasks')
-    .update({ contract_request_id: created.id } as any)
-    .eq('id', subtask.id);
+
+  if (lineIds.length) {
+    const { error } = await supabase
+      .from('vendor_ad_lines')
+      .update({ contract_request_id: created.id } as any)
+      .in('id', lineIds);
+    if (error) logSbError('insertVendorContractRequest: link lines', error);
+  }
+
+  // Only the first one claims the booking — a second write would overwrite
+  // the first contract's id and lose which request the booking points at.
+  if (!(subtask as any).contract_request_id) {
+    await supabase
+      .from('pm_tasks')
+      .update({ contract_request_id: created.id } as any)
+      .eq('id', subtask.id);
+    (subtask as any).contract_request_id = created.id;
+  }
   return created.id;
 }
 
@@ -4886,31 +4940,59 @@ export async function sendVendorContractRequest(opts: {
   client?: ClientRow | null;
   requestedBy: string;
   notes?: string | null;
-}): Promise<string> {
+  /**
+   * Siraj: *"vendor contract should be requested all combined to one contract
+   * or multiple contract based on the vendor lines"*. `combined` is the
+   * default and is what this always did.
+   */
+  split?: SplitMode;
+}): Promise<string[]> {
   const { subtask, vendor, bank } = opts;
 
-  if ((subtask as any).contract_request_id) {
-    throw new Error('A contract has already been requested for this subtask.');
-  }
   if (!subtask.workspace_id) {
     throw new Error('This subtask has no workspace; cannot raise a request.');
   }
 
-  // One contract per vendor subtask, covering every ad inside it.
   const lines = await fetchVendorAdLines(subtask.id);
   const linesTotal = totalsOf(lines).amount;
 
-  const check = vendorContractReadiness(subtask, vendor, bank, linesTotal);
+  // Which ads are not yet under contract. Asking again for a booking whose
+  // March ads are contracted and whose June ads are not should raise a
+  // contract for June, not a duplicate of March — which is why this reads
+  // the ads rather than the booking's single link.
+  const free = lines.filter((l) => !(l as any).contract_request_id);
+  if (lines.length && !free.length) {
+    throw new Error('Every ad on this booking is already under contract.');
+  }
+  if (!lines.length && (subtask as any).contract_request_id) {
+    throw new Error('A contract has already been requested for this booking.');
+  }
+
+  const check = vendorContractReadiness(
+    subtask, vendor, bank, linesTotal, opts.parent, lines,
+  );
   if (!check.ready || !vendor) {
     throw new Error(
       `Not ready to send. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
     );
   }
 
-  return insertVendorContractRequest(
-    subtask,
-    buildVendorContractPayload({ ...opts, vendor, bank, lines }),
-  );
+  const groups = contractPlan(free as any, opts.split ?? 'combined');
+  const ids: string[] = [];
+  for (const g of groups) {
+    // Each contract carries only the ads it covers, so its amount, its ad
+    // types and its itemisation are the ones on the paper — not the whole
+    // booking's, which would say the vendor is owed twice.
+    const covered = g.lineIds.length
+      ? free.filter((l) => g.lineIds.includes(String((l as any).id)))
+      : free;
+    ids.push(await insertVendorContractRequest(
+      subtask,
+      buildVendorContractPayload({ ...opts, vendor, bank, lines: covered }),
+      g.lineIds,
+    ));
+  }
+  return ids;
 }
 
 /**
@@ -4945,11 +5027,17 @@ export async function autoCreateContractRequestForSubtask(opts: {
   if (!subtask.workspace_id) {
     throw new Error('Subtask has no workspace_id; cannot create contract request.');
   }
-  if (!vendorContractReadiness(subtask, vendor, bank, linesTotal).ready) return null;
+  const ready = vendorContractReadiness(
+    subtask, vendor, bank, linesTotal, opts.parent, lines,
+  ).ready;
+  if (!ready) return null;
 
+  // Auto-fire is always combined. Splitting is a decision somebody makes on
+  // purpose, and a background write is not the place to make it.
   return insertVendorContractRequest(
     subtask,
     buildVendorContractPayload({ ...opts, vendor, bank, lines }),
+    lines.map((l) => String((l as any).id)).filter(Boolean),
   );
 }
 
@@ -4967,10 +5055,16 @@ export function subtaskContractState(
   subtask: PMTask,
   vendor: LegacyVendor | null,
   bank: LegacyBankAccount | null,
+  /** The campaign, so the brand name it holds counts as answered. */
+  parent?: PMTask | null,
+  /** The booking's ads, so a per-line booking is not read as unpriced. */
+  lines?: AdLine[],
 ): SubtaskContractState {
   if (!isVendorSubtaskKind(subtask.subtask_kind)) return 'n/a';
   if (subtask.contract_request_id) return 'requested';
-  return vendorContractReadiness(subtask, vendor, bank).ready ? 'ready' : 'missing';
+  const total = lines?.length ? totalsOf(lines).amount : null;
+  return vendorContractReadiness(subtask, vendor, bank, total, parent, lines).ready
+    ? 'ready' : 'missing';
 }
 
 export interface ContractTally {
@@ -4987,12 +5081,17 @@ export function contractTally(
   subtasks: PMTask[],
   vendors: LegacyVendor[],
   banks: LegacyBankAccount[],
+  /** The campaign above them — it holds the brand name. */
+  parent?: PMTask | null,
+  /** Every ad on the campaign, by booking. Without them a per-line booking
+   *  counts as "missing a price", which is the number people read. */
+  linesBySubtask?: Map<string, AdLine[]>,
 ): ContractTally {
   const tally: ContractTally = { total: 0, requested: 0, ready: 0, missing: 0 };
   for (const s of subtasks) {
     const v = s.vendor_id != null ? vendors.find((x) => x.id === s.vendor_id) ?? null : null;
     const b = v ? banks.find((x) => x.vendor_id === v.id) ?? null : null;
-    const state = subtaskContractState(s, v, b);
+    const state = subtaskContractState(s, v, b, parent, linesBySubtask?.get(s.id));
     if (state === 'n/a') continue;
     tally.total += 1;
     tally[state] += 1;
@@ -5014,6 +5113,8 @@ export async function sendVendorContractRequests(opts: {
   banks: LegacyBankAccount[];
   client?: ClientRow | null;
   requestedBy: string;
+  /** Applied to every booking in the batch. */
+  split?: SplitMode;
 }): Promise<{ sent: number; skipped: { title: string; reason: string }[] }> {
   const skipped: { title: string; reason: string }[] = [];
   let sent = 0;
@@ -5024,11 +5125,15 @@ export async function sendVendorContractRequests(opts: {
       : null;
     const bank = vendor ? opts.banks.find((b) => b.vendor_id === vendor.id) ?? null : null;
     try {
-      await sendVendorContractRequest({
+      // A split booking raises several contracts, and the count is of
+      // contracts — "Requested 4 contracts" has to be four pieces of paper,
+      // not four vendors, or the number on the tally is a different number
+      // from the number in the pile.
+      const ids = await sendVendorContractRequest({
         subtask, parent: opts.parent, vendor, bank,
-        client: opts.client, requestedBy: opts.requestedBy,
+        client: opts.client, requestedBy: opts.requestedBy, split: opts.split,
       });
-      sent += 1;
+      sent += ids.length;
     } catch (e: any) {
       skipped.push({ title: subtask.title, reason: e?.message ?? String(e) });
     }

@@ -6,10 +6,12 @@ import {
   vendorContractReadiness, sendVendorContractRequest, sendVendorContractRequests,
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
-import { Card, Note, Missing, inkButton, TONE,
-} from './ui';
+import { Card, Note, Missing, inkButton, TONE } from './ui';
 import { LengthField, TrackRow, TermsField, termsLabel } from './track';
 import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '@/lib/campaign-page';
+import {
+  contractPlan, contractCoverage, type SplitMode,
+} from '@/lib/vendor-contracts';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 /**
@@ -28,10 +30,13 @@ import type { OptimisticSave } from '@/hooks/use-optimistic-save';
  * exactly like the ones it sent.
  */
 export function CampaignVendorContracts({
-  task, subtasks, bookings, client, role, currentUserId, today, opt, onChanged,
+  task, subtasks, adLinesBySubtask, bookings, client, role, currentUserId,
+  today, opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
+  /** The ads inside each booking. A contract covers ads, not a booking (070). */
+  adLinesBySubtask: Map<string, any[]>;
   bookings: { id: string; name: string; amount?: number | null; [k: string]: any }[];
   client: any | null;
   role: WorkspaceRole | null;
@@ -44,6 +49,18 @@ export function CampaignVendorContracts({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+
+  /**
+   * Siraj: *"vendor contract should be requested all combined to one contract
+   * or multiple contract based on the vendor lines"*.
+   *
+   * One choice for the card rather than one per row: it is the same decision
+   * every time — is this vendor on one agreement or several — and asking it
+   * eleven times to send eleven contracts is the kind of question people stop
+   * reading. Combined is the default because it is what the app has always
+   * done and what most bookings want.
+   */
+  const [split, setSplit] = useState<SplitMode>('combined');
 
   const canRequest = !!role
     && ['owner', 'admin', 'marketing', 'sales', 'key_account'].includes(role);
@@ -65,7 +82,10 @@ export function CampaignVendorContracts({
     const booking = bookings.find((b) => b.id === sub.id);
     const vendor = (vendors as any[]).find((v) => Number(v.id) === Number((sub as any).vendor_id)) ?? null;
     const bank = (banks as any[]).find((x) => Number(x.vendor_id) === Number((sub as any).vendor_id)) ?? null;
-    const readiness = vendorContractReadiness(sub, vendor, bank, booking?.amount ?? null);
+    const lines = adLinesBySubtask.get(sub.id) ?? [];
+    const readiness = vendorContractReadiness(
+      sub, vendor, bank, booking?.amount ?? booking?.price ?? null, task, lines as any,
+    );
     const request = (sub as any).contract_request_id
       ? { status: (sub as any).contract_status ?? 'pending',
           created_at: (sub as any).contract_requested_at ?? (sub as any).updated_at,
@@ -77,12 +97,20 @@ export function CampaignVendorContracts({
       ? (readiness.missing[0] as any)?.label ?? 'Not ready'
       : null;
 
+    // Read from the ads, not the booking. A vendor whose March ads are
+    // contracted and whose June ads are not used to read "contract signed",
+    // because one link on the booking was the whole story it could tell.
+    const cover = contractCoverage(lines as any);
+    const plan = contractPlan(
+      (lines as any[]).filter((l) => !l.contract_request_id), split,
+    );
+
     return {
-      sub, vendor, booking, readiness, blocker,
+      sub, vendor, booking, readiness, blocker, lines, cover, plan,
       name: booking?.name ?? vendor?.name ?? sub.title ?? 'Unnamed vendor',
       track: contractTrack(request, today, blocker),
     };
-  }), [vendorSubtasks, bookings, vendors, banks, today]);
+  }), [vendorSubtasks, bookings, vendors, banks, today, adLinesBySubtask, task, split]);
 
   const ready = rows.filter((r) => r.track.state === 'none' && !r.blocker);
   const blocked = rows.filter((r) => r.track.state === 'blocked');
@@ -90,12 +118,14 @@ export function CampaignVendorContracts({
   const waiting = rows.filter((r) => r.track.state === 'waiting').length;
 
   const askOne = (row: typeof rows[number]) => run(async () => {
-    await sendVendorContractRequest({
+    const ids = await sendVendorContractRequest({
       subtask: row.sub, parent: task, vendor: row.vendor,
       bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
-      client, requestedBy: currentUserId,
+      client, requestedBy: currentUserId, split,
     });
-    setNotice(`Contract requested for ${row.name}.`);
+    setNotice(ids.length === 1
+      ? `Contract requested for ${row.name}.`
+      : `${ids.length} contracts requested for ${row.name}, one per line.`);
   });
 
   const askAll = () => run(async () => {
@@ -106,6 +136,7 @@ export function CampaignVendorContracts({
       banks: banks as any,
       client,
       requestedBy: currentUserId,
+      split,
     });
     setNotice(bulkResultLine(res.sent, res.skipped));
   });
@@ -126,12 +157,15 @@ export function CampaignVendorContracts({
         blocked.length ? `${blocked.length} blocked` : null,
       ].filter(Boolean).join(' · ') || 'nothing asked for yet'}
       right={canRequest ? (
-        <button
-          type="button"
-          style={inkButton(busy || !ready.length)}
-          disabled={busy || !ready.length}
-          onClick={askAll}
-        >{askAllLabel(ready.length, blocked.length)}</button>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <SplitChoice value={split} onChange={setSplit} disabled={busy} />
+          <button
+            type="button"
+            style={inkButton(busy || !ready.length)}
+            disabled={busy || !ready.length}
+            onClick={askAll}
+          >{askAllLabel(ready.length, blocked.length)}</button>
+        </span>
       ) : null}
     >
       {error && <Note tone="bad">{error}</Note>}
@@ -149,6 +183,11 @@ export function CampaignVendorContracts({
               ? termsLabel((r.sub as any).payment_terms, (r.sub as any).payment_split_pct,
                            (r.sub as any).payment_net_days)
               : null,
+            // Only worth saying when it is not the obvious one contract.
+            r.track.state === 'none' && r.plan.length > 1
+              ? `${r.plan.length} contracts`
+              : null,
+            r.cover.partial ? `${r.cover.uncovered} ads not covered` : null,
           ].filter(Boolean).join(' · ')}
           detail={r.track.state === 'blocked'
             ? <Missing items={r.readiness.missing as any} />
@@ -193,6 +232,15 @@ export function CampaignVendorContracts({
                 <button type="button" style={inkButton(busy)} disabled={busy}
                   onClick={() => askOne(r)}>Ask</button>
               )}
+              {/* Ads added after the contract went out. The old shape could
+                  not express this at all — the booking had a contract, so it
+                  was done — and the new ads went uncovered in silence. */}
+              {canRequest && r.track.state !== 'none' && r.cover.partial && !r.blocker && (
+                <button type="button" style={inkButton(busy)} disabled={busy}
+                  onClick={() => askOne(r)}
+                  title={`${r.cover.uncovered} ads are not on any contract yet`}
+                >Ask for the rest</button>
+              )}
               {canRequest && r.track.state === 'blocked' && (
                 <button type="button" style={inkButton(true)} disabled>Ask</button>
               )}
@@ -201,5 +249,56 @@ export function CampaignVendorContracts({
         />
       ))}
     </Card>
+  );
+}
+
+/**
+ * One contract, or one per line.
+ *
+ * A two-state segmented control rather than a dropdown, because there are
+ * exactly two answers and a dropdown hides one of them behind a click. It
+ * sits beside the ask-all button because that is where the decision is
+ * spent, and it says what it will produce rather than what it is called —
+ * the ask-all button already learned that lesson.
+ */
+function SplitChoice({ value, onChange, disabled }: {
+  value: SplitMode;
+  onChange: (v: SplitMode) => void;
+  disabled?: boolean;
+}) {
+  const opts: { v: SplitMode; l: string; title: string }[] = [
+    { v: 'combined', l: 'One contract', title: 'Everything this vendor is booked for, on one agreement.' },
+    { v: 'per-line', l: 'One per line', title: 'A separate contract for each ad line — a Home Ad in March and a Store Visit in June become two.' },
+  ];
+  return (
+    <span
+      role="group"
+      aria-label="How many contracts"
+      style={{
+        display: 'inline-flex', borderRadius: 8, overflow: 'hidden',
+        border: '1px solid var(--aq-border)', background: 'var(--aq-bg-elevated)',
+      }}
+    >
+      {opts.map((o) => {
+        const on = o.v === value;
+        return (
+          <button
+            key={o.v}
+            type="button"
+            title={o.title}
+            aria-pressed={on}
+            disabled={disabled}
+            onClick={() => onChange(o.v)}
+            style={{
+              font: 'inherit', fontSize: 12, fontWeight: on ? 700 : 600,
+              padding: '5px 11px', border: 'none', whiteSpace: 'nowrap',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              background: on ? 'var(--aq-text)' : 'transparent',
+              color: on ? '#fff' : 'var(--aq-text-secondary)',
+            }}
+          >{o.l}</button>
+        );
+      })}
+    </span>
   );
 }

@@ -24,7 +24,8 @@ import { CampaignActivity } from './campaign/CampaignActivity';
 import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
   TONE,
-  Card, Group, Fields, F, Val, Pick, Text, HILITE } from './campaign/ui';
+  Card, Group, Fields, F, Val, Pick, Text, HILITE, Money,
+  Chip, platformTone } from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
@@ -32,9 +33,9 @@ import { DateField } from './DateField';
 import { CampaignLoading } from './CampaignSkeleton';
 import { closerKey, closerFields, closerOptions } from '@/lib/sales-closer';
 import {
-  moneyBar, stripTotals, bookingRows, campaignGaps, gapSummary,
+  moneyBar, stripTotals, bookingRows, campaignSpread, campaignGaps, gapSummary,
   pageIndex, PAGE_SECTION_IDS, indexProgress, money, moneyRound, shortDate, longDate, initials,
-  amountOrNull as pos, brandMark,
+  amountOrNull as pos, brandMark, parseMoney,
   type Gap, type BookingRow, type IndexEntry,
 } from '@/lib/campaign-page';
 
@@ -295,6 +296,15 @@ export function CampaignPage({
     }),
     [vendorSubtasks, allAdLines, vendorNames, contractStatusById],
   );
+
+  // What the campaign is ACTUALLY running, from the ads up.
+  //
+  // Siraj: *"same for the client task"*. The campaign's own Ad type and
+  // Platforms were typed when it was created — a plan. Once the bookings
+  // have ads, the ads are the fact, and a campaign selling "Reel on TikTok"
+  // whose vendors are posting Store Visits to Instagram should say so on
+  // the page rather than only in the lines twelve scrolls down.
+  const spread = useMemo(() => campaignSpread(bookings), [bookings]);
 
   // The masthead adds up the SAME rows the Bookings card shows, rather than
   // reading price off each subtask separately. rollupCampaignMoney reads the
@@ -905,6 +915,22 @@ export function CampaignPage({
                     canEdit={canEdit}
                   />
                 </F>
+                {/* The two fields above are the PLAN — typed when the campaign
+                    was created. This is what the bookings are actually doing.
+                    They are shown together because the gap between them is the
+                    thing worth seeing: a campaign sold as one ad type whose
+                    vendors are posting three has drifted, and until now that
+                    was only visible by opening every booking. */}
+                {(spread.adTypes.length > 0 || spread.platforms.length > 0) && (
+                  <F k="Booked">
+                    <Running
+                      adTypes={spread.adTypes}
+                      platforms={spread.platforms}
+                      planAdType={task.ad_type}
+                      planPlatforms={((view as any).platforms ?? []) as string[]}
+                    />
+                  </F>
+                )}
                 {/* One date could not say when a campaign runs — only when it
                     was due. Both are kept: the run is start → end, and the due
                     date stays as the deadline everything else already sorts by. */}
@@ -972,10 +998,10 @@ export function CampaignPage({
               <Group title="Money & paperwork" />
               <Fields>
                 <F k="Budget">
-                  <Text
+                  <Money
                     value={(view as any).budget != null ? String((view as any).budget) : ''}
                     placeholder="0.00"
-                    onCommit={(v) => save('budget', v === '' ? null : Number(v))}
+                    onCommit={(v) => save('budget', parseMoney(v))}
                     canEdit={canEdit}
                   />
                 </F>
@@ -995,11 +1021,11 @@ export function CampaignPage({
                     : <Val>{longDate((view as any).client_payment_date)}</Val>}
                 </F>
                 <F k="Amount paid">
-                  <Text
+                  <Money
                     value={(view as any).client_payment_amount != null
                       ? String((view as any).client_payment_amount) : ''}
                     placeholder="0.00"
-                    onCommit={(v) => save('client_payment_amount', v === '' ? null : Number(v))}
+                    onCommit={(v) => save('client_payment_amount', parseMoney(v))}
                     canEdit={canEdit}
                   />
                 </F>
@@ -1081,13 +1107,20 @@ export function CampaignPage({
           <CampaignVendorContracts
             task={task}
             subtasks={shownSubtasks as any}
+            adLinesBySubtask={bySubtask}
             bookings={bookings}
             client={currentClient}
             role={role}
             currentUserId={currentUserId}
             today={today ?? ''}
             opt={opt}
-            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+            onChanged={async () => {
+              // The ads carry the contract link now (070), so a request
+              // raised here changes them as well as the bookings. Without
+              // this the card kept saying "Ask" for something it had just
+              // asked for — the same dropped-refetch bug three times over.
+              await refetch(); await refetchSubtasks(); await refetchAdLines();
+            }}
           />
 
           <CampaignWork
@@ -1447,6 +1480,58 @@ function Fig({ k, v, sub, lead, bad }: {
  * Text's `numeric` prop silently did nothing here. Deleted; the shared ones
  * are a superset.
  */
+
+/**
+ * What the bookings are actually running, against what was sold.
+ *
+ * Reported, never edited — the ads own these, and a control here would set a
+ * number nothing reads. Anything the bookings carry that the plan above does
+ * not gets an outline rather than a fill, so drift is visible without a
+ * sentence: filled chips are on plan, outlined ones were added underneath.
+ */
+function Running({ adTypes, platforms, planAdType, planPlatforms }: {
+  adTypes: string[];
+  platforms: string[];
+  planAdType?: string | null;
+  planPlatforms: string[];
+}) {
+  const plannedTypes = new Set([String(planAdType ?? '')].filter(Boolean));
+  const plannedPlatforms = new Set(planPlatforms.map((p) => String(p)));
+
+  return (
+    <span style={{
+      display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      minHeight: 32, padding: '5px 10px', borderRadius: 8,
+      border: '1px dashed var(--aq-border)', background: 'var(--aq-bg-sunken)',
+    }}>
+      {adTypes.map((t) => (
+        plannedTypes.has(t)
+          ? <Chip key={`t-${t}`} label={t} />
+          : <Outline key={`t-${t}`} label={t} title="Booked, but not what the campaign says it is" />
+      ))}
+      {adTypes.length > 0 && platforms.length > 0 && (
+        <span aria-hidden style={{ color: 'var(--aq-border)' }}>·</span>
+      )}
+      {platforms.map((p) => (
+        plannedPlatforms.has(p)
+          ? <Chip key={`p-${p}`} label={p} colours={platformTone(p)} />
+          : <Outline key={`p-${p}`} label={p} title="Booked, but not on the campaign's platform list" />
+      ))}
+    </span>
+  );
+}
+
+/** A chip for something the plan above does not mention. */
+function Outline({ label, title }: { label: string; title: string }) {
+  return (
+    <span title={title} style={{
+      display: 'inline-flex', alignItems: 'center',
+      fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+      border: '1px dashed #b45309', color: '#92400e', background: 'transparent',
+      whiteSpace: 'nowrap', lineHeight: 1.5,
+    }}>{label}</span>
+  );
+}
 
 function GapRow({ gap }: { gap: Gap }) {
   const blocking = gap.weight === 'blocking';

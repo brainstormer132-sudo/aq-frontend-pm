@@ -391,6 +391,8 @@ export function stripTotals(ads: AdForStrip[]): Record<AdStatusKey, number> {
 // ── The bookings list ───────────────────────────────────────────────
 
 export interface BookingSubtask {
+  /** The booking's own single platform — a fallback when its ads carry none. */
+  platform?: string | null;
   /** Typed on the booking only when it has no ads to be priced by. */
   net_amount?: unknown;
   id: string;
@@ -405,6 +407,8 @@ export interface BookingSubtask {
 export interface BookingAd {
   subtask_id?: string | null;
   ad_type?: string | null;
+  /** Per-ad. One vendor can post a Home Ad to TikTok and a Store Visit to Instagram. */
+  platform?: string | null;
   quantity?: unknown;
   status?: string | null;
   // An influencer is priced per piece, not per booking: twelve ads at
@@ -428,6 +432,30 @@ export interface BookingRow {
   /** 0–100 for the progress sliver. */
   progressPct: number;
   adTypes: string;
+  /**
+   * Every distinct ad type and platform across this booking's ads.
+   *
+   * Siraj: *"the same vendor could do one ad home ad one store visit one of
+   * them tiktok and one instagram so it should reflect that"*. The booking
+   * carries a single `ad_type` and a single `platform`, which cannot say
+   * that — so the lists come from the ads, and the single fields are only a
+   * fallback for a booking that has none.
+   */
+  adTypeList: string[];
+  platformList: string[];
+  /** True when the ads disagree with each other, so one dropdown cannot say it. */
+  mixedAdTypes: boolean;
+  mixedPlatforms: boolean;
+  /**
+   * True when the list came from the ads rather than the booking's own field.
+   *
+   * The booking's dropdown is then a report, not a control — the same rule
+   * Client price already follows once the lines carry money. Leaving it
+   * editable would let somebody set a value nothing reads, which the next
+   * line edit then silently contradicts.
+   */
+  adTypesFromAds: boolean;
+  platformsFromAds: boolean;
   price: number | null;
   /** '' when there is no request at all. */
   contract: 'none' | 'requested' | 'signed';
@@ -456,14 +484,22 @@ export function bookingRows(input: {
     let ads = 0;
     let posted = 0;
     const types: string[] = [];
+    const platforms: string[] = [];
     for (const l of lines) {
       const q = Math.max(1, num(l.quantity) ?? 1);
       ads += q;
       if (txt(l.status) === 'Posted') posted += q;
       const t = txt(l.ad_type);
       if (t && !types.includes(t)) types.push(t);
+      const pf = txt(l.platform);
+      if (pf && !platforms.includes(pf)) platforms.push(pf);
     }
-    if (!lines.length && txt(s.ad_type)) types.push(txt(s.ad_type));
+    const adTypesFromAds = types.length > 0;
+    const platformsFromAds = platforms.length > 0;
+    // No ads, or ads nobody has typed a type on: fall back to the booking's
+    // own single field, which is all a booking without lines ever had.
+    if (!types.length && txt(s.ad_type)) types.push(txt(s.ad_type));
+    if (!platforms.length && txt(s.platform)) platforms.push(txt(s.platform));
 
     // Where the money is typed depends on whether the booking has ads.
     //
@@ -512,6 +548,12 @@ export function bookingRows(input: {
       posted,
       progressPct: ads ? Math.round((posted / ads) * 100) : 0,
       adTypes: types.join(', '),
+      adTypeList: types,
+      platformList: platforms,
+      mixedAdTypes: types.length > 1,
+      mixedPlatforms: platforms.length > 1,
+      adTypesFromAds,
+      platformsFromAds,
       price,
       net,
       /** True when the ads below are the source of the money, not the booking. */
@@ -522,6 +564,26 @@ export function bookingRows(input: {
       meta: bits.join(' · '),
     };
   });
+}
+
+/**
+ * Every ad type and platform running on the campaign, from the ads up.
+ *
+ * A campaign carries one `ad_type` and a `platforms` array, both typed when
+ * it was created. Once the bookings have ads, those are a guess and the ads
+ * are the fact: the campaign is whatever its vendors are actually posting.
+ */
+export function campaignSpread(rows: BookingRow[]): {
+  adTypes: string[];
+  platforms: string[];
+} {
+  const adTypes: string[] = [];
+  const platforms: string[] = [];
+  for (const r of rows ?? []) {
+    for (const t of r.adTypeList ?? []) if (!adTypes.includes(t)) adTypes.push(t);
+    for (const p of r.platformList ?? []) if (!platforms.includes(p)) platforms.push(p);
+  }
+  return { adTypes, platforms };
 }
 
 function contractLabelFor(c: BookingRow['contract']): string {
@@ -868,6 +930,59 @@ export function isCalculated(key: string): boolean {
  * that is not a number at all is also null rather than NaN, which would reach
  * Postgres as `NaN` and fail the insert with a message about JSON.
  */
+/**
+ * A money figure with its thousands separators, while it is being typed.
+ *
+ * Siraj: *"any integer places for prices and money it should auto put an
+ * apostrophe for 1000 it should do it while you work also not when you
+ * submit"*. A number only grouped on save is a number you cannot read at the
+ * moment you most need to — 29000 and 290000 are one glance apart, and that
+ * glance is the difference between a booking and a mistake.
+ *
+ * Deliberately forgiving, because it runs on every keystroke:
+ *  - anything that is not a digit or a dot is dropped, so a pasted
+ *    "SAR 29,000.00" cleans itself up;
+ *  - a trailing dot survives, or typing "29." would delete the dot the
+ *    instant you pressed it;
+ *  - decimals stop at two, and the integer side is grouped in threes.
+ */
+export function groupDigits(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw : raw == null ? '' : String(raw);
+  const cleaned = s.replace(/[^\d.]/g, '');
+  if (!cleaned) return '';
+
+  // One dot only: the first wins, later ones are typos.
+  const dot = cleaned.indexOf('.');
+  const whole = dot === -1 ? cleaned : cleaned.slice(0, dot);
+  const frac = dot === -1 ? null : cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+
+  // Leading zeros go, but a lone "0" stays — somebody is mid-way to "0.5".
+  const trimmed = whole.replace(/^0+(?=\d)/, '');
+  const grouped = trimmed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+  if (dot === -1) return grouped;
+  return `${grouped}.${frac}`;
+}
+
+/**
+ * Where the caret should sit after grouping.
+ *
+ * Without this the cursor jumps to the end on the keystroke that adds a
+ * comma, so editing the middle of a figure is impossible. Counts the
+ * characters that are not separators before the caret, then finds that same
+ * position in the grouped string.
+ */
+export function caretAfterGrouping(before: string, caret: number, after: string): number {
+  const kept = before.slice(0, Math.max(0, caret)).replace(/[^\d.]/g, '').length;
+  if (kept === 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < after.length; i += 1) {
+    if (after[i] !== ',') seen += 1;
+    if (seen === kept) return i + 1;
+  }
+  return after.length;
+}
+
 export function parseMoney(v: unknown): number | null {
   const s = txt(v).replace(/[, ]/g, '');
   if (!s) return null;
@@ -876,19 +991,54 @@ export function parseMoney(v: unknown): number | null {
   return n;
 }
 
-/** The grey line under a booking's name: what is booked, and where it stands. */
+/**
+ * The grey line under a booking's name: what is booked, and where it stands.
+ *
+ * The ad type and the platform are LISTS, not words. One vendor doing a Home
+ * Ad on TikTok and a Store Visit on Instagram is one booking, and a subtitle
+ * that names only the first of each is a lie about what was booked.
+ *
+ * `adType` is still read because the drawer passed that shape; new callers
+ * pass `adTypeList` and `platformList` straight off a `BookingRow`.
+ */
 export function bookingSubtitle(
-  row: { ads?: unknown; adType?: unknown; contractNote?: unknown },
+  row: {
+    ads?: unknown;
+    adType?: unknown;
+    adTypeList?: unknown;
+    platformList?: unknown;
+    contractNote?: unknown;
+  },
   adLineCount: number,
 ): string {
   const parts: string[] = [];
   const ads = Number(row.ads ?? adLineCount) || adLineCount;
   parts.push(ads === 0 ? 'no ads yet' : `${ads} ad${ads === 1 ? '' : 's'}`);
-  const type = txt(row.adType);
-  if (type) parts.push(type);
+
+  const types = list(row.adTypeList);
+  if (types.length) parts.push(types.join(', '));
+  else {
+    const type = txt(row.adType);
+    if (type) parts.push(type);
+  }
+
+  const platforms = list(row.platformList);
+  if (platforms.length) parts.push(platforms.join(', '));
+
   const note = txt(row.contractNote);
   if (note) parts.push(note);
   return parts.join(' · ');
+}
+
+/** A string[] out of whatever a caller handed over, blanks dropped. */
+function list(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const x of v) {
+    const s = txt(x);
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
 }
 
 /**

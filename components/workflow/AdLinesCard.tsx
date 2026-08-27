@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createAdLines, updateAdLine, deleteAdLine, syncBookingPriceFromAds,
   AD_TYPE_OPTIONS, type AdLine,
@@ -10,6 +10,7 @@ import {
   adsMissingProof, AD_LINE_STATUSES, type AdLineSpec,
 } from '@/lib/ad-lines';
 import { AddAdLinesDialog } from './AddAdLinesDialog';
+import { groupDigits, caretAfterGrouping } from '@/lib/campaign-page';
 import { DateField } from './DateField';
 import { SkeletonRows } from '@/components/Skeleton';
 
@@ -357,6 +358,7 @@ function AdDetail({
             without it the two numbers look like the same number twice. */}
         <Cell label="Price each (SAR)" width={140}>
           <NumberCell
+            money
             value={Number(line.unit_price)} min={0} step="0.01" disabled={!canEdit}
             onCommit={(v) => onPatch({ unit_price: v })}
           />
@@ -431,6 +433,7 @@ function AdDetail({
           </Cell>
           <Cell label="Net on this ad" width={140}>
             <TextCell
+              money
               value={line.net_amount == null ? '' : String(line.net_amount)}
               disabled={!canEdit}
               placeholder="0.00"
@@ -496,44 +499,123 @@ function Cell({ label, width, children }: { label: string; width?: number; child
 
 /** Text that saves on blur or Enter — never per keystroke. */
 function TextCell({
-  value, onCommit, disabled, placeholder,
+  value, onCommit, disabled, placeholder, money,
 }: {
   value: string;
   onCommit: (v: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  /** Group the thousands as it is typed. */
+  money?: boolean;
 }) {
+  // A money cell formats as it is typed; everything else is a plain box.
+  const [draft, setDraft] = useState(money ? groupDigits(value) : value);
+  const box = useRef<HTMLInputElement | null>(null);
+  const caret = useRef<number | null>(null);
+
+  useEffect(() => { if (money) setDraft(groupDigits(value)); }, [value, money]);
+  useEffect(() => {
+    if (caret.current == null || !box.current) return;
+    box.current.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  });
+
+  if (!money) {
+    return (
+      <input
+        className="aq-input"
+        defaultValue={value}
+        disabled={disabled}
+        placeholder={placeholder}
+        onBlur={(e) => { const v = e.target.value.trim(); if (v !== value.trim()) onCommit(v); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      />
+    );
+  }
+
   return (
     <input
+      ref={box}
       className="aq-input"
-      defaultValue={value}
+      inputMode="decimal"
+      value={draft}
       disabled={disabled}
       placeholder={placeholder}
-      onBlur={(e) => { const v = e.target.value.trim(); if (v !== value.trim()) onCommit(v); }}
+      style={{ fontVariantNumeric: 'tabular-nums' }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const next = groupDigits(raw);
+        caret.current = caretAfterGrouping(raw, e.target.selectionStart ?? raw.length, next);
+        setDraft(next);
+      }}
+      onBlur={() => { if (draft.trim() !== groupDigits(value)) onCommit(draft.trim()); }}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
     />
   );
 }
 
 function NumberCell({
-  value, onCommit, disabled, min, step,
+  value, onCommit, disabled, min, step, money,
 }: {
   value: number;
   onCommit: (v: number) => void;
   disabled?: boolean;
   min?: number;
   step?: string;
+  /** Group the thousands while typing. A price, not a count. */
+  money?: boolean;
 }) {
+  // A native number input cannot show separators — the browser owns the
+  // rendering — so a money cell is a text box that formats itself instead.
+  const [draft, setDraft] = useState(money ? groupDigits(String(value ?? '')) : '');
+  const box = useRef<HTMLInputElement | null>(null);
+  const caret = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (money) setDraft(groupDigits(String(value ?? '')));
+  }, [value, money]);
+
+  useEffect(() => {
+    if (caret.current == null || !box.current) return;
+    box.current.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  });
+
+  if (!money) {
+    return (
+      <input
+        className="aq-input"
+        type="number"
+        min={min}
+        step={step}
+        defaultValue={value}
+        disabled={disabled}
+        style={{ textAlign: 'right' }}
+        onBlur={(e) => { const v = Number(e.target.value); if (v !== value) onCommit(v); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      />
+    );
+  }
+
   return (
     <input
+      ref={box}
       className="aq-input"
-      type="number"
-      min={min}
-      step={step}
-      defaultValue={value}
+      inputMode="decimal"
+      value={draft}
       disabled={disabled}
-      style={{ textAlign: 'right' }}
-      onBlur={(e) => { const v = Number(e.target.value); if (v !== value) onCommit(v); }}
+      style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const next = groupDigits(raw);
+        caret.current = caretAfterGrouping(raw, e.target.selectionStart ?? raw.length, next);
+        setDraft(next);
+      }}
+      onBlur={() => {
+        const n = Number(draft.replace(/,/g, ''));
+        if (!Number.isFinite(n) || n < 0) { setDraft(groupDigits(String(value ?? ''))); return; }
+        if (n !== value) onCommit(n);
+      }}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
     />
   );

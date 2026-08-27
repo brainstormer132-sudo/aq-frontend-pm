@@ -18,7 +18,8 @@ import { SearchablePicker } from '../SearchablePicker';
 import { DateField } from '../DateField';
 import {
   Card, Group, Fields, F, Val, Pick, Text, Check, Note, UndoBar, Missing,
-  inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf, HILITE } from './ui';
+  inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf, HILITE, Money,
+  platformTone } from './ui';
 import {
   money, initials, parseMoney, bulkResultLine, bookingSubtitle, brandMark,
   type BookingRow,
@@ -26,6 +27,36 @@ import {
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 const UNDO_MS = 4000;
+
+/**
+ * A field the ads below have already answered.
+ *
+ * Drawn like `Val calc` — dashed, sunken — so it reads as reported rather
+ * than as a control somebody has disabled, which is the same distinction
+ * Client price makes once the lines carry money. The values are chips
+ * because there can be several: a booking is one vendor, not one ad type.
+ */
+function FromAds({ values, colourise, lines }: {
+  values: string[];
+  colourise?: (v: string) => { bg: string; fg: string };
+  lines: number;
+}) {
+  return (
+    <span style={{
+      display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      minHeight: 32, padding: '5px 10px', borderRadius: 8,
+      border: '1px dashed var(--aq-border)', background: 'var(--aq-bg-sunken)',
+      fontSize: 13, color: 'var(--aq-text-secondary)',
+    }}>
+      {values.map((v) => (
+        <Chip key={v} label={v} colours={colourise?.(v)} />
+      ))}
+      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+        · from the {lines} {lines === 1 ? 'ad' : 'ads'} below
+      </span>
+    </span>
+  );
+}
 
 /** The campaign's platform list as one string, for a tracking row's prefill. */
 function campaignPlatformText(t: any): string | null {
@@ -117,8 +148,15 @@ export function CampaignBookings({
   );
 
   const tally = useMemo(
-    () => contractTally(vendorSubtasks, vendors as any, banks as any),
-    [vendorSubtasks, vendors, banks],
+    // The campaign and the ads are passed because the readiness check now
+    // reads them: the brand name lives on the campaign, and a booking priced
+    // entirely through its lines has no price of its own. Without them every
+    // per-line booking counted as "blocked", which is the number on the card.
+    () => contractTally(
+      vendorSubtasks, vendors as any, banks as any,
+      task, adLinesBySubtask as any,
+    ),
+    [vendorSubtasks, vendors, banks, task, adLinesBySubtask],
   );
 
   const platformNames = useMemo(
@@ -304,11 +342,14 @@ export function CampaignBookings({
       vendor,
       bank,
       already: !!(sub as any).contract_request_id,
-      readiness: vendorContractReadiness(sub, vendor, bank, row.price ?? null),
+      readiness: vendorContractReadiness(
+        sub, vendor, bank, row.price ?? null, task,
+        (adLinesBySubtask.get(row.id) ?? []) as any,
+      ),
       requirements: vendorDataRequirements(sub, vendor),
       mark: brandMark(row.name),
     };
-  }, [openId, shown, subtaskById, vendors, banks, adLinesBySubtask]);
+  }, [openId, shown, subtaskById, vendors, banks, adLinesBySubtask, task]);
 
   return (
     <Card
@@ -507,8 +548,8 @@ export function CampaignBookings({
                 {b.pricedPerLine ? (
                   <Val calc>{b.price == null ? '—' : money(b.price)} · from the {lines.length} ads below</Val>
                 ) : (
-                  <Text
-                    numeric canEdit={canEdit}
+                  <Money
+                    canEdit={canEdit}
                     value={(sub as any).price ?? ''}
                     placeholder="0.00"
                     onCommit={(v) => saveOn(sub.id, 'price', parseMoney(v), (sub as any).price)}
@@ -519,8 +560,8 @@ export function CampaignBookings({
                 {b.pricedPerLine && b.net != null ? (
                   <Val calc>{money(b.net)} · added up from the ads</Val>
                 ) : (
-                  <Text
-                    numeric canEdit={canEdit}
+                  <Money
+                    canEdit={canEdit}
                     value={(sub as any).net_amount ?? ''}
                     placeholder="0.00"
                     onCommit={(v) => saveOn(sub.id, 'net_amount', parseMoney(v), (sub as any).net_amount)}
@@ -560,21 +601,42 @@ export function CampaignBookings({
                     />
                   : <Val>{(sub as any).due_date ?? '—'}</Val>}
               </F>
+              {/* Platform and Ad type follow the same rule as Client price:
+                  once the ads below carry them, the ads are the source and
+                  these report. One vendor doing a Home Ad on TikTok and a
+                  Store Visit on Instagram is one booking, and no single
+                  dropdown can say that — so when the lines answer, the
+                  answer is a list. */}
               <F k="Platform">
-                <Pick
-                  canEdit={canEdit}
-                  value={(sub as any).platform}
-                  options={platformNames.map((p) => ({ v: p, l: p }))}
-                  onChange={(v) => saveOn(sub.id, 'platform', v, (sub as any).platform)}
-                />
+                {b.platformsFromAds ? (
+                  <FromAds
+                    values={b.platformList}
+                    colourise={(p) => platformTone(p)}
+                    lines={lines.length}
+                  />
+                ) : (
+                  <Pick
+                    canEdit={canEdit}
+                    value={(sub as any).platform}
+                    options={platformNames.map((p) => ({ v: p, l: p }))}
+                    onChange={(v) => saveOn(sub.id, 'platform', v, (sub as any).platform)}
+                  />
+                )}
               </F>
               <F k="Ad type">
-                <Pick
-                  canEdit={canEdit}
-                  value={(sub as any).ad_type}
-                  options={[...AD_TYPES].map((a) => ({ v: String(a), l: labelFor(String(a)) }))}
-                  onChange={(v) => saveOn(sub.id, 'ad_type', v, (sub as any).ad_type)}
-                />
+                {b.adTypesFromAds ? (
+                  <FromAds
+                    values={b.adTypeList.map((a) => labelFor(a))}
+                    lines={lines.length}
+                  />
+                ) : (
+                  <Pick
+                    canEdit={canEdit}
+                    value={(sub as any).ad_type}
+                    options={[...AD_TYPES].map((a) => ({ v: String(a), l: labelFor(String(a)) }))}
+                    onChange={(v) => saveOn(sub.id, 'ad_type', v, (sub as any).ad_type)}
+                  />
+                )}
               </F>
               <F k="Paid on">
                 {canEdit

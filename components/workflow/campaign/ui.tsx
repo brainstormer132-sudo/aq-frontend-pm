@@ -11,6 +11,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { groupDigits, caretAfterGrouping } from '@/lib/campaign-page';
 
 /* ── Colour, as a vocabulary ──────────────────────────────────────
  *
@@ -344,6 +345,67 @@ export function Text({ value, placeholder, onCommit, canEdit, warn, label, numer
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
       style={{
         width: '100%', fontSize: 13,
+        borderColor: warn ? '#b45309' : undefined,
+        background: warn ? '#fef3c7' : undefined,
+      }}
+    />
+  );
+}
+
+/**
+ * A money field that groups its thousands while you type.
+ *
+ * Not on blur, not on save — as the digits go in, because a figure you cannot
+ * read at the moment you are entering it is a figure you can get wrong by a
+ * factor of ten. The caret is put back where it belongs afterwards, or
+ * editing the middle of a number would be impossible: the keystroke that
+ * inserts a comma otherwise throws the cursor to the end.
+ *
+ * It reports the RAW value on commit — `parseMoney` strips the separators —
+ * so nothing downstream has to know this is here.
+ */
+export function Money({ value, placeholder, onCommit, canEdit, label, warn }: {
+  value: string | number | null | undefined;
+  placeholder?: string;
+  onCommit: (v: string) => void;
+  canEdit: boolean;
+  label?: string;
+  warn?: boolean;
+}) {
+  const asText = value == null || value === '' ? '' : groupDigits(String(value));
+  const [draft, setDraft] = useState(asText);
+  const box = useRef<HTMLInputElement | null>(null);
+  const caret = useRef<number | null>(null);
+
+  useEffect(() => { setDraft(asText); }, [asText]);
+
+  // After React has painted the grouped value, put the caret back.
+  useEffect(() => {
+    if (caret.current == null || !box.current) return;
+    box.current.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  });
+
+  if (!canEdit) return <Val warn={warn} label={label}>{asText || '—'}</Val>;
+
+  return (
+    <input
+      ref={box}
+      className="aq-input"
+      aria-label={label}
+      value={draft}
+      inputMode="decimal"
+      placeholder={placeholder}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const next = groupDigits(raw);
+        caret.current = caretAfterGrouping(raw, e.target.selectionStart ?? raw.length, next);
+        setDraft(next);
+      }}
+      onBlur={() => { if (draft !== asText) onCommit(draft.trim()); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      style={{
+        width: '100%', fontSize: 13, fontVariantNumeric: 'tabular-nums',
         borderColor: warn ? '#b45309' : undefined,
         background: warn ? '#fef3c7' : undefined,
       }}
@@ -699,8 +761,11 @@ export function OverridableMoney({
 }) {
   const overridden = override != null;
   const shown = overridden ? Number(override) : computed;
-  const [draft, setDraft] = useState(overridden ? String(override) : '');
-  useEffect(() => { setDraft(overridden ? String(override) : ''); }, [override, overridden]);
+  const [draft, setDraft] = useState(overridden ? groupDigits(String(override)) : '');
+  useEffect(
+    () => { setDraft(overridden ? groupDigits(String(override)) : ''); },
+    [override, overridden],
+  );
 
   if (!canEdit) {
     return <Val calc={!overridden} label={label}>{format(shown)}</Val>;
@@ -713,7 +778,7 @@ export function OverridableMoney({
         inputMode="decimal"
         value={draft}
         placeholder={format(computed)}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => setDraft(groupDigits(e.target.value))}
         onBlur={() => {
           const t = draft.trim();
           if (!t) { if (overridden) onCommit(null); return; }
