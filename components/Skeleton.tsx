@@ -1,5 +1,7 @@
 'use client';
 
+import { AQLoadingOverlay } from '@/components/AQLoading';
+
 /**
  * Placeholders shaped like the thing that is loading.
  *
@@ -140,6 +142,10 @@ export function SkeletonDashboard({ tiles = 4 }: { tiles?: number }) {
 export function SkeletonShell() {
   return (
     <SkeletonRegion label="Loading workspace">
+      {/* Booting is the app's longest wait — auth, membership, role, then the
+          first screen — and it is the one people watch. The mark goes over
+          it; the skeleton underneath still says what is coming. */}
+      <AQLoadingOverlay label="Loading your workspace" />
       <div style={{ display: 'flex', minHeight: '100vh' }}>
         <div style={{
           width: 260, flexShrink: 0, background: 'var(--aq-sidebar-bg)',

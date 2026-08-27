@@ -84,7 +84,7 @@ export const ROLE_BLURB: Record<Role, string> = {
   admin: 'Everything except handing out ownership.',
   operations: 'All Tasks and Tracking Sheets. Fulfils quotation, invoice and contract requests.',
   sales: 'New Task, CRM, Clients, Tracking Sheets and Data. Can delete a campaign they raised.',
-  marketing: 'Triage, New Task, CRM, Clients, Vendors, Tracking Sheets and every task.',
+  marketing: 'Marketing Inbox, New Task, CRM, Clients, Vendors, Tracking Sheets and every task.',
   key_account: 'All Tasks, CRM, Tracking Sheets and Data. Approves and rejects contract requests.',
   member: 'Dashboard, Inbox and Team. Can be assigned work and mentioned on it.',
 };

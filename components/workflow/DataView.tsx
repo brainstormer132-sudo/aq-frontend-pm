@@ -283,11 +283,11 @@ export function DataView({
         <SkeletonDashboard />
       ) : (
         <>
-          {/* ── 1. Did we make money ─────────────────────────────
+          {/* ── 1. Profitability ─────────────────────────────
               People do not arrive here wanting "the data". They arrive with
               one of three questions, so the page is three sections named
               after them, in the order they get asked. */}
-          <Question title="Did we make money" note="on the work we billed" />
+          <Question title="Profitability" note="on the work billed" />
 
           <div className="aq-card" style={{ padding: '18px 20px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
@@ -296,7 +296,7 @@ export function DataView({
                 fontVariantNumeric: 'tabular-nums', lineHeight: 1,
               }}>{compact(totalMoney.gross)}</span>
               <span style={{ fontSize: 14, color: 'var(--aq-text-muted)', fontWeight: 600 }}>
-                SAR AQ gross
+                SAR AQ net
               </span>
               {/* The rate, which this page never had. The absolute goes up
                   whenever we do more work; the rate says whether the work
@@ -309,7 +309,7 @@ export function DataView({
             </div>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28, margin: '16px 0 4px' }}>
-              {model.kpis.filter((k) => k.key !== 'Est AQ gross').map((k) => (
+              {model.kpis.filter((k) => k.key !== 'AQ net').map((k) => (
                 <span key={k.key}>
                   <span style={{
                     display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
@@ -329,19 +329,19 @@ export function DataView({
             <div style={{ marginTop: 18 }}>
               <h3 style={{ fontSize: 13.5, fontWeight: 700, margin: 0 }}>Money by month</h3>
               <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', margin: '2px 0 12px' }}>
-                Price, net and AQ gross. One axis — all three are SAR, and each sits inside
+                Billed, vendors cost and AQ net. One axis — all three are SAR, and each sits inside
                 the one before it. By the month the campaign was <strong>created</strong>,
                 which is not the month it was invoiced.
               </p>
-              <Legend items={[['Price', SERIES[0]], ['Net', SERIES[1]], ['AQ gross', SERIES[2]]]} />
+              <Legend items={[['Billed', SERIES[0]], ['Vendors cost', SERIES[1]], ['AQ net', SERIES[2]]]} />
               <Months bars={model.months} />
             </div>
           </div>
 
-          {/* ── 2. Who owes us, and who do we owe ────────────────
+          {/* ── 2. Receivables and payables ────────────────
               The section Siraj asked for. The bar is the shape; the ledger
               under it is the rows, filterable by state and searchable. */}
-          <Question title="Who owes us, and who do we owe" note="the money still moving" />
+          <Question title="Receivables and payables" note="the money still moving" />
 
           <div className="aq-card" style={{ padding: '18px 20px' }}>
             <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -406,7 +406,7 @@ export function DataView({
                 onClick={() => setLedgerFilter((f) => ({
                   ...f, outstandingOnly: !f.outstandingOnly, state: null,
                 }))}
-              >Still owed</Chip>
+              >Balance due</Chip>
 
               <input
                 className="aq-input"
@@ -453,8 +453,8 @@ export function DataView({
             />
           </div>
 
-          {/* ── 3. Where does it come from ───────────────────────── */}
-          <Question title="Where does it come from" note="and who does the work" />
+          {/* ── 3. Where the revenue comes from ───────────────────────── */}
+          <Question title="Where the revenue comes from" note="and who does the work" />
 
           <div style={{
             display: 'grid', gap: 14, alignItems: 'start',
@@ -583,8 +583,8 @@ function PayBar({
     return (
       <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
         {side === 'clients'
-          ? 'Nothing billed in this window.'
-          : 'No vendor bookings with a cost in this window.'}
+          ? 'Nothing billed in this period.'
+          : 'No vendor bookings with a recorded cost in this period.'}
       </p>
     );
   }
@@ -913,7 +913,7 @@ function useTip() {
 function Months({ bars }: { bars: { key: string; label: string; short: string; price: number; net: number; gross: number }[] }) {
   const { show, hide, node } = useTip();
   if (!bars.length) {
-    return <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>No campaigns in this window.</p>;
+    return <p style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>No campaigns in this period.</p>;
   }
   // Campaigns exist but carry no money yet. An axis of 0 / 1 / 1 over six
   // flat months looks like a broken chart; saying so is more use.
@@ -935,7 +935,7 @@ function Months({ bars }: { bars: { key: string; label: string; short: string; p
   const bw = Math.min(18, (gw - 30) / 3);
   const gap = 4;
   const series: [keyof typeof bars[0], string, string][] = [
-    ['price', SERIES[0], 'Price'], ['net', SERIES[1], 'Net'], ['gross', SERIES[2], 'AQ gross'],
+    ['price', SERIES[0], 'Billed'], ['net', SERIES[1], 'Vendors cost'], ['gross', SERIES[2], 'AQ net'],
   ];
 
   return (
@@ -987,7 +987,7 @@ function Months({ bars }: { bars: { key: string; label: string; short: string; p
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 6 }}>
           <thead>
             <tr>
-              {['Month', 'Price', 'Net', 'AQ gross'].map((h, i) => (
+              {['Month', 'Billed', 'Vendors cost', 'AQ net'].map((h, i) => (
                 <th key={h} style={{
                   textAlign: i ? 'right' : 'left', fontSize: 10.5, textTransform: 'uppercase',
                   letterSpacing: '.09em', color: 'var(--aq-text-muted)', padding: '6px 8px',

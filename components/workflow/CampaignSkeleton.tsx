@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { SkeletonLine } from '@/components/Skeleton';
-import { AQ_PATH_A, AQ_PATH_RING, AQ_TRACE_A, AQ_TRACE_RING } from '@/components/auth/AQMark';
+import { AQLoadingOverlay } from '@/components/AQLoading';
 
 /**
  * What the campaign page looks like before it has anything to say.
@@ -16,54 +16,12 @@ import { AQ_PATH_A, AQ_PATH_RING, AQ_TRACE_A, AQ_TRACE_RING } from '@/components
  *    than the network's. It is the same trace-then-fill the welcome page
  *    uses, so it is recognisably the same logo behaving the same way.
  *
- * The overlay is deliberately **late**: nothing is drawn for the first 260ms.
- * A cached campaign arrives well inside that, and an overlay that flashes for
- * a tenth of a second is worse than no overlay — it reads as a glitch. So a
- * fast load shows the skeleton alone for a blink, and only a slow one is
- * worth interrupting for.
- *
- * The animation loops rather than playing once. A one-shot that finishes and
- * then sits still while the page is *still* loading looks frozen, which is
- * the exact impression a loader exists to prevent.
+ * The overlay is `AQLoadingOverlay`, shared with every other whole-screen
+ * wait in the app — see that file for why it appears late and why it loops.
  */
 export function CampaignLoading() {
   return (
     <div style={{ background: 'var(--aq-bg)', minHeight: '100vh', position: 'relative' }}>
-      <style>{`
-        /* ── the mark, drawing itself, over and over ── */
-        .aq-load-trace{
-          fill:none; stroke:currentColor; stroke-width:280;
-          stroke-linecap:butt; stroke-linejoin:miter; stroke-miterlimit:10;
-          stroke-dasharray:100; stroke-dashoffset:100;
-        }
-        .aq-load-trace-a     {animation:aq-load-draw 2.6s ease-in-out infinite}
-        .aq-load-trace-ring  {animation:aq-load-draw 2.6s ease-in-out .35s infinite}
-        .aq-load-final       {fill:currentColor; opacity:0}
-        .aq-load-final-a     {animation:aq-load-fill 2.6s ease-in-out infinite}
-        .aq-load-final-ring  {animation:aq-load-fill 2.6s ease-in-out .35s infinite}
-
-        /* Draw, hold, release. The gap at the end is the beat that stops it
-           reading as a spinner — a logo that never rests is a busy-indicator
-           wearing a costume. */
-        @keyframes aq-load-draw{
-          0%{stroke-dashoffset:100} 30%{stroke-dashoffset:0}
-          42%{stroke-dashoffset:0; opacity:1} 50%{opacity:0}
-          92%{opacity:0; stroke-dashoffset:0} 100%{stroke-dashoffset:100; opacity:1}
-        }
-        @keyframes aq-load-fill{
-          0%,38%{opacity:0} 50%,86%{opacity:1} 96%,100%{opacity:0}
-        }
-
-        /* Nothing at all for a quarter of a second. */
-        .aq-load-veil{animation:aq-load-in .3s ease .26s both}
-        @keyframes aq-load-in{from{opacity:0} to{opacity:1}}
-
-        @media (prefers-reduced-motion:reduce){
-          .aq-load-trace{animation:none !important; opacity:0 !important}
-          .aq-load-final{animation:none !important; opacity:1 !important}
-          .aq-load-veil{animation:none; opacity:1}
-        }
-      `}</style>
 
       {/* ── The page's shape, behind ─────────────────────────────── */}
 
@@ -159,49 +117,7 @@ export function CampaignLoading() {
         </div>
       </div>
 
-      {/* ── The mark, in the middle ──────────────────────────────── */}
-      <div
-        className="aq-load-veil"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
-        style={{
-          position: 'fixed', inset: 0, display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          // Not a black scrim: the skeleton behind is the reassuring part and
-          // dimming it to nothing throws away the only thing that says what is
-          // coming. Light enough that the ink band still reads as ink — at 72%
-          // it washed to grey and the page lost the one thing that identifies
-          // it while you wait.
-          background: 'rgba(245, 245, 244, 0.58)',
-          backdropFilter: 'blur(1.5px)',
-          WebkitBackdropFilter: 'blur(1.5px)',
-          zIndex: 60,
-        }}
-      >
-        <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-          padding: '30px 40px', borderRadius: 18,
-          background: 'var(--aq-bg-elevated)',
-          border: '1px solid var(--aq-border-light)',
-          boxShadow: '0 12px 34px rgba(28, 25, 23, 0.12)',
-        }}>
-          <svg
-            width={72} height={72} viewBox="0 0 5906 5906"
-            aria-hidden="true" focusable="false"
-            style={{ display: 'block', color: 'var(--aq-text)' }}
-          >
-            <path className="aq-load-trace aq-load-trace-a" pathLength={100} d={AQ_TRACE_A} />
-            <path className="aq-load-trace aq-load-trace-ring" pathLength={100} d={AQ_TRACE_RING} />
-            <path className="aq-load-final aq-load-final-ring" d={AQ_PATH_RING} />
-            <path className="aq-load-final aq-load-final-a" d={AQ_PATH_A} />
-          </svg>
-          <span style={{
-            fontSize: 12, fontWeight: 700, letterSpacing: '.1em',
-            textTransform: 'uppercase', color: 'var(--aq-text-muted)',
-          }}>Loading the campaign</span>
-        </div>
-      </div>
+      <AQLoadingOverlay label="Loading the campaign" />
     </div>
   );
 }

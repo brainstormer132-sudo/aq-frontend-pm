@@ -64,7 +64,8 @@ export const INBOX_KINDS: KindMeta[] = [
   { key: 'assigned',  label: 'Assigned to me',  pill: 'Assigned' },
   { key: 'contract',  label: 'Contracts',       pill: 'Contract' },
   { key: 'document',  label: 'Quotes & invoices', pill: 'Document' },
-  { key: 'triage',    label: 'Triage',          pill: 'Triage' },
+  // The key is the stored discriminant and stays; only the words change.
+  { key: 'triage',    label: 'Marketing inbox', pill: 'Unassigned' },
   { key: 'completed', label: 'Completed',       pill: 'Completed' },
   { key: 'other',     label: 'Everything else', pill: 'Update' },
 ];

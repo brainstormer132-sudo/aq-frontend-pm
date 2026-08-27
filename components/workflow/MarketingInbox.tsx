@@ -161,7 +161,7 @@ export function MarketingInbox({
       <div className="aq-card animate-fade-in" style={{ padding: 32, textAlign: 'center' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>Marketing only</h2>
         <p style={{ color: 'var(--aq-text-muted)', marginTop: 8, fontSize: 14 }}>
-          Only marketing, admin and owner triage campaigns.
+          Only marketing, admin and owner can assign campaigns.
           Your role is <strong>{role || 'unset'}</strong>.
         </p>
       </div>

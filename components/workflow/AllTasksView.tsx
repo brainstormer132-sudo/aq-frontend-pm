@@ -131,8 +131,9 @@ export function AllTasksView({
             onClick={() => set('noVendors')(!filter.noVendors)}
           />
           <Chip
-            label="Show completed"
-            on={filter.showCompleted}
+            label="Hide completed"
+            count={rows.filter((r) => r.stage === 'completed').length}
+            on={!filter.showCompleted}
             onClick={() => set('showCompleted')(!filter.showCompleted)}
           />
 

@@ -95,7 +95,7 @@ export function WorkflowDashboard({
         <h2 style={{ fontSize: 24, fontWeight: 800 }}>Hello, {userName.split(' ')[0]}.</h2>
         <p style={{ color: 'var(--aq-text-secondary)', marginTop: 4, fontSize: 14 }}>
           {loading || !today
-            ? 'Working out what needs you…'
+            ? 'Checking what needs your attention…'
             : attention.counts.urgent + attention.counts.soon === 0
               ? `Nothing is overdue and nothing is stuck${role ? `, in your ${roleLabel(role)} view` : ''}.`
               : attentionSummary(attention.counts)}
@@ -112,7 +112,7 @@ export function WorkflowDashboard({
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 700 }}>Needs attention</h3>
             <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
-              Ranked. Longest-waiting first.
+              Ranked by severity, longest-waiting first.
             </p>
           </div>
           {attention.hiddenCount > 0 && (
@@ -126,7 +126,7 @@ export function WorkflowDashboard({
         </header>
 
         {loading || !today ? (
-          <SkeletonRows rows={4} height={46} gap={0} label="Checking for problems" />
+          <SkeletonRows rows={4} height={46} gap={0} label="Checking for issues" />
         ) : attention.items.length === 0 ? (
           <p style={{ fontSize: 13.5, color: 'var(--aq-text-muted)' }}>
             Nothing needs chasing — no overdue dates, no unpriced bookings, and no
@@ -151,7 +151,7 @@ export function WorkflowDashboard({
       <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(240px, 1fr)', gap: 16 }}>
         <div className="aq-card" style={{ padding: 20 }}>
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Your work</h3>
+            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Assigned to you</h3>
             <button
               className="aq-btn aq-btn-ghost"
               onClick={() => onGoTo('all-tasks')}
@@ -163,7 +163,7 @@ export function WorkflowDashboard({
             <SkeletonRows rows={4} height={44} gap={0} label="Loading your tasks" />
           ) : myTasks.length === 0 && crm.open === 0 ? (
             <p style={{ color: 'var(--aq-text-muted)', fontSize: 13 }}>
-              Nothing assigned to you. Enjoy it.
+              Nothing is assigned to you right now.
             </p>
           ) : (
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
@@ -248,7 +248,7 @@ export function WorkflowDashboard({
               onClick={() => onGoTo('marketing-triage')}
               style={{ fontSize: 13 }}
             >
-              Triage {stats.pendingMarketing} waiting
+              Marketing inbox · {stats.pendingMarketing} waiting
             </button>
           )}
         </div>
@@ -291,7 +291,7 @@ export function WorkflowDashboard({
                     fontVariantNumeric: 'tabular-nums',
                     color: p.count === 0 ? 'var(--aq-text-muted)' : 'var(--aq-text)',
                   }}>
-                    {p.count === 0 ? 'free' : p.count}
+                    {p.count === 0 ? 'None' : p.count}
                   </span>
                 </li>
               );
@@ -308,7 +308,7 @@ export function WorkflowDashboard({
 const SEVERITY_STYLE: Record<Severity, { dot: string; label: string }> = {
   urgent: { dot: '#dc2626', label: 'Urgent' },
   soon:   { dot: '#ca8a04', label: 'Soon' },
-  tidy:   { dot: '#a8a29e', label: 'Tidy up' },
+  tidy:   { dot: '#a8a29e', label: 'Housekeeping' },
 };
 
 function AttentionRow({

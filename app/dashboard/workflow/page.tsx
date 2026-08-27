@@ -262,12 +262,12 @@ export default function WorkflowPage() {
   const onTaskCreated = () => {
     refetchAll();
     setView(role === 'sales' ? 'all-tasks' : 'inbox');
-    setToast({ kind: 'ok', text: 'Task submitted to marketing.' });
+    setToast({ kind: 'ok', text: 'Campaign submitted to marketing.' });
   };
 
   const onTaskTriaged = () => {
     refetchAll();
-    setToast({ kind: 'ok', text: 'Task triaged. Subtasks created and key account notified.' });
+    setToast({ kind: 'ok', text: 'Campaign assigned. Deliverables created and the key account manager notified.' });
   };
 
   return (

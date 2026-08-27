@@ -27,8 +27,8 @@ export type PayKey = 'paid' | 'partial' | 'unpaid';
 export type Side = 'clients' | 'vendors';
 
 export const SIDES: { key: Side; label: string; blurb: string }[] = [
-  { key: 'clients', label: 'Clients owe us', blurb: 'Campaigns we have billed.' },
-  { key: 'vendors', label: 'We owe vendors', blurb: 'Bookings we have to pay.' },
+  { key: 'clients', label: 'Receivables', blurb: 'Campaigns we have billed.' },
+  { key: 'vendors', label: 'Payables', blurb: 'Bookings we have to pay.' },
 ];
 
 export const PAY_KEYS: PayKey[] = ['paid', 'partial', 'unpaid'];
@@ -387,14 +387,14 @@ export function ratePct(v: number | null, dp = 1): string {
 export function ledgerLine(totals: LedgerTotals, side: Side): string {
   if (totals.rows === 0) {
     return side === 'clients'
-      ? 'Nothing billed in this window.'
-      : 'No vendor bookings with a cost in this window.';
+      ? 'Nothing billed in this period.'
+      : 'No vendor bookings with a recorded cost in this period.';
   }
   const of = side === 'clients' ? 'billed' : 'booked';
   if (totals.outstanding <= 0) {
     return `SAR ${money(totals.total)} ${of}, all settled.`;
   }
-  const verb = side === 'clients' ? 'still owed to us' : 'still owed by us';
+  const verb = side === 'clients' ? 'receivable' : 'payable';
   return `SAR ${money(totals.total)} ${of} · SAR ${money(totals.outstanding)} ${verb}.`;
 }
 
@@ -402,7 +402,7 @@ export function emptyLedgerMessage(f: LedgerFilter, side: Side, total: number): 
   if (total === 0) {
     return side === 'clients'
       ? 'No campaigns with a price in this window.'
-      : 'No vendor bookings with a cost in this window.';
+      : 'No vendor bookings with a recorded cost in this period.';
   }
   if (f.query.trim()) return `Nothing matches “${f.query.trim()}”.`;
   if (f.state === 'paid') return side === 'clients' ? 'Nothing is fully paid yet.' : 'No vendor has been paid in full yet.';
@@ -412,7 +412,7 @@ export function emptyLedgerMessage(f: LedgerFilter, side: Side, total: number): 
       ? 'Every client here has paid something. '
       : 'Every vendor here has been paid something.';
   }
-  if (f.outstandingOnly) return 'Everything here is settled.';
+  if (f.outstandingOnly) return 'Every balance here is settled.';
   return 'Nothing matches these filters.';
 }
 
@@ -424,7 +424,7 @@ export const LEDGER_COLUMNS: { key: LedgerSortKey; label: (s: Side) => string; a
   { key: 'state',       label: () => 'Status', align: 'left' },
   { key: 'total',       label: (s) => (s === 'clients' ? 'Billed (SAR)' : 'Booked (SAR)'), align: 'right' },
   { key: 'paid',        label: () => 'Paid (SAR)', align: 'right' },
-  { key: 'outstanding', label: () => 'Outstanding (SAR)', align: 'right' },
+  { key: 'outstanding', label: () => 'Balance due (SAR)', align: 'right' },
 ];
 
 /**

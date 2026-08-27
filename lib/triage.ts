@@ -390,8 +390,8 @@ export function deletedMessage(name: string): string {
 
 export function triagedMessage(name: string, owner: string, steps: number): string {
   const tail = steps === 0
-    ? ' with no subtasks — add them from the campaign when you know them'
-    : ` with ${steps} subtask${steps === 1 ? '' : 's'}`;
+    ? ' with no deliverables yet — add them from the campaign'
+    : ` with ${steps} deliverable${steps === 1 ? '' : 's'}`;
   return `“${name}” is ${owner}'s now${tail}.`;
 }
 

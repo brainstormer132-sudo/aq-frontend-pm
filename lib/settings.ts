@@ -325,9 +325,9 @@ export function fixedSettings(input: {
       where: 'VAT_RATE, in the code',
     },
     {
-      label: 'Chase triage after',
+      label: 'Chase unassigned campaigns after',
       value: plural(input.triageDays, 'day'),
-      effect: 'How long a campaign may sit unclaimed before the Dashboard and the Marketing Inbox call it urgent.',
+      effect: 'How long a campaign may sit unassigned before the Dashboard and the Marketing Inbox mark it urgent.',
       where: 'TRIAGE_PATIENCE_DAYS and STALE_DAYS, in the code',
     },
     {

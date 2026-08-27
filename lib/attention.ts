@@ -219,15 +219,15 @@ export function attentionItems(
     // not even have a vendor yet is three lines for one action.
     if (isVendorish(t)) {
       if (t.vendor_id == null) {
-        out.push(gap(t, 'vendor_missing', 'soon', 'No vendor picked yet.', contextOf(t)));
+        out.push(gap(t, 'vendor_missing', 'soon', 'No vendor selected.', contextOf(t)));
         continue;
       }
       if (t.price == null || Number(t.price) === 0) {
-        out.push(gap(t, 'price_missing', 'soon', 'A vendor, but no price.', contextOf(t)));
+        out.push(gap(t, 'price_missing', 'soon', 'Vendor booked, but no price set.', contextOf(t)));
         continue;
       }
       if (!txt(t.contract_request_id)) {
-        out.push(gap(t, 'contract_missing', 'tidy', 'Priced, but no contract requested.', contextOf(t)));
+        out.push(gap(t, 'contract_missing', 'tidy', 'Priced, but no contract has been requested.', contextOf(t)));
         continue;
       }
     }
@@ -244,14 +244,14 @@ export function attentionItems(
             taskId: t.id,
             title: nameOf(t),
             context: txt(t.brand_name),
-            message: `Waiting on marketing for ${plural(waiting, 'day')}.`,
+            message: `Awaiting marketing assignment for ${plural(waiting, 'day')}.`,
             days: waiting,
           });
           continue;
         }
       }
       if (!due) {
-        out.push(gap(t, 'no_due_date', 'tidy', 'No due date, so it is on nobody’s calendar.', txt(t.brand_name)));
+        out.push(gap(t, 'no_due_date', 'tidy', 'No due date, so it appears on no calendar.', txt(t.brand_name)));
         continue;
       }
     }
@@ -287,7 +287,7 @@ export function attentionItems(
         taskId: r.parent_task_id,
         title: nameOf(r) || nameOf(parent),
         context: txt(r.brand_name),
-        message: 'Running, with no vendors booked.',
+        message: 'Active, with no vendors booked.',
         days: 0,
       });
     }
@@ -350,10 +350,10 @@ function money(n: number): string {
 /** The one-line summary above the list. */
 export function attentionSummary(counts: Record<Severity, number>): string {
   const total = counts.urgent + counts.soon + counts.tidy;
-  if (total === 0) return 'Nothing needs chasing.';
+  if (total === 0) return 'Nothing outstanding.';
   const parts: string[] = [];
   if (counts.urgent) parts.push(`${counts.urgent} urgent`);
   if (counts.soon) parts.push(`${counts.soon} soon`);
-  if (counts.tidy) parts.push(`${counts.tidy} to tidy up`);
+  if (counts.tidy) parts.push(`${counts.tidy} for housekeeping`);
   return parts.join(' · ');
 }

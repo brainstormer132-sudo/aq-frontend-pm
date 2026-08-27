@@ -703,11 +703,11 @@ function workspaceModel(
 
   return {
     kpis: [
-      { key: 'Σ Price', value: compact(money.price), note: 'SAR · all campaigns' },
-      { key: 'Σ Net', value: compact(money.net), note: 'SAR · to vendors' },
-      { key: 'Est AQ gross', value: compact(money.gross), note: 'SAR · price − net' },
+      { key: 'Billed', value: compact(money.price), note: 'SAR · all campaigns' },
+      { key: 'Vendors cost', value: compact(money.net), note: 'SAR paid to vendors' },
+      { key: 'AQ net', value: compact(money.gross), note: 'SAR · billed less vendor cost' },
       { key: 'Campaigns', value: full(s.parents.length), note: `${full(clientIds.size)} clients` },
-      { key: 'Vendors used', value: full(vendorIds.size), note: `on ${full(vendorRows.length)} subtasks` },
+      { key: 'Vendors engaged', value: full(vendorIds.size), note: `across ${full(vendorRows.length)} bookings` },
     ],
     months: moneyByMonth(campaignMoneyRows(s.parents, s.allSubtasks)),
     donut: {
@@ -729,7 +729,7 @@ function workspaceModel(
     },
     bars2: {
       title: 'Top clients by value',
-      caption: 'Σ Price. Everything past the top six folds into one row.',
+      caption: 'By amount billed. Everything past the top six folds into one row.',
       rows: topN(
         [...byClient.entries()].map(([id, v]) => ({
           key: id, label: clientName.get(id) ?? 'Unknown client', value: v,
@@ -790,27 +790,27 @@ function clientModel(input: DashboardInput, s: Scoped, vendorName: Map<string, s
 
   return {
     kpis: [
-      { key: 'Σ Price', value: compact(money.price), note: `SAR · ${full(s.parents.length)} campaigns` },
-      { key: 'Σ Net', value: compact(money.net), note: 'SAR · to vendors' },
-      { key: 'Est AQ gross', value: compact(money.gross), note: 'SAR · price − net' },
+      { key: 'Billed', value: compact(money.price), note: `SAR · ${full(s.parents.length)} campaigns` },
+      { key: 'Vendors cost', value: compact(money.net), note: 'SAR paid to vendors' },
+      { key: 'AQ net', value: compact(money.gross), note: 'SAR · billed less vendor cost' },
       { key: 'Campaigns', value: full(s.parents.length), note: `${full(done)} done · ${full(s.parents.length - done)} running` },
-      { key: 'Vendors used', value: full(vendorIds.size), note: `on ${full(s.subtasks.length)} subtasks` },
+      { key: 'Vendors engaged', value: full(vendorIds.size), note: `across ${full(s.subtasks.length)} bookings` },
     ],
     months: moneyByMonth(campaignMoneyRows(s.parents, s.allSubtasks)),
     donut: {
-      title: 'Their payments to us',
-      caption: `Of SAR ${full(invoiced)} billed to ${scope.name}. Outstanding is red because somebody has to chase it.`,
+      title: 'Payments received',
+      caption: `Of SAR ${full(invoiced)} billed to ${scope.name}. Of the amount billed to them.`,
       centre: [compact(invoiced), 'SAR billed'],
       slices,
     },
     bars1: {
       title: 'Campaigns by value',
-      caption: 'Every campaign we have run for them, by Σ Price.',
+      caption: 'Every campaign run for them, by amount billed.',
       rows: topN(perCampaign.map((r) => ({ key: r.p.id, label: nameOf(r.p), value: r.m.price })), 6, compact),
     },
     bars2: {
       title: 'Vendors their money went to',
-      caption: 'Σ Net by vendor across their campaigns.',
+      caption: 'Vendor cost by vendor, across their campaigns.',
       rows: topN(
         [...byVendor.entries()].map(([id, v]) => ({ key: id, label: vendorName.get(id) ?? `Vendor ${id}`, value: v })),
         6,
@@ -876,15 +876,15 @@ function vendorModel(input: DashboardInput, s: Scoped, clientName: Map<string, s
   return {
     kpis: [
       { key: 'Times worked', value: full(s.subtasks.length), note: `across ${full(s.parents.length)} campaigns` },
-      { key: 'Σ Net', value: compact(money.net), note: 'SAR · earned' },
-      { key: 'Owed now', value: compact(owedNow), note: `SAR · ${full(states.filter((x) => x.key !== 'paid').length)} subtasks` },
+      { key: 'Vendors cost', value: compact(money.net), note: 'SAR · earned' },
+      { key: 'Payable now', value: compact(owedNow), note: `SAR · ${full(states.filter((x) => x.key !== 'paid').length)} bookings` },
       { key: 'Clients', value: full(clientsSeen.size), note: 'they have worked for' },
       { key: 'Contracts', value: `${full(signed)} / ${full(s.subtasks.length)}`, note: 'campaigns with a signed contract' },
     ],
     months: moneyByMonth(s.subtasks),
     donut: {
-      title: 'What we owe them',
-      caption: `Of SAR ${full(money.net)} earned. Unpaid is red — that is the number they will ask about.`,
+      title: 'Amounts payable',
+      caption: `Of SAR ${full(money.net)} earned. Of the amount they have earned.`,
       centre: [compact(money.net), 'SAR earned'],
       slices,
     },

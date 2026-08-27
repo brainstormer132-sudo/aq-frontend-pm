@@ -360,13 +360,20 @@ export interface Filter {
   noVendors: boolean;
   /** Only rows past their due date. */
   lateOnly: boolean;
-  /** Completed campaigns are history and are off unless asked for. */
+  /**
+   * Completed campaigns.
+   *
+   * On by default. They were hidden, and a finished campaign silently
+   * disappearing from a list called "All Tasks" is the list lying about its
+   * own name — you finish something and it is gone, with nothing to say
+   * where. Hiding them is now a choice somebody makes, not the default.
+   */
   showCompleted: boolean;
 }
 
 export const EMPTY_FILTER: Filter = {
   query: '', stage: null, personId: null,
-  noVendors: false, lateOnly: false, showCompleted: false,
+  noVendors: false, lateOnly: false, showCompleted: true,
 };
 
 /**

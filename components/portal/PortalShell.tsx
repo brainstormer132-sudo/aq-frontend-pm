@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { AQLoadingScreen } from '@/components/AQLoading';
 import { createClient } from '@/lib/supabase-browser';
 import { portal, type PortalMe } from '@/lib/portal-api';
 import { Icon, initials } from './PortalUI';
@@ -91,13 +92,9 @@ export function PortalShell({
     );
   }
   if (!me) {
-    return (
-      <div style={{ minHeight: '100vh', background: 'var(--aq-bg)', padding: 32 }}>
-        <div className="aq-card" style={{ padding: 32, maxWidth: 720, margin: '60px auto' }}>
-          <p style={{ color: 'var(--aq-text-muted)' }}>Loading your portal…</p>
-        </div>
-      </div>
-    );
+    // No skeleton here on purpose: the role decides the layout, and a
+    // skeleton of the wrong shape promises a page that never arrives.
+    return <AQLoadingScreen label="Loading your portal" />;
   }
 
   // ─── First-login password-change gate ────────────────────────────────────
