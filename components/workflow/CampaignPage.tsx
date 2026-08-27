@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   useTask, useTaskSubtasks, useAdLinesForSubtasks, useTrackingRows,
   useLegacyVendors, useClients, useClientBrands, useWorkspaceProfiles,
-  useTaskSources, useClientCategories, useTaskPlatforms, useContractRequests,
+  useTaskSources, useClientCategories, useTaskPlatforms, useContractRequestsForTasks,
   useCommentsForTasks, useAttachmentsForTasks,
   useDocumentRequests, useServiceTypes, usePublishedTrackingRows,
   updateTaskFields, markTaskCompleted, deleteTask, displayName,
@@ -86,7 +86,6 @@ export function CampaignPage({
   const { items: taskSources } = useTaskSources(workspaceId);
   const { items: clientCategories } = useClientCategories(workspaceId);
   const { items: taskPlatforms } = useTaskPlatforms(workspaceId);
-  const { items: requests, refetch: refetchRequests } = useContractRequests(workspaceId, taskId);
   // The campaign AND everything under it. Comments and files stored against
   // a booking were only ever reachable through the drawer; with the drawer
   // gone they would have become invisible rather than deleted, which is the
@@ -99,7 +98,12 @@ export function CampaignPage({
   const { attachments, refetch: refetchFiles } = useAttachmentsForTasks(activityIds);
   const { items: docRequests, refetch: refetchDocs } = useDocumentRequests(taskId);
   const { steps } = useServiceTypes(workspaceId);
-  const { rows: publishedRows } = usePublishedTrackingRows(taskId);
+  // The refetch again. Publishing set tracking_published_at and returned "12
+  // rows are now what the client sees" — while the card beside it recomputed
+  // from a publishedCount still holding 0 and printed "The client is reading
+  // 0 rows. 12 newer ones are not in it yet." Both true-looking, one of them
+  // stale, and only a reload settled it.
+  const { rows: publishedRows, refetch: refetchPublished } = usePublishedTrackingRows(taskId);
 
   const { brands } = useClientBrands(task?.client_id ?? null);
 
@@ -111,6 +115,22 @@ export function CampaignPage({
   );
 
   const subtaskIds = useMemo(() => subtasks.map((s) => s.id), [subtasks]);
+
+  // The campaign and every booking on it. See useContractRequestsForTasks:
+  // filtering on the campaign alone returned client requests only, so the
+  // bookings card's contract lookup could never hit and every booking read
+  // "contract waiting" for ever — including after Legal had generated it.
+  const { items: requests, refetch: refetchRequests } = useContractRequestsForTasks(
+    workspaceId, useMemo(() => [taskId, ...subtaskIds], [taskId, subtaskIds]),
+  );
+
+  // Which is whose. The paperwork card wants the client's; the index entry
+  // labelled "Vendor contracts" was counting the client's, so a campaign with
+  // ten vendor contracts pending read 0.
+  const vendorRequests = useMemo(
+    () => (requests as any[]).filter((r) => String(r.request_kind ?? r.kind ?? '') === 'vendor'),
+    [requests],
+  );
   // The refetch was being thrown away.
   //
   // `useAdLinesForSubtasks` returns one, nothing here called it, and the ad
@@ -160,8 +180,9 @@ export function CampaignPage({
     void refetchComments();
     void refetchFiles();
     void refetchAdLines();
+    void refetchPublished();
   }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, refetchTracking,
-      refetchComments, refetchFiles, refetchAdLines]);
+      refetchComments, refetchFiles, refetchAdLines, refetchPublished]);
 
   // The campaign row and everything hanging off it.
   useRealtime({ table: 'pm_tasks', filter: `id=eq.${taskId}`, onChange: refetchAll });
@@ -177,7 +198,10 @@ export function CampaignPage({
   // the subscription is workspace-wide and the refetch is cheap and debounced
   // by the hooks themselves.
   useRealtime({ table: 'vendor_ad_lines', onChange: refetchAll });
-  useRealtime({ table: 'contract_requests', filter: `pm_task_id=eq.${taskId}`, onChange: refetchAll });
+  // No filter, for the reason above: a vendor contract request carries the
+  // BOOKING's id, so a campaign-id filter would miss exactly the rows whose
+  // status coming back from Legal this page most needs to hear about.
+  useRealtime({ table: 'contract_requests', onChange: refetchAll });
 
   // Today after mount, never during render — the server does not know what day
   // it is where you are, and a date that differs is a hydration mismatch.
@@ -332,8 +356,8 @@ export function CampaignPage({
 
   const index = useMemo(() => pageIndex({
     bookings: bookings.length,
-    contractsWaiting: (requests as any[]).filter((r) => r.status === 'pending').length,
-    contractsTotal: (requests as any[]).length,
+    contractsWaiting: vendorRequests.filter((r) => r.status === 'pending').length,
+    contractsTotal: vendorRequests.length,
     trackingRows: trackingRows.length,
     adsPosted: totals.Posted,
     adsTotal: trackingRows.length,
@@ -354,7 +378,7 @@ export function CampaignPage({
       ((view as any)?.contract_status === 'signed_attached' ? 1 : 0)
       + (((view as any)?.quotation_numbers ?? []).length ? 1 : 0)
       + (((view as any)?.invoice_numbers ?? []).length ? 1 : 0),
-  }), [bookings, requests, trackingRows.length, totals.Posted, docRequests,
+  }), [bookings, vendorRequests, trackingRows.length, totals.Posted, docRequests,
        comments.length, view, gaps, publishedRows.length]);
 
   // Named after the vendor where there is one, so a comment says which
@@ -1085,7 +1109,11 @@ export function CampaignPage({
             publishedCount={(publishedRows as any[]).length}
             role={role}
             brandName={view.brand_name}
-            onChanged={async () => { await refetch(); await refetchTracking(); }}
+            onChanged={async () => {
+              await refetch();
+              await refetchTracking();
+              await refetchPublished();
+            }}
           />
 
           <CampaignBookings

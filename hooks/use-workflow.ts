@@ -3957,6 +3957,44 @@ export function useContractRequests(workspaceId: string | null, taskId?: string 
 }
 
 /**
+ * Contract requests for a campaign AND every booking under it.
+ *
+ * `useContractRequests(workspaceId, taskId)` filters `pm_task_id = taskId`,
+ * which is right for a CLIENT contract and wrong for every vendor one: a
+ * vendor request is raised from the booking, so it stores the BOOKING's id
+ * (see `vendorContractRequestPayload`). The campaign page was therefore
+ * holding client requests only, and using them to decide what a booking's
+ * contract state was — a lookup that could never hit. Every booking read
+ * "contract waiting" for ever, including after its contract was generated.
+ *
+ * One `.in()` rather than a request per booking.
+ */
+export function useContractRequestsForTasks(workspaceId: string | null, taskIds: string[]) {
+  const [items, setItems] = useState<ContractRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  // The SET, not the array: subtasks arriving in a different order must not
+  // send this refetching for ever.
+  const key = [...new Set(taskIds.filter(Boolean))].sort().join(',');
+
+  const fetch = useCallback(async () => {
+    const ids = key ? key.split(',') : [];
+    if (!workspaceId || !ids.length) { setItems([]); setLoading(false); return; }
+    const rows = await selectAllRows<ContractRequest>('useContractRequestsForTasks', () =>
+      supabase
+        .from('contract_requests')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .in('pm_task_id', ids)
+        .order('created_at', { ascending: false }));
+    setItems(rows);
+    setLoading(false);
+  }, [workspaceId, key]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+/**
  * The legacy `generated_contracts` rows behind a set of contract IDs.
  *
  * This is the old contract app's table: no workspace column, no RLS, keyed
