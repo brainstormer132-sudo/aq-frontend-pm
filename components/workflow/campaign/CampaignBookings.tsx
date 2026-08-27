@@ -63,12 +63,21 @@ const BOOKING_LABELS: Record<string, string> = {
  * confirm dialog asked forty times a day is a dialog nobody reads.
  */
 export function CampaignBookings({
-  task, subtasks, adLinesBySubtask, bookings, role, currentUserId,
+  task, subtasks, adLinesBySubtask, refetchAdLines, bookings, role, currentUserId,
   workspaceId, client, taskPlatforms, profiles, opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
   adLinesBySubtask: Map<string, any[]>;
+  /**
+   * The page's own copy of the ad lines, refreshed.
+   *
+   * `onChanged` refetches the campaign and its subtasks — not the lines. An
+   * ad edited here therefore updated inside this card and nowhere else: the
+   * tile above it kept the old price, the pips the old count, the masthead
+   * the old money, until the page was reloaded.
+   */
+  refetchAdLines: () => Promise<void> | void;
   // Typed, not `[k: string]: any`. The loose index signature let `b.amount`
   // — a field BookingRow has never had — typecheck as `any` and come back
   // undefined, so every row read "no price yet" and every contract
@@ -632,11 +641,12 @@ export function CampaignBookings({
               canEdit={canEdit}
               lines={lines}
               loading={false}
-              refetch={onChanged}
+              refetch={async () => { await refetchAdLines(); await onChanged(); }}
               platformOptions={platformNames}
               defaultPlatform={(sub as any).platform ?? (task as any).platform ?? null}
               onTotalChanged={async () => {
                 await syncBookingPriceFromAds(sub.id);
+                await refetchAdLines();
                 await onChanged();
               }}
             />

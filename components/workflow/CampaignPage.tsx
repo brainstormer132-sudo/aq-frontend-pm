@@ -111,7 +111,16 @@ export function CampaignPage({
   );
 
   const subtaskIds = useMemo(() => subtasks.map((s) => s.id), [subtasks]);
-  const { bySubtask } = useAdLinesForSubtasks(subtaskIds);
+  // The refetch was being thrown away.
+  //
+  // `useAdLinesForSubtasks` returns one, nothing here called it, and the ad
+  // lines feed everything: the tile price, the pips, the ad count, the money
+  // bar, the whole campaign roll-up. So adding or editing an ad refetched the
+  // campaign, its subtasks, its documents, its contracts, its tracking rows,
+  // its comments and its files — every table except the one that had actually
+  // changed. Siraj: *"ad line is not being updated you have to keep
+  // refreshing"*. A reload was the only way to see your own edit.
+  const { bySubtask, refetch: refetchAdLines } = useAdLinesForSubtasks(subtaskIds);
 
   const router = useRouter();
   const [error, setError] = useState('');
@@ -150,8 +159,9 @@ export function CampaignPage({
     void refetchTracking();
     void refetchComments();
     void refetchFiles();
+    void refetchAdLines();
   }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, refetchTracking,
-      refetchComments, refetchFiles]);
+      refetchComments, refetchFiles, refetchAdLines]);
 
   // The campaign row and everything hanging off it.
   useRealtime({ table: 'pm_tasks', filter: `id=eq.${taskId}`, onChange: refetchAll });
@@ -1082,6 +1092,7 @@ export function CampaignPage({
             task={task}
             subtasks={shownSubtasks as any}
             adLinesBySubtask={bySubtask}
+            refetchAdLines={refetchAdLines}
             bookings={bookings}
             role={role}
             currentUserId={currentUserId}
