@@ -25,6 +25,7 @@ export type AttentionKind =
   | 'vendor_missing'
   | 'price_missing'
   | 'contract_missing'
+  | 'contract_stuck'
   | 'money_mismatch'
   | 'no_vendors'
   | 'no_due_date'
@@ -95,6 +96,16 @@ const ACTIVE_STAGES = ['in_progress', 'pending_marketing', 'approved', 'active']
 /** How long a task can sit unclaimed in triage before it is a problem. */
 export const TRIAGE_PATIENCE_DAYS = 3;
 
+/**
+ * How long a contract can sit with Legal before somebody should ask.
+ *
+ * Kept in step with CONTRACT_PATIENCE_DAYS in lib/campaign-page — the
+ * campaign page and this list must not disagree about whether a contract is
+ * late, or the dashboard sends you to a campaign that says everything is
+ * fine.
+ */
+export const CONTRACT_PATIENCE_DAYS = 7;
+
 function txt(v: string | null | undefined): string {
   return (v ?? '').trim();
 }
@@ -121,6 +132,17 @@ function plural(n: number, one: string, many = `${one}s`): string {
 export interface AttentionInput {
   /** Every pm_task row in the workspace, parents and subtasks alike. */
   tasks: TaskRow[];
+  /**
+   * When each booking's contract was requested, by pm_task id.
+   *
+   * Passed in from `contract_requests` rather than read off the task,
+   * because pm_tasks has no column recording it — an age derived from the
+   * task's own `updated_at` resets every time somebody edits an unrelated
+   * field, which is exactly the number a chase would be built on.
+   */
+  requestSentAt?: Map<string, string>;
+  /** Each booking's contract status, by pm_task id. */
+  contractStatus?: Map<string, string>;
   /** The rollup view, one row per campaign. */
   rollup?: RollupRow[];
   /** This person's CRM follow-ups. */
@@ -155,6 +177,8 @@ export function attentionItems(
   opts: AttentionOptions = {},
 ): AttentionResult {
   const tasks = input.tasks || [];
+  const requestSentAt = input.requestSentAt;
+  const contractStatus = input.contractStatus;
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const out: AttentionItem[] = [];
 
@@ -229,6 +253,30 @@ export function attentionItems(
       if (!txt(t.contract_request_id)) {
         out.push(gap(t, 'contract_missing', 'tidy', 'Priced, but no contract has been requested.', contextOf(t)));
         continue;
+      }
+      // Asked for, and never came back.
+      //
+      // Nothing in the app has ever chased one of these: a request went out
+      // and whether it returned was something people noticed or did not.
+      // 'soon' rather than 'urgent' — the work is agreed and usually
+      // running; what is missing is the paper, and the cost of that shows
+      // up later rather than today.
+      const sent = requestSentAt?.get(t.id);
+      if (sent && !isContractDone(t, contractStatus?.get(t.id))) {
+        const waiting = daysBetween(txt(sent).slice(0, 10), today);
+        if (waiting >= CONTRACT_PATIENCE_DAYS) {
+          out.push({
+            key: `contract_stuck:${t.id}`,
+            kind: 'contract_stuck',
+            severity: 'soon',
+            taskId: t.id,
+            title: nameOf(t),
+            context: contextOf(t),
+            message: `Contract has been with Legal ${plural(waiting, 'day')}.`,
+            days: waiting,
+          });
+          continue;
+        }
       }
     }
 
@@ -341,6 +389,12 @@ function gap(
  */
 function isVendorish(t: TaskRow): boolean {
   return !!t.parent_task_id && ['vendor', 'ad'].includes(txt(t.subtask_kind));
+}
+
+/** A contract that came back, one way or another, is not stuck. */
+function isContractDone(t: TaskRow, status: string | undefined): boolean {
+  const s = txt(status) || txt((t as any).contract_status);
+  return s === 'generated' || s === 'rejected' || s === 'cancelled';
 }
 
 function money(n: number): string {

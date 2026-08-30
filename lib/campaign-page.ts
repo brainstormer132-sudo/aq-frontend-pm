@@ -631,6 +631,8 @@ export function campaignGaps(input: {
    * lib/payment-schedule.
    */
   overduePayments?: { id: string; name: string; days: number; amount: number | null }[];
+  /** Contracts sitting with Legal past CONTRACT_PATIENCE_DAYS. */
+  stuckContracts?: { id: string; name: string; days: number }[];
   today: string;
 }): Gap[] {
   const out: Gap[] = [];
@@ -675,6 +677,18 @@ export function campaignGaps(input: {
         anchor: '#bookings',
       });
     }
+  }
+
+  // Contracts that went out and never came back.
+  for (const c of input.stuckContracts ?? []) {
+    out.push({
+      key: `stuck:${c.id}`,
+      weight: 'soon',
+      what: `${c.name}'s contract has been with Legal ${c.days} days.`,
+      why: 'Nothing chases it on its own, and the work may already have started.',
+      action: 'Chase it',
+      anchor: '#vendor-contracts',
+    });
   }
 
   const paid = txt(input.clientPaymentStatus);
@@ -1158,6 +1172,25 @@ export function requestStateLine(sub: {
 /* ── Asked, then answered ───────────────────────────────────────── */
 
 export type TrackState = 'none' | 'waiting' | 'done' | 'blocked';
+
+/**
+ * How long a contract can sit with Legal before somebody should ask.
+ *
+ * Five working days, said as seven calendar ones. Short enough that a
+ * fortnight-old request cannot hide; long enough that the list is not
+ * crying wolf on Monday about something sent on Friday.
+ *
+ * Nothing in the app has ever chased one of these. A request went out, and
+ * whether it came back was a thing people noticed or did not.
+ */
+export const CONTRACT_PATIENCE_DAYS = 7;
+
+/** True when a contract has been with Legal longer than anyone should wait. */
+export function contractIsStuck(track: Track): boolean {
+  return track.state === 'waiting'
+    && track.waitingDays != null
+    && track.waitingDays >= CONTRACT_PATIENCE_DAYS;
+}
 
 export interface Track {
   state: TrackState;

@@ -162,14 +162,16 @@ export function TrackingSheetPanel({
     setBusy(true); setError('');
     try {
       // Adopt first, then insert: a placeholder claimed by the ad it stood in
-      // for must not be able to end up beside a fresh copy of itself.
-      for (const adoption of plan.toAdopt) {
-        await updateTrackingRow(String(adoption.row.id), adoptionPatch(adoption) as any);
-      }
+      // for must not be able to end up beside a fresh copy of itself. That
+      // ordering is between the adoptions and the INSERT — the adoptions
+      // have no order among themselves, each touching its own row, so they
+      // go together. Twenty placeholders was twenty sequential writes, and
+      // every one of them is now a trip to Frankfurt.
+      await Promise.all(plan.toAdopt.map((adoption) =>
+        updateTrackingRow(String(adoption.row.id), adoptionPatch(adoption) as any)));
       const start = rows.reduce((max, r) => Math.max(max, Number(r.position) || 0), -1) + 1;
       const added = await addTrackingRowsFromBookings(taskId, plannedRows(plan, start, brandName));
-      await refetch();
-      await refetchBookings();
+      await Promise.all([refetch(), refetchBookings()]);
       setConfirming(null);
       const total = added + plan.toAdopt.length;
       setNotice(`${total} ${total === 1 ? 'ad' : 'ads'} added from the bookings.`);

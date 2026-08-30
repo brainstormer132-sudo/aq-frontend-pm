@@ -913,28 +913,35 @@ export function useTrackingCampaigns(workspaceId: string | null) {
         .order('created_at', { ascending: false }));
 
     const ids = campaigns.map((c) => c.id);
+
+    // The batches exist because the ids go into a URL and a few hundred of
+    // them build a request too long to send. They are independent of each
+    // other, so they go out together: the Promise.all INSIDE the loop was
+    // right and the loop around it was not, which meant 350 campaigns cost
+    // four sequential waves instead of one.
+    const batches: string[][] = [];
+    for (let i = 0; i < ids.length; i += TRACKING_ID_BATCH) {
+      batches.push(ids.slice(i, i + TRACKING_ID_BATCH));
+    }
+
+    const results = await Promise.all(batches.map((batch) => Promise.all([
+      selectAllRows<TrackingRollupRow>('useTrackingCampaigns rows', () =>
+        supabase
+          .from('tracking_rows')
+          .select('task_id, id, price_incl, updated_at')
+          .in('task_id', batch)
+          .order('id', { ascending: true })),
+      selectAllRows<TrackingPublishedStamp>('useTrackingCampaigns published', () =>
+        supabase
+          .from('tracking_rows_published')
+          .select('task_id, source_row_id, updated_at')
+          .in('task_id', batch)
+          .order('id', { ascending: true })),
+    ])));
+
     const allRows: TrackingRollupRow[] = [];
     const allPublished: TrackingPublishedStamp[] = [];
-
-    for (let i = 0; i < ids.length; i += TRACKING_ID_BATCH) {
-      const batch = ids.slice(i, i + TRACKING_ID_BATCH);
-      const [r, p] = await Promise.all([
-        selectAllRows<TrackingRollupRow>('useTrackingCampaigns rows', () =>
-          supabase
-            .from('tracking_rows')
-            .select('task_id, id, price_incl, updated_at')
-            .in('task_id', batch)
-            .order('id', { ascending: true })),
-        selectAllRows<TrackingPublishedStamp>('useTrackingCampaigns published', () =>
-          supabase
-            .from('tracking_rows_published')
-            .select('task_id, source_row_id, updated_at')
-            .in('task_id', batch)
-            .order('id', { ascending: true })),
-      ]);
-      allRows.push(...r);
-      allPublished.push(...p);
-    }
+    for (const [r, p] of results) { allRows.push(...r); allPublished.push(...p); }
 
     // row_count / total_incl are kept for anything still reading the old shape.
     const counts: Record<string, { row_count: number; total_incl: number }> = {};
@@ -1307,23 +1314,38 @@ export function useWorkflowTasks(workspaceId: string | null, stage?: TaskStage |
   const [tasks, setTasks] = useState<PMTask[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetch = useCallback(async () => {
+  const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setTasks([]); setLoading(false); return; }
+    // Cached, because the dashboard screen calls this hook TWICE with the
+    // same arguments — once in the page and once in WorkflowDashboard — and
+    // each call was a full scan of pm_tasks, paged. Two identical scans of
+    // the biggest table in the app, on the landing screen, every visit.
+    //
+    // Keyed by stage as well as workspace: 'all' and 'in_progress' are
+    // different result sets and sharing one entry would serve whichever ran
+    // first to both.
+    //
     // Paged for the same reason the client list is: past 1000 campaigns this
     // silently stopped listing them, and a campaign missing from All Tasks
     // looks like a deleted campaign.
-    const rows = await selectAllRows<PMTask>('useWorkflowTasks', () => {
-      let query = supabase.from('pm_tasks').select('*')
-        .eq('workspace_id', workspaceId).is('parent_task_id', null);
-      if (stage && stage !== 'all') query = query.eq('stage', stage);
-      return query.order('created_at', { ascending: false });
-    });
+    const rows = await cachedFetch<PMTask[]>(
+      `workflowTasks:${workspaceId}:${stage ?? 'all'}`,
+      () => selectAllRows<PMTask>('useWorkflowTasks', () => {
+        let query = supabase.from('pm_tasks').select('*')
+          .eq('workspace_id', workspaceId).is('parent_task_id', null);
+        if (stage && stage !== 'all') query = query.eq('stage', stage);
+        return query.order('created_at', { ascending: false });
+      }),
+      force,
+    );
     setTasks(rows);
     setLoading(false);
   }, [workspaceId, stage]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { tasks, loading, refetch: fetch };
+  // Every caller's refetch runs after a write, so it must go past the cache.
+  const refetch = useCallback(() => fetch(true), [fetch]);
+  return { tasks, loading, refetch };
 }
 
 /** Subtasks (child rows) for a parent task. */
@@ -1456,14 +1478,31 @@ export async function triageMarketingTask(input: {
     ? new Set(input.selected_step_ids)
     : null;
 
+  // Both lookups for EVERY service type, in two queries rather than two per
+  // type. Three service types used to mean six sequential reads inside the
+  // loop before a single child task was written — at Frankfurt latency,
+  // most of a second spent fetching a catalogue that does not change.
+  const [stepsRes, metaRes] = await Promise.all([
+    supabase.from('service_type_steps').select('*')
+      .in('service_type_id', input.service_type_ids)
+      .order('position', { ascending: true }),
+    supabase.from('service_types').select('id, name, icon')
+      .in('id', input.service_type_ids),
+  ]);
+  if (stepsRes.error) throw stepsRes.error;
+
+  const stepsByType = new Map<string, any[]>();
+  for (const row of stepsRes.data ?? []) {
+    const k = String((row as any).service_type_id);
+    if (!stepsByType.has(k)) stepsByType.set(k, []);
+    stepsByType.get(k)!.push(row);
+  }
+  const metaById = new Map<string, any>(
+    (metaRes.data ?? []).map((m: any) => [String(m.id), m]));
+
   for (const stId of input.service_type_ids) {
-    const { data: steps, error: stepsErr } = await supabase
-      .from('service_type_steps')
-      .select('*')
-      .eq('service_type_id', stId)
-      .order('position', { ascending: true });
-    if (stepsErr) throw stepsErr;
-    if (!steps || !steps.length) continue;
+    const steps = stepsByType.get(String(stId)) ?? [];
+    if (!steps.length) continue;
 
     // Filter steps if the caller specified which ones to include.
     const filteredSteps = selectedSet
@@ -1471,11 +1510,7 @@ export async function triageMarketingTask(input: {
       : steps;
     if (!filteredSteps.length) continue;
 
-    const { data: stMeta } = await supabase
-      .from('service_types')
-      .select('name, icon')
-      .eq('id', stId)
-      .maybeSingle();
+    const stMeta = metaById.get(String(stId));
     const prefix = stMeta ? `${stMeta.icon ?? ''} ${stMeta.name} — ` : '';
 
     const rows = filteredSteps.map((s: any) => ({
@@ -3949,6 +3984,54 @@ export interface ContractRequest {
   reviewed_at: string | null;
   reviewed_by: string | null;
   created_at: string;
+}
+
+/**
+ * Contracts that are still out, so the dashboard can chase them.
+ *
+ * Deliberately narrow: three columns, and only the requests that have not
+ * come back. A workspace with two thousand signed contracts has perhaps
+ * fifteen open ones, and the dashboard already runs enough scans.
+ *
+ * This exists because pm_tasks has no column recording when a contract was
+ * requested. `contract_status` is there (028) but the DATE never was, so any
+ * age worked out from the task itself came from `updated_at` and reset
+ * whenever anyone touched the booking.
+ */
+export function useOpenContractRequests(workspaceId: string | null) {
+  const [sentAt, setSentAt] = useState<Map<string, string>>(new Map());
+  const [status, setStatus] = useState<Map<string, string>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async (force = false) => {
+    if (!workspaceId) { setSentAt(new Map()); setStatus(new Map()); setLoading(false); return; }
+    const rows = await cachedFetch(`openContracts:${workspaceId}`, () => selectAllRows<any>(
+      'useOpenContractRequests',
+      () => supabase
+        .from('contract_requests')
+        .select('pm_task_id, status, created_at')
+        .eq('workspace_id', workspaceId)
+        .eq('request_kind', 'vendor')
+        .in('status', ['pending', 'approved'])
+        .order('created_at', { ascending: true }),
+    ), force);
+
+    const at = new Map<string, string>();
+    const st = new Map<string, string>();
+    for (const r of rows) {
+      const k = String(r.pm_task_id ?? '');
+      // Ascending, so the FIRST one seen is the oldest — which is the one
+      // that has been waiting longest and the one worth chasing.
+      if (k && !at.has(k)) {
+        at.set(k, String(r.created_at ?? ''));
+        st.set(k, String(r.status ?? ''));
+      }
+    }
+    setSentAt(at); setStatus(st); setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { sentAt, status, loading, refetch: () => fetch(true) };
 }
 
 export function useContractRequests(workspaceId: string | null, taskId?: string | null) {

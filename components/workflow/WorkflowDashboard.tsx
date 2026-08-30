@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   useWorkspaceStats, useRecentActivity, useTaskCountsByMember,
-  useWorkflowTasks, useCrmTasks,
+  useWorkflowTasks, useCrmTasks, useOpenContractRequests,
   usePmTaskCampaignRollup,
   type Profile, type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -54,6 +54,9 @@ export function WorkflowDashboard({
   const { tasks: allTasks } = useWorkflowTasks(workspaceId, 'all');
   const { rows: campaignRollup } = usePmTaskCampaignRollup(workspaceId);
   const { items: followUps } = useCrmTasks(workspaceId, { assignedTo: userId });
+  // Contracts still out with Legal. One narrow query — open requests only —
+  // and it is what lets the list chase something nothing has ever chased.
+  const { sentAt: requestSentAt, status: contractStatus } = useOpenContractRequests(workspaceId);
 
   // Today is read after mount, never during render: the server does not know
   // what day it is where you are, and the two renders disagreeing is a
@@ -68,9 +71,12 @@ export function WorkflowDashboard({
 
   const attention = useMemo(
     () => (today
-      ? attentionItems({ tasks: rows, rollup: campaignRollup, followUps }, today, { userId, limit: 7 })
+      ? attentionItems(
+          { tasks: rows, rollup: campaignRollup, followUps, requestSentAt, contractStatus },
+          today, { userId, limit: 7 },
+        )
       : { items: [], hiddenCount: 0, counts: { urgent: 0, soon: 0, tidy: 0 } }),
-    [rows, campaignRollup, followUps, today, userId],
+    [rows, campaignRollup, followUps, requestSentAt, contractStatus, today, userId],
   );
 
   const myTasks = useMemo(

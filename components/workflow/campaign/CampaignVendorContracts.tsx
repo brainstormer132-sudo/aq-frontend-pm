@@ -8,7 +8,9 @@ import {
 } from '@/hooks/use-workflow';
 import { Card, Note, Missing, inkButton, TONE } from './ui';
 import { LengthField, TrackRow, TermsField, termsLabel } from './track';
-import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '@/lib/campaign-page';
+import {
+  contractTrack, contractIsStuck, askAllLabel, lengthLabel, money, bulkResultLine,
+} from '@/lib/campaign-page';
 import {
   contractPlan, contractCoverage, type SplitMode,
 } from '@/lib/vendor-contracts';
@@ -33,11 +35,24 @@ import type { OptimisticSave } from '@/hooks/use-optimistic-save';
  * exactly like the ones it sent.
  */
 export function CampaignVendorContracts({
-  task, subtasks, adLinesBySubtask, bookings, client, role, currentUserId,
-  today, opt, onChanged,
+  task, subtasks, adLinesBySubtask, requests, bookings, client, role,
+  currentUserId, today, opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
+  /**
+   * The actual contract_requests rows for this campaign's bookings.
+   *
+   * This card used to read `contract_status`, `contract_requested_at` and
+   * `contract_generated_at` off the SUBTASK. Only the first of those is a
+   * real column — 028 added `contract_status` to pm_tasks and the other two
+   * have never existed. So the age fell back to `updated_at`, and "With
+   * Legal 9 days" reset to "Sent today" the moment anybody edited an
+   * unrelated field on that booking. A number that looks right and is wrong
+   * is worse than no number, and it is the number a chase would be built on.
+   */
+  requests: { pm_task_id?: string | null; status?: unknown;
+              created_at?: unknown; generated_at?: unknown }[];
   /** The ads inside each booking. A contract covers ads, not a booking (070). */
   adLinesBySubtask: Map<string, any[]>;
   bookings: { id: string; name: string; amount?: number | null; [k: string]: any }[];
@@ -81,6 +96,18 @@ export function CampaignVendorContracts({
     [subtasks],
   );
 
+  const requestByTask = useMemo(() => {
+    const m = new Map<string, any>();
+    // Newest first, so the first one seen for a booking is its current
+    // request. A booking can have several once contracts are split per line.
+    for (const r of [...(requests ?? [])].sort((a, b) =>
+      String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))) {
+      const k = String(r.pm_task_id ?? '');
+      if (k && !m.has(k)) m.set(k, r);
+    }
+    return m;
+  }, [requests]);
+
   const rows = useMemo(() => vendorSubtasks.map((sub) => {
     const booking = bookings.find((b) => b.id === sub.id);
     const vendor = (vendors as any[]).find((v) => Number(v.id) === Number((sub as any).vendor_id)) ?? null;
@@ -89,11 +116,9 @@ export function CampaignVendorContracts({
     const readiness = vendorContractReadiness(
       sub, vendor, bank, booking?.amount ?? booking?.price ?? null, task, lines as any,
     );
-    const request = (sub as any).contract_request_id
-      ? { status: (sub as any).contract_status ?? 'pending',
-          created_at: (sub as any).contract_requested_at ?? (sub as any).updated_at,
-          generated_at: (sub as any).contract_generated_at }
-      : null;
+    // From the request itself, which is the only thing that knows when it
+    // was asked for and what came back.
+    const request = requestByTask.get(sub.id) ?? null;
 
     // The first missing thing, said on the row. The full list opens under it.
     const blocker = !request && !readiness.ready
@@ -131,7 +156,8 @@ export function CampaignVendorContracts({
       name: booking?.name ?? vendor?.name ?? sub.title ?? 'Unnamed vendor',
       track: contractTrack(request, today, blocker),
     };
-  }), [vendorSubtasks, bookings, vendors, banks, today, adLinesBySubtask, task, split]);
+  }), [vendorSubtasks, bookings, vendors, banks, today, adLinesBySubtask, task,
+       split, requestByTask]);
 
   const ready = rows.filter((r) => r.track.state === 'none' && !r.blocker);
   const blocked = rows.filter((r) => r.track.state === 'blocked');
@@ -140,6 +166,9 @@ export function CampaignVendorContracts({
   // agreed, an overdue payment is work delivered and not paid for — and
   // the second is the one a vendor rings about.
   const late = rows.filter((r) => r.pay.overdue);
+  // Sent, and never came back. Now that the age is read from the request
+  // rather than the booking's updated_at, this number means something.
+  const stuck = rows.filter((r) => contractIsStuck(r.track));
   const dueSoon = rows.filter(
     (r) => !r.pay.overdue && r.pay.instalments.some((i) => i.state === 'due-soon'));
   const signed = rows.filter((r) => r.track.state === 'done').length;
@@ -180,7 +209,7 @@ export function CampaignVendorContracts({
       // healthier state than one waiting on paperwork.
       bead={TONE[
         blocked.length || late.length ? 'red'
-        : ready.length || dueSoon.length ? 'amber'
+        : ready.length || dueSoon.length || stuck.length ? 'amber'
         : 'green'
       ].edge}
       id="vendor-contracts"
@@ -188,6 +217,7 @@ export function CampaignVendorContracts({
       hint={[
         signed ? `${signed} signed` : null,
         waiting ? `${waiting} with Legal` : null,
+        stuck.length ? `${stuck.length} to chase` : null,
         ready.length ? `${ready.length} ready` : null,
         blocked.length ? `${blocked.length} blocked` : null,
         late.length ? `${late.length} overdue to pay` : null,

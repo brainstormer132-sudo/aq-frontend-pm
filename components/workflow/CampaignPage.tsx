@@ -37,6 +37,7 @@ import { closerKey, closerFields, closerOptions } from '@/lib/sales-closer';
 import {
   moneyBar, stripTotals, bookingRows, campaignSpread, campaignGaps, gapSummary,
   pageIndex, PAGE_SECTION_IDS, indexProgress, money, moneyRound, shortDate, longDate, initials,
+  contractTrack, contractIsStuck,
   amountOrNull as pos, brandMark, parseMoney,
   type Gap, type BookingRow, type IndexEntry,
 } from '@/lib/campaign-page';
@@ -396,6 +397,28 @@ export function CampaignPage({
     });
   }, [bookings, shownSubtasks, bySubtask, view, today]);
 
+  /**
+   * Contracts that went out and never came back.
+   *
+   * Read from the request rows, not the booking: the booking has no column
+   * recording when its contract was asked for, so any age derived there
+   * reset itself whenever somebody edited an unrelated field.
+   */
+  const stuckContracts = useMemo(() => {
+    if (!today) return [];
+    const byTask = new Map<string, any>();
+    for (const r of [...(vendorRequests as any[])].sort((a, b) =>
+      String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))) {
+      const k = String(r.pm_task_id ?? '');
+      if (k && !byTask.has(k)) byTask.set(k, r);
+    }
+    return bookings.flatMap((b) => {
+      const track = contractTrack(byTask.get(b.id) ?? null, today, null);
+      if (!contractIsStuck(track)) return [];
+      return [{ id: b.id, name: b.name, days: track.waitingDays ?? 0 }];
+    });
+  }, [bookings, vendorRequests, today]);
+
   const gaps = useMemo(
     () => (today && view
       ? campaignGaps({
@@ -406,10 +429,11 @@ export function CampaignPage({
           bookings,
           adsWithoutDate,
           overduePayments,
+          stuckContracts,
           today,
         })
       : []),
-    [view, bookings, adsWithoutDate, overduePayments, today],
+    [view, bookings, adsWithoutDate, overduePayments, stuckContracts, today],
   );
 
   const index = useMemo(() => pageIndex({
@@ -1156,6 +1180,7 @@ export function CampaignPage({
             task={task}
             subtasks={shownSubtasks as any}
             adLinesBySubtask={bySubtask}
+            requests={vendorRequests as any}
             bookings={bookings}
             client={currentClient}
             role={role}
