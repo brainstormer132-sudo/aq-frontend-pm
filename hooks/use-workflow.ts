@@ -785,13 +785,17 @@ export function useMyRole(workspaceId: string | null) {
   const fetch = useCallback(async (force = false) => {
     if (!workspaceId) { setRole(null); setLoading(false); return; }
     const mine = await cachedFetch<WorkspaceRole | null>(`myRole:${workspaceId}`, async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return null;
+      // getSession reads the token already in local storage; getUser is a
+      // round trip to /auth/v1/user for an id we are holding either way.
+      // Every page load paid for that before the role query could start.
+      const { data: { session } } = await supabase.auth.getSession();
+      const uid = session?.user?.id;
+      if (!uid) return null;
       const { data, error } = await supabase
         .from('workspace_members')
         .select('role')
         .eq('workspace_id', workspaceId)
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .maybeSingle();
       if (error) { logSbError('useMyRole', error, { workspaceId }); }
       return (data?.role as WorkspaceRole) ?? null;
@@ -1629,10 +1633,14 @@ export async function fetchCampaignBookings(parentTaskId: string): Promise<Booki
 
   if (!subtasks.length) return [];
 
-  const byId = await fetchAdLinesForSubtasks(subtasks.map((s) => s.id));
-  const vendorNames = await fetchVendorNames(
-    subtasks.map((s) => s.vendor_id).filter((v): v is number => v != null),
-  );
+  // Both derive from `subtasks` and neither reads the other, so they go
+  // together. Serially this was a third round trip for no reason.
+  const [byId, vendorNames] = await Promise.all([
+    fetchAdLinesForSubtasks(subtasks.map((s) => s.id)),
+    fetchVendorNames(
+      subtasks.map((s) => s.vendor_id).filter((v): v is number => v != null),
+    ),
+  ]);
 
   return subtasks
     .map((s) => ({
@@ -2838,9 +2846,14 @@ export async function deleteTask(taskId: string) {
   // deleter's own inbox update without waiting for a poll. It must never
   // fail the delete — the task IS deleted by this point.
   try {
-    for (const id of ids) {
-      await supabase.from('notifications').delete().ilike('link', `%task=${id}%`);
-    }
+    // One statement, not one per id. Deleting a campaign with twelve
+    // bookings meant thirteen sequential deletes AFTER the delete had
+    // already succeeded — over a second of a frozen screen waiting on
+    // best-effort cleanup a trigger does server-side anyway.
+    await supabase
+      .from('notifications')
+      .delete()
+      .or(ids.map((id) => `link.ilike.%task=${id}%`).join(','));
   } catch (e) {
     logSbError('deleteTask:notifications', e as any, { taskId });
   }
@@ -4946,6 +4959,14 @@ export async function sendVendorContractRequest(opts: {
    * default and is what this always did.
    */
   split?: SplitMode;
+  /**
+   * This booking's ads, when the caller already has them.
+   *
+   * The bulk send loops over bookings, and each one used to fetch its own
+   * ads — eight bookings meant eight sequential reads before the first
+   * contract was written. It now fetches all of them once, up front.
+   */
+  lines?: AdLine[];
 }): Promise<string[]> {
   const { subtask, vendor, bank } = opts;
 
@@ -4953,7 +4974,7 @@ export async function sendVendorContractRequest(opts: {
     throw new Error('This subtask has no workspace; cannot raise a request.');
   }
 
-  const lines = await fetchVendorAdLines(subtask.id);
+  const lines = opts.lines ?? await fetchVendorAdLines(subtask.id);
   const linesTotal = totalsOf(lines).amount;
 
   // Which ads are not yet under contract. Asking again for a booking whose
@@ -5119,6 +5140,12 @@ export async function sendVendorContractRequests(opts: {
   const skipped: { title: string; reason: string }[] = [];
   let sent = 0;
 
+  // Every booking's ads, in one read. The loop below is sequential on
+  // purpose — it reports which vendor was skipped and why, which a
+  // Promise.all would lose — but it should not also be paying for a
+  // round trip per booking just to look up ads.
+  const linesBySubtask = await fetchAdLinesForSubtasks(opts.subtasks.map((s) => s.id));
+
   for (const subtask of opts.subtasks) {
     const vendor = subtask.vendor_id != null
       ? opts.vendors.find((v) => v.id === subtask.vendor_id) ?? null
@@ -5132,6 +5159,7 @@ export async function sendVendorContractRequests(opts: {
       const ids = await sendVendorContractRequest({
         subtask, parent: opts.parent, vendor, bank,
         client: opts.client, requestedBy: opts.requestedBy, split: opts.split,
+        lines: linesBySubtask.get(subtask.id) ?? [],
       });
       sent += ids.length;
     } catch (e: any) {

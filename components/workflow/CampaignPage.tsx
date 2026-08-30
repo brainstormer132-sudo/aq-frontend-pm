@@ -28,6 +28,7 @@ import {
   Chip, platformTone } from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
+import { useCoalesced } from '@/hooks/use-coalesced';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import { CampaignLoading } from './CampaignSkeleton';
@@ -150,8 +151,10 @@ export function CampaignPage({
   // write goes out behind it, and the page refetches once after a burst rather
   // than once per field.
   const opt = useOptimisticSave(async () => {
-    await refetch();
-    await refetchSubtasks();
+    // Together: the campaign and its bookings are separate state, and
+    // neither read needs the other's answer. Serially this cost two round
+    // trips to Frankfurt after every field somebody edited.
+    await Promise.all([refetch(), refetchSubtasks()]);
   });
 
   // Everything below reads the campaign as the user believes it to be: what
@@ -186,23 +189,35 @@ export function CampaignPage({
       refetchComments, refetchFiles, refetchAdLines, refetchPublished]);
 
   // The campaign row and everything hanging off it.
-  useRealtime({ table: 'pm_tasks', filter: `id=eq.${taskId}`, onChange: refetchAll });
-  useRealtime({ table: 'pm_tasks', filter: `parent_task_id=eq.${taskId}`, onChange: refetchAll });
-  useRealtime({ table: 'document_requests', filter: `pm_task_id=eq.${taskId}`, onChange: refetchAll });
-  useRealtime({ table: 'tracking_rows', filter: `task_id=eq.${taskId}`, onChange: refetchAll });
+  /**
+   * One refetch per burst, not one per event.
+   *
+   * Four of the subscriptions below cannot be filtered, so they fire on
+   * changes anywhere in the workspace. Wired straight to `refetchAll` that
+   * meant nine queries every time anybody commented on anything — and a
+   * colleague bulk-editing twenty ad lines put a hundred and eighty
+   * requests through this page. The old comment here claimed the hooks
+   * debounced it themselves. They do not; nothing did.
+   */
+  const refetchSoon = useCoalesced(refetchAll);
+
+  useRealtime({ table: 'pm_tasks', filter: `id=eq.${taskId}`, onChange: refetchSoon });
+  useRealtime({ table: 'pm_tasks', filter: `parent_task_id=eq.${taskId}`, onChange: refetchSoon });
+  useRealtime({ table: 'document_requests', filter: `pm_task_id=eq.${taskId}`, onChange: refetchSoon });
+  useRealtime({ table: 'tracking_rows', filter: `task_id=eq.${taskId}`, onChange: refetchSoon });
   // No filter: a comment on a BOOKING carries the booking's id, not the
   // campaign's, so filtering on task_id here would miss exactly the rows
   // this card exists to keep visible.
-  useRealtime({ table: 'comments', onChange: refetchAll });
-  useRealtime({ table: 'task_attachments', onChange: refetchAll });
-  // Ad lines belong to a SUBTASK, so there is no column here to filter on —
-  // the subscription is workspace-wide and the refetch is cheap and debounced
-  // by the hooks themselves.
-  useRealtime({ table: 'vendor_ad_lines', onChange: refetchAll });
+  useRealtime({ table: 'comments', onChange: refetchSoon });
+  useRealtime({ table: 'task_attachments', onChange: refetchSoon });
+  // Ad lines belong to a SUBTASK, so there is no column here to filter on:
+  // the subscription is workspace-wide, which is exactly why it has to be
+  // coalesced rather than wired straight through.
+  useRealtime({ table: 'vendor_ad_lines', onChange: refetchSoon });
   // No filter, for the reason above: a vendor contract request carries the
   // BOOKING's id, so a campaign-id filter would miss exactly the rows whose
   // status coming back from Legal this page most needs to hear about.
-  useRealtime({ table: 'contract_requests', onChange: refetchAll });
+  useRealtime({ table: 'contract_requests', onChange: refetchSoon });
 
   // Today after mount, never during render — the server does not know what day
   // it is where you are, and a date that differs is a hydration mismatch.
@@ -1101,7 +1116,7 @@ export function CampaignPage({
             currentUserId={currentUserId}
             today={today ?? ''}
             opt={opt}
-            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+            onChanged={async () => { await Promise.all([refetch(), refetchSubtasks()]); }}
           />
 
           <CampaignVendorContracts
@@ -1119,7 +1134,7 @@ export function CampaignPage({
               // raised here changes them as well as the bookings. Without
               // this the card kept saying "Ask" for something it had just
               // asked for — the same dropped-refetch bug three times over.
-              await refetch(); await refetchSubtasks(); await refetchAdLines();
+              await Promise.all([refetch(), refetchSubtasks(), refetchAdLines()]);
             }}
           />
 
@@ -1133,7 +1148,7 @@ export function CampaignPage({
             taskPlatforms={taskPlatforms as any}
             serviceTypeSteps={steps as any}
             opt={opt}
-            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+            onChanged={async () => { await Promise.all([refetch(), refetchSubtasks()]); }}
           />
 
           <CampaignTracking
@@ -1143,9 +1158,7 @@ export function CampaignPage({
             role={role}
             brandName={view.brand_name}
             onChanged={async () => {
-              await refetch();
-              await refetchTracking();
-              await refetchPublished();
+              await Promise.all([refetch(), refetchTracking(), refetchPublished()]);
             }}
           />
 
@@ -1162,7 +1175,7 @@ export function CampaignPage({
             taskPlatforms={taskPlatforms as any}
             profiles={profiles as any}
             opt={opt}
-            onChanged={async () => { await refetch(); await refetchSubtasks(); }}
+            onChanged={async () => { await Promise.all([refetch(), refetchSubtasks()]); }}
           />
           <CampaignActivity
             task={task}

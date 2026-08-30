@@ -28,7 +28,13 @@ export default function CampaignRoute({ params }: { params: Promise<{ id: string
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      // getSession reads the token already in local storage. getUser is a
+      // round trip to the auth server for an id the session already holds,
+      // and NOTHING on this page — not one of its twelve queries — could
+      // start until it came back. From Frankfurt that was a tenth of a
+      // second of skeleton before the real work was allowed to begin.
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
       if (!user) { router.replace('/auth'); return; }
       const { data } = await supabase
         .from('workspace_members')

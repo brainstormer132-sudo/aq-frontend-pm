@@ -87,7 +87,11 @@ export default function WorkflowPage() {
   // Boot.
   useEffect(() => {
     (async () => {
-      const { data: { user: u } } = await supabase.auth.getUser();
+      // The session is already in local storage; getUser asks the auth
+      // server to confirm what we are holding, and everything on this
+      // screen waited behind that answer.
+      const { data: { session } } = await supabase.auth.getSession();
+      const u = session?.user;
       if (!u) { window.location.href = withBase('/auth'); return; }
       try {
         await ensureProfile(u);

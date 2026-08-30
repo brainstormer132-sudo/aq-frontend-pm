@@ -55,17 +55,25 @@ export function AdLinesCard({
   const undated = lines.filter((l) => !l.due_date);
   const unproven = adsMissingProof(lines);
 
-  /** Anything that moves the money re-fills the booking's Price. */
-  const syncUp = async () => {
-    await syncBookingPriceFromAds(subtaskId);
-    await onTotalChanged?.();
-  };
+  /**
+   * Anything that moves the money re-fills the booking's Price.
+   *
+   * `onTotalChanged` owns the whole sequence — the write, then the
+   * refetches. It used to be called AFTER a `syncBookingPriceFromAds` here
+   * as well, and the parent then did its own, so every ad line edit wrote
+   * the same price twice and refetched everything twice: about eleven
+   * sequential round trips to add one line. At Frankfurt latency that is
+   * over a second of waiting for work already done.
+   *
+   * `refetch` is not called alongside this either — `onTotalChanged`
+   * refetches the lines itself, and doing both made a third duplicate pair.
+   */
+  const syncUp = async () => { await onTotalChanged?.(); };
 
   const add = async (spec: AdLineSpec) => {
     setError('');
     try {
       await createAdLines(newLines(subtaskId, lines, spec));
-      await refetch();
       await syncUp();
       setAdding(false);
     } catch (e: any) { setError(e?.message ?? String(e)); throw e; }
@@ -78,9 +86,11 @@ export function AdLinesCard({
     setBusy(line.id); setError('');
     try {
       await updateAdLine(line.id, fields);
-      await refetch();
       // Quantity moves the money too, now that it multiplies the price.
+      // When it does, syncUp refetches; when it doesn't, refetch alone is
+      // the whole job. Never both — that was two round trips for one edit.
       if ('unit_price' in fields || 'quantity' in fields) await syncUp();
+      else await refetch();
     }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
@@ -89,7 +99,7 @@ export function AdLinesCard({
   const remove = async (line: AdLine) => {
     if (!line.id) return;
     setBusy(line.id); setError('');
-    try { await deleteAdLine(line.id); setOpenId(null); await refetch(); await syncUp(); }
+    try { await deleteAdLine(line.id); setOpenId(null); await syncUp(); }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };

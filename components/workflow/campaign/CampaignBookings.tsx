@@ -703,13 +703,19 @@ export function CampaignBookings({
               canEdit={canEdit}
               lines={lines}
               loading={false}
-              refetch={async () => { await refetchAdLines(); await onChanged(); }}
+              refetch={async () => {
+                // Together, not one after the other: neither reads the
+                // other's result, and each is a round trip to Frankfurt.
+                await Promise.all([refetchAdLines(), onChanged()]);
+              }}
               platformOptions={platformNames}
               defaultPlatform={(sub as any).platform ?? (task as any).platform ?? null}
               onTotalChanged={async () => {
+                // The write has to land before the reads — they are what
+                // shows the new price. After that the two reads are
+                // independent, so they go together.
                 await syncBookingPriceFromAds(sub.id);
-                await refetchAdLines();
-                await onChanged();
+                await Promise.all([refetchAdLines(), onChanged()]);
               }}
             />
 
