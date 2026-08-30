@@ -324,3 +324,74 @@ export const zoho = {
   resetClients: () =>
     contractApi<{ deleted: number }>('/zoho/reset-clients', { method: 'POST' }),
 };
+
+// ─── Downloading a generated contract ───────────────────────────────────
+
+export type ContractFileKind = 'pdf' | 'docx';
+
+/**
+ * Fetch a generated contract and hand it to the browser as a file.
+ *
+ * **Why a fetch-and-blob rather than a link.** The backend's older download
+ * routes accept the token as a `?token=` query parameter, because a native
+ * download triggered through an iframe cannot set headers. That puts a
+ * bearer token in a URL — and so into access logs, referrer headers and
+ * browser history. A Supabase session token is not going in a query string
+ * to save a few lines here, so this asks with an Authorization header like
+ * every other call in this file and saves what comes back.
+ *
+ * The cost is that the file passes through memory before it is saved, which
+ * for a contract is a few hundred kilobytes and not worth a second thought.
+ */
+export async function downloadContract(
+  contractId: string,
+  kind: ContractFileKind,
+): Promise<void> {
+  const url = `${resolveBase()}/contracts/secure-download/${kind}/${encodeURIComponent(contractId)}`;
+  const res = await fetch(url, { headers: await authHeader() });
+
+  if (!res.ok) {
+    // The backend says something useful on a 404 — that the file is missing
+    // and can be regenerated — and that is exactly what somebody needs to
+    // read here rather than "Request failed (404)".
+    let detail = `Could not download the contract (${res.status}).`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === 'string') detail = body.detail;
+    } catch { /* not JSON; keep the status line */ }
+    throw new Error(detail);
+  }
+
+  const blob = await res.blob();
+  // The filename the backend chose — "Alarabi oil - 10-Jun-2026.pdf" rather
+  // than a contract id. It is in Content-Disposition; falling back to the id
+  // is better than a browser-invented "download".
+  const name = filenameFrom(res.headers.get('content-disposition'))
+    ?? `${contractId}.${kind}`;
+
+  const href = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    // Revoked on the next tick, not immediately: Safari has not finished
+    // reading the blob when click() returns, and revoking synchronously
+    // gives an empty file.
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+  }
+}
+
+/** The filename out of a Content-Disposition header, RFC 5987 form first. */
+function filenameFrom(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star) {
+    try { return decodeURIComponent(star[1].trim()); } catch { /* fall through */ }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain ? plain[1].trim() : null;
+}

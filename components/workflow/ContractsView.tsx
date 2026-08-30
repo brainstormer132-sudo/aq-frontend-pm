@@ -16,6 +16,7 @@ import {
   type ContractKind, type ContractRow, type ContractStatus,
   type Filter, type Sort, type TaskLike, type PersonLike,
 } from '@/lib/contracts';
+import { downloadContract } from '@/lib/contract-api';
 import { SkeletonRows } from '@/components/Skeleton';
 
 /**
@@ -46,12 +47,16 @@ import { SkeletonRows } from '@/components/Skeleton';
  */
 
 /**
- * There is no internal route to a generated contract file yet — only the
- * external portal has one (`/external-portal/contracts/{id}/download/{kind}`,
- * and that is portal-authed). When the backend grows the internal
- * equivalent, set this true and wire `onDownload`.
+ * The route now exists: `/api/contracts/secure-download/{kind}/{id}`, gated
+ * by the Supabase JWT plus a workspace-role check rather than the legacy
+ * contract-app token the older download routes require.
+ *
+ * A contract carries the vendor's IBAN, what the client is billed and what
+ * the vendor takes, so the backend allows the same roles that may generate
+ * one — owner, admin, marketing, key account. `canManage` below is that
+ * same set, so a button that appears enabled is one the server will honour.
  */
-const CONTRACTS_CAN_DOWNLOAD = false;
+const CONTRACTS_CAN_DOWNLOAD = true;
 
 const MANAGE_ROLES = ['owner', 'admin', 'marketing', 'key_account'];
 
@@ -129,6 +134,31 @@ export function ContractsView({
           ? `Approved ${row.party}. It is ready to generate.`
           : `Rejected ${row.party}.`);
       }
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * Take the file away.
+   *
+   * Kept out of `act` because nothing here changes: no refetch, no status
+   * move, and a failure is not a failed action — it is usually the backend
+   * telling you the file was never rendered, which is a sentence worth
+   * reading rather than a red row.
+   */
+  const download = async (row: ContractRow) => {
+    if (!row.contractId) return;
+    // The ROW's id, not the contract's: that is what the busy check
+    // compares against, and the two are different ids.
+    setBusyId(row.id); setError(''); setMessage('');
+    try {
+      // DOCX when the PDF never rendered. The label already says "Open
+      // DOCX"; asking for a pdf that is not there would 404 on a button
+      // that looked perfectly fine.
+      await downloadContract(row.contractId, row.file === 'docx_only' ? 'docx' : 'pdf');
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
@@ -292,6 +322,7 @@ export function ContractsView({
                   busy={busyId === r.id}
                   onOpenTask={onOpenTask}
                   onAct={(what) => act(r, what)}
+                  onDownload={() => download(r)}
                 />
               ))}
             </tbody>
@@ -305,15 +336,20 @@ export function ContractsView({
 /* ─────────────────────────────────────────────────────────────── */
 
 function Row({
-  row, canManage, busy, onOpenTask, onAct,
+  row, canManage, busy, onOpenTask, onAct, onDownload,
 }: {
   row: ContractRow;
   canManage: boolean;
   busy: boolean;
   onOpenTask: (id: string) => void;
   onAct: (what: 'approve' | 'reject' | 'generate') => void;
+  onDownload: () => void;
 }) {
-  const action = nextAction(row, { canManage, canDownload: CONTRACTS_CAN_DOWNLOAD });
+  // Downloading is the same permission as generating: a row you can see is
+  // not necessarily a file you may take away.
+  const action = nextAction(row, {
+    canManage, canDownload: CONTRACTS_CAN_DOWNLOAD && canManage,
+  });
   const note = fileNote(row);
 
   return (
@@ -394,6 +430,10 @@ function Row({
               onClick={() => {
                 if (action.kind === 'approve') onAct('approve');
                 else if (action.kind === 'generate') onAct('generate');
+                // `open` is DOCX-only when the PDF never rendered — the
+                // label already says so, and asking for a pdf that is not
+                // there would 404 on a button that looked fine.
+                else if (action.kind === 'open') onDownload();
               }}
               disabled={busy || action.disabled}
               // A disabled button that will not say why is a dead end.

@@ -352,7 +352,7 @@ export function fixedSettings(input: {
       label: 'Opening a generated contract',
       value: input.contractsCanDownload ? 'On' : 'Not built yet',
       effect: input.contractsCanDownload
-        ? 'The Contracts screen can open a generated PDF.'
+        ? 'Owners, admins, marketing and key accounts can open a generated contract. A contract carries the vendor’s IBAN and both sides’ money, so it is the same permission as generating one — not everyone who can see the row.'
         : 'The Contracts screen shows Open disabled: the internal app has no download route yet, only the client portal.',
       where: 'CONTRACTS_CAN_DOWNLOAD, in the code',
     },

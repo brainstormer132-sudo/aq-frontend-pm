@@ -97,7 +97,7 @@ export function SettingsView({
     briefFileBytes: MAX_BRIEF_FILE_BYTES,
     avatarBytes: MAX_AVATAR_BYTES,
     pageSize: 1000,
-    contractsCanDownload: false,
+    contractsCanDownload: true,
   }), []);
 
   return (
