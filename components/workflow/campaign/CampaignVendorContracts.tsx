@@ -12,6 +12,9 @@ import { contractTrack, askAllLabel, lengthLabel, money, bulkResultLine } from '
 import {
   contractPlan, contractCoverage, type SplitMode,
 } from '@/lib/vendor-contracts';
+import {
+  paymentSchedule, bookingSchedule, dueLabel, scheduleTone,
+} from '@/lib/payment-schedule';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 /**
@@ -101,12 +104,30 @@ export function CampaignVendorContracts({
     // contracted and whose June ads are not used to read "contract signed",
     // because one link on the booking was the whole story it could tell.
     const cover = contractCoverage(lines as any);
+
+    // When this vendor is actually owed their money.
+    //
+    // 067 captured payment terms on every booking and nothing read them, so
+    // "50% up front" and "net 30" were notes to whoever remembered to look
+    // — which means chasing has been running on memory. The terms plus the
+    // delivery date are a due date, and a due date can be sorted and
+    // chased. Delivery is the day the LAST ad went up, and only once every
+    // one of them is posted: eleven of twelve is not delivered, and
+    // starting a net-30 clock on the eleventh pays in full for work still
+    // outstanding.
+    const pay = bookingSchedule({
+      booking: sub as any,
+      campaign: task as any,
+      amount: booking?.amount ?? booking?.price ?? null,
+      lines: lines as any,
+      today,
+    });
     const plan = contractPlan(
       (lines as any[]).filter((l) => !l.contract_request_id), split,
     );
 
     return {
-      sub, vendor, booking, readiness, blocker, lines, cover, plan,
+      sub, vendor, booking, readiness, blocker, lines, cover, plan, pay,
       name: booking?.name ?? vendor?.name ?? sub.title ?? 'Unnamed vendor',
       track: contractTrack(request, today, blocker),
     };
@@ -114,6 +135,13 @@ export function CampaignVendorContracts({
 
   const ready = rows.filter((r) => r.track.state === 'none' && !r.blocker);
   const blocked = rows.filter((r) => r.track.state === 'blocked');
+  // Money we are late paying. Counted separately from contract state
+  // because they are different failures: a blocked contract is work not
+  // agreed, an overdue payment is work delivered and not paid for — and
+  // the second is the one a vendor rings about.
+  const late = rows.filter((r) => r.pay.overdue);
+  const dueSoon = rows.filter(
+    (r) => !r.pay.overdue && r.pay.instalments.some((i) => i.state === 'due-soon'));
   const signed = rows.filter((r) => r.track.state === 'done').length;
   const waiting = rows.filter((r) => r.track.state === 'waiting').length;
 
@@ -147,7 +175,14 @@ export function CampaignVendorContracts({
     <Card
       // Red beats amber beats green: the worst thing on the card is what
       // the bead reports, because that is what you came to find out.
-      bead={TONE[blocked.length ? 'red' : ready.length ? 'amber' : 'green'].edge}
+      // Red beats amber beats green, and an overdue payment is as red as a
+      // blocked contract — a vendor waiting on money we owe is not a
+      // healthier state than one waiting on paperwork.
+      bead={TONE[
+        blocked.length || late.length ? 'red'
+        : ready.length || dueSoon.length ? 'amber'
+        : 'green'
+      ].edge}
       id="vendor-contracts"
       title="Vendor contracts"
       hint={[
@@ -155,6 +190,8 @@ export function CampaignVendorContracts({
         waiting ? `${waiting} with Legal` : null,
         ready.length ? `${ready.length} ready` : null,
         blocked.length ? `${blocked.length} blocked` : null,
+        late.length ? `${late.length} overdue to pay` : null,
+        dueSoon.length ? `${dueSoon.length} due this week` : null,
       ].filter(Boolean).join(' · ') || 'nothing asked for yet'}
       right={canRequest ? (
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -183,15 +220,21 @@ export function CampaignVendorContracts({
               ? termsLabel((r.sub as any).payment_terms, (r.sub as any).payment_split_pct,
                            (r.sub as any).payment_net_days)
               : null,
+            // The terms turned into a date. Only the next unpaid one — the
+            // full schedule opens below rather than crowding the row.
+            nextDueText(r.pay),
             // Only worth saying when it is not the obvious one contract.
             r.track.state === 'none' && r.plan.length > 1
               ? `${r.plan.length} contracts`
               : null,
             r.cover.partial ? `${r.cover.uncovered} ads not covered` : null,
           ].filter(Boolean).join(' · ')}
-          detail={r.track.state === 'blocked'
-            ? <Missing items={r.readiness.missing as any} />
-            : null}
+          detail={
+            <>
+              {r.track.state === 'blocked' && <Missing items={r.readiness.missing as any} />}
+              {r.pay.instalments.length > 0 && <PaySchedule schedule={r.pay} />}
+            </>
+          }
           actions={
             <>
               <LengthField
@@ -300,5 +343,82 @@ function SplitChoice({ value, onChange, disabled }: {
         );
       })}
     </span>
+  );
+}
+
+/**
+ * The next payment, in one phrase, for the row's subtitle.
+ *
+ * Only the soonest unpaid one. A vendor on 50/50 has two dates and the row
+ * has room for neither pair nor paragraph — the full schedule opens
+ * underneath. Silence when everything is settled: "paid" belongs on the
+ * badge, not repeated in the subtitle.
+ */
+function nextDueText(s: ReturnType<typeof paymentSchedule>): string | null {
+  if (!s.instalments.length) return null;
+  if (s.overdue) {
+    const d = s.worstDaysLate ?? 0;
+    return `${d} ${d === 1 ? 'day' : 'days'} overdue`;
+  }
+  const next = s.instalments.find((i) => i.state !== 'paid');
+  if (!next) return null;
+  return dueLabel(next);
+}
+
+/**
+ * When this vendor gets paid, and how sure we are of the date.
+ *
+ * Every row says whether its date is a fact or a projection, because they
+ * are not the same thing and printing them in the same ink is how somebody
+ * pays a month early. A date counted from the planned finish moves when the
+ * plan does; a date counted from the day the last ad actually went up does
+ * not.
+ */
+function PaySchedule({ schedule }: { schedule: ReturnType<typeof paymentSchedule> }) {
+  const tone = TONE[scheduleTone(schedule)];
+  return (
+    <div style={{
+      marginTop: 9, padding: '10px 12px', borderRadius: 9,
+      background: 'var(--aq-bg-sunken)',
+      borderLeft: `3px solid ${tone.edge}`,
+    }}>
+      <div style={{
+        fontSize: 11.5, color: 'var(--aq-text-muted)', marginBottom: 7,
+      }}>{schedule.summary}</div>
+
+      {schedule.instalments.map((i) => {
+        const t = TONE[
+          i.state === 'paid' ? 'green'
+          : i.state === 'overdue' ? 'red'
+          : i.state === 'due-soon' ? 'amber'
+          : i.state === 'unknown' ? 'grey' : 'blue'
+        ];
+        return (
+          <div key={i.key} style={{
+            display: 'flex', alignItems: 'baseline', gap: 9,
+            fontSize: 12.5, padding: '3px 0',
+          }}>
+            <i aria-hidden style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: t.edge, flex: '0 0 auto',
+            }} />
+            <span style={{ minWidth: 0 }}>{i.label}</span>
+            <span style={{
+              marginLeft: 'auto', display: 'flex', alignItems: 'baseline', gap: 10,
+              whiteSpace: 'nowrap',
+            }}>
+              {i.amount != null && (
+                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                  {money(i.amount)}
+                </span>
+              )}
+              <span style={{ color: t.fg, fontWeight: i.state === 'overdue' ? 700 : 500 }}>
+                {dueLabel(i)}
+              </span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }

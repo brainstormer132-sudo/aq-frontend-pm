@@ -29,6 +29,7 @@ import {
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
 import { useCoalesced } from '@/hooks/use-coalesced';
+import { bookingSchedule } from '@/lib/payment-schedule';
 import { failureLine, failureSummary } from '@/lib/pending-writes';
 import { DateField } from './DateField';
 import { CampaignLoading } from './CampaignSkeleton';
@@ -364,6 +365,37 @@ export function CampaignPage({
     [trackingRows],
   );
 
+  /**
+   * Vendors whose money is past its date.
+   *
+   * The same derivation the Vendor contracts card uses —
+   * `bookingSchedule` is the single definition, so the top of the page and
+   * the card underneath it cannot disagree about who is owed what.
+   */
+  const overduePayments = useMemo(() => {
+    if (!today) return [];
+    return bookings.flatMap((b) => {
+      const sub = (shownSubtasks as any[]).find((s) => s.id === b.id);
+      if (!sub) return [];
+      const pay = bookingSchedule({
+        booking: sub,
+        campaign: view as any,
+        // What the VENDOR takes, not what the client is billed — this is
+        // money going out.
+        amount: b.net ?? null,
+        lines: (bySubtask.get(b.id) ?? []) as any,
+        today,
+      });
+      if (!pay.overdue) return [];
+      return [{
+        id: b.id,
+        name: b.name,
+        days: pay.worstDaysLate ?? 0,
+        amount: pay.outstanding,
+      }];
+    });
+  }, [bookings, shownSubtasks, bySubtask, view, today]);
+
   const gaps = useMemo(
     () => (today && view
       ? campaignGaps({
@@ -373,10 +405,11 @@ export function CampaignPage({
           dueDate: view.due_date,
           bookings,
           adsWithoutDate,
+          overduePayments,
           today,
         })
       : []),
-    [view, bookings, adsWithoutDate, today],
+    [view, bookings, adsWithoutDate, overduePayments, today],
   );
 
   const index = useMemo(() => pageIndex({

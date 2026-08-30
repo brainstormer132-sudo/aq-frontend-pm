@@ -624,9 +624,33 @@ export function campaignGaps(input: {
   dueDate?: unknown;
   bookings: BookingRow[];
   adsWithoutDate: number;
+  /**
+   * Vendors whose money is past its date, worked out from their payment
+   * terms. Passed in rather than derived here so there is exactly one
+   * definition of a booking's schedule — see `bookingSchedule` in
+   * lib/payment-schedule.
+   */
+  overduePayments?: { id: string; name: string; days: number; amount: number | null }[];
   today: string;
 }): Gap[] {
   const out: Gap[] = [];
+
+  // First, above everything: work delivered that we have not paid for.
+  //
+  // Every other gap on this page is something unfinished. This one is a
+  // debt — the vendor has done the job, the date has passed, and the next
+  // thing that happens is a phone call. It goes at the top because it is
+  // the only gap with somebody waiting on the other end of it.
+  for (const p of input.overduePayments ?? []) {
+    out.push({
+      key: `overdue:${p.id}`,
+      weight: 'blocking',
+      what: `${p.name} should have been paid ${p.days} ${p.days === 1 ? 'day' : 'days'} ago${p.amount != null ? ` — ${money(p.amount)}` : ''}.`,
+      why: 'Their terms fell due and the payment has not been recorded.',
+      action: 'Pay them',
+      anchor: '#vendor-contracts',
+    });
+  }
 
   for (const b of input.bookings) {
     if (b.price == null) {
