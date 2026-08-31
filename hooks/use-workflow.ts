@@ -2844,6 +2844,66 @@ export async function updateTaskFields(taskId: string, fields: Partial<PMTask>) 
 }
 
 /** Hard-delete a task. Cascades to subtasks via the FK. */
+/* ── The recycle bin ────────────────────────────────────────────── */
+
+export interface DeletedTask {
+  id: string;
+  task_name: string | null;
+  brand_name: string | null;
+  parent_task_id: string | null;
+  deleted_at: string;
+  deleted_by: string | null;
+  deleted_by_name: string | null;
+  /** How many bookings went with it. */
+  bookings: number;
+  /** Days before it is purged for good. */
+  days_left: number;
+}
+
+/**
+ * What is in the bin, and how long each thing has left.
+ *
+ * An RPC rather than a query, because the whole point of 073 is that
+ * deleted tasks are invisible to SELECT. Reading the bin has to be a
+ * deliberate act by somebody allowed to make it, which is what the
+ * SECURITY DEFINER function enforces — owners and admins only.
+ */
+export function useDeletedTasks(workspaceId: string | null) {
+  const [items, setItems] = useState<DeletedTask[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!workspaceId) { setItems([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .rpc('deleted_tasks', { p_workspace_id: workspaceId });
+    if (error) logSbError('useDeletedTasks', error, { workspaceId });
+    setItems((data ?? []) as DeletedTask[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { items, loading, refetch: fetch };
+}
+
+/**
+ * Bring a deleted task back, with the bookings that went with it.
+ *
+ * Deliberately NOT everything under it: a booking deleted on its own three
+ * weeks earlier stays deleted. Restoring a campaign should not quietly
+ * resurrect something somebody removed on purpose.
+ */
+export async function restoreTask(taskId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('restore_task', { p_task_id: taskId });
+  if (error) { logSbError('restoreTask', error, { taskId }); throw error; }
+  const n = Number(data ?? 0);
+  if (n === 0) {
+    throw new Error(
+      'Nothing to restore — it may have been brought back already, or its 30 days may be up.',
+    );
+  }
+  return n;
+}
+
 export async function deleteTask(taskId: string) {
   // Capture child subtask ids before the cascade delete removes them, so we
   // can also clear their inbox notifications.
@@ -2853,33 +2913,39 @@ export async function deleteTask(taskId: string) {
     .eq('parent_task_id', taskId);
   const ids = [taskId, ...((children || []).map((c: any) => c.id as string))];
 
-  // Delete FIRST, and check that it actually happened.
+  // Hidden, not destroyed — and hidden at the DATABASE.
   //
-  // This is the "sometimes delete glitches" bug. It used to be:
+  // 073 replaced the hard delete with a stamp, and put the filter in the
+  // RLS policy rather than in the queries. That matters more than it
+  // sounds: pm_tasks is read from around sixty places, and a soft delete
+  // whose filter lives in the callers is one forgotten `where` away from
+  // showing somebody a campaign that was deleted last week. A deleted task
+  // is now invisible to SELECT full stop — the REST API, the rollup view,
+  // the dashboard, the portal, and whatever gets written next year.
   //
-  //     const { error } = await supabase.from('pm_tasks').delete().eq('id', taskId);
-  //     if (error) throw error;
+  // It stays recoverable for 30 days (`restoreTask`), then
+  // `purge_deleted_tasks()` really deletes it and the existing FK cascades
+  // take the bookings, ad lines and tracking rows exactly as this function
+  // used to.
   //
-  // PostgREST does not report an error when RLS simply matches no rows — the
-  // request succeeds having deleted nothing. The panel closed, the caller
-  // refetched, and the task came straight back. Asking for the deleted rows
-  // back turns that silence into something we can act on.
-  const { data: deleted, error } = await supabase
-    .from('pm_tasks')
-    .delete()
-    .eq('id', taskId)
-    .select('id');
+  // The old code checked the returned rows because PostgREST reports no
+  // error when RLS simply matches nothing — the request "succeeded" having
+  // deleted nothing, the panel closed, and the task came straight back.
+  // The RPC returns a count for the same reason, and raises rather than
+  // shrugging when the caller is not allowed.
+  const { data: stamped, error } = await supabase
+    .rpc('soft_delete_task', { p_task_id: taskId });
   if (error) { logSbError('deleteTask', error, { taskId }); throw error; }
-  if (!deleted || deleted.length === 0) {
+  if (!stamped || Number(stamped) === 0) {
     throw new Error(
       'That task was not deleted — it may already be gone, or your role may not be allowed to delete it. Refresh and try again.',
     );
   }
 
-  // Best effort, and only once the row is genuinely gone. A DB trigger
-  // (migration 037) clears these server-side anyway; this just makes the
-  // deleter's own inbox update without waiting for a poll. It must never
-  // fail the delete — the task IS deleted by this point.
+  // Best effort, once the task is out of sight. A DB trigger (037) clears
+  // these when the row is finally purged; this clears them now, because an
+  // inbox still linking to a task nobody can open is worse than an empty
+  // one. It must never fail the delete — the task IS hidden by this point.
   try {
     // One statement, not one per id. Deleting a campaign with twelve
     // bookings meant thirteen sequential deletes AFTER the delete had

@@ -408,6 +408,6 @@ export function attentionSummary(counts: Record<Severity, number>): string {
   const parts: string[] = [];
   if (counts.urgent) parts.push(`${counts.urgent} urgent`);
   if (counts.soon) parts.push(`${counts.soon} soon`);
-  if (counts.tidy) parts.push(`${counts.tidy} for housekeeping`);
+  if (counts.tidy) parts.push(`${counts.tidy} missing data`);
   return parts.join(' · ');
 }

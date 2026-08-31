@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import {
   useTaskSources, useClientCategories, useTaskPlatforms, useLookupUsage,
   useVendorCategoriesLegacy,
+  useDeletedTasks, restoreTask,
   createTaskSource, updateTaskSource, deleteTaskSource,
   createClientCategory, updateClientCategory, deleteClientCategory,
   createTaskPlatform, updateTaskPlatform, deleteTaskPlatform,
@@ -72,6 +73,9 @@ export function SettingsView({
   const platforms = useTaskPlatforms(workspaceId);
   const { usage, refetch: refetchUsage } = useLookupUsage(workspaceId);
   const { categories: vendorCats } = useVendorCategoriesLegacy();
+  // Only an owner or admin can read this at all — the RPC enforces it, so a
+  // marketing user simply sees an empty bin rather than a forbidden one.
+  const { items: deleted, refetch: refetchDeleted } = useDeletedTasks(workspaceId);
 
   const [error, setError] = useState('');
 
@@ -204,6 +208,75 @@ export function SettingsView({
           </table>
         </div>
       </section>
+
+      {/* ── Deleted tasks ────────────────────────────────────────── */}
+      {(canEdit || deleted.length > 0) && (
+        <section className="aq-card" style={{ padding: 18 }}>
+          <header style={{ marginBottom: 10 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700 }}>Recently deleted</h3>
+            <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 3, maxWidth: '70ch' }}>
+              A deleted campaign disappears from every screen immediately, and
+              stays here for 30 days in case it was a mistake. After that it is
+              removed for good, along with its bookings, ads and tracking rows.
+              This is the only place it can be seen.
+            </p>
+          </header>
+
+          {deleted.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: 0 }}>
+              Nothing deleted in the last 30 days.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {deleted.map((d) => (
+                <div key={d.id} style={{
+                  display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto auto',
+                  gap: 14, alignItems: 'center', padding: '11px 0',
+                  borderTop: '1px solid var(--aq-border-light)',
+                }}>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+                      {d.task_name || 'Untitled campaign'}
+                    </span>
+                    <span style={{ display: 'block', fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+                      {[
+                        d.brand_name,
+                        d.bookings > 0
+                          ? `${d.bookings} ${d.bookings === 1 ? 'booking' : 'bookings'} went with it`
+                          : null,
+                        d.deleted_by_name ? `deleted by ${d.deleted_by_name}` : null,
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  {/* Red inside a week: the point of a countdown is that it
+                      is read before it runs out. */}
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap',
+                    fontVariantNumeric: 'tabular-nums',
+                    color: d.days_left <= 7 ? '#b91c1c' : 'var(--aq-text-muted)',
+                  }}>
+                    {d.days_left === 0
+                      ? 'gone today'
+                      : `${d.days_left} ${d.days_left === 1 ? 'day' : 'days'} left`}
+                  </span>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="aq-btn aq-btn-secondary"
+                      style={{ fontSize: 12, padding: '4px 11px' }}
+                      onClick={async () => {
+                        setError('');
+                        try { await restoreTask(d.id); await refetchDeleted(); }
+                        catch (e: any) { setError(e?.message ?? String(e)); }
+                      }}
+                    >Restore</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── Fixed in the code ────────────────────────────────────── */}
       <section className="aq-card" style={{ padding: 18 }}>

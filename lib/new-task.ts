@@ -65,8 +65,12 @@ export function stepStatuses(draft: Draft): StepStatus[] {
   else if (txt(draft.taskName).length < 3) whatMissing.push('That name is too short to find later.');
 
   return [
-    { key: 'who',   title: 'Who is it for', done: whoMissing.length === 0,  missing: whoMissing },
-    { key: 'what',  title: 'What is it',    done: whatMissing.length === 0, missing: whatMissing },
+    // Named for the ANSWER, not the question. "Who is it for" and "What is
+    // it" read as an interview; "Client" and "Data" read as the two things
+    // a person is filling in, and match how the rest of the app labels a
+    // section.
+    { key: 'who',   title: 'Client', done: whoMissing.length === 0,  missing: whoMissing },
+    { key: 'what',  title: 'Data',   done: whatMissing.length === 0, missing: whatMissing },
     // The brief is optional, so this step is never "incomplete" — it is
     // done the moment you get to it.
     { key: 'brief', title: 'The brief',     done: true,                     missing: [] },

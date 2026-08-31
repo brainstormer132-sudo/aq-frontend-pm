@@ -314,7 +314,7 @@ export function WorkflowDashboard({
 const SEVERITY_STYLE: Record<Severity, { dot: string; label: string }> = {
   urgent: { dot: '#dc2626', label: 'Urgent' },
   soon:   { dot: '#ca8a04', label: 'Soon' },
-  tidy:   { dot: '#a8a29e', label: 'Housekeeping' },
+  tidy:   { dot: '#a8a29e', label: 'Missing data' },
 };
 
 function AttentionRow({
