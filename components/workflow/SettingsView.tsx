@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import {
   useTaskSources, useClientCategories, useTaskPlatforms, useLookupUsage,
   useVendorCategoriesLegacy,
-  useDeletedTasks, restoreTask,
+  useDeletedTasks, restoreTask, useRecentActivity,
   createTaskSource, updateTaskSource, deleteTaskSource,
   createClientCategory, updateClientCategory, deleteClientCategory,
   createTaskPlatform, updateTaskPlatform, deleteTaskPlatform,
@@ -76,6 +76,9 @@ export function SettingsView({
   // Only an owner or admin can read this at all — the RPC enforces it, so a
   // marketing user simply sees an empty bin rather than a forbidden one.
   const { items: deleted, refetch: refetchDeleted } = useDeletedTasks(workspaceId);
+  // The full log. The dashboard shows six; this is where you come when you
+  // need to know who did something and when.
+  const { items: log } = useRecentActivity(workspaceId, 100);
 
   const [error, setError] = useState('');
 
@@ -277,6 +280,64 @@ export function SettingsView({
           )}
         </section>
       )}
+
+      {/* ── The log ──────────────────────────────────────────────── */}
+      <section className="aq-card" style={{ padding: 18 }}>
+        <header style={{ marginBottom: 10 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700 }}>Activity log</h3>
+          <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 3, maxWidth: '70ch' }}>
+            Who did what, newest first. Entries are never edited or removed —
+            not even by an owner — and they outlive what they describe, so a
+            campaign removed for good still has its history here.
+          </p>
+        </header>
+
+        {log.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: 0 }}>
+            Nothing logged yet.
+          </p>
+        ) : (
+          <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+            {log.map((a) => (
+              <div key={a.id} style={{
+                display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto',
+                gap: 14, alignItems: 'baseline', padding: '9px 0',
+                borderTop: '1px solid var(--aq-border-light)', fontSize: 12.5,
+              }}>
+                <span style={{ minWidth: 0 }}>
+                  <strong style={{ fontWeight: 600 }}>
+                    {a.user_name ?? (a.user_id ? 'Someone' : 'The system')}
+                  </strong>
+                  {' '}<span style={{ color: 'var(--aq-text-secondary)' }}>{logVerb(a.action)}</span>
+                  {a.entity_name && (
+                    <>
+                      {' '}
+                      <span style={{
+                        textDecoration: a.task_exists ? undefined : 'line-through',
+                        color: a.task_exists ? 'var(--aq-text)' : 'var(--aq-text-muted)',
+                      }}>{a.entity_name}</span>
+                    </>
+                  )}
+                  {a.entity_kind === 'booking' && (
+                    <span style={{ color: 'var(--aq-text-muted)' }}> (a booking)</span>
+                  )}
+                  {typeof a.details?.bookings === 'number' && a.details.bookings > 0 && (
+                    <span style={{ color: 'var(--aq-text-muted)' }}>
+                      {' · '}{a.details.bookings} {a.details.bookings === 1 ? 'booking' : 'bookings'} went with it
+                    </span>
+                  )}
+                </span>
+                <span style={{
+                  color: 'var(--aq-text-muted)', whiteSpace: 'nowrap',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {new Date(a.created_at).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* ── Fixed in the code ────────────────────────────────────── */}
       <section className="aq-card" style={{ padding: 18 }}>
@@ -586,4 +647,27 @@ function Td({ children, muted = false }: { children?: React.ReactNode; muted?: b
       color: muted ? 'var(--aq-text-muted)' : 'var(--aq-text)',
     }}>{children}</td>
   );
+}
+
+/** The verb, in the past tense somebody would say out loud. */
+function logVerb(action: string): string {
+  const m: Record<string, string> = {
+    created: 'created',
+    updated: 'updated',
+    deleted: 'deleted',
+    restored: 'restored',
+    // Nobody did this one on the day it happened — its 30 days ran out.
+    purged: 'removed for good:',
+    completed: 'completed',
+    assigned: 'assigned',
+    unassigned: 'unassigned',
+    commented: 'commented on',
+    moved: 'moved',
+    status_changed: 'changed the status of',
+    priority_changed: 'changed the priority of',
+    contract_requested: 'requested a contract for',
+    contract_generated: 'got a signed contract for',
+    sheet_published: 'published the tracking sheet for',
+  };
+  return m[action] ?? action;
 }

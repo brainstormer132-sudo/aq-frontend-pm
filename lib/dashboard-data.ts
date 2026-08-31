@@ -877,13 +877,13 @@ function vendorModel(input: DashboardInput, s: Scoped, clientName: Map<string, s
     kpis: [
       { key: 'Times worked', value: full(s.subtasks.length), note: `across ${full(s.parents.length)} campaigns` },
       { key: 'Vendors cost', value: compact(money.net), note: 'SAR · earned' },
-      { key: 'Payable now', value: compact(owedNow), note: `SAR · ${full(states.filter((x) => x.key !== 'paid').length)} bookings` },
+      { key: 'Liability now', value: compact(owedNow), note: `SAR · ${full(states.filter((x) => x.key !== 'paid').length)} bookings` },
       { key: 'Clients', value: full(clientsSeen.size), note: 'they have worked for' },
       { key: 'Contracts', value: `${full(signed)} / ${full(s.subtasks.length)}`, note: 'campaigns with a signed contract' },
     ],
     months: moneyByMonth(s.subtasks),
     donut: {
-      title: 'Amounts payable',
+      title: 'Liability',
       caption: `Of SAR ${full(money.net)} earned. Of the amount they have earned.`,
       centre: [compact(money.net), 'SAR earned'],
       slices,

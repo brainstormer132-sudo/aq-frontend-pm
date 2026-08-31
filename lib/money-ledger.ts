@@ -27,8 +27,8 @@ export type PayKey = 'paid' | 'partial' | 'unpaid';
 export type Side = 'clients' | 'vendors';
 
 export const SIDES: { key: Side; label: string; blurb: string }[] = [
-  { key: 'clients', label: 'Receivables', blurb: 'Campaigns we have billed.' },
-  { key: 'vendors', label: 'Payables', blurb: 'Bookings we have to pay.' },
+  { key: 'clients', label: 'Collection', blurb: 'Campaigns we have billed.' },
+  { key: 'vendors', label: 'Liability', blurb: 'Bookings we have to pay.' },
 ];
 
 export const PAY_KEYS: PayKey[] = ['paid', 'partial', 'unpaid'];
@@ -394,7 +394,9 @@ export function ledgerLine(totals: LedgerTotals, side: Side): string {
   if (totals.outstanding <= 0) {
     return `SAR ${money(totals.total)} ${of}, all settled.`;
   }
-  const verb = side === 'clients' ? 'receivable' : 'payable';
+  // The same two words the tabs use, so the sentence under a tab does not
+  // rename what the tab just called it.
+  const verb = side === 'clients' ? 'to collect' : 'owed';
   return `SAR ${money(totals.total)} ${of} · SAR ${money(totals.outstanding)} ${verb}.`;
 }
 

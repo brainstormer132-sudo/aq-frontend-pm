@@ -218,8 +218,24 @@ export function WorkflowDashboard({
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>
               {activity.map((a) => (
                 <li key={a.id} style={{ fontSize: 12, color: 'var(--aq-text-secondary)', lineHeight: 1.45 }}>
-                  <strong>{profileById.get(a.user_id)?.full_name ?? 'Someone'}</strong>{' '}
+                  {/* The name comes with the entry now. `user_id` is null
+                      when the system did it — the nightly purge — and
+                      "Someone" would be wrong about that in a way that
+                      matters: nobody did it, a schedule did. */}
+                  <strong>{a.user_name ?? (a.user_id ? 'Someone' : 'The system')}</strong>{' '}
                   {humanAction(a.action)}
+                  {a.entity_name && (
+                    <>
+                      {' '}
+                      <span style={{
+                        // Struck through once the task is really gone, so a
+                        // name you cannot click is visibly a name that no
+                        // longer exists rather than a broken link.
+                        textDecoration: a.task_exists ? undefined : 'line-through',
+                        color: a.task_exists ? 'var(--aq-text)' : 'var(--aq-text-muted)',
+                      }}>{a.entity_name}</span>
+                    </>
+                  )}
                   <span style={{ color: 'var(--aq-text-muted)' }}>
                     {' · '}{new Date(a.created_at).toLocaleDateString()}
                   </span>
@@ -384,16 +400,22 @@ function rowButton(first: boolean): React.CSSProperties {
 
 function humanAction(a: string) {
   const m: Record<string, string> = {
-    created: 'created a task',
+    created: 'created',
     updated: 'updated a task',
-    deleted: 'deleted a task',
-    completed: 'completed a task',
+    deleted: 'deleted',
+    completed: 'completed',
     assigned: 'assigned a task',
     unassigned: 'unassigned a task',
     commented: 'left a comment',
     moved: 'moved a task',
     status_changed: 'changed task status',
     priority_changed: 'changed priority',
+    restored: 'restored',
+    // Nobody "deleted" it at this point — its 30 days ran out.
+    purged: 'was removed for good:',
+    contract_requested: 'requested a contract for',
+    contract_generated: 'got a signed contract for',
+    sheet_published: 'published the tracking sheet for',
   };
   return m[a] ?? a;
 }

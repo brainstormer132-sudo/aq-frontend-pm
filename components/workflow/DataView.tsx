@@ -338,10 +338,10 @@ export function DataView({
             </div>
           </div>
 
-          {/* ── 2. Receivables and payables ────────────────
+          {/* ── 2. Collection and liability ─────────────────
               The section Siraj asked for. The bar is the shape; the ledger
               under it is the rows, filterable by state and searchable. */}
-          <Question title="Receivables and payables" note="the money still moving" />
+          <Question title="Collection and liability" note="the money still moving" />
 
           <div className="aq-card" style={{ padding: '18px 20px' }}>
             <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>

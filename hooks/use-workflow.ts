@@ -3687,14 +3687,36 @@ export function useWorkspaceStats(workspaceId: string | null, userId: string | n
 
 export interface ActivityRow {
   id: string;
-  workspace_id: string;
   task_id: string | null;
-  user_id: string;
   action: string;
+  /** What the task was CALLED at the time. Survives the task itself. */
+  entity_name: string | null;
+  /** 'campaign' | 'booking' */
+  entity_kind: string | null;
   details: any;
+  /** Null when the system did it — the nightly purge, or another job. */
+  user_id: string | null;
+  user_name: string | null;
   created_at: string;
+  /** False once the task has been purged. The entry outlives its subject. */
+  task_exists: boolean;
 }
 
+/**
+ * The activity log.
+ *
+ * Through an RPC rather than a table read, because an entry has to remain
+ * readable after the task it describes is gone — 074 made `task_id` nullable
+ * on purge and put the task's NAME on the entry so it still reads as
+ * English. The function resolves the person's name in the same round trip,
+ * which the old table read did not: it selected raw rows and the dashboard
+ * looked each user up in a map it happened to have.
+ *
+ * Worth knowing: this table existed from 002 with RLS, two indexes and a
+ * reader on the dashboard — and NOTHING ever wrote to it. "Recent activity"
+ * said "Nothing yet." from the day it shipped, correctly. 074 is the first
+ * writer.
+ */
 export function useRecentActivity(workspaceId: string | null, limit = 10) {
   const [items, setItems] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3702,11 +3724,7 @@ export function useRecentActivity(workspaceId: string | null, limit = 10) {
   const fetch = useCallback(async () => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
     const { data, error } = await supabase
-      .from('activity_log')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+      .rpc('activity_feed', { p_workspace_id: workspaceId, p_limit: limit });
     if (error) logSbError('useRecentActivity', error);
     setItems((data || []) as ActivityRow[]);
     setLoading(false);
