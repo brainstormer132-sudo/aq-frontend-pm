@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient, applyRememberMe, rememberMeChosen } from '@/lib/supabase-browser';
 import { absoluteUrl, withBase } from '@/lib/paths';
 import { SplitAuthLayout } from '@/components/auth/SplitAuthLayout';
 
@@ -14,7 +14,6 @@ type InviteInfo = {
   expires_at: string | null;
 };
 
-const REMEMBER_ME_KEY = 'aq_remember_me';
 
 export default function AuthPage() {
   const [supabase] = useState(() => createClient());
@@ -84,8 +83,7 @@ export default function AuthPage() {
 
   // Restore Remember-me preference on mount.
   useEffect(() => {
-    const saved = localStorage.getItem(REMEMBER_ME_KEY);
-    if (saved === '0') setRememberMe(false);
+    setRememberMe(rememberMeChosen());
   }, []);
 
   const claimInviteIfPresent = async () => {
@@ -96,21 +94,11 @@ export default function AuthPage() {
     localStorage.removeItem('aq_pending_invite');
   };
 
-  const applyRememberMePreference = (remember: boolean) => {
-    // Persist the user's choice so the page comes back the same way next time.
-    localStorage.setItem(REMEMBER_ME_KEY, remember ? '1' : '0');
-    if (remember) {
-      // Persistent: the Supabase session cookie stays past tab close (default).
-      // Clear any "sign out on close" hook that may have been set previously.
-      try { sessionStorage.removeItem('aq_session_only'); } catch {}
-    } else {
-      // Session-only: drop the session when this browser tab is closed.
-      // We use sessionStorage as a tab-scoped flag, then a beforeunload that
-      // signs out. This is the practical, standard approach — Supabase doesn't
-      // expose a direct "session-only cookie" knob via @supabase/ssr.
-      try { sessionStorage.setItem('aq_session_only', '1'); } catch {}
-    }
-  };
+  // The choice now sets the auth cookie's lifetime — see lib/supabase-browser.
+  // It used to only write a localStorage flag and hang a "sign out on tab
+  // close" listener off it, while the cookie itself stayed a session cookie
+  // either way. So the box did nothing: ticked or not, closing the browser
+  // signed you out.
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,7 +111,7 @@ export default function AuthPage() {
         password: signInPassword,
       });
       if (signInErr) throw signInErr;
-      applyRememberMePreference(rememberMe);
+      await applyRememberMe(rememberMe);
       await claimInviteIfPresent();
       window.location.href = withBase('/dashboard/workflow');
     } catch (err: any) {
@@ -177,7 +165,7 @@ export default function AuthPage() {
       if (data.user && !data.session) {
         setSignUpMessage('Check your email for a confirmation link. Once you confirm, you will be redirected back here.');
       } else if (data.session) {
-        applyRememberMePreference(rememberMe);
+        await applyRememberMe(rememberMe);
         await claimInviteIfPresent();
         window.location.href = withBase('/dashboard/workflow');
       }
@@ -200,7 +188,7 @@ export default function AuthPage() {
         ? absoluteUrl(`/dashboard/workflow?invite=${inviteToken}`)
         : absoluteUrl('/dashboard/workflow');
       if (inviteToken) localStorage.setItem('aq_pending_invite', inviteToken);
-      applyRememberMePreference(rememberMe);
+      await applyRememberMe(rememberMe);
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider,
         options: { redirectTo: redirect },

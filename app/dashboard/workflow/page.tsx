@@ -71,18 +71,11 @@ export default function WorkflowPage() {
   // Set when a CRM deal is won: the New Task form opens filled in from it.
   const [taskPrefill, setTaskPrefill] = useState<CampaignPrefill | null>(null);
 
-  // Remember-me opt-out: if the auth page set aq_session_only on this tab,
-  // sign the user out as soon as the tab is closing. The flag lives in
-  // sessionStorage so it dies with the tab regardless of what we do.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    let sessionOnly = false;
-    try { sessionOnly = sessionStorage.getItem('aq_session_only') === '1'; } catch {}
-    if (!sessionOnly) return;
-    const handler = () => { void supabase.auth.signOut(); };
-    window.addEventListener('pagehide', handler);
-    return () => window.removeEventListener('pagehide', handler);
-  }, []);
+  // The "sign out when the tab closes" listener that used to live here is
+  // gone. `pagehide` fires on ordinary navigation as well as on close, and
+  // its sessionStorage flag was per-tab while the cookies are shared — so
+  // one old tab could sign every other tab out. The cookie's own lifetime
+  // does this properly now; see lib/supabase-browser.
 
   // Boot.
   useEffect(() => {

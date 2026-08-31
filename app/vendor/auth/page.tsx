@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient, applyRememberMe, rememberMeChosen } from '@/lib/supabase-browser';
 import { PortalAuthShell } from '@/components/portal/PortalAuthShell';
+import { portal } from '@/lib/portal-api';
 
 export default function VendorAuthPage() {
   return <PortalLogin role="vendor" />;
@@ -16,6 +17,11 @@ export function PortalLogin({ role }: { role: 'vendor' | 'client' }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [remember, setRemember] = useState(true);
+
+  useEffect(() => { setRemember(rememberMeChosen()); }, []);
+
+  const other = role === 'vendor' ? 'client' : 'vendor';
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,10 +30,45 @@ export function PortalLogin({ role }: { role: 'vendor' | 'client' }) {
     try {
       const { error: e1 } = await supabase.auth.signInWithPassword({ email, password });
       if (e1) throw e1;
-      // Confirm caller is actually an external user of the right role,
-      // otherwise sign them right out — this page is portal-only.
-      const targetPath = role === 'vendor' ? '/vendor' : '/client';
-      window.location.href = targetPath;
+
+      /**
+       * The door has to check who it lets in.
+       *
+       * The comment here used to say "confirm caller is actually an
+       * external user of the right role, otherwise sign them right out"
+       * — and then redirected without confirming anything. So a client
+       * could sign in at the vendor door, and a member of staff could
+       * sign in at either. The session was created either way; the
+       * portal shell bounced them somewhere afterwards, which is not the
+       * same as refusing them.
+       *
+       * Siraj: *"seperate client and vendor portals you cant log in to a
+       * vendor portal from the clients and vice verca"*. So: ask who
+       * this is, and sign them straight back out if the answer is wrong.
+       */
+      let me;
+      try {
+        me = await portal.me();
+      } catch {
+        await supabase.auth.signOut();
+        setError(
+          'That account is not a portal account. If you work at AQ, sign in '
+          + 'at the main dashboard instead.',
+        );
+        return;
+      }
+
+      if (me.role !== role) {
+        await supabase.auth.signOut();
+        setError(
+          `That is a ${me.role} account, and this is the ${role} portal. `
+          + `Sign in at the ${me.role} portal instead.`,
+        );
+        return;
+      }
+
+      await applyRememberMe(remember);
+      window.location.href = role === 'vendor' ? '/vendor' : '/client';
     } catch (err: any) {
       const msg = err.message || 'Sign-in failed.';
       if (/Invalid login credentials/i.test(msg)) {
@@ -75,8 +116,27 @@ export function PortalLogin({ role }: { role: 'vendor' | 'client' }) {
         >
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+          color: 'var(--aq-text-secondary)',
+        }}>
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          <span>Keep me signed in on this device</span>
+        </label>
         <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', textAlign: 'center', marginTop: 6 }}>
-          Forgot your password? Ask your AQ contact to send you a new invite link.
+          Forgot your password? Ask your AQ contact to send you a new setup link.
+          <br />
+          {/* Named, because somebody at the wrong door needs the right one,
+              not just to be told they are at the wrong one. */}
+          Are you a {other}?{' '}
+          <a href={other === 'vendor' ? '/vendor/auth' : '/client/auth'}
+             style={{ color: 'var(--aq-text)', textDecoration: 'underline' }}>
+            Use the {other} portal
+          </a>
         </p>
       </form>
     </PortalAuthShell>

@@ -69,6 +69,38 @@ export async function validateInviteToken(token: string): Promise<InviteValidati
   return result;
 }
 
+/**
+ * Turn an invite into a working account, in one call.
+ *
+ * Replaces the browser doing signUp → claim → signIn. Two things went
+ * wrong with that:
+ *
+ *   * **A reset could never work.** `supabase.auth.signUp` does not change
+ *     an existing user's password, so on a re-issued invite the new
+ *     password was never set and the sign-in afterwards failed against one
+ *     that did not exist.
+ *   * **A failure burned the token.** The invite was consumed before the
+ *     session was proven, so any error after that point marked it used and
+ *     every retry reported "Invite already used" — which is the "invalid
+ *     token" people were seeing, usually on their own second attempt.
+ *
+ * The backend sets the password with the service role FIRST and consumes
+ * the invite only once that has worked, so a failure leaves the link
+ * usable.
+ */
+export async function acceptInvite(token: string, password: string) {
+  return publicFetch<{
+    ok: true;
+    email: string;
+    role: 'vendor' | 'client';
+    external_user_id: string;
+  }>('/external-invites/accept', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password }),
+  });
+}
+
 export async function claimInvite(token: string, authUserId: string) {
   return publicFetch<{
     external_user_id: string;

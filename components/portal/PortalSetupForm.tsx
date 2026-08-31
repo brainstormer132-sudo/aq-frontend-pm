@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { validateInviteToken, claimInvite, type InviteValidationResult } from '@/lib/portal-api';
+import { validateInviteToken, acceptInvite, type InviteValidationResult } from '@/lib/portal-api';
 import { PortalAuthShell } from '@/components/portal/PortalAuthShell';
 
 /**
@@ -68,42 +68,20 @@ export function PortalSetupForm({ expectedRole }: { expectedRole: 'vendor' | 'cl
     setStatus('submitting');
     setError('');
     try {
-      // 1. Create the Supabase auth user.
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: info.email,
-        password,
-        options: {
-          data: { role: expectedRole, source: 'external_invite' },
-          // Disable confirmation email — we don't have email plumbing locally.
-          emailRedirectTo: undefined,
-        },
-      });
-      if (signUpError) throw signUpError;
+      // One call. The account is created or its password is reset, and the
+      // invite is consumed only once that has actually worked — so a
+      // failure here leaves the link usable instead of burning it and
+      // reporting "invalid token" on every retry.
+      await acceptInvite(token, password);
 
-      // If the user was already signed up before, signUp returns user but no
-      // session. In that case sign them in instead.
-      let authUser = data.user;
-      if (!authUser) {
-        const { data: signed, error: signInError } =
-          await supabase.auth.signInWithPassword({ email: info.email, password });
-        if (signInError) throw signInError;
-        authUser = signed.user;
-      }
-      if (!authUser) throw new Error('Could not establish a session.');
-
-      // 2. Claim the invite (creates external_users row).
-      await claimInvite(token, authUser.id);
-
-      // 3. If signUp returned a session, we're already in. Otherwise sign in.
-      if (!data.session) {
-        const { error: postSignInErr } =
-          await supabase.auth.signInWithPassword({ email: info.email, password });
-        if (postSignInErr) throw postSignInErr;
-      }
+      // Now an ordinary sign-in, against a password that definitely exists.
+      const { error: signInError } =
+        await supabase.auth.signInWithPassword({ email: info.email, password });
+      if (signInError) throw signInError;
 
       setStatus('done');
       const target = expectedRole === 'vendor' ? '/vendor' : '/client';
-      window.location.href = target;
+      window.location.href = `${target}?welcome=1`;
     } catch (err: any) {
       setStatus('ready');
       setError(err?.message ?? 'Something went wrong.');

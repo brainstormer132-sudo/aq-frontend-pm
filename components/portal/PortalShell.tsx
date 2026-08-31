@@ -4,6 +4,7 @@ import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { AQLoadingScreen } from '@/components/AQLoading';
 import { createClient } from '@/lib/supabase-browser';
 import { portal, type PortalMe } from '@/lib/portal-api';
+import { PortalWelcome } from './PortalWelcome';
 import { Icon, initials } from './PortalUI';
 
 /**
@@ -45,6 +46,26 @@ export function PortalShell({
   const [error, setError] = useState('');
   const [activeId, setActiveId] = useState<string>('overview');
 
+  /**
+   * The greeting, shown while the portal fetches itself.
+   *
+   * `?welcome=1` comes off the setup page, which has just created the
+   * account — a different sentence is owed to somebody arriving for the
+   * first time than to somebody signing in again. The parameter is
+   * stripped straight away so a refresh does not replay it.
+   */
+  const [greeting, setGreeting] = useState<{ firstTime: boolean } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const firstTime = url.searchParams.get('welcome') === '1';
+    if (firstTime) {
+      url.searchParams.delete('welcome');
+      window.history.replaceState({}, '', url.toString());
+    }
+    setGreeting({ firstTime });
+  }, []);
+
   const refetchMe = async () => {
     const data = await portal.me();
     setMe(data);
@@ -81,9 +102,23 @@ export function PortalShell({
   };
 
   // ─── Loading / error states ───────────────────────────────────────────────
+
+  // The greeting covers the wait, so it goes ABOVE the error and the
+  // skeleton in the return order but is rendered alongside them — a
+  // failure that happens behind it is still there when it lifts.
+  const welcome = greeting && (
+    <PortalWelcome
+      name={displayNameOf(me)}
+      firstTime={greeting.firstTime}
+      ready={!!me || !!error}
+      onDone={() => setGreeting(null)}
+    />
+  );
+
   if (error) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--aq-bg)', padding: 32 }}>
+        {welcome}
         <div className="aq-card" style={{ padding: 32, color: 'var(--aq-error)', maxWidth: 720, margin: '60px auto' }}>
           <strong>Could not load your portal:</strong>
           <pre style={{ whiteSpace: 'pre-wrap', marginTop: 10, fontFamily: 'inherit', fontSize: 13 }}>{error}</pre>
@@ -94,13 +129,17 @@ export function PortalShell({
   if (!me) {
     // No skeleton here on purpose: the role decides the layout, and a
     // skeleton of the wrong shape promises a page that never arrives.
-    return <AQLoadingScreen label="Loading your portal" />;
+    // The greeting IS the loading screen while it is up; the mark keeps
+    // drawing underneath it either way, so the handover has nothing to
+    // cross-fade.
+    return <>{welcome}<AQLoadingScreen label="Loading your portal" /></>;
   }
 
   // ─── First-login password-change gate ────────────────────────────────────
   if (me.must_change_password) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--aq-bg)' }}>
+        {welcome}
         <MinimalTopbar me={me} onSignOut={signOut} />
         <main style={{ maxWidth: 560, margin: '40px auto', padding: '0 20px' }}>
           <MustChangePasswordForm onSuccess={async () => { await refetchMe(); }} />
@@ -111,6 +150,8 @@ export function PortalShell({
 
   // ─── Main dashboard ──────────────────────────────────────────────────────
   return (
+    <>
+    {welcome}
     <Shell
       me={me}
       // Pass the active-view setter as the navigate callback so pages can wire
@@ -120,7 +161,15 @@ export function PortalShell({
       setActiveId={setActiveId}
       onSignOut={signOut}
     />
+    </>
   );
+}
+
+/** The name to greet them by — the company, or the vendor's own. */
+function displayNameOf(me: PortalMe | null): string {
+  if (!me) return '';
+  const p: any = me.profile ?? {};
+  return String(p.contact_name || p.company_name || p.name || '').trim();
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
