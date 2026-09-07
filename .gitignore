@@ -20,7 +20,4 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Delivery drop folders — never the app
-aq-*/
-_to_delete/
+.test-build/

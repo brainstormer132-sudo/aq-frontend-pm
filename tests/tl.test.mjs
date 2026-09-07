@@ -1,0 +1,17 @@
+import { lengthLabel } from '../.test-build/campaign-page.js';
+let p=0,f=0;
+const eq=(n,g,w)=>{ if(JSON.stringify(g)===JSON.stringify(w)) p++; else {f++;console.log(`FAIL ${n}: got ${JSON.stringify(g)} want ${JSON.stringify(w)}`);} };
+eq('90 days',            lengthLabel(90, 'days'),   '90 days');
+eq('1 day is singular',  lengthLabel(1, 'days'),    '1 day');
+eq('unit now optional',  lengthLabel(30, null),     '30 days');
+eq('and blank',          lengthLabel(30, ''),       '30 days');
+eq('numeric string',     lengthLabel('45', 'days'), '45 days');
+eq('legacy months kept', lengthLabel(3, 'months'),  '3 months');
+eq('legacy 1 month',     lengthLabel(1, 'months'),  '1 month');
+eq('legacy weeks kept',  lengthLabel(2, 'weeks'),   '2 weeks');
+eq('nothing recorded',   lengthLabel(null, null),   '');
+eq('zero is not a term', lengthLabel(0, 'days'),    '');
+eq('negative refused',   lengthLabel(-5, 'days'),   '');
+eq('rubbish',            lengthLabel('abc','days'), '');
+console.log(`\n${p} passed, ${f} failed`);
+process.exit(f?1:0);

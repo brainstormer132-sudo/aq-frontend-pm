@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit",
+    "db:test": "node scripts/test-migrations.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

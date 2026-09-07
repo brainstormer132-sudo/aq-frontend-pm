@@ -1,0 +1,91 @@
+name: CI
+
+# Everything that can be checked without a person, checked on every push.
+#
+# The tests existed before this file did — they just ran when somebody
+# remembered, in a scratch directory, against a hand-compiled copy of the
+# library. That protects the afternoon they were written and nothing after
+# it, which is the same failure as a backup nobody has restored.
+#
+# Three jobs, in order of how quickly they fail:
+#
+#   typecheck  — seconds, catches most of it
+#   test       — the 500-odd assertions around the money and the rules
+#   schema     — the migrations, replayed into a real Postgres, then the
+#                security properties asserted against it
+#
+# The schema job is the one worth having. Four of the five worst problems
+# in this codebase were in SQL and none of them would fail a typecheck: a
+# view that bypassed RLS, a column revoke that did nothing, tables with RLS
+# never switched on, and listable invite tokens.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      # The prerender step needs a live Supabase and will fail without one.
+      # `Compiled successfully` is the signal that matters here: it means
+      # every import resolves and every type checks in the real bundler.
+      - name: Compile
+        run: npx next build 2>&1 | tee build.log; grep -q "Compiled successfully" build.log
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-only-placeholder
+
+  schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Replay the migrations and assert the schema
+        run: npm run db:test
+        env:
+          PGURL: postgres://postgres:postgres@localhost:5432/postgres
