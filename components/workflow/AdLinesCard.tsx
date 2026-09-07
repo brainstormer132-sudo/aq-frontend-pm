@@ -34,7 +34,7 @@ import { SkeletonRows } from '@/components/Skeleton';
  */
 export function AdLinesCard({
   subtaskId, canEdit, lines, loading, refetch, platformOptions, defaultPlatform,
-  onTotalChanged,
+  onTotalChanged, onAdsChanged,
 }: {
   subtaskId: string;
   canEdit: boolean;
@@ -45,6 +45,22 @@ export function AdLinesCard({
   defaultPlatform?: string | null;
   /** Refresh the booking above — its Price is filled in from these ads. */
   onTotalChanged?: () => Promise<void> | void;
+  /**
+   * WHAT ADS EXIST has changed — not just what they cost.
+   *
+   * The tracking sheet is one row per ad, and it is seeded when the VENDOR
+   * is picked. At that moment the booking has no lines, so it got a single
+   * placeholder row and nothing ever came back to turn it into the real
+   * rows. Siraj: *"there should be a booking in the tracking sheet per line
+   * added right now its just the one vendor task added"*.
+   *
+   * Fired on add, on delete, and on a patch that changes the quantity, the
+   * ad type or the platform — the three fields the sheet draws. Not on
+   * price: what a vendor charges is nothing to do with how many rows the
+   * client's sheet has, and re-syncing on every price keystroke would be
+   * several round trips for no change.
+   */
+  onAdsChanged?: () => Promise<void> | void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -70,10 +86,14 @@ export function AdLinesCard({
    */
   const syncUp = async () => { await onTotalChanged?.(); };
 
+  /** The ads themselves changed, so the client's sheet has to follow. */
+  const adsChanged = async () => { await onAdsChanged?.(); };
+
   const add = async (spec: AdLineSpec) => {
     setError('');
     try {
       await createAdLines(newLines(subtaskId, lines, spec));
+      await adsChanged();
       await syncUp();
       setAdding(false);
     } catch (e: any) { setError(e?.message ?? String(e)); throw e; }
@@ -86,6 +106,11 @@ export function AdLinesCard({
     setBusy(line.id); setError('');
     try {
       await updateAdLine(line.id, fields);
+      // Quantity changes how MANY ads there are; ad type and platform change
+      // what each row says. All three reach the client's sheet.
+      if ('quantity' in fields || 'ad_type' in fields || 'platform' in fields) {
+        await adsChanged();
+      }
       // Quantity moves the money too, now that it multiplies the price.
       // When it does, syncUp refetches; when it doesn't, refetch alone is
       // the whole job. Never both — that was two round trips for one edit.
@@ -99,7 +124,11 @@ export function AdLinesCard({
   const remove = async (line: AdLine) => {
     if (!line.id) return;
     setBusy(line.id); setError('');
-    try { await deleteAdLine(line.id); setOpenId(null); await syncUp(); }
+    try {
+      await deleteAdLine(line.id); setOpenId(null);
+      await adsChanged();
+      await syncUp();
+    }
     catch (e: any) { setError(e?.message ?? String(e)); }
     finally { setBusy(null); }
   };

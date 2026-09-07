@@ -177,6 +177,49 @@ export function CampaignBookings({
     finally { setBusy(false); }
   };
 
+  /**
+   * Put this booking's ads on the client's tracking sheet — one row per ad.
+   *
+   * Called at TWO moments, which is the whole point. Picking the vendor
+   * seeds the sheet, but at that instant the booking has no lines, so all
+   * it can write is a single placeholder keyed to the subtask. The ads
+   * arrive afterwards, and until now nothing came back to turn that
+   * placeholder into the real rows — so a vendor booked for six home ads
+   * and six store visits sat on the sheet as one line forever. Siraj:
+   * *"there should be a booking in the tracking sheet per line added right
+   * now its just the one vendor task added"*.
+   *
+   * Re-running it is safe and is the design: `planSync` claims the
+   * placeholder rather than drawing a second row beside it, keys everything
+   * else on (ad_line_id, ad_line_seq) so nothing is added twice, and
+   * reports rows whose line has gone WITHOUT deleting them — a row may
+   * carry a posting date and a link that exist nowhere else.
+   */
+  const syncSheetFor = async (sub: PMTask, vendor: any): Promise<number> => {
+    if (!vendor) return 0;
+    // A van rental has no place on the client's sheet, whatever it is
+    // booked for. Re-checked here rather than assumed from the first call:
+    // the vendor on a booking can be swapped.
+    if (!shouldTrackVendorOnSheet(vendorCategoryKey(vendor))) return 0;
+
+    // The flag first: a sheet that is switched off used to swallow the rows.
+    if (!(task as any).has_tracking) {
+      await updateTaskFields(task.id, { has_tracking: true } as any);
+    }
+
+    return ensureTrackingRowsForBooking({
+      parent_task_id: task.id,
+      subtask_id: sub.id,
+      vendor_name: String(vendor.name ?? ''),
+      // Prefill from whatever is already known, the campaign included.
+      platform: (sub as any).platform ?? campaignPlatformText(task) ?? null,
+      type_of_ad: (sub as any).ad_type ?? (task as any).ad_type ?? null,
+      profile_link: vendor.platforms ?? null,
+      product: (task as any).brand_name ?? null,
+      price_excl: (sub as any).price ?? null,
+    } as any);
+  };
+
   /* ── Removing, with a way back ─────────────────────────────────── */
 
   const commitRemove = (id: string) => {
@@ -287,23 +330,11 @@ export function CampaignBookings({
       return;
     }
 
-    // The flag first: a sheet that is switched off used to swallow the rows.
-    if (!(task as any).has_tracking) {
-      await updateTaskFields(task.id, { has_tracking: true } as any);
-    }
-    const added = await ensureTrackingRowsForBooking({
-      parent_task_id: task.id,
-      subtask_id: sub.id,
-      vendor_name: String(vendor.name ?? ''),
-      // Prefill from whatever is already known, the campaign included.
-      platform: (sub as any).platform ?? campaignPlatformText(task) ?? null,
-      type_of_ad: (sub as any).ad_type ?? (task as any).ad_type ?? null,
-      profile_link: vendor.platforms ?? null,
-      product: (task as any).brand_name ?? null,
-      price_excl: (sub as any).price ?? null,
-    } as any);
+    const added = await syncSheetFor(sub, vendor);
     setNotice(added > 0
-      ? `${added} ${added === 1 ? 'row' : 'rows'} added to the tracking sheet — one per ad.`
+      ? (adLinesBySubtask.get(sub.id)?.length
+          ? `${added} ${added === 1 ? 'row' : 'rows'} added to the tracking sheet — one per ad.`
+          : `${vendor.name} is on the tracking sheet. It becomes one row per ad as you add the ads.`)
       : `${vendor.name}'s ads are already on the tracking sheet.`);
   });
 
@@ -717,6 +748,11 @@ export function CampaignBookings({
                 await syncBookingPriceFromAds(sub.id);
                 await Promise.all([refetchAdLines(), onChanged()]);
               }}
+              // The client's sheet is one row per ad, and it was seeded
+              // before any ads existed. This is what turns that single
+              // placeholder into the real rows, and keeps it in step
+              // afterwards.
+              onAdsChanged={async () => { await syncSheetFor(sub, vendor); }}
             />
 
             {/* Asking for the contract is not here any more — it is on the
