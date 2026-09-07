@@ -20,7 +20,22 @@ Thumbs.db
 
 # Logs
 *.log
-.test-build/
 
-# scratch: device_bash cannot delete, so removals land here
-supabase/migrations/_to_delete/
+# Delivery drop folders — never the app.
+#
+# These are working copies dropped here to be reviewed and then merged in.
+# They are stale duplicates of app/, components/ and lib/, and they do not
+# compile: aq-report/ and aq-ship/ import components that were renamed
+# months ago. tsconfig.json includes **/*.ts, so if they are ever committed
+# `next build` type-checks them and Vercel fails.
+#
+# This is not hypothetical — it happened. A .gitignore shipped in a tarball
+# replaced this file instead of adding to it, these three lines went with
+# it, and 78 files landed in the repo on the next `git add -A`. tsconfig
+# now excludes them as well, so the build survives even if the ignore is
+# lost again.
+aq-*/
+_to_delete/
+
+# Compiled output of the pure libs, rebuilt by `npm test` on every run
+.test-build/
