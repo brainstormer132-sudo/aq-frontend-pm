@@ -38,17 +38,36 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readdirSync, rmSync, mkdirSync } from 'node:fs';
+import { readdirSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.test-build');
 
+/**
+ * The compiler, found rather than shelled to.
+ *
+ * This used to be `execFileSync('npx', ['tsc', ...])`, which works on Linux
+ * and CANNOT work on Windows: there is no `npx` there, only `npx.cmd`, and
+ * execFile does not consult PATHEXT — that is a shell's job, and execFile
+ * deliberately isn't one. `npm test` died with `spawnSync npx ENOENT` on the
+ * only machine this repo is actually developed on.
+ *
+ * Reaching for `shell: true` would fix it and bring in a shell, quoting
+ * rules, and a path with a space and a bracket in it ("New folder (3)").
+ * TypeScript is a dependency and its entry point is a .js file, so the
+ * portable thing is to run it with the Node we are already running:
+ * no shell, no PATH, no platform difference.
+ */
+const TSC = join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+
 /** The pure libraries under test. Anything importing React or Supabase is
  *  not on this list, and that is the point. */
 const LIBS = [
   'lib/campaign-page.ts',
+  'lib/ad-lines.ts',
+  'lib/dashboard-data.ts',
   'lib/payment-schedule.ts',
   'lib/vendor-contracts.ts',
   'lib/tracking-sync.ts',
@@ -77,8 +96,15 @@ function compile() {
   mkdirSync(outDir, { recursive: true });
   // Strict, and the same target the app builds with. A test that passes
   // against loosely-compiled output is testing something else.
-  execFileSync('npx', [
-    'tsc', ...LIBS,
+  if (!existsSync(TSC)) {
+    console.error(
+      `${RED}TypeScript is not installed.${OFF}\n`
+      + `Looked for ${TSC}. Run \`npm ci\` (or \`npm install\`) first.`,
+    );
+    process.exit(1);
+  }
+  execFileSync(process.execPath, [
+    TSC, ...LIBS,
     '--outDir', outDir,
     '--target', 'es2020',
     '--module', 'es2020',
@@ -102,7 +128,10 @@ function run() {
   const broken = [];
 
   for (const file of suites) {
-    const res = spawnSync('node', [join(root, 'tests', file)], {
+    // process.execPath, not 'node': the same reasoning as TSC above, plus it
+    // guarantees the suites run under the Node that started the runner
+    // rather than whichever one happens to be first on PATH.
+    const res = spawnSync(process.execPath, [join(root, 'tests', file)], {
       cwd: root, encoding: 'utf8',
     });
     const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;

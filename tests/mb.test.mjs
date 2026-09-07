@@ -105,8 +105,17 @@ eq('amountOrNull takes strings', amountOrNull('1200.50'), 1200.5);
     ],
     vendorNames: new Map([[1, 'Reem'], [2, 'Bright Studios']]),
   });
+  // CHANGED 7 Sep 2026, and the old expectation is worth keeping in view:
+  // it was `3500 + 6000 = 9500`, added flat, on the line directly below one
+  // that multiplies the price by the same quantity. The test name spelled
+  // the bug out and nobody read it that way.
+  //
+  // `net_amount` is the vendor's fee for ONE ad, exactly as `unit_price` is
+  // the charge for one (aq-price-is-not-net.md). Three ads costing 3,500
+  // each cost 10,500, not 3,500 — so this booking bills 24,000 and costs
+  // 16,500, and AQ keeps 7,500 rather than the 14,500 it used to claim.
   eq('per-line price is 3x5000 + 9000', rows[0].price, 24000);
-  eq('per-line net is 3500 + 6000', rows[0].net, 9500);
+  eq('per-line net is 3x3500 + 6000, not 3500 + 6000', rows[0].net, 16500);
   eq('per-line flag', rows[0].pricedPerLine, true);
   eq('flat booking price', rows[1].price, 20000);
   eq('flat booking net', rows[1].net, 14000);
@@ -119,10 +128,11 @@ eq('amountOrNull takes strings', amountOrNull('1200.50'), 1200.5);
     if (r.net != null) { cost += r.net; anyCost = true; }
   }
   eq('client is billed', breakdown, 44000);
-  eq('vendors take', cost, 23500);
+  // 16,500 (per-line, now × quantity) + 14,000 (flat). Was 23,500.
+  eq('vendors take', cost, 30500);
 
   const bar = moneyBar({ budget: 44000, vendorCost: anyCost ? cost : null, breakdown });
-  eq('AQ keeps the difference', bar.net, 20500);
+  eq('AQ keeps the difference', bar.net, 13500);   // was 20500 — the margin was overstated
   eq('and the breakdown agrees with the budget', bar.breakdownVariance, 0);
 }
 

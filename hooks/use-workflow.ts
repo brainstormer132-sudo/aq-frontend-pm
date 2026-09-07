@@ -2231,9 +2231,15 @@ export async function syncBookingPriceFromAds(subtaskId: string): Promise<number
   //
   // A net of null on every line is "nobody has worked it out yet", which is
   // not zero, so the booking's own net is left alone in that case.
+  //
+  // Times the quantity, the same as the price. `net_amount` is the fee for
+  // ONE ad, exactly as `unit_price` is the charge for one — a line of six at
+  // 1,500 costing 700 each is 4,200 of vendor cost, not 700. Summing it flat
+  // while multiplying the price reported the margin as 8,300 instead of
+  // 4,800, and the error grew with the quantity. Migration 076 fixes the
+  // trigger and the rollup view the same way.
   const anyNet = lines.some((l: any) => l.net_amount != null);
-  const netSum = lines.reduce(
-    (sum: number, l: any) => sum + (Number(l.net_amount) || 0), 0);
+  const netSum = totalsOf(lines).net;
 
   await updateTaskFields(subtaskId, {
     price: amount,
@@ -4834,6 +4840,22 @@ export function clientContractReadiness(
  * `budget` is still read as a fallback so vendor rows created before this
  * change, which may have a budget and no price, keep their amount.
  */
+/**
+ * What the VENDOR is owed on a booking with no ad lines.
+ *
+ * The sibling of vendorSubtaskAmount below, and the one a vendor contract
+ * wants. There is no fallback to `price` or `budget` on purpose: those are
+ * the client's figures, and substituting them is the bug this exists to
+ * prevent. Null means nobody has agreed a fee, which is a reason to stop.
+ */
+export function vendorSubtaskNet(subtask: PMTask | null): number | null {
+  if (!subtask) return null;
+  const net = Number((subtask as any).net_amount);
+  if ((subtask as any).net_amount != null && Number.isFinite(net) && net > 0) return net;
+  return null;
+}
+
+/** What the CLIENT is billed for a booking with no ad lines. Not for contracts. */
 export function vendorSubtaskAmount(subtask: PMTask | null): number | null {
   if (!subtask) return null;
   const price = Number(subtask.price);
@@ -5009,7 +5031,15 @@ function buildVendorContractPayload(opts: {
     // With ad lines, the lines ARE the price — a booking of six home ads and
     // six store visits is worth what they add up to, and the subtask's single
     // price field cannot express it. Without lines, nothing changes.
-    amount: lines.length ? lineTotals.amount : vendorSubtaskAmount(subtask),
+    // The VENDOR'S FEE, never the client's price.
+    //
+    // This was `lineTotals.amount` — the sum of quantity × unit_price, which
+    // is what the CLIENT is billed. Every vendor contract raised from ad
+    // lines promised the influencer AQ's own selling price: six ads at 1,500
+    // costing 700 each went out as SAR 9,000 against a real 4,200. Null when
+    // no fee has been agreed, so the request carries a gap rather than a
+    // wrong number — see contractDetails() in lib/ad-lines.ts.
+    amount: lines.length ? lineTotals.net : vendorSubtaskNet(subtask),
     notes: notes ?? null,
 
     // Who the work is ultimately for. The contract app shows it as context;
@@ -5142,7 +5172,9 @@ export async function sendVendorContractRequest(opts: {
   }
 
   const lines = opts.lines ?? await fetchVendorAdLines(subtask.id);
-  const linesTotal = totalsOf(lines).amount;
+  // The fee, not the price: readiness must fail when nobody has agreed what
+  // the vendor takes, otherwise the contract goes out with the client's number.
+  const linesTotal = totalsOf(lines).net || null;
 
   // Which ads are not yet under contract. Asking again for a booking whose
   // March ads are contracted and whose June ads are not should raise a
@@ -5209,8 +5241,8 @@ export async function autoCreateContractRequestForSubtask(opts: {
   if (!vendor) return null;
 
   const lines = await fetchVendorAdLines(subtask.id);
-  const linesTotal = totalsOf(lines).amount;
-  if (vendorSubtaskAmount(subtask) == null && linesTotal <= 0) return null;
+  const linesTotal = totalsOf(lines).net;
+  if (vendorSubtaskNet(subtask) == null && linesTotal <= 0) return null;
 
   if (!subtask.workspace_id) {
     throw new Error('Subtask has no workspace_id; cannot create contract request.');
@@ -5250,7 +5282,7 @@ export function subtaskContractState(
 ): SubtaskContractState {
   if (!isVendorSubtaskKind(subtask.subtask_kind)) return 'n/a';
   if (subtask.contract_request_id) return 'requested';
-  const total = lines?.length ? totalsOf(lines).amount : null;
+  const total = lines?.length ? (totalsOf(lines).net || null) : vendorSubtaskNet(subtask);
   return vendorContractReadiness(subtask, vendor, bank, total, parent, lines).ready
     ? 'ready' : 'missing';
 }

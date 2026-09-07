@@ -309,27 +309,71 @@ export function vendorPaymentState(row: DashTask): PaymentState {
 /**
  * What a client still owes us on one campaign.
  *
- * `client_payment_status` is free-ish text ("pending" / "paid" / "partial"),
- * so it is read tolerantly and anything unrecognised counts as outstanding —
- * the safe direction, because a campaign wrongly marked paid disappears from
- * the list of things to chase.
+ * `client_payment_status` is free-ish text, so it is read tolerantly and
+ * anything unrecognised counts as outstanding — the safe direction, because a
+ * campaign wrongly marked paid disappears from the list of things to chase.
+ *
+ * ── THE BUG THIS REPLACES ─────────────────────────────────────────
+ *
+ * The tolerant read was `s.includes('paid')`, and
+ *
+ *     'unpaid'.includes('paid') === true
+ *
+ * so did `'not paid'`. `unpaid` is not a hypothetical value — it is a
+ * first-class key in this app's own vocabulary (money-ledger.ts) and the
+ * column has no CHECK constraint to keep it out.
+ *
+ * It was not a labelling slip. `clampPaid()` in money-ledger.ts returns the
+ * FULL total whenever the state is `paid`, so a 250,000 campaign marked
+ * `unpaid` with nothing recorded showed "Paid 250,000, Balance 0" and
+ * dropped a quarter of a million out of `outstanding`. The `outstandingOnly`
+ * filter then hid the row, so it could not be found by hand either.
+ *
+ * The fix is exact matching against a known set. Substring matching is the
+ * wrong tool for a status: every negation of a word contains the word.
+ */
+
+/** Values that mean the client has settled in full. Exact, deliberately. */
+const PAID_IN_FULL = new Set(['paid', 'paid_in_full', 'done', 'settled', 'complete', 'completed']);
+
+/** Values that mean some money has arrived but not all of it. */
+const PART_PAID = new Set(['partial', 'partially_paid', 'part_paid', 'partial_payment', 'deposit']);
+
+/**
+ * KNOWN GAP, recorded rather than guessed at.
+ *
+ * CampaignPage's PAYMENT_STATES picker offers seven values:
+ *
+ *     unpaid · partial · paid · no_payment · refund · credit · adjustment
+ *
+ * The last four were added precisely because "pending" could not describe a
+ * refund, a credit note or a campaign that was never going to be invoiced —
+ * and this function was never taught about them, so all four still fall
+ * through to Outstanding and the Dashboard chases them forever. That is the
+ * exact complaint the picker's own comment makes.
+ *
+ * Fixing it needs a fourth PayKey, which changes the ledger's filters and its
+ * totals — a decision, not a tidy-up. Until it is made, they stay in the
+ * outstanding bucket: unchanged behaviour, and the safe direction. Mapping
+ * them to `paid` on a guess would fabricate their amounts through
+ * clampPaid(), which is how the bug above got its teeth.
  */
 export function clientPaymentState(row: DashTask): PaymentState {
   const s = norm(row.client_payment_status);
-  if (s.includes('partial')) return { key: 'partial', label: 'Partial', tone: 'wait' };
-  if (s === 'paid' || s.includes('paid') || s === 'done' || s === 'settled') {
-    return { key: 'paid', label: 'Paid', tone: 'ok' };
-  }
+  if (PART_PAID.has(s)) return { key: 'partial', label: 'Partial', tone: 'wait' };
+  if (PAID_IN_FULL.has(s)) return { key: 'paid', label: 'Paid', tone: 'ok' };
   return { key: 'unpaid', label: 'Outstanding', tone: 'bad' };
 }
 
 export interface ContractState { key: 'signed' | 'pending' | 'none'; label: string; tone: Tone }
 
+/** Values that mean a signed contract is in hand. Exact — see the note above:
+ *  the old `s.includes('signed')` was also satisfied by `'unsigned'`. */
+const SIGNED = new Set(['signed', 'signed_attached', 'done', 'countersigned', 'executed']);
+
 export function contractState(row: DashTask): ContractState {
   const s = norm(row.contract_status);
-  if (s === 'signed_attached' || s === 'done' || s.includes('signed')) {
-    return { key: 'signed', label: 'Signed', tone: 'ok' };
-  }
+  if (SIGNED.has(s)) return { key: 'signed', label: 'Signed', tone: 'ok' };
   if (!s || s === 'no_contract') return { key: 'none', label: 'No contract', tone: 'none' };
   if (s === 'po') return { key: 'signed', label: 'PO', tone: 'ok' };
   return { key: 'pending', label: 'Not signed', tone: 'bad' };

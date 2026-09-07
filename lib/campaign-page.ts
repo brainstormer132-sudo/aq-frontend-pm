@@ -507,9 +507,21 @@ export function bookingRows(input: {
     // typing over it on the booking was pointless: syncBookingPriceFromAds
     // overwrote it the next time anybody touched a line. So the lines are
     // the source and the booking only reports them.
-    const adsTotal = lines.reduce(
-      (sum, l) => sum + (Math.max(1, num(l.quantity) ?? 1) * (num(l.unit_price) ?? 0)), 0);
-    const adsNet = lines.reduce((sum, l) => sum + (num(l.net_amount) ?? 0), 0);
+    //
+    // Both figures are PER AD and both are multiplied by quantity. That the
+    // net was not is the bug this line fixes: `unit_price` is "the price of
+    // ONE ad on this line" and `net_amount` is "what the vendor takes for
+    // that one ad" (aq-price-is-not-net.md), so a line of quantity 6 at
+    // 1,500 with a net of 700 is 9,000 billed against 4,200 of cost — not
+    // against 700. The old asymmetry reported gross 8,300 instead of 4,800,
+    // and the error grew with the quantity.
+    //
+    // The same asymmetry was in the sync_booking_money_from_lines trigger and
+    // in pm_task_campaign_rollup; migration 076 fixes both, so the page and
+    // the database still agree.
+    const qty = (l: BookingAd) => Math.max(1, num(l.quantity) ?? 1);
+    const adsTotal = lines.reduce((sum, l) => sum + (qty(l) * (num(l.unit_price) ?? 0)), 0);
+    const adsNet = lines.reduce((sum, l) => sum + (qty(l) * (num(l.net_amount) ?? 0)), 0);
     const anyLineNet = lines.some((l) => num(l.net_amount) != null);
 
     const name = txt(s.vendor_id != null ? input.vendorNames?.get(s.vendor_id) : '')

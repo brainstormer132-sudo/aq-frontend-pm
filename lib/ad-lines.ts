@@ -78,27 +78,75 @@ export function lineTotal(line: AdLine): number {
   return num(line.quantity) * num(line.unit_price);
 }
 
+/**
+ * What the VENDOR takes for a line: their fee for one ad, times how many.
+ *
+ * `net_amount` is per ad, exactly as `unit_price` is — "what the vendor takes
+ * for that one ad" (aq-price-is-not-net.md). It has no generated column to
+ * lean on the way `line_total` does, so it is always computed.
+ *
+ * Null, not zero, when nobody has worked the net out. Those are different
+ * claims: zero says the vendor works for free, null says we do not yet know
+ * what we owe them — and a contract must never be written from the second.
+ */
+export function lineNet(line: AdLine): number | null {
+  if (line.net_amount == null) return null;
+  const n = Number(line.net_amount);
+  if (!Number.isFinite(n)) return null;
+  return num(line.quantity) * n;
+}
+
 export interface AdLineTotals {
   /** How many ads, counting quantities — 6 home + 6 store = 12. */
   ads: number;
-  /** What the vendor is owed for all of them. */
+  /**
+   * What the CLIENT is billed for all of them.
+   *
+   * This field used to be documented as "what the vendor is owed", and it was
+   * that comment — not a calculation — that put the client's price on every
+   * vendor contract. `unit_price` is the client charge; the vendor's fee is
+   * `net` below. Read the name of the field you want.
+   */
   amount: number;
+  /** What the VENDOR is owed for all of them. Zero when nothing is worked out. */
+  net: number;
+  /**
+   * True when at least one line carries a net. False means nothing here can
+   * describe what the vendor is owed, and `net` is 0 because there is nothing
+   * to add up — never because the work is free.
+   */
+  netKnown: boolean;
+  /** Lines with a price but no net. These are what block a vendor contract. */
+  netMissing: number;
   /** Lines that cost nothing. Worth naming, because people forget them. */
   freeLines: number;
 }
 
 export function totalsOf(lines: AdLine[]): AdLineTotals {
-  let ads = 0, amount = 0, freeLines = 0;
+  let ads = 0, amount = 0, net = 0, freeLines = 0, netMissing = 0;
+  let netKnown = false;
   for (const l of lines || []) {
     ads += num(l.quantity);
     const t = lineTotal(l);
     amount += t;
     if (t === 0) freeLines += 1;
+
+    const n = lineNet(l);
+    if (n == null) { if (t > 0) netMissing += 1; } else { net += n; netKnown = true; }
   }
-  return { ads, amount, freeLines };
+  return { ads, amount, net, netKnown, netMissing, freeLines };
 }
 
-export interface AdTypeGroup { ad_type: string; quantity: number; amount: number }
+export interface AdTypeGroup {
+  ad_type: string;
+  quantity: number;
+  /** What the client is billed for this group. */
+  amount: number;
+  /** What the vendor is owed for it. */
+  net: number;
+  /** False when no line in the group has a net worked out. */
+  netKnown: boolean;
+}
 
 /**
  * Collapse the lines by ad type, keeping the order they were entered in.
@@ -111,10 +159,15 @@ export function groupByAdType(lines: AdLine[]): AdTypeGroup[] {
   const acc = new Map<string, AdTypeGroup>();
   for (const l of lines || []) {
     const key = txt(l.ad_type) || 'Ad';
-    if (!acc.has(key)) { acc.set(key, { ad_type: key, quantity: 0, amount: 0 }); order.push(key); }
+    if (!acc.has(key)) {
+      acc.set(key, { ad_type: key, quantity: 0, amount: 0, net: 0, netKnown: false });
+      order.push(key);
+    }
     const g = acc.get(key)!;
     g.quantity += num(l.quantity);
     g.amount += lineTotal(l);
+    const n = lineNet(l);
+    if (n != null) { g.net += n; g.netKnown = true; }
   }
   return order.map((k) => acc.get(k)!);
 }
@@ -134,7 +187,24 @@ function money(n: number): string {
 }
 
 /**
- * The itemisation, written once, for the contract's details.
+ * The itemisation, written once, for the VENDOR contract's details.
+ *
+ * ── THE BUG THIS REPLACES ─────────────────────────────────────────
+ *
+ * Every figure here used to be `lineTotal()` — the CLIENT's price. So a
+ * booking of six ads at 1,500 that cost AQ 700 each produced a contract
+ * reading "6 × Home Ad — SAR 1,500 each · SAR 9,000", handed to an influencer
+ * who is owed 4,200. AQ was promising, in writing, its own selling price.
+ *
+ * Nothing in the arithmetic was wrong. `AdLineTotals.amount` was documented
+ * as "what the vendor is owed", and whoever wired it in believed the comment.
+ * That is the same failure as 046's "belt and braces" revoke: a confident
+ * wrong comment stops the next person from checking.
+ *
+ * A vendor contract now shows `net_amount` and nothing else. If the net has
+ * not been worked out, it says so in the document rather than substituting
+ * the number it does have — a contract that admits a gap can be stopped by
+ * the person reading it; one quoting the wrong figure cannot.
  *
  * Free lines are marked "no charge" rather than "SAR 0", because a zero in a
  * price column reads like a mistake and an explicit "no charge" reads like a
@@ -146,15 +216,28 @@ export function contractDetails(lines: AdLine[], header?: string | null): string
 
   // The per-ad rate is what was agreed and what the vendor will check, so
   // the contract shows it alongside the total rather than only the total.
+  //
+  // `each` is a division across a group that may hold lines at different
+  // rates, so it is only shown when the number we would PRINT multiplies back
+  // to the total we would print beside it.
+  //
+  // Two Home Ad lines at 1,000 and one at 1,500 average 1,166.67. money()
+  // rounds that to "SAR 1,167", and 1,167 × 3 = 3,501 against a stated total
+  // of 3,500 — two numbers on one line of a signed document that contradict
+  // each other, at a per-ad rate nobody agreed to. Testing the unrounded
+  // division instead would always pass and catch nothing: it is the rounding
+  // that breaks the reconciliation, so the rounded figure is what to test.
   const body = groups.map((g) => {
-    const each = g.quantity > 0 ? g.amount / g.quantity : 0;
-    const price = g.amount === 0
-      ? 'no charge'
-      : `${money(each)} each · ${money(g.amount)}`;
-    return `${g.quantity} × ${g.ad_type} — ${price}`;
+    if (!g.netKnown) return `${g.quantity} × ${g.ad_type} — fee not agreed yet`;
+    if (g.net === 0) return `${g.quantity} × ${g.ad_type} — no charge`;
+    const each = g.quantity > 0 ? Math.round(g.net / g.quantity) : 0;
+    const reconciles = g.quantity > 0 && each * g.quantity === Math.round(g.net);
+    return reconciles
+      ? `${g.quantity} × ${g.ad_type} — ${money(each)} each · ${money(g.net)}`
+      : `${g.quantity} × ${g.ad_type} — ${money(g.net)}`;
   });
 
-  const { amount, ads } = totalsOf(lines);
+  const { net, ads, netKnown, netMissing } = totalsOf(lines);
   const head = txt(header);
   const dated = schedule(lines);
 
@@ -174,13 +257,25 @@ export function contractDetails(lines: AdLine[], header?: string | null): string
     }),
   ] : [];
 
+  // The total says what it is. "Total: SAR 4,200" on a page whose other
+  // number is 9,000 is exactly the ambiguity that caused the bug.
+  const total = netKnown
+    ? `Total payable to the vendor: ${ads} ad${ads === 1 ? '' : 's'} · ${money(net)}`
+    : `Total payable to the vendor: ${ads} ad${ads === 1 ? '' : 's'} · not agreed yet`;
+
+  const gap = netMissing > 0
+    ? `(${netMissing} ${netMissing === 1 ? 'line has' : 'lines have'} no agreed fee — `
+      + 'settle those before this is signed.)'
+    : null;
+
   return [
     head,
     head ? '' : null,
     ...body,
     ...when,
     '',
-    `Total: ${ads} ad${ads === 1 ? '' : 's'} · ${money(amount)}`,
+    total,
+    gap,
   ].filter((l) => l !== null).join('\n').trim();
 }
 

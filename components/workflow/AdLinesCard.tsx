@@ -470,7 +470,17 @@ function AdDetail({
               onCommit={(v) => onPatch({ quotation_no: v || null } as any)}
             />
           </Cell>
-          <Cell label="Net on this ad" width={140}>
+          {/*
+            "Net on this ad" was ambiguous in the one place ambiguity costs
+            money: it reads as easily as "what AQ nets" as "what the vendor
+            takes", and the column comment in the database actually said the
+            former while every calculation in the app assumed the latter
+            (aq_gross = price - net_amount; vendor_cost = sum of nets).
+            Whoever typed AQ's margin in here inverted every margin on the
+            booking, and no test can catch a person answering the wrong
+            question. So the label asks the question exactly.
+          */}
+          <Cell label="Vendor's fee, per ad" width={160}>
             <TextCell
               money
               value={line.net_amount == null ? '' : String(line.net_amount)}

@@ -145,8 +145,13 @@ export function vendorContractNeeds(input: VendorContractInput): Missing[] {
   // 8. The money, and when it is due. Terms are not a nicety: "50% up front"
   //    is half the agreement, and a contract that omits it is renegotiated
   //    by whoever is chased for payment first.
+  //    `amount` is the VENDOR'S FEE — net_amount, not the client's price.
+  //    Passing the client's price here was the readiness half of the contract
+  //    bug: a booking with a price and no agreed fee passed the gate and then
+  //    produced a contract quoting the price. What is missing in that case is
+  //    the fee, so that is what the checklist now asks for.
   if (amount == null || !(amount > 0)) {
-    out.push({ label: 'Price, or at least one ad line', where: 'this booking' });
+    out.push({ label: "The vendor's fee (net) on the booking or its ad lines", where: 'this booking' });
   }
   if (!has(booking.payment_terms)) {
     out.push({ label: 'Payment terms', where: 'this booking' });
@@ -184,8 +189,12 @@ export interface ContractGroup {
   lineIds: string[];
   /** What the contract is for, in the user's words. */
   label: string;
-  /** What the vendor is owed under it. */
-  amount: number;
+  /**
+   * What the vendor is owed under it — their `net_amount`, never the client's
+   * price. Null means no line in this group has an agreed fee, which is a
+   * reason not to send the contract, not a reason to print another number.
+   */
+  amount: number | null;
   /** How many ads, counting quantities. */
   ads: number;
 }
@@ -195,8 +204,12 @@ export interface PlanLine {
   ad_type?: unknown;
   platform?: unknown;
   quantity?: unknown;
+  /** What the CLIENT is billed per ad. Never the figure on a vendor contract. */
   unit_price?: unknown;
+  /** quantity × unit_price, generated. Also the client's number. */
   line_total?: unknown;
+  /** What the VENDOR takes per ad. This is the figure a vendor contract states. */
+  net_amount?: unknown;
 }
 
 function qty(l: PlanLine): number {
@@ -204,11 +217,36 @@ function qty(l: PlanLine): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-function total(l: PlanLine): number {
-  const stored = Number(l.line_total);
-  if (l.line_total != null && Number.isFinite(stored)) return stored;
-  const unit = Number(l.unit_price);
-  return qty(l) * (Number.isFinite(unit) ? unit : 0);
+/**
+ * What the VENDOR is owed for a line, or null if nobody has agreed it.
+ *
+ * ── THE BUG THIS REPLACES ─────────────────────────────────────────
+ *
+ * `ContractGroup.amount` is documented as "what the vendor is owed under it"
+ * and was computed from `line_total` — the client's price. Every vendor
+ * contract sent from ad lines quoted AQ's selling price as the vendor's fee.
+ *
+ * Null is deliberate and is carried all the way to the button. A booking
+ * whose net is not worked out cannot become a vendor contract, and saying
+ * "not agreed yet" is the only honest thing to put in that field. Falling
+ * back to the client's price is what caused this.
+ */
+function vendorFee(l: PlanLine): number | null {
+  if (l.net_amount == null) return null;
+  const n = Number(l.net_amount);
+  if (!Number.isFinite(n)) return null;
+  return qty(l) * n;
+}
+
+/** Sum the fees, or null if not one line has one agreed. */
+function sumFees(lines: PlanLine[]): number | null {
+  let known = false;
+  let sum = 0;
+  for (const l of lines) {
+    const f = vendorFee(l);
+    if (f != null) { sum += f; known = true; }
+  }
+  return known ? sum : null;
 }
 
 /** What a line is called on a contract: `6 × Home Ad on TikTok`. */
@@ -245,7 +283,7 @@ export function contractPlan(
       key: 'all',
       lineIds: ids,
       label,
-      amount: all.reduce((s, l) => s + total(l), 0),
+      amount: sumFees(all),
       ads: all.reduce((s, l) => s + qty(l), 0),
     }];
   }
@@ -254,7 +292,7 @@ export function contractPlan(
     key: txt(l.id) || `line-${i}`,
     lineIds: [txt(l.id)].filter(Boolean),
     label: lineLabel(l),
-    amount: total(l),
+    amount: vendorFee(l),
     ads: qty(l),
   }));
 }

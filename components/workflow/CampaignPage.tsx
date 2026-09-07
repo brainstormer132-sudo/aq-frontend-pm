@@ -1303,7 +1303,7 @@ const FIELD_LABELS: Record<string, string> = {
   contract_length: 'Contract length',
   contract_length_unit: 'Contract length',
   price: 'Price',
-  net_amount: 'Net',
+  net_amount: "Vendor's fee",
   vendor_id: 'Vendor',
   has_tracking: 'Tracking sheet',
   quotation_numbers: 'Quotation numbers',

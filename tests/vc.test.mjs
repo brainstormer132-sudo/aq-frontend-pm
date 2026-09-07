@@ -83,11 +83,11 @@ eq('a complete booking needs nothing', vendorContractNeeds(good()), []);
 }
 {
   const i = good(); i.amount = null;
-  eq('price', labels(vendorContractNeeds(i)), ['Price, or at least one ad line']);
+  eq('price', labels(vendorContractNeeds(i)), ["The vendor's fee (net) on the booking or its ad lines"]);
 }
 {
   const i = good(); i.amount = 0;
-  eq('zero is not a price', labels(vendorContractNeeds(i)), ['Price, or at least one ad line']);
+  eq('zero is not a price', labels(vendorContractNeeds(i)), ["The vendor's fee (net) on the booking or its ad lines"]);
 }
 {
   const i = good(); i.booking.payment_terms = null;
@@ -142,15 +142,26 @@ eq('no vendor', labels(vendorContractNeeds({ ...good(), vendor: null })), ['Vend
   i.bank = null; i.amount = null; i.booking.payment_terms = null;
   eq('all of them, vendor first', labels(vendorContractNeeds(i)), [
     'First and last name', 'Their name on the platform', 'Bank account',
-    'Price, or at least one ad line', 'Payment terms',
+    "The vendor's fee (net) on the booking or its ad lines", 'Payment terms',
   ]);
 }
 
 /* ── One contract, or several ────────────────────────────────────── */
+//
+// CHANGED 7 Sep 2026. These lines used to carry `unit_price` and nothing
+// else, and every amount assertion below expected the sum of it — 15,000,
+// which is what the CLIENT is billed. `ContractGroup.amount` is documented
+// as "what the vendor is owed", so this suite was asserting, in detail and
+// in passing, that a vendor contract should quote AQ's selling price.
+//
+// A vendor's fee is `net_amount`, per ad, so the fixture now carries one:
+// 600 against a 1,000 charge, 900 against 1,500, and a free reminder that
+// costs nothing either way. The contract is worth 3,600 + 5,400 = 9,000 to
+// the vendor on a booking billed at 15,000.
 const LINES = [
-  { id: 'l1', ad_type: 'Home Ad', platform: 'TikTok', quantity: 6, unit_price: 1000 },
-  { id: 'l2', ad_type: 'Store Visit', platform: 'Instagram', quantity: 6, unit_price: 1500 },
-  { id: 'l3', ad_type: 'Reminder', platform: 'TikTok', quantity: 3, unit_price: 0 },
+  { id: 'l1', ad_type: 'Home Ad', platform: 'TikTok', quantity: 6, unit_price: 1000, net_amount: 600 },
+  { id: 'l2', ad_type: 'Store Visit', platform: 'Instagram', quantity: 6, unit_price: 1500, net_amount: 900 },
+  { id: 'l3', ad_type: 'Reminder', platform: 'TikTok', quantity: 3, unit_price: 0, net_amount: 0 },
 ];
 
 eq('a line reads as a line', lineLabel(LINES[0]), '6 × Home Ad on TikTok');
@@ -162,7 +173,7 @@ eq('an unnamed line is still an ad', lineLabel({ quantity: 1 }), 'Ad');
   const p = contractPlan(LINES, 'combined');
   eq('combined is one contract', p.length, 1);
   eq('covering every line', p[0].lineIds, ['l1', 'l2', 'l3']);
-  eq('for the whole amount', p[0].amount, 6000 + 9000);
+  eq('for the vendor fee, not the client price', p[0].amount, 3600 + 5400);
   eq('and every ad', p[0].ads, 15);
   eq('sentence', planSentence(p), 'One contract, covering everything booked.');
 }
@@ -173,9 +184,9 @@ eq('an unnamed line is still an ad', lineLabel({ quantity: 1 }), 'Ad');
   eq('named for the line', p.map((g) => g.label), [
     '6 × Home Ad on TikTok', '6 × Store Visit on Instagram', '3 × Reminder on TikTok',
   ]);
-  eq('each with its own money', p.map((g) => g.amount), [6000, 9000, 0]);
+  eq('each with its own fee', p.map((g) => g.amount), [3600, 5400, 0]);
   eq('a free line is still a contract', p[2].ads, 3);
-  eq('and the total is unchanged', p.reduce((s, g) => s + g.amount, 0), 15000);
+  eq('and the total is unchanged', p.reduce((s, g) => s + g.amount, 0), 9000);
   eq('sentence', planSentence(p), '3 separate contracts, one per line.');
 }
 // A booking with one line cannot be split, and a booking with none is still
@@ -186,12 +197,23 @@ eq('an unnamed line is still an ad', lineLabel({ quantity: 1 }), 'Ad');
   eq('no lines is still one contract', none.length, 1);
   eq('named for the booking', none[0].label, 'The whole booking');
   eq('covering no lines', none[0].lineIds, []);
-  eq('and no money', none[0].amount, 0);
+  // Null, not 0. No lines means no fee has been agreed, and 0 would say the
+  // vendor works for free — the distinction the whole fix turns on.
+  eq('and no agreed fee', none[0].amount, null);
 }
-// A stored line_total wins over the multiplication — the database computes it.
+// The generated `line_total` column is the CLIENT's number. It must never
+// become the vendor's fee — that substitution is exactly the bug.
 {
-  const p = contractPlan([{ id: 'x', ad_type: 'Reel', quantity: 4, unit_price: 1000, line_total: 3600 }], 'combined');
-  eq('the stored total is the total', p[0].amount, 3600);
+  const p = contractPlan(
+    [{ id: 'x', ad_type: 'Reel', quantity: 4, unit_price: 1000, line_total: 3600 }], 'combined');
+  eq('a stored line_total is not a vendor fee', p[0].amount, null);
+}
+// And when a fee IS agreed, the stored client total is ignored in its favour.
+{
+  const p = contractPlan(
+    [{ id: 'x', ad_type: 'Reel', quantity: 4, unit_price: 1000, line_total: 3600, net_amount: 550 }],
+    'combined');
+  eq('the fee is 4 x 550, not the stored 3600', p[0].amount, 2200);
 }
 
 /* ── How much of a booking is under contract ─────────────────────── */
