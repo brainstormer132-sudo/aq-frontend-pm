@@ -39,3 +39,6 @@ _to_delete/
 
 # Compiled output of the pure libs, rebuilt by `npm test` on every run
 .test-build/
+
+# Asana import output - real client and vendor data, never committed.
+out/

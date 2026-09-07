@@ -1,5 +1,9 @@
 # Asana import - dry run on `JED_Deals_26`
 
+> **Superseded the same day** by `claude/aq-asana-import.md` - the build,
+> the verification, and how every decision below came out. Kept as the
+> record of what the export looked like before anything was written.
+
 **7 Sep 2026.** Read-only pass over the CSV Siraj exported. Nothing built,
 nothing written. This is the mapping and the decisions it needs.
 

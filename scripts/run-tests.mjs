@@ -2,18 +2,18 @@
 /**
  * Compile the pure libraries, then run every suite in tests/.
  *
- * ── Why this exists ───────────────────────────────────────────────
+ * â”€â”€ Why this exists â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  *
  * The suites were real and they were good and they lived nowhere. They ran
  * when somebody remembered to run them, in a scratch directory, against a
  * hand-compiled copy of the library. So they protected the afternoon they
- * were written and nothing after it — which is the same failure as a backup
+ * were written and nothing after it â€” which is the same failure as a backup
  * nobody has restored.
  *
  * This makes them a fixture of the repository: `npm test`, and the same
  * command in CI on every push.
  *
- * ── Why there is no test framework ────────────────────────────────
+ * â”€â”€ Why there is no test framework â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  *
  * Deliberately none. The suites are plain `.mjs` files that import the
  * compiled module, compare values, and print. That is the whole contract,
@@ -29,7 +29,7 @@
  * functions, no React, no Supabase, no argless `new Date()`. A library you
  * can test with `node file.mjs` is a library that was designed properly.
  *
- * ── Adding a suite ────────────────────────────────────────────────
+ * â”€â”€ Adding a suite â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  *
  *   1. Put `lib/<thing>.ts` in LIBS below if it is not there.
  *   2. Write `tests/<name>.test.mjs`, importing from
@@ -50,7 +50,7 @@ const outDir = join(root, '.test-build');
  *
  * This used to be `execFileSync('npx', ['tsc', ...])`, which works on Linux
  * and CANNOT work on Windows: there is no `npx` there, only `npx.cmd`, and
- * execFile does not consult PATHEXT — that is a shell's job, and execFile
+ * execFile does not consult PATHEXT â€” that is a shell's job, and execFile
  * deliberately isn't one. `npm test` died with `spawnSync npx ENOENT` on the
  * only machine this repo is actually developed on.
  *
@@ -74,6 +74,7 @@ const LIBS = [
   'lib/attention.ts',
   'lib/contracts.ts',
   'lib/all-tasks.ts',
+  'lib/asana-import.ts',
 ];
 
 const GREEN = '\x1b[32m';
@@ -91,7 +92,7 @@ function compile() {
     rmSync(outDir, { recursive: true, force: true });
   } catch (err) {
     if (err?.code !== 'EPERM' && err?.code !== 'EBUSY' && err?.code !== 'ENOTEMPTY') throw err;
-    console.log(`${DIM}  (could not clear ${outDir}: ${err.code} — reusing it)${OFF}`);
+    console.log(`${DIM}  (could not clear ${outDir}: ${err.code} â€” reusing it)${OFF}`);
   }
   mkdirSync(outDir, { recursive: true });
   // Strict, and the same target the app builds with. A test that passes
@@ -147,7 +148,7 @@ function run() {
     } else {
       broken.push(name);
       console.log(`${RED}FAIL${OFF}  ${name}`);
-      // The suite's own output IS the failure report — it prints what it
+      // The suite's own output IS the failure report â€” it prints what it
       // got and what it wanted. Repeating that here would be a worse
       // version of a message the suite already wrote.
       console.log(out.split('\n').filter(Boolean).map((l) => `        ${l}`).join('\n'));
@@ -156,7 +157,7 @@ function run() {
 
   console.log('');
   if (totalFail || broken.length) {
-    console.log(`${RED}${totalFail} failed${OFF}, ${totalPass} passed · ${broken.join(', ')}`);
+    console.log(`${RED}${totalFail} failed${OFF}, ${totalPass} passed Â· ${broken.join(', ')}`);
     process.exit(1);
   }
   console.log(`${GREEN}${totalPass} assertions passed${OFF} across ${suites.length} suites.`);
