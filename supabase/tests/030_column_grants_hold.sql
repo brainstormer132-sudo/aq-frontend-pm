@@ -1,4 +1,5 @@
--- A portal client must not be able to read the money on a published sheet.
+-- A portal client must not be able to read the money on a published sheet
+-- — AND must still be able to read the sheet.
 --
 -- THE BUG THIS FREEZES: migration 046 wrote
 --
@@ -12,10 +13,17 @@
 -- and changed nothing.
 --
 -- To protect a column you must revoke SELECT on the whole table first,
--- then grant back the safe ones. 071 does that. This asserts it stayed
--- done, because the failure is silent in both directions: nothing errors
--- when the protection is absent.
+-- then grant back the safe ones. 071 does that.
+--
+-- THE SECOND BUG THIS FREEZES: the first version of this file had only
+-- the negative half below, and it passed against a baseline that had no
+-- grants in it at all — the dump had been taken with --no-privileges. A
+-- test that passes because the thing it inspects is absent is worse than
+-- no test, because it reports green. Hence the positive half: the safe
+-- columns must actually be readable. Together, the two halves can only
+-- both pass on a database where the grants exist AND are correct.
 
+-- ── 1. The money is not readable ──────────────────────────────────
 do $$
 declare
   leaked text;
@@ -43,9 +51,79 @@ begin
   end if;
 end $$;
 
--- And the publish function must not copy the money across in the first
--- place. Two independent defences, because 046 relied on one and it was
--- the one that did not work.
+-- ── 2. The sheet is still readable ────────────────────────────────
+--
+-- This is the half that catches a baseline dumped without privileges, and
+-- also catches an over-enthusiastic revoke that locks the client out of
+-- their own tracking sheet. Both failures are silent from the SQL side:
+-- the portal just shows an empty table.
+do $$
+declare
+  missing text;
+begin
+  select string_agg(c, ', ')
+    into missing
+    from unnest(array[
+      -- The 16 columns 071 grants back. This is the client's tracking
+      -- sheet: who posted, on what, when, and the link to it.
+      'id', 'task_id', 'position',
+      'influencer_name', 'profile_link', 'platform', 'type_of_ad',
+      'content', 'product',
+      'shooting_date', 'posting_date', 'ad_status', 'ad_link',
+      'created_at', 'updated_at', 'published_at'
+      --
+      -- Deliberately NOT here, and each for its own reason:
+      --   price_excl, price_incl          the money
+      --   subtask_id, ad_line_id,
+      --   ad_line_seq, source_row_id,
+      --   published_by                    our internal wiring
+      --   license_plate_url,
+      --   contact_number, notes           the influencer's, not ours to share
+      --   is_event, guest,
+      --   location, visit_time            event logistics — see the note below
+    ]) as c
+   where not exists (
+     select 1
+       from information_schema.column_privileges
+      where table_schema = 'public'
+        and table_name  = 'tracking_rows_published'
+        and grantee     = 'authenticated'
+        and privilege_type = 'SELECT'
+        and column_name = c
+   );
+
+  if missing is not null then
+    raise exception
+      'A portal client cannot read these columns of '
+      'tracking_rows_published: %. Either the grants were never applied '
+      '(a baseline dumped with --no-privileges carries none, and then the '
+      'negative assertion above passes for the wrong reason), or a revoke '
+      'took away more than the money.', missing;
+  end if;
+end $$;
+
+-- ── An open question, recorded here because this is where it was found ──
+--
+-- is_event / guest / location / visit_time are withheld from the client,
+-- and it is not obvious that they should be. They are the event-logistics
+-- block: whether this ad is an event, who the guest is, where it happens
+-- and at what time. For a client running an event campaign, that is their
+-- own event — arguably theirs to see.
+--
+-- They are withheld today because 071 granted the columns the sheet needed
+-- and stopped, and these four sit next to license_plate_url and
+-- contact_number, which are the influencer's private details and are
+-- correctly withheld. Nobody has decided; the grouping decided.
+--
+-- Leaving them out is the safe default, so the assertion above freezes the
+-- current behaviour rather than guessing. If the answer is that clients
+-- should see them, that is a 075 migration granting the four and four more
+-- lines in the list above — not a change to make quietly.
+
+-- ── 3. The publish function does not copy the money across ────────
+--
+-- Two independent defences, because 046 relied on one and it was the one
+-- that did not work.
 do $$
 declare
   src text;

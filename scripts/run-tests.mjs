@@ -63,7 +63,17 @@ const DIM = '\x1b[2m';
 const OFF = '\x1b[0m';
 
 function compile() {
-  rmSync(outDir, { recursive: true, force: true });
+  // Clearing the output directory is a convenience, not a requirement: tsc
+  // overwrites what it emits. Some sandboxed filesystems refuse the rmdir
+  // with EPERM, and failing the whole suite over a directory we were only
+  // tidying would be the runner breaking the tests rather than running
+  // them. So: try, and carry on if the filesystem says no.
+  try {
+    rmSync(outDir, { recursive: true, force: true });
+  } catch (err) {
+    if (err?.code !== 'EPERM' && err?.code !== 'EBUSY' && err?.code !== 'ENOTEMPTY') throw err;
+    console.log(`${DIM}  (could not clear ${outDir}: ${err.code} — reusing it)${OFF}`);
+  }
   mkdirSync(outDir, { recursive: true });
   // Strict, and the same target the app builds with. A test that passes
   // against loosely-compiled output is testing something else.

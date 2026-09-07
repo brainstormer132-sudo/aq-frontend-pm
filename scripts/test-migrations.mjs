@@ -43,12 +43,33 @@
  * Fixing 79 files of history is archaeology with no prize at the end. The
  * standard fix is a BASELINE:
  *
- *     pg_dump --schema-only --no-owner --no-privileges "$PROD_URL" \
+ *     pg_dump --schema-only --no-owner -n public "$PROD_URL" \
  *       > supabase/migrations/000_baseline.sql
  *
  * That file is the schema as it really is. Everything numbered above it
  * replays on top of it, and from that day on the files and the database
  * agree — which is the property this whole script exists to protect.
+ *
+ * ── Do NOT pass --no-privileges ───────────────────────────────────
+ *
+ * The first baseline was taken with it, and it is a trap sharp enough to
+ * be worth the paragraph. --no-privileges strips every GRANT and REVOKE,
+ * which means:
+ *
+ *   * The rebuilt database has no grants at all, so `anon` and
+ *     `authenticated` can read nothing. PostgREST returns empty for
+ *     everyone. The rebuild "succeeds" and the app is dead.
+ *   * Worse, the two security assertions that matter most here —
+ *     030_column_grants_hold and 040_invite_tokens_are_not_listable —
+ *     are phrased as "this must NOT be granted", so they both went GREEN
+ *     against a database with nothing granted. A test that passes because
+ *     its subject is missing is worse than no test, because it reports
+ *     success.
+ *
+ * 030 now asserts both directions — the money is not readable AND the
+ * sheet is — so a privilege-less baseline fails loudly instead of
+ * quietly. Keep it that way: every negative assertion in supabase/tests/
+ * wants a positive one beside it.
  *
  * When `000_baseline.sql` is present, everything below the highest
  * migration already contained in it should be moved to

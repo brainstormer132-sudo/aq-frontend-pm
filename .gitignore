@@ -21,3 +21,6 @@ Thumbs.db
 # Logs
 *.log
 .test-build/
+
+# scratch: device_bash cannot delete, so removals land here
+supabase/migrations/_to_delete/
