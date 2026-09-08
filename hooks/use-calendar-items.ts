@@ -19,7 +19,9 @@ export interface CalendarItem {
   /** Campaign name, for the ones that hang off one. */
   context: string | null;
   assignee_id: string | null;
-}
+  /** The campaign at the top of whatever this hangs off - itself, for a campaign. */
+  campaignId: string;
+  campaign: string;}
 
 /**
  * Everything that can sit on a calendar: campaigns, their subtasks, and the
@@ -63,7 +65,8 @@ export function useCalendarItems(workspaceId: string | null) {
       done: isDone(t),
       context: t.parent_task_id ? nameOf(byId.get(t.parent_task_id)) : (t.brand_name ?? null),
       assignee_id: t.assignee_id ?? null,
-    }));
+      campaignId: t.parent_task_id ?? t.id,
+      campaign: t.parent_task_id ? nameOf(byId.get(t.parent_task_id)) : nameOf(t),    }));
 
     // The ads inside vendor bookings. Selected without a workspace filter —
     // the table has no workspace column — then matched to subtasks we already
@@ -88,7 +91,8 @@ export function useCalendarItems(workspaceId: string | null) {
         done: l.status === 'Posted' || l.status === 'Cancelled',
         context: nameOf(parent),
         assignee_id: parent.assignee_id ?? null,
-      });
+        campaignId: parent.parent_task_id ?? parent.id,
+        campaign: parent.parent_task_id ? nameOf(byId.get(parent.parent_task_id)) : nameOf(parent),      });
     }
 
     setItems(out);

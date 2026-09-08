@@ -141,3 +141,82 @@ export function isOverdue(
   const day = dayOf(due);
   return !!day && day < todayISO;
 }
+
+// -- One day, in full ------------------------------------------------
+
+export interface DayItem {
+  id: string;
+  kind: 'campaign' | 'subtask' | 'ad' | string;
+  title: string;
+  done: boolean;
+  due_date?: string | null;
+  campaignId: string;
+  campaign: string;
+}
+
+export interface DayGroup<T> {
+  campaignId: string;
+  campaign: string;
+  items: (T & { overdue: boolean })[];
+}
+
+export interface DayDetail<T> {
+  day: string;
+  total: number;
+  done: number;
+  overdue: number;
+  groups: DayGroup<T>[];
+}
+
+const KIND_ORDER: Record<string, number> = { campaign: 0, subtask: 1, ad: 2 };
+
+/**
+ * Everything due on one day, grouped under its campaign.
+ *
+ * The grid shows three chips and "+34 more"; this is the 34 more. Grouping
+ * by campaign is what makes forty items readable - a day with twelve ads
+ * for one client and three bookings for another reads as two things, not
+ * fifteen. Campaigns first within a group, then bookings, then ads; groups
+ * with something overdue float to the top, then by name.
+ */
+export function dayDetail<T extends DayItem>(items: T[], day: string, todayISO: string): DayDetail<T> {
+  const groups = new Map<string, DayGroup<T>>();
+  let done = 0; let overdue = 0; let total = 0;
+  for (const it of items) {
+    if (dayOf(it.due_date) !== day) continue;
+    total++;
+    const late = isOverdue(it.due_date, todayISO, it.done);
+    if (it.done) done++;
+    if (late) overdue++;
+    let g = groups.get(it.campaignId);
+    if (!g) { g = { campaignId: it.campaignId, campaign: it.campaign, items: [] }; groups.set(it.campaignId, g); }
+    g.items.push({ ...it, overdue: late });
+  }
+  const list = [...groups.values()];
+  for (const g of list) {
+    g.items.sort((a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9) || a.title.localeCompare(b.title));
+  }
+  list.sort((a, b) => {
+    const la = a.items.some((i) => i.overdue) ? 0 : 1;
+    const lb = b.items.some((i) => i.overdue) ? 0 : 1;
+    return la - lb || a.campaign.localeCompare(b.campaign);
+  });
+  return { day, total, done, overdue, groups: list };
+}
+
+/** "Tuesday 8 September" */
+export function dayTitle(day: string): string {
+  const d = new Date(day + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return day;
+  const wd = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()];
+  const mo = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getUTCMonth()];
+  return `${wd} ${d.getUTCDate()} ${mo}`;
+}
+
+export function dayCountLine(d: { total: number; done: number; overdue: number }): string {
+  if (!d.total) return 'Nothing due.';
+  const parts = [`${d.total} due`];
+  if (d.overdue) parts.push(`${d.overdue} overdue`);
+  if (d.done) parts.push(`${d.done} done`);
+  return parts.join(' | ');
+}
