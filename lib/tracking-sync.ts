@@ -376,7 +376,15 @@ export function plannedRowInput(
   if (ad.postingDate) row.posting_date = ad.postingDate;
   if (ad.status) row.ad_status = ad.status;
   if (ad.adLink) row.ad_link = ad.adLink;
-  if (ad.priceExcl != null) row.price_excl = ad.priceExcl;
+  // Always present, never null. The column is NOT NULL with a default of
+  // 0, and 0 already means "no price yet" everywhere the sheet reads it -
+  // but the default only applies when the key is absent from EVERY row of
+  // an insert. PostgREST fills a key that some rows have and others lack
+  // with an explicit null, and the first campaign with a priced booking
+  // beside an unpriced one (the Asana import made hundreds) failed with
+  // "null value in column price_excl". The price is the one field that is
+  // not "nobody entered this" when empty; it is "nothing agreed yet".
+  row.price_excl = ad.priceExcl ?? 0;
 
   const note = [ad.ordinal, ad.notes].filter(Boolean).join(' · ');
   if (note) row.notes = note;
