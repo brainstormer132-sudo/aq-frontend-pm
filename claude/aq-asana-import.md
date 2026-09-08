@@ -140,3 +140,18 @@ January for a January deal.
 Export from Asana with all the fields you want visible on the project,
 don't open the file in Excel, run the script, read `report.md`, run the
 SQL. The rows update in place.
+
+## Bugs the real data surfaced
+
+Kept here as they come, one line each, with where the fix lives.
+
+- **"null value in column price_excl of relation tracking_rows"** when
+  making a sheet for an imported campaign. `plannedRowInput` left
+  `price_excl` off rows whose ad line had no price, relying on the column
+  default - but a PostgREST bulk insert fills a key that some rows have
+  and others lack with an explicit null, and imported campaigns are the
+  first with priced and unpriced lines side by side. It now always sends
+  a number, 0 when nothing is agreed. `lib/tracking-sync.ts`,
+  `tests/sheet.test.mjs`.
+- Campaigns with two hundred vendors: `claude/aq-campaign-many-vendors.md`.
+- Days with forty items on the calendar: `claude/aq-calendar-day-view.md`.

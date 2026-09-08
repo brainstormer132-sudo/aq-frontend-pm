@@ -1,5 +1,5 @@
 import {
-  expandBooking, planSync, plannedRows, adoptionPatch, rowKey, adsOnLine,
+  expandBooking, planSync, plannedRows, plannedRowInput, adoptionPatch, rowKey, adsOnLine,
   MAX_ADS_PER_LINE,
 } from '../.test-build/tracking-sync.js';
 
@@ -195,5 +195,16 @@ eq('a line with no id is skipped',
   eq('and the product', rows[0].product, 'Nice Brand');
 }
 
+{
+  // A priced line and an unpriced one on the same sheet. Every row must
+  // carry price_excl - a bulk insert where only some rows have the key
+  // sends null for the rest, and the column is NOT NULL.
+  const priced = { key: 'a#1', adLineId: 'a', adLineSeq: 1, subtaskId: 's', vendorName: 'V', profileLink: '', platform: 'TikTok', adType: 'Reel', priceExcl: 3750, postingDate: null, status: '', adLink: '', notes: '', ordinal: '' };
+  const unpriced = { ...priced, key: 'b#1', adLineId: 'b', priceExcl: null };
+  const rows = [plannedRowInput(priced, 0), plannedRowInput(unpriced, 1)];
+  eq('priced row keeps its price', rows[0].price_excl, 3750);
+  eq('unpriced row carries 0, not an absent key', rows[1].price_excl, 0);
+  eq('every row has the same money key', Object.keys(rows[1]).includes('price_excl'), true);
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
