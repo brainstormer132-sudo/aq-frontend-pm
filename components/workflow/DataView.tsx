@@ -51,6 +51,8 @@ const TONE_BG: Record<Tone, string> = {
 
 type RangeKey = 'all' | 'year' | 'd90' | 'custom';
 
+/** Ledger rows drawn before the reader has to ask for more. */
+const LEDGER_PAGE = 200;
 export function DataView({
   workspaceId, onOpenTask,
 }: {
@@ -133,16 +135,32 @@ export function DataView({
   const [ledgerFilter, setLedgerFilter] = useState<LedgerFilter>(EMPTY_LEDGER_FILTER);
   const [ledgerSort, setLedgerSort] = useState<LedgerSort>(DEFAULT_LEDGER_SORT);
 
-  const ledger = useMemo(() => (side === 'clients'
-    ? clientLedger({ parents: scoped.parents, subtasks: scoped.allSubtasks, clientName: clientNames })
-    : vendorLedger({ subtasks: scoped.subtasks, parents: scoped.parents, vendorName: vendorNames })
-  ), [side, scoped, clientNames, vendorNames]);
+  // One memo, one object: the side, its rows, its totals and the rows on
+  // screen are worked out together so the header and the table cannot
+  // come from different sides. Siraj saw the Collection header over the
+  // Liability rows after switching back and forth on 4,000 bookings; the
+  // three separate memos this used to be gave that a way to happen, and
+  // the table below is keyed on the side so it is rebuilt, not patched.
+  const ledgerView = useMemo(() => {
+    const rows = side === 'clients'
+      ? clientLedger({ parents: scoped.parents, subtasks: scoped.allSubtasks, clientName: clientNames })
+      : vendorLedger({ subtasks: scoped.subtasks, parents: scoped.parents, vendorName: vendorNames });
+    return {
+      side,
+      rows,
+      totals: ledgerTotals(rows, side),
+      shown: sortLedger(filterLedger(rows, ledgerFilter), ledgerSort),
+    };
+  }, [side, scoped, clientNames, vendorNames, ledgerFilter, ledgerSort]);
+  const ledger = ledgerView.rows;
+  const ledgerAll = ledgerView.totals;
+  const ledgerShown = ledgerView.shown;
 
-  const ledgerAll = useMemo(() => ledgerTotals(ledger, side), [ledger, side]);
-  const ledgerShown = useMemo(
-    () => sortLedger(filterLedger(ledger, ledgerFilter), ledgerSort),
-    [ledger, ledgerFilter, ledgerSort],
-  );
+  // The vendor ledger is four thousand rows after the Asana import. Drawing
+  // them all made every switch a two-second freeze; the first LEDGER_PAGE
+  // draw at once and the rest come in pages. The CSV still takes them all.
+  const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE);
+  useEffect(() => { setLedgerLimit(LEDGER_PAGE); }, [side, ledgerFilter, ledgerSort]);
 
   // The margin rate — the number this page never had. `Est AQ gross` is an
   // absolute, and an absolute goes up whenever we do more work.
@@ -444,13 +462,34 @@ export function DataView({
             </div>
 
             <Ledger
-              rows={ledgerShown}
-              side={side}
+              key={ledgerView.side}
+              rows={ledgerShown.slice(0, ledgerLimit)}
+              side={ledgerView.side}
               sort={ledgerSort}
               onSort={(k) => setLedgerSort((cur) => nextLedgerSort(cur, k))}
               onOpen={onOpenTask}
-              empty={emptyLedgerMessage(ledgerFilter, side, ledger.length)}
+              empty={emptyLedgerMessage(ledgerFilter, ledgerView.side, ledger.length)}
             />
+            {ledgerShown.length > ledgerLimit && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 12, marginTop: 12,
+                fontSize: 12.5, color: 'var(--aq-text-secondary)',
+              }}>
+                <span>Showing {ledgerLimit.toLocaleString('en-US')} of {ledgerShown.length.toLocaleString('en-US')} rows.</span>
+                <button
+                  type="button"
+                  className="aq-btn aq-btn-secondary"
+                  onClick={() => setLedgerLimit((n) => n + LEDGER_PAGE)}
+                  style={{ fontSize: 12.5, padding: '5px 12px' }}
+                >Show {Math.min(LEDGER_PAGE, ledgerShown.length - ledgerLimit)} more</button>
+                <button
+                  type="button"
+                  className="aq-btn aq-btn-ghost"
+                  onClick={() => setLedgerLimit(ledgerShown.length)}
+                  style={{ fontSize: 12.5, padding: '5px 10px' }}
+                >Show all</button>
+              </div>
+            )}
           </div>
 
           {/* ── 3. Where the revenue comes from ───────────────────────── */}

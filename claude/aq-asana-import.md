@@ -164,3 +164,10 @@ Kept here as they come, one line each, with where the fix lives.
   number. And the month chart now spans every month with data (Jan to
   Sep) instead of the last six, and fills the card. `lib/dashboard-data.ts`,
   `components/workflow/DataView.tsx`, `tests/money-vocab.test.mjs`.
+- **Collection header over Liability rows** after switching back and forth
+  on the Data view. The side, its rows, its totals and the rows on screen
+  were three separate memos; now one, so they cannot come from different
+  renders, and the table is keyed on the side so it is rebuilt rather than
+  patched. Also: the vendor ledger is 4,000 rows after the import and was
+  drawn in one go - now 200 at a time with *Show more* / *Show all*; the
+  CSV still takes everything. `components/workflow/DataView.tsx`.
