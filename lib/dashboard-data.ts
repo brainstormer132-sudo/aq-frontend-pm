@@ -516,11 +516,14 @@ export function campaignMoneyRows(parents: DashTask[], subtasks: DashTask[]): Mo
 }
 
 /**
- * Six months ending at the most recent month that has anything in it, so an
- * agency looking at a quiet client doesn't get an empty chart of the current
- * quarter. Months with no work stay in, at zero — the gap is information.
+ * Every month from the first with anything in it to the last, capped at
+ * `maxMonths` ending at the most recent one. Months with no work stay in,
+ * at zero - the gap is information.
+ *
+ * It used to be a fixed six. The Asana import brought a whole year, and a
+ * chart that started in April was answering a question nobody asked.
  */
-export function moneyByMonth(rows: MoneyRow[], months = 6): MonthBar[] {
+export function moneyByMonth(rows: MoneyRow[], maxMonths = 12): MonthBar[] {
   const buckets = new Map<string, Money>();
   for (const r of rows) {
     const key = monthOf(r.created_at);
@@ -532,7 +535,11 @@ export function moneyByMonth(rows: MoneyRow[], months = 6): MonthBar[] {
     buckets.set(key, b);
   }
   if (!buckets.size) return [];
-  const last = [...buckets.keys()].sort().pop()!;
+  const keys = [...buckets.keys()].sort();
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  let months = 1;
+  for (let k = last; k !== first && months < maxMonths; months++) k = shiftMonth(k, -1);
   const out: MonthBar[] = [];
   for (let i = months - 1; i >= 0; i--) {
     const key = shiftMonth(last, -i);
@@ -748,8 +755,8 @@ function workspaceModel(
   return {
     kpis: [
       { key: 'Billed', value: compact(money.price), note: 'SAR · all campaigns' },
-      { key: 'Vendors cost', value: compact(money.net), note: 'SAR paid to vendors' },
-      { key: 'AQ net', value: compact(money.gross), note: 'SAR · billed less vendor cost' },
+      { key: 'Vendors cost', value: compact(money.net), note: 'SAR to vendors, agreed not paid' },
+      { key: 'AQ margin', value: compact(money.gross), note: 'SAR \u00b7 billed less vendor cost' },
       { key: 'Campaigns', value: full(s.parents.length), note: `${full(clientIds.size)} clients` },
       { key: 'Vendors engaged', value: full(vendorIds.size), note: `across ${full(vendorRows.length)} bookings` },
     ],
@@ -835,8 +842,8 @@ function clientModel(input: DashboardInput, s: Scoped, vendorName: Map<string, s
   return {
     kpis: [
       { key: 'Billed', value: compact(money.price), note: `SAR · ${full(s.parents.length)} campaigns` },
-      { key: 'Vendors cost', value: compact(money.net), note: 'SAR paid to vendors' },
-      { key: 'AQ net', value: compact(money.gross), note: 'SAR · billed less vendor cost' },
+      { key: 'Vendors cost', value: compact(money.net), note: 'SAR to vendors, agreed not paid' },
+      { key: 'AQ margin', value: compact(money.gross), note: 'SAR \u00b7 billed less vendor cost' },
       { key: 'Campaigns', value: full(s.parents.length), note: `${full(done)} done · ${full(s.parents.length - done)} running` },
       { key: 'Vendors engaged', value: full(vendorIds.size), note: `across ${full(s.subtasks.length)} bookings` },
     ],

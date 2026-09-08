@@ -6,7 +6,7 @@
  * the arithmetic — it was fine — but that a name or a comment said one thing
  * and the code did another, and nothing in between could tell.
  */
-import { clientPaymentState, contractState } from '../.test-build/dashboard-data.js';
+import { clientPaymentState, contractState, moneyByMonth } from '../.test-build/dashboard-data.js';
 import { totalsOf, groupByAdType, contractDetails, lineNet } from '../.test-build/ad-lines.js';
 import { contractPlan } from '../.test-build/vendor-contracts.js';
 import { bookingRows } from '../.test-build/campaign-page.js';
@@ -189,5 +189,21 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   eq('partial fees sum what is known', contractPlan(partial, 'combined')[0].amount, 1400);
 }
 
+{
+  // Money by month spans from the first month with anything to the last,
+  // not a fixed six. The Asana import brought a whole year.
+  const row = (m, price, net) => ({ created_at: `2026-${m}-15T00:00:00Z`, price, net_amount: net });
+  const year = moneyByMonth([row('01', 100, 60), row('04', 50, 20), row('09', 10, 5)]);
+  eq('January to September is nine months', year.length, 9);
+  eq('starts at the first month with work', year[0].key, '2026-01');
+  eq('ends at the last', year[8].key, '2026-09');
+  eq('quiet months stay in at zero', year[1].price, 0);
+  eq('gross is price less net', year[0].gross, 40);
+  const capped = moneyByMonth([row('01', 1, 0), row('09', 1, 0)], 6);
+  eq('a cap keeps the most recent months', capped.map((b) => b.key)[0], '2026-04');
+  eq('and the cap is honoured', capped.length, 6);
+  eq('one month is one bar', moneyByMonth([row('06', 1, 0)]).length, 1);
+  eq('nothing is nothing', moneyByMonth([]).length, 0);
+}
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

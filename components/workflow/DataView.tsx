@@ -296,7 +296,7 @@ export function DataView({
                 fontVariantNumeric: 'tabular-nums', lineHeight: 1,
               }}>{compact(totalMoney.gross)}</span>
               <span style={{ fontSize: 14, color: 'var(--aq-text-muted)', fontWeight: 600 }}>
-                SAR AQ net
+                SAR AQ margin
               </span>
               {/* The rate, which this page never had. The absolute goes up
                   whenever we do more work; the rate says whether the work
@@ -309,7 +309,7 @@ export function DataView({
             </div>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28, margin: '16px 0 4px' }}>
-              {model.kpis.filter((k) => k.key !== 'AQ net').map((k) => (
+              {model.kpis.filter((k) => k.key !== 'AQ margin').map((k) => (
                 <span key={k.key}>
                   <span style={{
                     display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
@@ -329,11 +329,11 @@ export function DataView({
             <div style={{ marginTop: 18 }}>
               <h3 style={{ fontSize: 13.5, fontWeight: 700, margin: 0 }}>Money by month</h3>
               <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', margin: '2px 0 12px' }}>
-                Billed, vendors cost and AQ net. One axis — all three are SAR, and each sits inside
+                Billed, vendors cost and AQ margin. One axis {'\u2014'} all three are SAR, and each sits inside
                 the one before it. By the month the campaign was <strong>created</strong>,
                 which is not the month it was invoiced.
               </p>
-              <Legend items={[['Billed', SERIES[0]], ['Vendors cost', SERIES[1]], ['AQ net', SERIES[2]]]} />
+              <Legend items={[['Billed', SERIES[0]], ['Vendors cost', SERIES[1]], ['AQ margin', SERIES[2]]]} />
               <Months bars={model.months} />
             </div>
           </div>
@@ -926,23 +926,28 @@ function Months({ bars }: { bars: { key: string; label: string; short: string; p
     );
   }
 
-  const W = 520, H = 240, L = 54, R = 8, T = 16, B = 34;
+  // The drawing is 60 units per month wide, so a year is not twelve bars
+  // squeezed into the space six had, and it fills the card rather than
+  // sitting in the middle of it: no fixed pixel height, the viewBox sets
+  // the aspect and the width does the rest. Siraj: "the charts are too small".
+  const W = Math.max(520, 60 * bars.length + 70), H = 240, L = 54, R = 8, T = 16, B = 34;
   const iw = W - L - R, ih = H - T - B;
   const step = Math.pow(10, Math.floor(Math.log10(peak)));
   const max = Math.ceil(peak / (step / 2)) * (step / 2);
   const y = (v: number) => T + ih - (v / max) * ih;
   const gw = iw / bars.length;
-  const bw = Math.min(18, (gw - 30) / 3);
+  const bw = Math.min(22, (gw - 24) / 3);
   const gap = 4;
   const series: [keyof typeof bars[0], string, string][] = [
-    ['price', SERIES[0], 'Billed'], ['net', SERIES[1], 'Vendors cost'], ['gross', SERIES[2], 'AQ net'],
+    ['price', SERIES[0], 'Billed'], ['net', SERIES[1], 'Vendors cost'], ['gross', SERIES[2], 'AQ margin'],
   ];
 
   return (
     <>
       {node}
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Money by month"
-           style={{ display: 'block', overflow: 'visible' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Money by month"
+           preserveAspectRatio="xMinYMin meet"
+           style={{ display: 'block', overflow: 'visible', width: '100%', maxWidth: 1100, height: 'auto' }}>
         {[0, max / 2, max].map((v) => (
           <g key={v}>
             <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="var(--aq-border-light)" strokeWidth={1} />
@@ -987,7 +992,7 @@ function Months({ bars }: { bars: { key: string; label: string; short: string; p
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 6 }}>
           <thead>
             <tr>
-              {['Month', 'Billed', 'Vendors cost', 'AQ net'].map((h, i) => (
+              {['Month', 'Billed', 'Vendors cost', 'AQ margin'].map((h, i) => (
                 <th key={h} style={{
                   textAlign: i ? 'right' : 'left', fontSize: 10.5, textTransform: 'uppercase',
                   letterSpacing: '.09em', color: 'var(--aq-text-muted)', padding: '6px 8px',
@@ -1027,8 +1032,9 @@ function Bars({ panel }: { panel: { rows: { key: string; label: string; value: n
   return (
     <>
       {node}
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Magnitude by category"
-           style={{ display: 'block', overflow: 'visible' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Magnitude by category"
+           preserveAspectRatio="xMinYMin meet"
+           style={{ display: 'block', overflow: 'visible', width: '100%', maxWidth: 900, height: 'auto' }}>
         {panel.rows.map((r, i) => {
           const y = T + i * (bh + gap);
           const w = Math.max(3, (r.value / max) * (W - L - R));

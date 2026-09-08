@@ -155,3 +155,12 @@ Kept here as they come, one line each, with where the fix lives.
   `tests/sheet.test.mjs`.
 - Campaigns with two hundred vendors: `claude/aq-campaign-many-vendors.md`.
 - Days with forty items on the calendar: `claude/aq-calendar-day-view.md`.
+- **"Net is 14M in Asana, 9M in the app."** Two different things. Asana's
+  Net is the talent's fee (13.6M for Done + Approved); the app's 9.35M was
+  the *margin* - billed less vendor cost - and the report was calling it
+  "AQ net". Renamed to **AQ margin** so the word "net" means one thing
+  everywhere: what the vendor gets. "Vendors cost" also said "paid to
+  vendors" when it is the agreed amount; paid is a different, smaller
+  number. And the month chart now spans every month with data (Jan to
+  Sep) instead of the last six, and fills the card. `lib/dashboard-data.ts`,
+  `components/workflow/DataView.tsx`, `tests/money-vocab.test.mjs`.
