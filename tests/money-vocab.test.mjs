@@ -6,7 +6,8 @@
  * the arithmetic — it was fine — but that a name or a comment said one thing
  * and the code did another, and nothing in between could tell.
  */
-import { clientPaymentState, contractState, moneyByMonth } from '../.test-build/dashboard-data.js';
+import { clientPaymentState, contractState, moneyByMonth, isComplete } from '../.test-build/dashboard-data.js';
+import { clientLedger, vendorLedger } from '../.test-build/money-ledger.js';
 import { totalsOf, groupByAdType, contractDetails, lineNet } from '../.test-build/ad-lines.js';
 import { contractPlan } from '../.test-build/vendor-contracts.js';
 import { bookingRows } from '../.test-build/campaign-page.js';
@@ -204,6 +205,24 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   eq('and the cap is honoured', capped.length, 6);
   eq('one month is one bar', moneyByMonth([row('06', 1, 0)]).length, 1);
   eq('nothing is nothing', moneyByMonth([]).length, 0);
+}
+
+{
+  // The ledgers hold completed campaigns only. Siraj: "make sure that
+  // collection and liability only gets added when the task is complete".
+  const camp = (id, status, stage, extra = {}) => ({ id, parent_task_id: null, title: id, client_id: 'c', created_at: '2026-06-01', status, stage, client_payment_status: 'unpaid', ...extra });
+  const book = (id, parent, net) => ({ id, parent_task_id: parent, title: `${id} booking`, vendor_id: 1, price: net + 1000, net_amount: net, status: 'done', stage: 'completed' });
+  const parents = [camp('running', 'pending', 'in_progress'), camp('done', 'done', 'completed'), camp('cancelled', 'cancelled', 'in_progress'), camp('stage-done', 'pending', 'completed')];
+  const subs = [book('b1', 'running', 900), book('b2', 'done', 800), book('b3', 'cancelled', 700), book('b4', 'stage-done', 600)];
+  eq('isComplete: done', isComplete(parents[1]), true);
+  eq('isComplete: stage completed', isComplete(parents[3]), true);
+  eq('isComplete: running', isComplete(parents[0]), false);
+  eq('isComplete: cancelled', isComplete(parents[2]), false);
+  const cl = clientLedger({ parents, subtasks: subs });
+  eq('collection: only the completed campaigns', cl.map((r) => r.id).sort(), ['done', 'stage-done']);
+  const vl = vendorLedger({ subtasks: subs, parents });
+  eq('liability: only bookings on completed campaigns, even when the booking itself is done', vl.map((r) => r.id).sort(), ['b2', 'b4']);
+  eq('liability: the booking keeps its own net', vl.find((r) => r.id === 'b2').total, 800);
 }
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

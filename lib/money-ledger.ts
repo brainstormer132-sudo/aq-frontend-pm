@@ -17,7 +17,7 @@
  */
 
 import {
-  clientPaymentState, vendorPaymentState, isOpen,
+  clientPaymentState, vendorPaymentState, isOpen, isComplete,
   type DashTask, type PaymentState, type Tone,
 } from './dashboard-data';
 
@@ -27,8 +27,8 @@ export type PayKey = 'paid' | 'partial' | 'unpaid';
 export type Side = 'clients' | 'vendors';
 
 export const SIDES: { key: Side; label: string; blurb: string }[] = [
-  { key: 'clients', label: 'Collection', blurb: 'Campaigns we have billed.' },
-  { key: 'vendors', label: 'Liability', blurb: 'Bookings we have to pay.' },
+  { key: 'clients', label: 'Collection', blurb: 'Completed campaigns we have billed.' },
+  { key: 'vendors', label: 'Liability', blurb: 'Bookings on completed campaigns we have to pay.' },
 ];
 
 export const PAY_KEYS: PayKey[] = ['paid', 'partial', 'unpaid'];
@@ -93,7 +93,14 @@ function r2(n: number): number {
 /* ── Clients owe us ─────────────────────────────────────────────── */
 
 /**
- * One row per campaign that has been billed something.
+ * One row per COMPLETED campaign that has been billed something.
+ *
+ * Siraj: *"make sure that collection and liability only gets added when
+ * the task is complete not before the task is complete"*. A running
+ * campaign is not a debt yet - nothing has been delivered to bill for -
+ * and a cancelled one never will be. So the ledger holds finished work:
+ * status done, or stage completed. Everything still running sits in the
+ * profitability figures above, which are about the work, not the money.
  *
  * The state comes from `client_payment_status`, which is what a person set.
  * The outstanding figure comes from `client_payment_amount`, which is what
@@ -116,7 +123,7 @@ export function clientLedger(input: {
 
   const out: LedgerRow[] = [];
   for (const p of input.parents) {
-    const subs = byParent.get(p.id) ?? [];
+    if (!isComplete(p)) continue;    const subs = byParent.get(p.id) ?? [];
     const total = r2(subs.reduce((a, s) => a + num(s.price), 0));
     // A campaign nobody has priced is not a debt. It is an unfinished
     // campaign, and putting it in a ledger of money owed is how a total
@@ -152,7 +159,11 @@ export function clientLedger(input: {
 /* ── We owe vendors ─────────────────────────────────────────────── */
 
 /**
- * One row per vendor booking with a net on it.
+ * One row per vendor booking with a net on it, on a COMPLETED campaign.
+ *
+ * Keyed on the campaign, not the booking, for the same reason as the client
+ * side: the campaign is the task Siraj means by "complete". A booking whose
+ * own status is done on a campaign still running waits with its campaign.
  *
  * Named for the **campaign**, not the booking. A vendor booking is named
  * after the vendor, so a row reading "Bright Studios · Bright Studios
@@ -167,7 +178,8 @@ export function vendorLedger(input: {
 
   const out: LedgerRow[] = [];
   for (const s of input.subtasks) {
-    const total = r2(num(s.net_amount));
+    const campaign = parentById.get(s.parent_task_id ?? '');
+    if (!campaign || !isComplete(campaign)) continue;    const total = r2(num(s.net_amount));
     if (total <= 0) continue;
 
     const state = vendorPaymentState(s);
@@ -387,8 +399,8 @@ export function ratePct(v: number | null, dp = 1): string {
 export function ledgerLine(totals: LedgerTotals, side: Side): string {
   if (totals.rows === 0) {
     return side === 'clients'
-      ? 'Nothing billed in this period.'
-      : 'No vendor bookings with a recorded cost in this period.';
+      ? 'No completed campaign billed in this period.'
+      : 'No vendor booking on a completed campaign in this period.';
   }
   const of = side === 'clients' ? 'billed' : 'booked';
   if (totals.outstanding <= 0) {
@@ -403,8 +415,8 @@ export function ledgerLine(totals: LedgerTotals, side: Side): string {
 export function emptyLedgerMessage(f: LedgerFilter, side: Side, total: number): string {
   if (total === 0) {
     return side === 'clients'
-      ? 'No campaigns with a price in this window.'
-      : 'No vendor bookings with a recorded cost in this period.';
+      ? 'No completed campaign with a price in this window. Running campaigns join the ledger when they are done.'
+      : 'No vendor booking on a completed campaign in this period. Bookings join the ledger when their campaign is done.';
   }
   if (f.query.trim()) return `Nothing matches “${f.query.trim()}”.`;
   if (f.state === 'paid') return side === 'clients' ? 'Nothing is fully paid yet.' : 'No vendor has been paid in full yet.';

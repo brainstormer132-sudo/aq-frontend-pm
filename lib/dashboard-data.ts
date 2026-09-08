@@ -383,6 +383,10 @@ export function isOpen(row: DashTask): boolean {
   return row.status !== 'done' && row.status !== 'cancelled' && row.stage !== 'completed';
 }
 
+/** Finished, as opposed to open or cancelled. The only rows the ledgers hold. */
+export function isComplete(row: DashTask): boolean {
+  return row.status === 'done' || row.stage === 'completed';}
+
 /* ────────────────────────────────────────────────────────────────
    Scoping
    ──────────────────────────────────────────────────────────────── */

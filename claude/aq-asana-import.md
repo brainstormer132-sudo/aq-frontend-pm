@@ -171,3 +171,12 @@ Kept here as they come, one line each, with where the fix lives.
   patched. Also: the vendor ledger is 4,000 rows after the import and was
   drawn in one go - now 200 at a time with *Show more* / *Show all*; the
   CSV still takes everything. `components/workflow/DataView.tsx`.
+- **Collection and Liability now hold completed campaigns only.** Siraj:
+  *"make sure that collection and liability only gets added when the task
+  is complete not before the task is complete"*. A campaign joins
+  Collection when its status is done or its stage is completed; a booking
+  joins Liability when its campaign does (a booking finished on a campaign
+  still running waits with the campaign). Cancelled never joins. The header
+  says so. `lib/money-ledger.ts`, `lib/dashboard-data.ts` (`isComplete`),
+  and `lib/money-ledger.ts` is in the test harness now - the runner adds
+  the `.js` Node needs to cross-imports between libs.

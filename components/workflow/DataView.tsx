@@ -359,7 +359,7 @@ export function DataView({
           {/* ── 2. Collection and liability ─────────────────
               The section Siraj asked for. The bar is the shape; the ledger
               under it is the rows, filterable by state and searchable. */}
-          <Question title="Collection and liability" note="the money still moving" />
+          <Question title="Collection and liability" note="on completed campaigns only" />
 
           <div className="aq-card" style={{ padding: '18px 20px' }}>
             <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>

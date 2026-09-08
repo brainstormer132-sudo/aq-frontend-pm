@@ -2,18 +2,18 @@
 /**
  * Compile the pure libraries, then run every suite in tests/.
  *
- * Ã¢â€â‚¬Ã¢â€â‚¬ Why this exists Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ * -- Why this exists -----------------------------------------------
  *
  * The suites were real and they were good and they lived nowhere. They ran
  * when somebody remembered to run them, in a scratch directory, against a
  * hand-compiled copy of the library. So they protected the afternoon they
- * were written and nothing after it Ã¢â‚¬â€ which is the same failure as a backup
+ * were written and nothing after it - which is the same failure as a backup
  * nobody has restored.
  *
  * This makes them a fixture of the repository: `npm test`, and the same
  * command in CI on every push.
  *
- * Ã¢â€â‚¬Ã¢â€â‚¬ Why there is no test framework Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ * -- Why there is no test framework --------------------------------
  *
  * Deliberately none. The suites are plain `.mjs` files that import the
  * compiled module, compare values, and print. That is the whole contract,
@@ -29,7 +29,7 @@
  * functions, no React, no Supabase, no argless `new Date()`. A library you
  * can test with `node file.mjs` is a library that was designed properly.
  *
- * Ã¢â€â‚¬Ã¢â€â‚¬ Adding a suite Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ * -- Adding a suite ------------------------------------------------
  *
  *   1. Put `lib/<thing>.ts` in LIBS below if it is not there.
  *   2. Write `tests/<name>.test.mjs`, importing from
@@ -38,7 +38,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readdirSync, rmSync, mkdirSync, existsSync } from 'node:fs';
+import { readdirSync, rmSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -50,7 +50,7 @@ const outDir = join(root, '.test-build');
  *
  * This used to be `execFileSync('npx', ['tsc', ...])`, which works on Linux
  * and CANNOT work on Windows: there is no `npx` there, only `npx.cmd`, and
- * execFile does not consult PATHEXT Ã¢â‚¬â€ that is a shell's job, and execFile
+ * execFile does not consult PATHEXT - that is a shell's job, and execFile
  * deliberately isn't one. `npm test` died with `spawnSync npx ENOENT` on the
  * only machine this repo is actually developed on.
  *
@@ -68,6 +68,7 @@ const LIBS = [
   'lib/campaign-page.ts',
   'lib/ad-lines.ts',
   'lib/dashboard-data.ts',
+  'lib/money-ledger.ts',
   'lib/payment-schedule.ts',
   'lib/vendor-contracts.ts',
   'lib/tracking-sync.ts',
@@ -93,7 +94,7 @@ function compile() {
     rmSync(outDir, { recursive: true, force: true });
   } catch (err) {
     if (err?.code !== 'EPERM' && err?.code !== 'EBUSY' && err?.code !== 'ENOTEMPTY') throw err;
-    console.log(`${DIM}  (could not clear ${outDir}: ${err.code} Ã¢â‚¬â€ reusing it)${OFF}`);
+    console.log(`${DIM}  (could not clear ${outDir}: ${err.code} - reusing it)${OFF}`);
   }
   mkdirSync(outDir, { recursive: true });
   // Strict, and the same target the app builds with. A test that passes
@@ -113,6 +114,18 @@ function compile() {
     '--moduleResolution', 'node',
     '--strict',
   ], { cwd: root, stdio: 'inherit' });
+
+  // A lib that imports another lib writes `from './dashboard-data'` - fine
+  // for the app's bundler, not for Node, which wants the extension. Add it,
+  // so lib/money-ledger.ts can be on the list at all.
+  for (const f of readdirSync(outDir)) {
+    if (!f.endsWith('.js')) continue;
+    const path = join(outDir, f);
+    const src = readFileSync(path, 'utf8');
+    const fixed = src.replace(/(from\s+['"])(\.\.?\/[^'"]+?)(['"])/g,
+      (m, a, spec, b) => (/\.[cm]?js$/.test(spec) ? m : `${a}${spec}.js${b}`));
+    if (fixed !== src) writeFileSync(path, fixed);
+  }
 }
 
 function run() {
@@ -149,7 +162,7 @@ function run() {
     } else {
       broken.push(name);
       console.log(`${RED}FAIL${OFF}  ${name}`);
-      // The suite's own output IS the failure report Ã¢â‚¬â€ it prints what it
+      // The suite's own output IS the failure report - it prints what it
       // got and what it wanted. Repeating that here would be a worse
       // version of a message the suite already wrote.
       console.log(out.split('\n').filter(Boolean).map((l) => `        ${l}`).join('\n'));
@@ -158,7 +171,7 @@ function run() {
 
   console.log('');
   if (totalFail || broken.length) {
-    console.log(`${RED}${totalFail} failed${OFF}, ${totalPass} passed Ã‚Â· ${broken.join(', ')}`);
+    console.log(`${RED}${totalFail} failed${OFF}, ${totalPass} passed | ${broken.join(', ')}`);
     process.exit(1);
   }
   console.log(`${GREEN}${totalPass} assertions passed${OFF} across ${suites.length} suites.`);
