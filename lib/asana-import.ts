@@ -737,7 +737,7 @@ export function planImport(rows: AsanaRow[], projectName = 'Asana'): Plan {
     const description = describe([
       ['Project', projectName],
       ['Approval stage in Asana', ap.folded ? clean(p.approval) : ''],
-      ['Sales in Asana', salesIsChannel ? salesRaw : ''],
+      ['Sales in Asana', salesRaw],
       ['Key account', kam ?? ''],
       ['Packages', clean(p.packages)],
       ['Tags', clean(p.tags)],
