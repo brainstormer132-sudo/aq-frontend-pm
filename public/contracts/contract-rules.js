@@ -93,7 +93,42 @@
     return text(category.label) || text(category.name) || text(category.key);
   }
 
+  /**
+   * One page of a list, and everything the pager needs to describe it.
+   *
+   * A table over a couple of hundred rows has to page: this app builds
+   * every row as a string and writes them in one innerHTML, so a
+   * thousand-row directory is about a megabyte of concatenation on every
+   * keystroke in the search box.
+   *
+   * size 0 means "all of it" - the tasks table already offers that and
+   * people use it. Page numbers are clamped rather than trusted, so a
+   * filter that shrinks the list from 5 pages to 1 cannot leave the view
+   * on an empty page 4.
+   */
+  function pageOf(rows, page, size) {
+    var list = Array.isArray(rows) ? rows : [];
+    var per = Number(size);
+    if (!isFinite(per) || per <= 0) per = list.length || 1;
+    var pages = Math.max(1, Math.ceil(list.length / per));
+    var wanted = Math.floor(Number(page));
+    if (!isFinite(wanted) || wanted < 1) wanted = 1;
+    if (wanted > pages) wanted = pages;
+    var start = (wanted - 1) * per;
+    var slice = list.slice(start, start + per);
+    return {
+      rows: slice,
+      page: wanted,
+      pages: pages,
+      total: list.length,
+      // 1-based and inclusive, the way "Showing 1-200 of 495" reads.
+      from: list.length ? start + 1 : 0,
+      to: start + slice.length,
+    };
+  }
+
   var api = {
+    pageOf: pageOf,
     isSafeToAutoRetry: isSafeToAutoRetry,
     isTransientError: isTransientError,
     vendorIdentifier: vendorIdentifier,

@@ -162,6 +162,12 @@ const state = {
   taskLimit: Number(localStorage.getItem("aq_task_limit") || 10),
   vendorSearch: "",
   contractSearch: "",
+  // Which page of each long list is on screen. Reset to 1 whenever the
+  // list underneath changes shape (a search, a filter), so the view can
+  // never sit on a page that no longer exists.
+  vendorPage: 1,
+  clientPage: 1,
+  contractPage: 1,
   selectedVendorId: localStorage.getItem("aq_selected_vendor") || "",
   selectedVendorLicense: "",
   // Subtask IDs the user has checked in the Tasks view; cleared whenever
@@ -554,6 +560,42 @@ function categoryLabel(category) {
 function findBank(vendor, bankIdOrIban) {
   const value = String(bankIdOrIban || "");
   return (vendor?.bank_accounts || []).find((bank) => String(bank.id) === value || String(bank.iban) === value) || null;
+}
+
+/**
+ * How many rows of a directory to draw at once.
+ *
+ * Every row here is built as a string and written in one innerHTML, so a
+ * thousand-row list is about a megabyte of concatenation - on every
+ * keystroke in the search box, because the whole view re-renders.
+ */
+const PAGE_SIZE = 200;
+
+/**
+ * The bar under a paged table: what you are looking at, and how to move.
+ *
+ * `page` is the object pageOf() returned, so the numbers on screen and the
+ * rows above them cannot disagree - they came from the same call.
+ */
+function pagerBar(list, page, noun) {
+  const shown = page.total
+    ? `Showing ${page.from}-${page.to} of ${page.total} ${noun}${page.total === 1 ? "" : "s"}`
+    : `No ${noun}s found.`;
+  if (page.pages <= 1) return `<div class="cs-table-note">${escapeHtml(shown)}</div>`;
+  const step = (to, label, disabled) => `<button class="mini-button" type="button"
+      data-action="list-page" data-list="${encodeAttr(list)}" data-page="${encodeAttr(to)}"
+      data-pages="${page.pages}" ${disabled ? "disabled" : ""}>${label}</button>`;
+  return `
+    <div class="cs-table-note" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <span>${escapeHtml(shown)}</span>
+      <span style="display:flex;align-items:center;gap:6px;">
+        ${step("1", "First", page.page === 1)}
+        ${step("prev", "Prev", page.page === 1)}
+        <span style="padding:0 4px;">Page ${page.page} of ${page.pages}</span>
+        ${step("next", "Next", page.page === page.pages)}
+        ${step("last", "Last", page.page === page.pages)}
+      </span>
+    </div>`;
 }
 
 function limitOptions(selected = state.taskLimit) {
@@ -2347,7 +2389,9 @@ function renderVendorsView() {
   // cards in the redesign). Edit opens the same modal as before; the banks
   // live inside that editor, so the row stays a single line.
   const dirCols = "minmax(150px,1.5fr) 150px 130px 150px minmax(140px,1fr) 110px 96px";
-  const vendorRows = filteredVendors.map((item) => {
+  const vendorPage = window.AQContractRules.pageOf(filteredVendors, state.vendorPage, PAGE_SIZE);
+  state.vendorPage = vendorPage.page;   // clamped, so the bar and the rows agree
+  const vendorRows = vendorPage.rows.map((item) => {
     const cat = findVendorCategory(item.category_id);
     const idValue = cat?.requires_license
       ? (item.license_number || item.id_number || "")
@@ -2415,7 +2459,7 @@ function renderVendorsView() {
         <div>Vendor</div><div>License / ID</div><div>Phone</div><div>Bank</div><div>IBAN</div><div>Status</div><div></div>
       </div>
       ${vendorRows || `<div class="cs-table-note">No vendors found.</div>`}
-      <div class="cs-table-note">${filteredVendors.length} vendor${filteredVendors.length === 1 ? "" : "s"} shown</div>
+      ${pagerBar("vendors", vendorPage, "vendor")}
     </div>
 
     ${renderPendingPanel("vendors")}
@@ -2459,7 +2503,9 @@ function renderClientsView() {
 
   const clientCols = "minmax(160px,1.4fr) 150px 120px 160px 150px 96px";
   const missingCr = state.clients.filter((c) => !c.cr_number).length;
-  const clientRows = filteredClients.map((c) => {
+  const clientPage = window.AQContractRules.pageOf(filteredClients, state.clientPage, PAGE_SIZE);
+  state.clientPage = clientPage.page;
+  const clientRows = clientPage.rows.map((c) => {
     const isSel = String(c.id) === String(client?.id);
     const em = (v) => v ? escapeHtml(v) : `<span class="cs-empty">—</span>`;
     const loc = [c.city, c.country].filter(Boolean).map(escapeHtml).join(", ");
@@ -2515,7 +2561,7 @@ function renderClientsView() {
         <div>Company</div><div>CR Number</div><div>VAT</div><div>Signatory</div><div>Location</div><div></div>
       </div>
       ${clientRows || `<div class="cs-table-note">No clients found.</div>`}
-      <div class="cs-table-note">${filteredClients.length} client${filteredClients.length === 1 ? "" : "s"} shown</div>
+      ${pagerBar("clients", clientPage, "client")}
     </div>
 
     <section style="display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start;">
@@ -2710,7 +2756,14 @@ function renderContractsView() {
     grouped.get(key).push(c);
   });
 
-  const taskCards = Array.from(grouped.entries()).map(([taskId, contracts]) => {
+  // Paged by task group, which is the unit people scroll: the archive is
+  // never pruned, so this list is one entry per campaign that has ever
+  // generated anything.
+  const contractPage = window.AQContractRules.pageOf(
+    Array.from(grouped.entries()), state.contractPage, PAGE_SIZE,
+  );
+  state.contractPage = contractPage.page;
+  const taskCards = contractPage.rows.map(([taskId, contracts]) => {
     const isOpen = expanded.has(String(taskId));
     const task = tasksById.get(String(taskId));
     const headerBrand = task?.brand || contracts[0]?.brand_name || "";
@@ -2811,6 +2864,7 @@ function renderContractsView() {
     ${state.contracts.length === 0
       ? `<div class="cs-card"><p class="empty-note">No generated contracts yet.</p></div>`
       : (taskCards || `<div class="cs-card"><p class="empty-note">No contracts match your search.</p></div>`)}
+    ${state.contracts.length === 0 ? "" : `<div class="cs-card">${pagerBar("contracts", contractPage, "task")}</div>`}
   `;
 }
 
@@ -4924,14 +4978,17 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.id === "vendor-search") {
     state.vendorSearch = event.target.value;
+    state.vendorPage = 1;
     debouncedSearchRender(renderVendorsView, "vendor-search");
   }
   if (event.target.id === "client-search") {
     state.clientSearch = event.target.value;
+    state.clientPage = 1;
     debouncedSearchRender(renderClientsView, "client-search");
   }
   if (event.target.id === "contract-search") {
     state.contractSearch = event.target.value;
+    state.contractPage = 1;
     debouncedSearchRender(renderContractsView, "contract-search");
   }
   if (event.target.id === "sub-license") {
@@ -4971,11 +5028,13 @@ document.addEventListener("change", async (event) => {
     if (fid === "task-status-filter") { state.taskStatusFilter = event.target.value; await renderTasksView(); return; }
     if (fid === "task-gen-filter") { state.taskGenFilter = event.target.value; await renderTasksView(); return; }
     if (fid === "task-paid-filter") { state.taskPaidFilter = event.target.value; await renderTasksView(); return; }
-    if (fid === "vendor-type-filter") { state.vendorTypeFilter = event.target.value; renderVendorsView(); return; }
-    if (fid === "vendor-license-filter") { state.vendorLicenseFilter = event.target.value; renderVendorsView(); return; }
-    if (fid === "vendor-complete-filter") { state.vendorCompleteFilter = event.target.value; renderVendorsView(); return; }
-    if (fid === "client-cr-filter") { state.clientCrFilter = event.target.value; renderClientsView(); return; }
-    if (fid === "contract-files-filter") { state.contractFilesFilter = event.target.value; renderContractsView(); return; }
+    // Every filter puts you back on page 1: the list underneath changes
+    // shape, and page 4 of the old list means nothing in the new one.
+    if (fid === "vendor-type-filter") { state.vendorTypeFilter = event.target.value; state.vendorPage = 1; renderVendorsView(); return; }
+    if (fid === "vendor-license-filter") { state.vendorLicenseFilter = event.target.value; state.vendorPage = 1; renderVendorsView(); return; }
+    if (fid === "vendor-complete-filter") { state.vendorCompleteFilter = event.target.value; state.vendorPage = 1; renderVendorsView(); return; }
+    if (fid === "client-cr-filter") { state.clientCrFilter = event.target.value; state.clientPage = 1; renderClientsView(); return; }
+    if (fid === "contract-files-filter") { state.contractFilesFilter = event.target.value; state.contractPage = 1; renderContractsView(); return; }
     if (event.target.id === "sub-iban") {
       syncSubtaskBankPreview();
     }
@@ -5453,9 +5512,29 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "clear-filters") {
       if (state.view === "tasks") { state.taskStatusFilter = ""; state.taskGenFilter = ""; state.taskPaidFilter = ""; await renderTasksView(); }
-      else if (state.view === "vendors") { state.vendorTypeFilter = ""; state.vendorLicenseFilter = ""; state.vendorCompleteFilter = ""; renderVendorsView(); }
-      else if (state.view === "clients") { state.clientCrFilter = ""; renderClientsView(); }
-      else if (state.view === "contracts") { state.contractFilesFilter = ""; renderContractsView(); }
+      else if (state.view === "vendors") { state.vendorTypeFilter = ""; state.vendorLicenseFilter = ""; state.vendorCompleteFilter = ""; state.vendorPage = 1; renderVendorsView(); }
+      else if (state.view === "clients") { state.clientCrFilter = ""; state.clientPage = 1; renderClientsView(); }
+      else if (state.view === "contracts") { state.contractFilesFilter = ""; state.contractPage = 1; renderContractsView(); }
+      return;
+    }
+    if (action === "list-page") {
+      // First / Prev / Next / Last on a paged directory. pageOf() clamps
+      // whatever lands here, so an out-of-range number is harmless.
+      const key = { vendors: "vendorPage", clients: "clientPage", contracts: "contractPage" }[button.dataset.list];
+      if (!key) return;
+      const pages = Math.max(1, Number(button.dataset.pages) || 1);
+      const current = Number(state[key]) || 1;
+      const asked = button.dataset.page;
+      const next = asked === "prev" ? current - 1
+        : asked === "next" ? current + 1
+        : asked === "last" ? pages
+        : Number(asked) || 1;
+      state[key] = Math.min(Math.max(1, next), pages);
+      if (button.dataset.list === "vendors") renderVendorsView();
+      else if (button.dataset.list === "clients") renderClientsView();
+      else renderContractsView();
+      // Back to the top of the list, or page 2 starts wherever page 1 ended.
+      window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
     if (action === "go-tasks") setView("tasks");
@@ -5808,21 +5887,25 @@ document.addEventListener("click", async (event) => {
       showToast(`Deleted ${list.length} contract${list.length === 1 ? "" : "s"}`);
     }
     if (action === "scan-templates") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const scan = await api("/api/templates/scan", { method: "POST" });
       await loadTemplates();
       renderTemplatesView();
       showToast(`Found ${scan.found.length}, missing ${scan.missing.length}`);
     }
     if (action === "select-template-upload") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const select = document.querySelector("#upload-key");
       const file = document.querySelector("#upload-file");
       if (select) select.value = button.dataset.key;
       if (file) file.focus();
     }
     if (action === "set-default-template") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       await setDefaultTemplate(button.dataset.key);
     }
     if (action === "delete-template") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       await deleteTemplate(button.dataset.key);
     }
     if (action === "load-vendors") {
@@ -5854,6 +5937,7 @@ document.addEventListener("click", async (event) => {
       await deleteSelectedVendor();
     }
     if (action === "approve-vendor" || action === "reject-vendor") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const approved = action === "approve-vendor";
       await api(`/api/vendors/pending/vendors/${button.dataset.id}/action`, {
         method: "POST",
@@ -5865,6 +5949,7 @@ document.addEventListener("click", async (event) => {
       showToast(approved ? "Vendor approved" : "Vendor rejected");
     }
     if (action === "approve-client" || action === "reject-client") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       const approved = action === "approve-client";
       await api(`/api/vendors/pending/clients/${button.dataset.id}/action`, {
         method: "POST",
@@ -5875,6 +5960,7 @@ document.addEventListener("click", async (event) => {
       showToast(approved ? "Client approved" : "Client rejected");
     }
     if (action === "create-backup") {
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       await api("/api/settings/backups/create", { method: "POST" });
       await loadAdminData();
       renderSettingsView();

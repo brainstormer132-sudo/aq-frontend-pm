@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  isSafeToAutoRetry, isTransientError, vendorIdentifier,
+  pageOf, isSafeToAutoRetry, isTransientError, vendorIdentifier,
   findVendorByIdentifier, categoryLabel,
 } = require('../public/contracts/contract-rules.js');
 
@@ -81,6 +81,39 @@ eq('label wins over name', categoryLabel({ label: 'Influencer', name: 'old' }), 
 eq('the key is the last resort', categoryLabel({ key: 'influencer' }), 'influencer');
 eq('an empty row is an empty label, not undefined', categoryLabel({}), '');
 eq('and so is no row at all', categoryLabel(null), '');
+
+/* -- Paging ----------------------------------------------------------- */
+const nums = (n) => Array.from({ length: n }, (_, i) => i + 1);
+
+const first = pageOf(nums(495), 1, 200);
+eq('a full first page', [first.rows.length, first.from, first.to], [200, 1, 200]);
+eq('and it knows how many there are', [first.page, first.pages, first.total], [1, 3, 495]);
+const last = pageOf(nums(495), 3, 200);
+eq('the last page is the remainder', [last.rows.length, last.from, last.to], [95, 401, 495]);
+eq('and the rows are the right ones', [last.rows[0], last.rows[94]], [401, 495]);
+
+eq('a page past the end clamps to the last one', pageOf(nums(495), 99, 200).page, 3);
+eq('page zero clamps to the first', pageOf(nums(495), 0, 200).page, 1);
+eq('so does a negative page', pageOf(nums(495), -4, 200).page, 1);
+eq('and nonsense', pageOf(nums(495), 'abc', 200).page, 1);
+eq('a fractional page is floored', pageOf(nums(495), 2.7, 200).page, 2);
+
+// The case that matters after a filter: five pages become one, and the
+// view must not sit on an empty page 4.
+const filtered = pageOf(nums(12), 4, 200);
+eq('a shrunken list clamps the page', [filtered.page, filtered.pages, filtered.rows.length], [1, 1, 12]);
+
+eq('an empty list is one empty page', pageOf([], 1, 200),
+  { rows: [], page: 1, pages: 1, total: 0, from: 0, to: 0 });
+eq('and so is a missing one', pageOf(null, 1, 200).total, 0);
+
+eq('size 0 means all of it', pageOf(nums(495), 1, 0).rows.length, 495);
+eq('and reports one page', pageOf(nums(495), 1, 0).pages, 1);
+eq('a negative size means all of it too', pageOf(nums(30), 1, -5).rows.length, 30);
+eq('exactly one page when the list fits', pageOf(nums(200), 1, 200).pages, 1);
+eq('201 rows is two pages', pageOf(nums(201), 1, 200).pages, 2);
+eq('the second of those holds one row',
+  [pageOf(nums(201), 2, 200).rows, pageOf(nums(201), 2, 200).from], [[201], 201]);
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
