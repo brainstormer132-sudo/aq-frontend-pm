@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  pageOf, looksCapped, isSafeToAutoRetry, isTransientError, vendorIdentifier,
+  pageOf, selectionInView, looksCapped, isSafeToAutoRetry, isTransientError, vendorIdentifier,
   findVendorByIdentifier, categoryLabel,
 } = require('../public/contracts/contract-rules.js');
 
@@ -115,9 +115,40 @@ eq('201 rows is two pages', pageOf(nums(201), 1, 200).pages, 2);
 eq('the second of those holds one row',
   [pageOf(nums(201), 2, 200).rows, pageOf(nums(201), 2, 200).from], [[201], 201]);
 
+/* -- A selection after the filter moved ------------------------------- */
+const sel = (...ids) => new Set(ids.map(String));
+
+eq('everything ticked is still on screen',
+  selectionInView(sel('a', 'b'), ['a', 'b', 'c']), { shown: ['a', 'b'], hidden: 0 });
+
+// The reported shape: tick eight, change the status filter, three remain.
+eq('a filter hides five of the eight',
+  selectionInView(sel(1, 2, 3, 4, 5, 6, 7, 8), ['3', '5', '8']),
+  { shown: ['3', '5', '8'], hidden: 5 });
+
+eq('a filter that hides all of them leaves nothing to delete',
+  selectionInView(sel('a', 'b'), ['x', 'y']), { shown: [], hidden: 2 });
+
+eq('shown follows the order of the table, not the order of ticking',
+  selectionInView(sel('c', 'a'), ['a', 'b', 'c']).shown, ['a', 'c']);
+
+eq('numbers and strings are the same id', selectionInView(sel(7), ['7']).shown, ['7']);
+eq('an empty selection is not a bulk action', selectionInView(sel(), ['a']), { shown: [], hidden: 0 });
+eq('no rows on screen', selectionInView(sel('a'), []), { shown: [], hidden: 1 });
+eq('no selection object at all', selectionInView(null, ['a']), { shown: [], hidden: 0 });
+eq('no row list at all', selectionInView(sel('a'), null), { shown: [], hidden: 1 });
+eq('a blank id is not a row', selectionInView(sel('', '  '), ['a']), { shown: [], hidden: 0 });
+eq('a duplicated row id is counted once',
+  selectionInView(sel('a'), ['a', 'a']), { shown: ['a'], hidden: 0 });
+eq('an array works as well as a Set',
+  selectionInView(['a', 'b'], ['b']), { shown: ['b'], hidden: 1 });
+
 /* -- The server's row cap --------------------------------------------- */
-eq('a list sitting exactly on the cap is truncated', looksCapped(1000, 1000), true);
-eq('and one past it certainly is', looksCapped(1200, 1000), true);
+eq('a list sitting exactly on the cap is assumed truncated', looksCapped(1000, 1000), true);
+// 1815 is the real vendor count the day the backend started paging. Reading
+// that as "capped" put a red line under a list that was complete.
+eq('a longer list is proof the server paged', looksCapped(1815, 1000), false);
+eq('and so is any count past the cap', looksCapped(1200, 1000), false);
 eq('a short list is all of it', looksCapped(999, 1000), false);
 eq('an empty one is not a cap', looksCapped(0, 1000), false);
 eq('no cap, no warning', looksCapped(1000, 0), false);

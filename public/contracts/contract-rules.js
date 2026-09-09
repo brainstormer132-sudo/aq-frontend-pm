@@ -128,24 +128,61 @@
   }
 
   /**
+   * What a multi-select still means after the list has been filtered.
+   *
+   * The tick boxes write ids into a Set that nothing prunes, so a selection
+   * made before a filter changed keeps rows that are no longer on screen.
+   * The bulk bar then reads "8 selected" over a table showing three, and
+   * Delete removes five tasks the user cannot see. Selections are cheap to
+   * remake; deleted tasks are not.
+   *
+   * So: `shown` is the selection intersected with what is actually rendered,
+   * in the order it is rendered, and `hidden` is how many were left out.
+   * Callers act on `shown` and say `hidden` out loud.
+   */
+  function selectionInView(selected, visibleIds) {
+    var chosen = {};
+    var count = 0;
+    var source = selected && typeof selected.forEach === "function" ? selected : [];
+    source.forEach(function (id) {
+      var key = text(id);
+      if (key && !chosen[key]) { chosen[key] = true; count++; }
+    });
+    var visible = Array.isArray(visibleIds) ? visibleIds : [];
+    var shown = [];
+    var taken = {};
+    for (var i = 0; i < visible.length; i++) {
+      var v = text(visible[i]);
+      if (v && chosen[v] && !taken[v]) { taken[v] = true; shown.push(v); }
+    }
+    return { shown: shown, hidden: count - shown.length };
+  }
+
+  /**
    * Did the server send everything, or just as much as it will send?
    *
-   * Measured on 2026-09-09: `GET /api/vendors/` returns exactly 1000 rows
-   * on a directory with more than that, with no error and nothing in the
-   * body to say so. A list sitting exactly on the cap is therefore assumed
-   * truncated - a false alarm on a directory that happens to hold exactly
-   * 1000 is a sentence nobody minds reading, and the alternative is a
-   * picker that quietly cannot find a vendor who exists.
+   * Measured on 2026-09-09: `GET /api/vendors/` returned exactly 1000 rows
+   * on a directory holding 1815, with no error and nothing in the body to
+   * say so. The backend pages now (aq-backend, sb_select_all on the list
+   * endpoints) and the same call answers 1815, so this is no longer a
+   * warning anyone should see - it is the tripwire for that regressing.
+   *
+   * Exactly the cap, and only exactly. A count above it is proof the server
+   * paged, and reading this as `>=` is what put a red "only the first 1000"
+   * line under a complete list of 1815 vendors. A directory that genuinely
+   * holds exactly 1000 gets one false alarm; the expensive side of the
+   * trade is a picker that silently cannot find a vendor who exists.
    */
   function looksCapped(count, cap) {
     var n = Number(count);
     var limit = Number(cap);
     if (!isFinite(n) || !isFinite(limit) || limit <= 0) return false;
-    return n >= limit;
+    return n === limit;
   }
 
   var api = {
     pageOf: pageOf,
+    selectionInView: selectionInView,
     looksCapped: looksCapped,
     isSafeToAutoRetry: isSafeToAutoRetry,
     isTransientError: isTransientError,

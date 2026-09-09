@@ -576,12 +576,15 @@ const PAGE_SIZE = 200;
  *
  * 2026-09-09, signed in against the live API: `GET /api/vendors/` answered
  * with exactly 1000 rows, 200 OK, nothing in the body or the headers to say
- * it had held any back. Every list loader here is a bare GET, so any of them
- * can be silently short - and a vendor the server did not send is a vendor
- * the picker cannot find, with "No vendors match" as the only clue.
+ * it had held any back - on a directory holding 1815. A vendor the server
+ * did not send is a vendor the picker cannot find, with "No vendors match"
+ * as the only clue.
  *
- * Until the loaders page (which needs the API to accept an offset), the app
- * at least says so out loud wherever a capped list is on screen.
+ * Fixed the same day in aq-backend: those list endpoints read through
+ * sb_select_all() instead of stopping at PostgREST's page, and the same
+ * call now answers 1815 vendors and 1082 clients. This constant and the
+ * warnings below stay as the tripwire - if a list ever comes back at
+ * exactly 1000 again, the screen says so instead of quietly losing rows.
  */
 const SERVER_ROW_CAP = 1000;
 
@@ -1170,6 +1173,10 @@ async function renderTasksView() {
     if (tid) genByTask[tid] = (genByTask[tid] || 0) + 1;
   }
   const taskSel = state.taskSel || (state.taskSel = new Set());
+  // Ticks survive a filter change, so what is selected and what is on screen
+  // are two different lists. Everything below counts and acts on the overlap.
+  const taskPick = window.AQContractRules.selectionInView(
+    taskSel, visibleTasks.map((t) => String(t.id)));
   const taskCols = "38px 120px minmax(150px,1fr) 104px 92px 132px 116px 56px";
   const allTasksChecked = visibleTasks.length > 0 && visibleTasks.every((t) => taskSel.has(String(t.id)));
   const taskRows = visibleTasks.map((t) => {
@@ -1216,10 +1223,11 @@ async function renderTasksView() {
           <button class="cs-btn-danger" type="button" data-action="delete-task" ${task ? "" : "disabled"}>Delete</button>
         </div>
       </div>
-      ${taskSel.size ? `
+      ${taskPick.shown.length || taskPick.hidden ? `
       <div class="cs-bulkbar" style="margin:0 22px 14px;">
-        <span class="cs-bulk-count">${taskSel.size} selected</span>
-        <button class="cs-bulk-btn is-danger" type="button" data-action="delete-tasks-bulk">Delete</button>
+        <span class="cs-bulk-count">${taskPick.shown.length} selected</span>
+        ${taskPick.hidden ? `<span style="color:var(--cs-danger,#c0392b);font-size:12.5px;">${taskPick.hidden} more ${taskPick.hidden === 1 ? "row is" : "rows are"} selected but hidden by the current filter, and will not be deleted</span>` : ""}
+        <button class="cs-bulk-btn is-danger" type="button" data-action="delete-tasks-bulk" ${taskPick.shown.length ? "" : "disabled"}>Delete</button>
         <span class="cs-bulk-spacer"></span>
         <button class="cs-bulk-btn" type="button" data-action="clear-task-sel">Clear</button>
       </div>` : ""}
@@ -3869,6 +3877,7 @@ async function saveTask(event) {
       body: JSON.stringify(body),
     });
     state.selectedTaskId = created.id;
+    state.selectedSubtaskIds = new Set();
     localStorage.setItem("aq_selected_task", created.id);
     state.tasks = [created, ...state.tasks];
     showToast("Task created");
@@ -5720,6 +5729,9 @@ document.addEventListener("click", async (event) => {
       if (!task) throw new Error("Select a task first");
       const created = await api(`/api/tasks/${task.id}/duplicate`, { method: "POST" });
       state.selectedTaskId = created.id;
+      // The copy has its own subtask ids. Ticks left over from the original
+      // would send Generate the original's subtasks under the copy's task id.
+      state.selectedSubtaskIds = new Set();
       localStorage.setItem("aq_selected_task", created.id);
       await loadTasks();
       await renderTasksView();
@@ -5741,7 +5753,12 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "delete-tasks-bulk") {
-      const ids = Array.from(state.taskSel || []);
+      // Only the rows on screen. A selection made before the filter changed
+      // can hold tasks the user can no longer see, and Delete is not where
+      // anyone should discover that; the bulk bar counts the hidden ones.
+      const visibleIds = [...document.querySelectorAll(".task-pick")]
+        .map((cb) => String(cb.dataset.id || ""));
+      const ids = window.AQContractRules.selectionInView(state.taskSel, visibleIds).shown;
       if (!ids.length) { showToast("No tasks selected", "error"); return; }
       if (!confirm(`Delete ${ids.length} task${ids.length === 1 ? "" : "s"} and all their subtasks? This cannot be undone.`)) return;
       let ok = 0;
