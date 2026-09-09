@@ -1287,6 +1287,7 @@ async function renderTasksView() {
             <div class="cs-field-group"><label class="cs-label">Details</label><textarea id="sub-details" class="cs-textarea" rows="3">${escapeHtml(state.subtaskEditorTarget?.details || "")}</textarea></div>
           </div>
           <div class="cs-modal-foot">
+            <button class="cs-btn-ghost" type="button" data-action="preview-subtask-contract">Preview contract</button>
             <span class="cs-foot-spacer"></span>
             <button class="cs-btn-ghost" type="button" data-action="close-add-subtask">Cancel</button>
             <button class="cs-btn" type="submit" ${task ? "" : "disabled"}>${state.subtaskEditorTarget ? "Save changes" : "Add subtask"}</button>
@@ -3763,6 +3764,254 @@ async function saveTask(event) {
   renderTasksView();
 }
 
+/* --- Preview contract (subtask editor) ---------------------------
+ *
+ * Reads the form as it stands right now - not the saved subtask, which
+ * on a new row does not exist yet - and draws a document-shaped summary
+ * of what the contract will be filled with.
+ *
+ * Two decisions worth keeping:
+ *
+ *   * It renders by appending a node to <body>, NOT through state +
+ *     renderTasksView(). A re-render rebuilds the subtask form from
+ *     state and would throw away everything the user has typed, which
+ *     is exactly what they pressed Preview to check.
+ *   * The wording is the template's own, read out of the DOCX by
+ *     scripts/build-contract-template.mjs - never written here. What
+ *     the backend generates is still rendered from template storage,
+ *     so the header names the template and says the file may have
+ *     moved on; nothing on this page is invented.
+ */
+const CONTRACT_PREVIEW_ID = "contract-preview-overlay";
+let contractPreviewMode = "document";   // "document" | "fields"
+
+function subtaskContractPreviewInput() {
+  const task = selectedTask();
+  const vendor = findVendorByLicense(getFormValue("#sub-license"));
+  // Handles live in hidden inputs that only the platform pickers write.
+  syncPlatformPayload();
+  const bank = vendor ? findBank(vendor, getFormValue("#sub-iban")) : null;
+  const key = String(task?.contract_type || "").trim();
+  const template = (state.templates || []).find((item) => item.key === key);
+  const fallbackName = (TEMPLATE_OPTIONS.find(([optionKey]) => optionKey === key) || [])[1] || "";
+  const platforms = String(getFormValue("#sub-platforms") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(platformLabel)
+    .join(", ");
+
+  return {
+    task: {
+      id: task?.id || "",
+      brand: task?.brand || "",
+      duration: task?.duration || "",
+      end_date: task?.end_date || "",
+      contract_type: key,
+    },
+    template: { key, name: template?.display_name || fallbackName },
+    vendor: vendor ? {
+      name: vendor.name || "",
+      license_number: vendor.license_number || "",
+      id_number: vendor.id_number || "",
+      contact_name: vendor.contact_name || "",
+    } : null,
+    bank: bank ? {
+      bank_name: bank.bank_name || "",
+      account_name: bank.account_name || "",
+      iban: bank.iban || "",
+      account_number: bank.account_number || "",
+      swift_code: bank.swift_code || "",
+    } : null,
+    line: {
+      platforms,
+      handles: getFormValue("#sub-channel"),
+      ad_type: getFormValue("#sub-ad-type"),
+      ad_type_custom: getFormValue("#sub-ad-type-custom"),
+      qty: getFormValue("#sub-qty"),
+      price: getFormValue("#sub-price"),
+      details: getFormValue("#sub-details"),
+    },
+  };
+}
+
+function contractPreviewRowHtml(row) {
+  const valueHtml = row.missing
+    ? (row.required
+      ? `<span style="color:var(--cs-danger,#c0392b);font-weight:600;">Not set</span>`
+      : `<span style="color:var(--cs-muted);">&mdash;</span>`)
+    : `<span class="${row.bidi ? "cs-bidi" : ""}" style="${row.mono ? "font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px;" : ""}">${escapeHtml(row.value)}</span>`;
+  const hint = row.hint
+    ? `<div style="font-size:11.5px;color:var(--cs-muted);margin-top:2px;">${escapeHtml(row.hint)}</div>`
+    : "";
+  return `
+    <div style="display:grid;grid-template-columns:170px 1fr;gap:10px;padding:5px 0;border-bottom:1px solid var(--cs-card-bd);">
+      <div style="font-size:12px;color:var(--cs-muted);text-transform:uppercase;letter-spacing:.04em;padding-top:2px;">${escapeHtml(row.label)}</div>
+      <div style="font-size:13.5px;">${valueHtml}${hint}</div>
+    </div>`;
+}
+
+/* The paper. Fixed white and fixed black, in both themes - a contract is
+ * a printed page, and a dark-mode contract would not be a preview of
+ * anything. Everything outside the sheet is still themed. */
+const PAPER = "background:#ffffff;color:#141414;font-family:'IBM Plex Sans Arabic','IBM Plex Sans',sans-serif;";
+
+function contractSegmentHtml(seg) {
+  if (seg.t === "text") return escapeHtml(seg.v);
+  if (seg.missing) {
+    return `<span style="color:#c0392b;font-weight:700;white-space:nowrap;border-bottom:1px dashed #c0392b;">${escapeHtml(seg.v)}</span>`;
+  }
+  if (seg.pending) {
+    return `<span style="color:#8b8b8b;white-space:nowrap;border-bottom:1px dashed #c9c9c9;">${escapeHtml(seg.v)}</span>`;
+  }
+  // Filled from the form: highlighted, so it is obvious at a glance which
+  // words on the page came from this booking and which are the template's.
+  return `<span style="font-weight:700;background:#fbf0b8;padding:0 3px;border-radius:3px;">${escapeHtml(seg.v)}</span>`;
+}
+
+function contractBlockHtml(block) {
+  const segs = (block.segs || []).map(contractSegmentHtml).join("");
+  if (block.t === "id") {
+    return `<div style="direction:ltr;text-align:left;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:#555;margin-bottom:6px;">${segs}</div>`;
+  }
+  if (block.t === "title") {
+    return `<h3 style="text-align:center;font-size:20px;margin:10px 0 18px;">${segs}</h3>`;
+  }
+  if (block.t === "h") {
+    return `<p style="font-weight:700;margin:16px 0 6px;font-size:15px;">${segs}</p>`;
+  }
+  if (block.t === "li") {
+    return `<p style="margin:0 18px 6px 0;line-height:1.95;">${segs}</p>`;
+  }
+  if (block.t === "kv") {
+    return `<p style="margin:0 26px 3px 0;line-height:1.9;font-weight:600;">${segs}</p>`;
+  }
+  if (block.t === "center") {
+    return `<p style="text-align:center;margin:14px 0;line-height:1.9;">${segs}</p>`;
+  }
+  if (block.t === "table") {
+    const rows = (block.rows || []).map((cells, index) => `
+      <tr>${cells.map((cell) => `
+        <td style="border:1px solid #b9b9b9;padding:7px 9px;text-align:center;font-size:13.5px;word-break:break-word;${index === 0 ? "background:#f1f1f1;font-weight:700;" : ""}">${cell.map(contractSegmentHtml).join("")}</td>`).join("")}
+      </tr>`).join("");
+    // table-layout:fixed, because a handle like "TikTok: @someone_long"
+    // otherwise pushes the table wider than the page it is printed on -
+    // and min-width:0 because styles.css sets `table { min-width: 720px }`
+    // globally for the app's own data tables, which hangs this one out
+    // over the edge of the paper.
+    return `<table style="width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;margin:12px 0 6px;">${rows}</table>`;
+  }
+  if (block.t === "sig") {
+    const line = `<div style="border-bottom:1px solid #141414;height:34px;"></div>`;
+    return `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:26px;">
+        <div><div style="font-weight:700;margin-bottom:4px;">${(block.right || []).map(contractSegmentHtml).join("")}</div>${line}</div>
+        <div><div style="font-weight:700;margin-bottom:4px;">${(block.left || []).map(contractSegmentHtml).join("")}</div>${line}</div>
+      </div>`;
+  }
+  return `<p style="margin:0 0 8px;line-height:1.95;text-align:justify;">${segs}</p>`;
+}
+
+function contractDocumentHtml(doc, taskTemplate) {
+  const mismatch = taskTemplate && doc.key && taskTemplate.key && taskTemplate.key !== doc.key
+    ? `<div style="font-size:12px;color:var(--cs-danger,#c0392b);margin-top:4px;">This task is set to <strong>${escapeHtml(taskTemplate.name || taskTemplate.key)}</strong>. The wording below is the ${escapeHtml(doc.label)} template - the clauses on the real file may differ.</div>`
+    : "";
+  return `
+    <div style="font-size:12px;color:var(--cs-muted);margin-bottom:10px;line-height:1.6;">
+      Wording from the ${escapeHtml(doc.label)} vendor template. The file you generate is
+      rendered by the backend from template storage, so if the DOCX has been
+      replaced since, this page will be behind it.
+      ${mismatch}
+    </div>
+    <article dir="rtl" style="${PAPER}border:1px solid var(--cs-card-bd);border-radius:10px;padding:26px 30px 34px;font-size:14px;">
+      <div style="text-align:center;margin-bottom:4px;"><img src="/contracts/assets/logo.png" alt="AQ Creativity" style="height:56px;object-fit:contain;" /></div>
+      ${doc.blocks.map(contractBlockHtml).join("")}
+    </article>`;
+}
+
+function contractFieldsHtml(model) {
+  return model.sections.map((section) => `
+    <section style="margin-bottom:18px;">
+      <h4 style="margin:0 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--cs-ink2);">${escapeHtml(section.title)}</h4>
+      ${section.rows.map(contractPreviewRowHtml).join("")}
+    </section>`).join("");
+}
+
+function contractPreviewHtml(model, doc, template) {
+  const banner = model.missing.length
+    ? `<div style="background:var(--cs-soft);border:1px solid var(--cs-danger,#c0392b);border-radius:9px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:var(--cs-danger,#c0392b);font-weight:600;">${escapeHtml(model.missingSentence)}</div>`
+    : `<div style="background:var(--cs-soft);border:1px solid var(--cs-card-bd);border-radius:9px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;">${escapeHtml(model.missingSentence)}</div>`;
+
+  const isDoc = contractPreviewMode !== "fields";
+  const body = isDoc && doc ? contractDocumentHtml(doc, template) : contractFieldsHtml(model);
+  const tab = (mode, label) => `<button class="${contractPreviewMode === mode ? "cs-btn" : "cs-btn-ghost"}" type="button" data-action="contract-preview-mode" data-mode="${mode}">${label}</button>`;
+
+  return `
+    <div class="cs-scrim" id="${CONTRACT_PREVIEW_ID}">
+      <div class="cs-modal is-wide" role="dialog" aria-modal="true" aria-labelledby="contract-preview-title">
+        <div class="cs-modal-head">
+          <div class="cs-modal-title" id="contract-preview-title">Contract preview</div>
+          <button type="button" class="cs-modal-close" data-action="close-contract-preview" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="cs-modal-body">
+          ${banner}
+          ${body}
+        </div>
+        <div class="cs-modal-foot">
+          ${doc ? tab("document", "Document") : ""}
+          ${doc ? tab("fields", "Fields") : ""}
+          <span class="cs-foot-spacer"></span>
+          <button class="cs-btn" type="button" data-action="close-contract-preview">Back to the form</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function contractPreviewEscape(event) {
+  if (event.key === "Escape") closeContractPreview();
+}
+
+/** Today, as the local calendar has it - the backend stamps its own date
+ *  at generation, this is only what the sentence would read if you
+ *  generated now. */
+function todayIso() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function openSubtaskContractPreview() {
+  if (!window.AQContractPreview) {
+    showToast("Preview script did not load - hard-refresh the page.", "error");
+    return;
+  }
+  closeContractPreview();
+  const input = subtaskContractPreviewInput();
+  const model = window.AQContractPreview.contractPreviewModel(input);
+  // The document view needs the template text; without it the preview
+  // still opens on the field list rather than failing.
+  const template = window.AQContractTemplateAr?.template || null;
+  const doc = template
+    ? window.AQContractPreview.contractDocument(
+      template,
+      window.AQContractPreview.contractFieldValues(input, { today: todayIso(), strings: template.strings }),
+    )
+    : null;
+  const holder = document.createElement("div");
+  holder.innerHTML = contractPreviewHtml(model, doc, input.template);
+  const node = holder.firstElementChild;
+  node.addEventListener("click", (event) => {
+    if (event.target === node) closeContractPreview();
+  });
+  document.body.appendChild(node);
+  document.addEventListener("keydown", contractPreviewEscape);
+}
+
+function closeContractPreview() {
+  document.getElementById(CONTRACT_PREVIEW_ID)?.remove();
+  document.removeEventListener("keydown", contractPreviewEscape);
+}
+
 async function addSubtask(event) {
   event.preventDefault();
   const task = selectedTask();
@@ -5239,6 +5488,23 @@ document.addEventListener("click", async (event) => {
       state.subtaskEditorTarget = null;
       state.subtaskEditorOpen = true;
       await renderTasksView();
+      return;
+    }
+    if (action === "preview-subtask-contract") {
+      openSubtaskContractPreview();
+      return;
+    }
+    if (action === "contract-preview-mode") {
+      const mode = event.target.closest("[data-action='contract-preview-mode']")?.dataset.mode;
+      if (mode) contractPreviewMode = mode;
+      // Redraw from the form rather than from the node we are replacing:
+      // the subtask editor underneath is untouched, so this is the same
+      // read that opened the preview in the first place.
+      openSubtaskContractPreview();
+      return;
+    }
+    if (action === "close-contract-preview") {
+      closeContractPreview();
       return;
     }
     if (action === "close-add-subtask") {
