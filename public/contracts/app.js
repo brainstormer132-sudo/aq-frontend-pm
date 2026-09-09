@@ -353,6 +353,18 @@ async function api(path, options = {}) {
     try {
       response = await fetch(`${API_BASE}${path}`, buildInit());
     } catch (networkError) {
+      // A dropped connection says nothing about whether the server acted.
+      // Only reads are re-sent automatically; a write goes back to the
+      // person, who can look at the screen. Until 2026-09-09 both retries
+      // below re-sent the original request whatever its method, so one
+      // Generate could write the same contracts two or three times over.
+      if (!window.AQContractRules.isSafeToAutoRetry(options)) {
+        throw new Error(
+          "The connection dropped before the server answered. It may or may not "
+          + "have finished - check the screen before sending it again. "
+          + `(${networkError.message})`,
+        );
+      }
       // Browser-level fetch failure: server down, CORS, stale cached API base, etc.
       // Re-probe the candidate list synchronously and retry once if a different
       // URL turns out to be reachable. This self-heals when localStorage holds
@@ -527,10 +539,16 @@ function selectedClient() {
   return state.clients.find((c) => String(c.id) === String(state.selectedClientId)) || null;
 }
 
+/** Licence OR ID number: the categories with requires_license false -
+ *  models, rentals, events, logistics, locations - have only an ID, and
+ *  matching the licence alone made them impossible to book. */
 function findVendorByLicense(license) {
-  const value = String(license || "").trim().toLowerCase();
-  if (!value) return null;
-  return state.vendors.find((vendor) => String(vendor.license_number || "").trim().toLowerCase() === value) || null;
+  return window.AQContractRules.findVendorByIdentifier(state.vendors, license);
+}
+
+/** What the app calls a vendor category on screen. */
+function categoryLabel(category) {
+  return window.AQContractRules.categoryLabel(category);
 }
 
 function findBank(vendor, bankIdOrIban) {
@@ -604,8 +622,11 @@ function templateOptions(selected = defaultTemplateKey()) {
   const options = state.templates.length
     ? state.templates.map((template) => [template.key, template.display_name])
     : TEMPLATE_OPTIONS;
+  // Escaped: display_name and key are typed into the Create Slot form and
+  // come back from the API, so a template called `</option><img onerror=...>`
+  // used to run in every user's browser the moment they opened Tasks.
   return options.map(([value, label]) => `
-    <option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>
+    <option value="${encodeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>
   `).join("");
 }
 
@@ -2033,7 +2054,7 @@ function renderBulkVendorModal() {
   const startAt = bulkVendorNextNumber(state.vendors, prefix);
   const preview = bulkVendorNames(Math.min(count, 3), prefix, startAt);
   const categoryOptions = (state.vendorCategories || [])
-    .map((c) => `<option value="${encodeAttr(c.id)}" ${String(c.id) === String(state.bulkVendorCategory || "") ? "selected" : ""}>${escapeHtml(c.name)}</option>`)
+    .map((c) => `<option value="${encodeAttr(c.id)}" ${String(c.id) === String(state.bulkVendorCategory || "") ? "selected" : ""}>${escapeHtml(categoryLabel(c))}</option>`)
     .join("");
 
   const progress = state.bulkVendorBusy || state.bulkVendorDone
@@ -3368,7 +3389,7 @@ function renderSubLicenseSuggestions(query) {
   // keys can move through the list.
   box.innerHTML = matches.map((v, i) => `
     <button type="button" class="autocomplete-row ${i === subLicenseHoverIndex ? "is-active" : ""}"
-            data-license="${encodeAttr(v.license_number || "")}"
+            data-license="${encodeAttr(window.AQContractRules.vendorIdentifier(v))}"
             data-vendor-id="${encodeAttr(v.id)}">
       <span class="autocomplete-primary">${escapeHtml(v.name || "(no name)")}</span>
       <span class="autocomplete-secondary">${escapeHtml(v.license_number || v.id_number || "—")}</span>
@@ -3559,9 +3580,11 @@ async function downloadFile(path, fallbackName) {
   // append `?token=…` to the URL. The backend's `get_user_for_download`
   // dependency accepts either header or query param. JWT expiry (~8h)
   // limits the risk of token leakage via browser history / server logs.
-  const token = (typeof aqToken === "function" && aqToken())
-              || localStorage.getItem("aq_token")
-              || "";
+  // readStoredToken(), not localStorage: signing in without "Remember me"
+  // puts the token in sessionStorage, and this line used to send those
+  // users to "Not signed in." on every download. (`aqToken` was never
+  // defined anywhere, so the first clause was always false.)
+  const token = readStoredToken();
   if (!token) {
     showToast("Not signed in.", "error");
     return;
@@ -4115,10 +4138,22 @@ async function generateForSubtasks(taskId, subtaskIds, successMessage) {
   // because past attempts at extending the server timeout blew browser
   // limits. Worst case total wait added by retries: 3s + 6s = 9s.
   // (Bumped from 2 to 3 attempts on 2026-05-21.)
+  //
+  // 2026-09-09: a retry now ASKS THE ARCHIVE FIRST. A 504 means the gateway
+  // gave up while LibreOffice was still writing - the contracts exist. The
+  // old loop re-sent regardless, so a slow twenty-vendor campaign could end
+  // up with forty or sixty signed documents, each downloadable and each
+  // needing deleting by hand.
+  const contractsOnTask = () =>
+    (state.contracts || []).filter((c) => String(c.task_id) === String(taskId)).length;
+  await loadContracts().catch(() => {});
+  const contractsBefore = contractsOnTask();
+
   const MAX_ATTEMPTS = 3;
   const RETRY_DELAYS_MS = [3000, 6000];  // delay before attempt 2 and 3
   let generated;
   let lastError;
+  let landedWithoutAnswer = false;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       generated = await api("/api/contracts/generate", {
@@ -4128,9 +4163,12 @@ async function generateForSubtasks(taskId, subtaskIds, successMessage) {
       break;
     } catch (err) {
       lastError = err;
-      const msg = String(err?.message || err);
-      const isTransient = /failed to fetch|networkerror|timeout|502|503|504/i.test(msg);
-      if (attempt === MAX_ATTEMPTS || !isTransient) throw err;
+      if (!window.AQContractRules.isTransientError(err?.message || err)) throw err;
+      // Did it land anyway? Cheap read, and the only thing that makes a
+      // retry safe.
+      await loadContracts().catch(() => {});
+      if (contractsOnTask() > contractsBefore) { landedWithoutAnswer = true; break; }
+      if (attempt === MAX_ATTEMPTS) throw err;
       const delay = RETRY_DELAYS_MS[attempt - 1] ?? 6000;
       showToast(
         `Backend is warming up — retrying in ${Math.round(delay / 1000)}s (attempt ${attempt + 1} of ${MAX_ATTEMPTS})…`,
@@ -4138,6 +4176,20 @@ async function generateForSubtasks(taskId, subtaskIds, successMessage) {
       );
       await new Promise((r) => setTimeout(r, delay));
     }
+  }
+
+  if (landedWithoutAnswer) {
+    // The server finished; only the answer was lost. Say so plainly rather
+    // than reporting a failure the user can see is not one.
+    const made = contractsOnTask() - contractsBefore;
+    state.selectedSubtaskIds = new Set();
+    setView("contracts");
+    renderContractsView();
+    showToast(
+      `The connection dropped, but the server had already finished - ${made} contract${made === 1 ? "" : "s"} on this task.`,
+      "warn",
+    );
+    return;
   }
   if (!generated) throw lastError || new Error("Generation failed");
 
@@ -5700,6 +5752,10 @@ document.addEventListener("click", async (event) => {
       await regenerateContract(button.dataset.id);
     }
     if (action === "replace-contract") {
+      // The button is only rendered for admins, but rendering is not a
+      // gate - the handler has to say so too. The server must enforce it
+      // as well; this only stops the accident.
+      if (!isAdmin()) { showToast("Admin only", "error"); return; }
       // Admin-only "I edited this contract, upload my version" flow.
       // One picker that accepts both .pdf and .docx; the server endpoint
       // is selected by the extension of whatever file the user picks.
