@@ -77,6 +77,7 @@ const LIBS = [
   'lib/all-tasks.ts',
   'lib/asana-import.ts',
   'lib/task-calendar.ts',
+  'lib/registry.ts',
 ];
 
 const GREEN = '\x1b[32m';

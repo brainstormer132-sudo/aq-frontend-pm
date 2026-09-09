@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   approvePendingVendor,
   rejectPendingVendor,
@@ -16,19 +16,20 @@ import { vendorOps, type ExternalInvite } from '@/lib/contract-api';
 import {
   buildVendors, sortRows, filterRows, nextSort, summarise, summaryLine,
   emptyMessage, isFiltered, deleteWarning, deletedMessage,
-  VENDOR_COLUMNS, DEFAULT_SORT, EMPTY_FILTER,
+  VENDOR_COLUMNS, DEFAULT_SORT, EMPTY_FILTER, pageSlice, DEFAULT_PAGE_SIZE,
   type Filter, type RegistryRow, type Sort,
 } from '@/lib/registry';
 import {
   RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
-  Detail, DETAIL_GRID,
+  Detail, DETAIL_GRID, RegistryPager,
 } from './RegistryTable';
+import { AqLoaderBlock } from '@/components/AqLoader';
 import { InviteLinkModal } from '@/components/workflow/InviteLinkModal';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
 import { VendorEditorModal } from '@/components/workflow/VendorEditorModal';
 
 export function VendorsView({ role, userName }: { role: WorkspaceRole | null; userName: string }) {
-  const { vendors, banks, refetch: refetchVendors } = useLegacyVendors();
+  const { vendors, banks, loading, refetch: refetchVendors } = useLegacyVendors();
   const { items: pending, refetch: refetchPending } = usePendingVendors();
   const { categories } = useVendorCategoriesLegacy();
   const [tab, setTab] = useState<'vendors' | 'pending'>('vendors');
@@ -84,6 +85,14 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
   );
   const summary = summarise(rows, shown);
   const deleting = confirmDeleteId ? rows.find((r) => r.id === confirmDeleteId) ?? null : null;
+
+  // Paint one page at a time. The search above still runs over every vendor;
+  // this only limits what the table draws, so a click no longer re-renders
+  // 1800 rows. Ten by default, then 50 and 100.
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [query, filter, sort, pageSize, tab]);
+  const paged = useMemo(() => pageSlice(shown, page, pageSize), [shown, page, pageSize]);
 
   const presentCategories = useMemo(() => {
     const seen = new Set(rows.map((r) => r.who).filter(Boolean) as string[]);
@@ -169,7 +178,11 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
         }}>{message}</div>
       )}
 
-      {tab === 'vendors' && (
+      {tab === 'vendors' && loading && rows.length === 0 && (
+        <AqLoaderBlock label="Loading vendors\u2026" />
+      )}
+
+      {tab === 'vendors' && !(loading && rows.length === 0) && (
         <>
           <RegistryToolbar
             query={query}
@@ -227,7 +240,7 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
             }}>{emptyMessage({ ...filter, query }, rows.length, 'vendor')}</div>
           ) : (
             <RegistryTable
-              rows={shown}
+              rows={paged.rows}
               columns={VENDOR_COLUMNS}
               showValue={false}
               sort={sort}
@@ -251,6 +264,13 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
                   onDelete={() => setConfirmDeleteId(r.id)}
                 />
               )}
+            />
+          )}
+          {tab === 'vendors' && shown.length > 0 && (
+            <RegistryPager
+              page={paged.page} pages={paged.pages} size={pageSize}
+              total={paged.total} from={paged.from} to={paged.to} noun="vendor"
+              onPage={setPage} onSize={setPageSize}
             />
           )}
         </>

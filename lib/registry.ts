@@ -458,3 +458,38 @@ export function sortHint(col: Column, sort: Sort): string {
   if (sort.key !== col.key) return `Sort by ${col.label.toLowerCase()}`;
   return sort.dir === 'asc' ? 'Sorted ascending' : 'Sorted descending';
 }
+
+/* -- Paging ------------------------------------------------------- */
+
+/** The page-size choices the register offers. Default is the first. */
+export const PAGE_SIZES = [10, 50, 100] as const;
+export const DEFAULT_PAGE_SIZE = 10;
+
+/**
+ * One page of already-filtered, already-sorted rows.
+ *
+ * The register drew every matching row at once - 1815 vendors in one
+ * <table>, so a single click (which only toggles one row open) re-rendered
+ * all of them and felt stuck. Ten rows at a time makes a click cheap; the
+ * search still runs over the whole list, this only limits what is painted.
+ *
+ * The page is clamped, not trusted: a filter that shrinks 40 pages to 1
+ * cannot strand the view on an empty page 12. size <= 0 means "all of it".
+ */
+export function pageSlice<T>(
+  rows: T[], page: number, size: number,
+): { rows: T[]; page: number; pages: number; total: number; from: number; to: number } {
+  const list = Array.isArray(rows) ? rows : [];
+  let per = Number(size);
+  if (!isFinite(per) || per <= 0) per = list.length || 1;
+  const pages = Math.max(1, Math.ceil(list.length / per));
+  let wanted = Math.floor(Number(page));
+  if (!isFinite(wanted) || wanted < 1) wanted = 1;
+  if (wanted > pages) wanted = pages;
+  const start = (wanted - 1) * per;
+  const slice = list.slice(start, start + per);
+  return {
+    rows: slice, page: wanted, pages, total: list.length,
+    from: list.length ? start + 1 : 0, to: start + slice.length,
+  };
+}

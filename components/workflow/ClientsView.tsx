@@ -9,13 +9,14 @@ import {
 import {
   buildClients, sortRows, filterRows, nextSort, summarise, summaryLine,
   emptyMessage, isFiltered, deleteWarning, deletedMessage, resetWarning,
-  CLIENT_COLUMNS, DEFAULT_SORT, EMPTY_FILTER,
+  CLIENT_COLUMNS, DEFAULT_SORT, EMPTY_FILTER, pageSlice, DEFAULT_PAGE_SIZE,
   type CampaignInput, type Filter, type RegistryRow, type RollupInput, type Sort,
 } from '@/lib/registry';
 import {
   RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
-  Detail, DETAIL_GRID,
+  Detail, DETAIL_GRID, RegistryPager,
 } from './RegistryTable';
+import { AqLoaderBlock } from '@/components/AqLoader';
 import {
   brands as brandsApi, clientOps, manualCreate, zoho as zohoApi,
   type BrandRow, type ZohoImportJobStatus,
@@ -196,6 +197,12 @@ export function ClientsView({
     [rows, filter, query, sort],
   );
   const summary = summarise(rows, shown);
+
+  // One page at a time so a click does not re-render the whole client book.
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [query, filter, sort, pageSize]);
+  const paged = useMemo(() => pageSlice(shown, page, pageSize), [shown, page, pageSize]);
   const deleting = confirmDeleteId ? rows.find((r) => r.id === confirmDeleteId) ?? null : null;
 
   const removeClient = async (row: RegistryRow) => {
@@ -367,14 +374,14 @@ export function ClientsView({
       )}
 
       {loading && allClients.length === 0 ? (
-        <div className="aq-card" style={{ padding: 34 }} />
+        <AqLoaderBlock label="Loading clients\u2026" />
       ) : shown.length === 0 ? (
         <div className="aq-card" style={{
           padding: 34, textAlign: 'center', color: 'var(--aq-text-muted)', fontSize: 13.5,
         }}>{emptyMessage({ ...filter, query }, rows.length, 'client')}</div>
       ) : (
         <RegistryTable
-          rows={shown}
+          rows={paged.rows}
           columns={CLIENT_COLUMNS}
           sort={sort}
           onSort={(k) => setSort((cur) => nextSort(cur, k))}
@@ -388,6 +395,14 @@ export function ClientsView({
               onDelete={() => setConfirmDeleteId(r.id)}
             />
           )}
+        />
+      )}
+
+      {!(loading && allClients.length === 0) && shown.length > 0 && (
+        <RegistryPager
+          page={paged.page} pages={paged.pages} size={pageSize}
+          total={paged.total} from={paged.from} to={paged.to} noun="client"
+          onPage={setPage} onSize={setPageSize}
         />
       )}
 

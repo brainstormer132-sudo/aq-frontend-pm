@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import {
-  money$, gapLine, sortHint,
+  money$, gapLine, sortHint, PAGE_SIZES,
   type Column, type PortalState, type RegistryRow, type Sort,
 } from '@/lib/registry';
 
@@ -390,6 +390,66 @@ export const DETAIL_GRID: React.CSSProperties = {
   display: 'grid', gap: 12,
   gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
 };
+
+
+/* -- Pager -------------------------------------------------------- */
+
+/**
+ * How many rows to paint, and where in the list you are. The search runs
+ * over everything; this only limits the paint, which is what made a click
+ * cheap again. Ten by default (Siraj), then 50 and 100.
+ */
+export function RegistryPager({
+  page, pages, size, total, from, to, noun, onPage, onSize,
+}: {
+  page: number; pages: number; size: number; total: number; from: number; to: number;
+  noun: string;
+  onPage: (p: number) => void;
+  onSize: (s: number) => void;
+}) {
+  const step = (to_: number, label: string, disabled: boolean) => (
+    <button
+      type="button"
+      className="aq-btn aq-btn-secondary"
+      disabled={disabled}
+      onClick={() => onPage(to_)}
+      style={{ fontSize: 12, padding: '4px 10px', opacity: disabled ? 0.4 : 1 }}
+    >{label}</button>
+  );
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      padding: '2px 2px', fontSize: 12.5, color: 'var(--aq-text-muted)',
+    }}>
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+        {total === 0 ? `No ${noun}s` : `Showing ${from}\u2013${to} of ${total} ${noun}${total === 1 ? '' : 's'}`}
+      </span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>Per page</span>
+          <select
+            className="aq-select"
+            value={size}
+            onChange={(e) => onSize(Number(e.target.value))}
+            style={{ width: 'auto', fontSize: 12.5, padding: '4px 8px' }}
+            aria-label="Rows per page"
+          >
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        {pages > 1 && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {step(page - 1, 'Prev', page <= 1)}
+            <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              Page {page} of {pages}
+            </span>
+            {step(page + 1, 'Next', page >= pages)}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
 
 const SR_ONLY: React.CSSProperties = {
   position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
