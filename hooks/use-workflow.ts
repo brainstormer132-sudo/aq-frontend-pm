@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
+import { mapWithConcurrency, REQUEST_CONCURRENCY } from '@/lib/concurrency';
 import {
   onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
   onClientPaymentChanged, onDealWon, onDealLost,
@@ -924,7 +925,8 @@ export function useTrackingCampaigns(workspaceId: string | null) {
       batches.push(ids.slice(i, i + TRACKING_ID_BATCH));
     }
 
-    const results = await Promise.all(batches.map((batch) => Promise.all([
+    // Three batches in flight at a time, not every batch at once (Siraj).
+    const results = await mapWithConcurrency(batches, REQUEST_CONCURRENCY, (batch) => Promise.all([
       selectAllRows<TrackingRollupRow>('useTrackingCampaigns rows', () =>
         supabase
           .from('tracking_rows')
@@ -937,7 +939,7 @@ export function useTrackingCampaigns(workspaceId: string | null) {
           .select('task_id, source_row_id, updated_at')
           .in('task_id', batch)
           .order('id', { ascending: true })),
-    ])));
+    ]));
 
     const allRows: TrackingRollupRow[] = [];
     const allPublished: TrackingPublishedStamp[] = [];

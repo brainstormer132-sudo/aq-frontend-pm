@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { mapWithConcurrency, REQUEST_CONCURRENCY } from '@/lib/concurrency';
 import {
   useTrackingRows,
   usePublishedTrackingRows,
@@ -167,8 +168,9 @@ export function TrackingSheetPanel({
       // have no order among themselves, each touching its own row, so they
       // go together. Twenty placeholders was twenty sequential writes, and
       // every one of them is now a trip to Frankfurt.
-      await Promise.all(plan.toAdopt.map((adoption) =>
-        updateTrackingRow(String(adoption.row.id), adoptionPatch(adoption) as any)));
+      // Three at a time, not all the placeholders at once (Siraj).
+      await mapWithConcurrency(plan.toAdopt, REQUEST_CONCURRENCY, (adoption) =>
+        updateTrackingRow(String(adoption.row.id), adoptionPatch(adoption) as any));
       const start = rows.reduce((max, r) => Math.max(max, Number(r.position) || 0), -1) + 1;
       const added = await addTrackingRowsFromBookings(taskId, plannedRows(plan, start, brandName));
       await Promise.all([refetch(), refetchBookings()]);

@@ -78,6 +78,7 @@ const LIBS = [
   'lib/asana-import.ts',
   'lib/task-calendar.ts',
   'lib/registry.ts',
+  'lib/concurrency.ts',
 ];
 
 const GREEN = '\x1b[32m';
