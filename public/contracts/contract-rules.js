@@ -127,8 +127,26 @@
     };
   }
 
+  /**
+   * Did the server send everything, or just as much as it will send?
+   *
+   * Measured on 2026-09-09: `GET /api/vendors/` returns exactly 1000 rows
+   * on a directory with more than that, with no error and nothing in the
+   * body to say so. A list sitting exactly on the cap is therefore assumed
+   * truncated - a false alarm on a directory that happens to hold exactly
+   * 1000 is a sentence nobody minds reading, and the alternative is a
+   * picker that quietly cannot find a vendor who exists.
+   */
+  function looksCapped(count, cap) {
+    var n = Number(count);
+    var limit = Number(cap);
+    if (!isFinite(n) || !isFinite(limit) || limit <= 0) return false;
+    return n >= limit;
+  }
+
   var api = {
     pageOf: pageOf,
+    looksCapped: looksCapped,
     isSafeToAutoRetry: isSafeToAutoRetry,
     isTransientError: isTransientError,
     vendorIdentifier: vendorIdentifier,

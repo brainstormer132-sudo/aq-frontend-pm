@@ -572,20 +572,48 @@ function findBank(vendor, bankIdOrIban) {
 const PAGE_SIZE = 200;
 
 /**
+ * What the backend will send in one list, measured rather than assumed.
+ *
+ * 2026-09-09, signed in against the live API: `GET /api/vendors/` answered
+ * with exactly 1000 rows, 200 OK, nothing in the body or the headers to say
+ * it had held any back. Every list loader here is a bare GET, so any of them
+ * can be silently short - and a vendor the server did not send is a vendor
+ * the picker cannot find, with "No vendors match" as the only clue.
+ *
+ * Until the loaders page (which needs the API to accept an offset), the app
+ * at least says so out loud wherever a capped list is on screen.
+ */
+const SERVER_ROW_CAP = 1000;
+
+/** Was this list cut off by the server? */
+function listIsCapped(rows) {
+  return window.AQContractRules.looksCapped((rows || []).length, SERVER_ROW_CAP);
+}
+
+/** One sentence, used wherever a truncated list is shown. */
+function cappedNote(noun) {
+  return `The server sent only the first ${SERVER_ROW_CAP} ${noun}s and did not say so - anything past that is missing from this screen.`;
+}
+
+/**
  * The bar under a paged table: what you are looking at, and how to move.
  *
  * `page` is the object pageOf() returned, so the numbers on screen and the
  * rows above them cannot disagree - they came from the same call.
  */
-function pagerBar(list, page, noun) {
+function pagerBar(list, page, noun, capped = false) {
   const shown = page.total
     ? `Showing ${page.from}-${page.to} of ${page.total} ${noun}${page.total === 1 ? "" : "s"}`
     : `No ${noun}s found.`;
-  if (page.pages <= 1) return `<div class="cs-table-note">${escapeHtml(shown)}</div>`;
+  const warning = capped
+    ? `<div class="cs-table-note" style="color:var(--cs-danger,#c0392b);font-weight:600;">${escapeHtml(cappedNote(noun))}</div>`
+    : "";
+  if (page.pages <= 1) return `${warning}<div class="cs-table-note">${escapeHtml(shown)}</div>`;
   const step = (to, label, disabled) => `<button class="mini-button" type="button"
       data-action="list-page" data-list="${encodeAttr(list)}" data-page="${encodeAttr(to)}"
       data-pages="${page.pages}" ${disabled ? "disabled" : ""}>${label}</button>`;
   return `
+    ${warning}
     <div class="cs-table-note" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
       <span>${escapeHtml(shown)}</span>
       <span style="display:flex;align-items:center;gap:6px;">
@@ -2459,7 +2487,7 @@ function renderVendorsView() {
         <div>Vendor</div><div>License / ID</div><div>Phone</div><div>Bank</div><div>IBAN</div><div>Status</div><div></div>
       </div>
       ${vendorRows || `<div class="cs-table-note">No vendors found.</div>`}
-      ${pagerBar("vendors", vendorPage, "vendor")}
+      ${pagerBar("vendors", vendorPage, "vendor", listIsCapped(state.vendors))}
     </div>
 
     ${renderPendingPanel("vendors")}
@@ -2561,7 +2589,7 @@ function renderClientsView() {
         <div>Company</div><div>CR Number</div><div>VAT</div><div>Signatory</div><div>Location</div><div></div>
       </div>
       ${clientRows || `<div class="cs-table-note">No clients found.</div>`}
-      ${pagerBar("clients", clientPage, "client")}
+      ${pagerBar("clients", clientPage, "client", listIsCapped(state.clients))}
     </div>
 
     <section style="display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start;">
@@ -2864,7 +2892,7 @@ function renderContractsView() {
     ${state.contracts.length === 0
       ? `<div class="cs-card"><p class="empty-note">No generated contracts yet.</p></div>`
       : (taskCards || `<div class="cs-card"><p class="empty-note">No contracts match your search.</p></div>`)}
-    ${state.contracts.length === 0 ? "" : `<div class="cs-card">${pagerBar("contracts", contractPage, "task")}</div>`}
+    ${state.contracts.length === 0 ? "" : `<div class="cs-card">${pagerBar("contracts", contractPage, "contract record")}</div>`}
   `;
 }
 
@@ -3433,7 +3461,12 @@ function renderSubLicenseSuggestions(query) {
     .slice(0, SUB_LICENSE_MAX_SUGGESTIONS);
 
   if (matches.length === 0) {
-    box.innerHTML = `<div class="autocomplete-empty">No vendors match "${escapeHtml(query)}"</div>`;
+    // A vendor the server never sent looks exactly like a vendor who does
+    // not exist, so say which one this might be.
+    const capNote = listIsCapped(state.vendors)
+      ? `<div class="autocomplete-empty" style="color:var(--cs-danger,#c0392b);">Only the first ${SERVER_ROW_CAP} vendors are loaded - this one may be past that.</div>`
+      : "";
+    box.innerHTML = `<div class="autocomplete-empty">No vendors match "${escapeHtml(query)}"</div>${capNote}`;
     box.hidden = false;
     subLicenseHoverIndex = -1;
     return;
@@ -3483,7 +3516,10 @@ function syncSubtaskVendorFields() {
     vendorInput.value = "";
     ibanSelect.innerHTML = `<option value="">No matching vendor</option>`;
     ibanSelect.disabled = true;
-    preview.innerHTML = `<strong>Bank information</strong><span>No vendor found for this license.</span>`;
+    preview.innerHTML = `<strong>Bank information</strong><span>No vendor found for this license.</span>`
+      + (listIsCapped(state.vendors)
+        ? `<span style="color:var(--cs-danger,#c0392b);">${escapeHtml(cappedNote("vendor"))}</span>`
+        : "");
     return;
   }
 

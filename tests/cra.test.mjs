@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  pageOf, isSafeToAutoRetry, isTransientError, vendorIdentifier,
+  pageOf, looksCapped, isSafeToAutoRetry, isTransientError, vendorIdentifier,
   findVendorByIdentifier, categoryLabel,
 } = require('../public/contracts/contract-rules.js');
 
@@ -114,6 +114,15 @@ eq('exactly one page when the list fits', pageOf(nums(200), 1, 200).pages, 1);
 eq('201 rows is two pages', pageOf(nums(201), 1, 200).pages, 2);
 eq('the second of those holds one row',
   [pageOf(nums(201), 2, 200).rows, pageOf(nums(201), 2, 200).from], [[201], 201]);
+
+/* -- The server's row cap --------------------------------------------- */
+eq('a list sitting exactly on the cap is truncated', looksCapped(1000, 1000), true);
+eq('and one past it certainly is', looksCapped(1200, 1000), true);
+eq('a short list is all of it', looksCapped(999, 1000), false);
+eq('an empty one is not a cap', looksCapped(0, 1000), false);
+eq('no cap, no warning', looksCapped(1000, 0), false);
+eq('nor a nonsense cap', looksCapped(1000, 'lots'), false);
+eq('nor a nonsense count', looksCapped(undefined, 1000), false);
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
