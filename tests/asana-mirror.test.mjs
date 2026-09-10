@@ -7,7 +7,7 @@
  * whole gap - 12M of parent-only money in 2024, and the status filters that
  * made the board's tiles disagree with the app.
  */
-import { moneyContribs, asanaTiles } from '../.test-build/dashboard-data.js';
+import { moneyContribs, asanaTiles, buildDashboard, ALL_TIME } from '../.test-build/dashboard-data.js';
 
 let pass = 0, fail = 0;
 const eq = (name, got, want) => {
@@ -116,5 +116,20 @@ const sub = (id, parent, o = {}) => camp(id, { parent_task_id: parent, ...o });
   eq('a sub-row with no approval inherits the campaign', cs[0].approval, 'approved');
 }
 
+// 8. the whole-workspace model carries the board tiles; a scoped lookup does not.
+{
+  const tasks = [
+    camp('W1', { client_id: 'cl1', approval_stage: 'approved', client_payment_status: 'unpaid', status: 'done' }),
+    sub('w1a', 'W1', { price: 200, net_amount: 50, status: 'done', approval_stage: 'approved', client_payment_status: 'unpaid' }),
+    camp('W2', { client_id: 'cl1', status: 'pending', budget: 1000 }), // parent-only money
+  ];
+  const base = { tasks, clients: [{ id: 'cl1', company_name: 'C' }], vendors: [], people: [], range: ALL_TIME };
+  const ws = buildDashboard({ ...base, scope: null });
+  eq('the workspace model carries the board tiles', !!ws.asana, true);
+  eq('board sumPrice includes the parent-only budget', ws.asana.sumPrice, 200 + 1000);
+  eq('board approvedDoneUnpaid is the AD row only', ws.asana.approvedDoneUnpaid, 200);
+  const scoped = buildDashboard({ ...base, scope: { kind: 'client', id: 'cl1', name: 'C', meta: '' } });
+  eq('a scoped lookup has no board tiles', scoped.asana, undefined);
+}
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

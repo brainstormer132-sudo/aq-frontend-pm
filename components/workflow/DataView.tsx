@@ -9,7 +9,7 @@ import { useDashboardRows } from '@/hooks/use-dashboard';
 import { SkeletonDashboard } from '@/components/Skeleton';
 import {
   ALL_TIME, buildDashboard, scopeRows, sumMoney, searchEntities, compact, full, toCsv,
-  type Cell, type DateRange, type Scope, type SearchHit, type Tone,
+  type AsanaTiles, type Cell, type DateRange, type Scope, type SearchHit, type Tone,
 } from '@/lib/dashboard-data';
 import {
   clientLedger, vendorLedger, ledgerTotals, shares, filterLedger, sortLedger,
@@ -20,6 +20,16 @@ import {
   type LedgerFilter, type LedgerRow, type LedgerSort, type LedgerSortKey,
   type LedgerTotals, type PayKey, type Side,
 } from '@/lib/money-ledger';
+
+/** The Asana board's tiles, in the order they sit on the board: field, label, sub-note. */
+const BOARD_TILES: [keyof AsanaTiles, string, string][] = [
+  ['sumPrice', 'Sum of Price', 'every row'],
+  ['salesDone', 'Sales \u00b7 Done', 'status Done'],
+  ['salesPending', 'Sales \u00b7 Pending', 'status Pending'],
+  ['estAqGross', 'Est AQ Gross', 'approved, done/pending'],
+  ['approvedDoneUnpaid', 'Approved \u00b7 Done \u00b7 Unpaid', 'owed, delivered'],
+  ['approvedPendingUnpaid', 'Approved \u00b7 Pending \u00b7 Unpaid', 'owed, in pipeline'],
+];
 
 /**
  * The Data view — one search box over everything, and the same page narrowed
@@ -355,6 +365,34 @@ export function DataView({
               <Months bars={model.months} />
             </div>
           </div>
+
+          {/* The board, reproduced. Every row's own Price and status, filtered the
+              way the Asana tiles are, so the app and the board agree. Whole
+              workspace only - a scoped lookup leaves model.asana unset. */}
+          {model.asana && (
+            <div className="aq-card" style={{ padding: '18px 20px', marginTop: 14 }}>
+              <h3 style={{ fontSize: 13.5, fontWeight: 700, margin: '0 0 2px' }}>As your Asana board counts it</h3>
+              <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', margin: '0 0 14px' }}>
+                Each row carries its own Price and status, filtered the way the board tiles
+                are - so these line up with Asana.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28 }}>
+                {BOARD_TILES.map(([k, label, note]) => (
+                  <span key={k}>
+                    <span style={{
+                      display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
+                      textTransform: 'uppercase', color: 'var(--aq-text-muted)',
+                    }}>{label}</span>
+                    <span style={{
+                      display: 'block', fontSize: 17, fontWeight: 700, marginTop: 2,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>{compact(model.asana![k])}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: 'var(--aq-text-muted)' }}>{note}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── 2. Collection and liability ─────────────────
               The section Siraj asked for. The bar is the shape; the ledger

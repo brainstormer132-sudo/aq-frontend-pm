@@ -471,6 +471,9 @@ export interface DashboardModel {
   note: string;
   /** How many campaigns / subtasks the numbers were built from. */
   counted: { parents: number; subtasks: number };
+  /** The Asana board's tiles, reproduced. Workspace scope only - the board is
+   *  a whole-workspace view, so a scoped lookup leaves this undefined. */
+  asana?: AsanaTiles;
 }
 
 function nameOf(t: DashTask): string {
@@ -899,6 +902,7 @@ function workspaceModel(
         compact,
       ),
     },
+    asana: asanaTiles(s.parents, s.allSubtasks),
     table: {
       title: 'Needs attention',
       caption: "Campaigns with money outstanding or a contract unsigned. Everything else is in the charts above.",
