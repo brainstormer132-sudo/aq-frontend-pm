@@ -1055,15 +1055,26 @@ insert into asana_brands values`);
   for (const c of plan.clients) for (const b of c.brands) brandRows.push(`  (${lit(c.key)}, ${lit(c.name)}, ${lit(b)})`);
   out.push((brandRows.length ? brandRows.join(',\n') : "  (null, null, null)") + ';');
   out.push(`
+-- One row per (client, folded brand). Two Asana client keys can fold to the
+-- same client, and a brand can arrive as COZ / coz / Coz, or as
+-- "la bonte - badie" beside "la bonte-badie": distinct on collapses them
+-- inside this batch, and the guard folds the same way so an existing brand
+-- that differs only in case or punctuation is reused, not duplicated.
 insert into public.client_brands (client_id, brand_name, status)
-select pg_temp._client(b.client_key, pg_temp._fold(b.client_name)), b.brand, 'active'
-  from asana_brands b
- where b.brand is not null
-   and pg_temp._client(b.client_key, pg_temp._fold(b.client_name)) is not null
+select distinct on (t.cid, t.bf) t.cid, t.brand, 'active'
+  from (
+    select pg_temp._client(b.client_key, pg_temp._fold(b.client_name)) as cid,
+           b.brand as brand,
+           pg_temp._fold(b.brand) as bf
+      from asana_brands b
+     where b.brand is not null
+  ) t
+ where t.cid is not null
    and not exists (
      select 1 from public.client_brands x
-      where x.client_id = pg_temp._client(b.client_key, pg_temp._fold(b.client_name))
-        and lower(x.brand_name) = lower(b.brand));
+      where x.client_id = t.cid
+        and pg_temp._fold(x.brand_name) = t.bf)
+ order by t.cid, t.bf, t.brand;
 
 -- -- Vendors -----------------------------------------------------
 -- Same rule: an existing registry row with the same folded name is reused.

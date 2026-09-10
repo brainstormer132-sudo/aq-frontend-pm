@@ -298,6 +298,18 @@ test('renderSql: keyed on asana_gid, and a forced workspace is honoured', () => 
   assert.match(camp.sql, /No Reply By Client/);
 });
 
+test('renderSql: brands dedupe by folded name, and never twice within one batch', () => {
+  const [reg] = renderSql(PLAN);
+  // One row per (client, folded brand). COZ / coz / Coz collapse, and a brand
+  // that differs from an existing one only in case or punctuation is reused.
+  assert.match(reg.sql, /select distinct on \(t\.cid, t\.bf\)/);
+  assert.match(reg.sql, /pg_temp\._fold\(b\.brand\) as bf/);
+  assert.match(reg.sql, /pg_temp\._fold\(x\.brand_name\) = t\.bf/);
+  // the old case-only guard, which let punctuation and same-batch variants
+  // through, is gone.
+  assert.doesNotMatch(reg.sql, /lower\(x\.brand_name\) = lower\(b\.brand\)/);
+});
+
 test('mergeExports: copies columns the first file lacks, refuses different rows', () => {
   const a = 'Task ID,Name,Parent task,Price\n1000000000000001,A,,10\n1000000000000002,B,A,5\n';
   const b = 'Task ID,Name,Parent task,Contract \n1.0E+15,A,,Signed & Attached\n1.0E+15,B,A,PO\n';
