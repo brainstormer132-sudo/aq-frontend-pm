@@ -304,6 +304,54 @@ export async function selectAllRows<T>(
   return out;
 }
 
+/**
+ * Same as selectAllRows, but reads REQUEST_CONCURRENCY pages at once rather
+ * than one after another.
+ *
+ * The Data view pulls ~12 pages of subtasks. One at a time that was a dozen
+ * round-trips in series -- about thirty seconds on the real workspace, with the
+ * screen sat on a skeleton the whole time. In waves of three it is four.
+ *
+ * Offset paging only lines up when the order is total. Pass a `build` whose
+ * `.order(...)` ends in a unique column (id): with a non-unique order (many
+ * rows sharing one created_at, which the Asana import produced by the
+ * thousand) two pages can overlap, or a row can fall between them.
+ */
+export async function selectAllRowsParallel<T>(
+  label: string,
+  build: () => any,
+  onError?: (message: string) => void,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let base = 0; base < MAX_ROWS; base += REQUEST_CONCURRENCY * PAGE_SIZE) {
+    const offsets: number[] = [];
+    for (let i = 0; i < REQUEST_CONCURRENCY; i += 1) {
+      const from = base + i * PAGE_SIZE;
+      if (from < MAX_ROWS) offsets.push(from);
+    }
+    const pages = await mapWithConcurrency(
+      offsets,
+      REQUEST_CONCURRENCY,
+      (from) => timed<any>(label, () => build().range(from, from + PAGE_SIZE - 1)),
+    );
+    let last = false;
+    for (const { data, error } of pages) {
+      if (error) {
+        logSbError(label, error, {});
+        onError?.(error.message ?? String(error));
+        return out;
+      }
+      const rows = (data || []) as T[];
+      out.push(...rows);
+      if (rows.length < PAGE_SIZE) last = true;   // a short page is the last page
+    }
+    if (last) return out;
+  }
+  // eslint-disable-next-line no-console
+  console.warn(`${label}: stopped at ${MAX_ROWS} rows. The table is bigger than this screen should be loading.`);
+  return out;
+}
+
 /** Drop cached reference data — call after creating a client or vendor. */
 export function invalidateRefCache(key?: string) {
   if (key) REF_CACHE.delete(key); else REF_CACHE.clear();

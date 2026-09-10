@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { selectAllRows } from '@/hooks/use-workflow';
+import { selectAllRowsParallel } from '@/hooks/use-workflow';
 import type { DashTask } from '@/lib/dashboard-data';
 
 const supabase = createClient();
@@ -74,19 +74,21 @@ export function useDashboardRows(workspaceId: string | null): DashboardData {
     setError(null);
 
     const [parents, subs] = await Promise.all([
-      selectAllRows<DashTask>(
+      selectAllRowsParallel<DashTask>(
         'useDashboardRows parents',
         () => supabase.from('pm_tasks').select(COLUMNS)
           .eq('workspace_id', workspaceId)
           .is('parent_task_id', null)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false }),
         (msg) => setError(msg),
       ),
-      selectAllRows<DashTask>(
+      selectAllRowsParallel<DashTask>(
         'useDashboardRows subtasks',
         () => supabase.from('pm_tasks').select(COLUMNS)
           .not('parent_task_id', 'is', null)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false }),
         (msg) => setError(msg),
       ),
     ]);
