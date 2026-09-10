@@ -32,7 +32,7 @@ const COLUMNS = [
   'id', 'parent_task_id', 'title', 'task_name', 'brand_name',
   'client_id', 'vendor_id', 'assignee_id', 'created_at',
   'stage', 'status', 'subtask_kind',
-  'price', 'net_amount',
+  'price', 'net_amount', 'budget',
   'client_payment_status', 'client_payment_amount',
   'contract_status',
   'vendor_payment_amount', 'vendor_payment_date',

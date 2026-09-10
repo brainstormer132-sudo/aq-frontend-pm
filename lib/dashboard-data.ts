@@ -54,6 +54,8 @@ export interface DashTask {
   //    dashboard panels above, do not need them) ─────────────────
   due_date?: string | null;
   approval_stage?: string | null;
+  /** The campaign's own money, used when it is not split into vendor sub-rows. */
+  budget?: number | null;
   /** Per-ad platform, on a subtask. Campaigns carry `platforms` instead. */
   platform?: string | null;
   platforms?: string[] | null;
@@ -697,6 +699,110 @@ export interface DashboardInput {
   range: DateRange;
   /** Source / client category / service type names for the vendor report. */
   lookups?: DashLookups;
+}
+
+/* ----------------------------------------------------------------
+   Asana-mirror money - every row counted the way the Asana board is
+
+   The panels above sum only the vendor sub-rows. The Asana board sums each
+   row's OWN Price/Net, sliced by that row's Statues, its campaign's Approval
+   stage and its campaign's Client Payment. A campaign whose money sits on the
+   parent (no priced sub-rows) is therefore invisible to the panels - 12M of
+   the 2024 import. These functions add that money back and reproduce the
+   board's tiles, so the app and the board agree on the total.
+   ---------------------------------------------------------------- */
+
+export interface MoneyContrib {
+  price: number;
+  net: number;
+  /** the row's own Statues: 'done' | 'pending' | 'cancelled' | 'on_hold' */
+  status: string;
+  /** the row's own Approval stage, e.g. 'approved' (campaign as fallback) */
+  approval: string;
+  /** the row's own Client Payment, e.g. 'unpaid' | 'paid' (campaign as fallback) */
+  clientPay: string;
+  /** true when this is a campaign's own budget, not a vendor sub-row. Such a
+   *  row has no vendor net, so it counts as revenue but not as AD margin -
+   *  the same reason the board's gross and (Unpaid) tiles are AD-line only. */
+  parentOnly: boolean;
+}
+
+/**
+ * One contribution per money-carrying row, the way Asana counts.
+ *
+ * A vendor sub-row that carries a price contributes its own price/net with its
+ * own status, inheriting its campaign's approval and client-payment. A
+ * campaign whose sub-rows carry no price contributes its `budget` once, so
+ * parent-only money is not silently dropped. A parent has no net, so its gross
+ * is the whole price - which is exactly what the board shows for it.
+ */
+export function moneyContribs(parents: DashTask[], subtasks: DashTask[]): MoneyContrib[] {
+  const byId = new Map(parents.map((p) => [p.id, p]));
+  const priced = new Set<string>();
+  for (const s of subtasks) {
+    if ((num(s.price) !== 0 || num(s.net_amount) !== 0) && s.parent_task_id) priced.add(s.parent_task_id);
+  }
+  const out: MoneyContrib[] = [];
+  for (const s of subtasks) {
+    if (num(s.price) === 0 && num(s.net_amount) === 0) continue;
+    // Asana carries Approval stage and Client Payment on the sub-row itself, and
+    // they are not the campaign's - an approved campaign has cancelled sub-rows.
+    // So the row's own value wins; the campaign's is only a fallback for the few
+    // sub-rows that carry neither (and for data imported before the importer
+    // learned to keep them).
+    const owner = (s.parent_task_id ? byId.get(s.parent_task_id) : undefined) ?? s;
+    out.push({
+      price: num(s.price), net: num(s.net_amount), status: norm(s.status),
+      approval: norm(s.approval_stage) || norm(owner.approval_stage),
+      clientPay: norm(s.client_payment_status) || norm(owner.client_payment_status),
+      parentOnly: false,
+    });
+  }
+  for (const p of parents) {
+    if (priced.has(p.id)) continue;
+    const b = num(p.budget);
+    if (b === 0) continue;
+    out.push({
+      price: b, net: 0, status: norm(p.status),
+      approval: norm(p.approval_stage), clientPay: norm(p.client_payment_status),
+      parentOnly: true,
+    });
+  }
+  return out;
+}
+
+export interface AsanaTiles {
+  /** Sum of Price, every row, no filter. */
+  sumPrice: number;
+  /** Price where Statues = Done / Pending. */
+  salesDone: number;
+  salesPending: number;
+  /** Price - Net where Approval = Approved and Statues in {Done, Pending}. */
+  estAqGross: number;
+  /** Price where Approved, that Statues, and Client Payment = Unpaid. */
+  approvedDoneUnpaid: number;
+  approvedPendingUnpaid: number;
+}
+
+const DONE_OR_PENDING = new Set(['done', 'pending']);
+
+/** The board's tiles, reproduced from the loaded rows. */
+export function asanaTiles(parents: DashTask[], subtasks: DashTask[]): AsanaTiles {
+  const rows = moneyContribs(parents, subtasks);
+  const sum = (
+    keep: (r: MoneyContrib) => boolean,
+    val: (r: MoneyContrib) => number = (r) => r.price,
+  ) => rows.reduce((a, r) => (keep(r) ? a + val(r) : a), 0);
+  const approved = (r: MoneyContrib) => r.approval === 'approved';
+  const ad = (r: MoneyContrib) => !r.parentOnly; // AD-line tiles ignore parent-only budget
+  return {
+    sumPrice: sum(() => true),
+    salesDone: sum((r) => r.status === 'done'),
+    salesPending: sum((r) => r.status === 'pending'),
+    estAqGross: sum((r) => ad(r) && approved(r) && DONE_OR_PENDING.has(r.status), (r) => r.price - r.net),
+    approvedDoneUnpaid: sum((r) => ad(r) && approved(r) && r.status === 'done' && r.clientPay === 'unpaid'),
+    approvedPendingUnpaid: sum((r) => ad(r) && approved(r) && r.status === 'pending' && r.clientPay === 'unpaid'),
+  };
 }
 
 export function buildDashboard(input: DashboardInput): DashboardModel {
