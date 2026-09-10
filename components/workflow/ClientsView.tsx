@@ -16,7 +16,7 @@ import {
   RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
   Detail, DETAIL_GRID, RegistryPager,
 } from './RegistryTable';
-import { AqLoaderBlock } from '@/components/AqLoader';
+import { AqDrawingBlock } from '@/components/AQLoading';
 import {
   brands as brandsApi, clientOps, manualCreate, zoho as zohoApi,
   type BrandRow, type ZohoImportJobStatus,
@@ -374,7 +374,7 @@ export function ClientsView({
       )}
 
       {loading && allClients.length === 0 ? (
-        <AqLoaderBlock label="Loading clients\u2026" />
+        <AqDrawingBlock label={'Loading clients\u2026'} />
       ) : shown.length === 0 ? (
         <div className="aq-card" style={{
           padding: 34, textAlign: 'center', color: 'var(--aq-text-muted)', fontSize: 13.5,

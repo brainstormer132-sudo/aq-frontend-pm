@@ -23,7 +23,7 @@ import {
   RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
   Detail, DETAIL_GRID, RegistryPager,
 } from './RegistryTable';
-import { AqLoaderBlock } from '@/components/AqLoader';
+import { AqDrawingBlock } from '@/components/AQLoading';
 import { InviteLinkModal } from '@/components/workflow/InviteLinkModal';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
 import { VendorEditorModal } from '@/components/workflow/VendorEditorModal';
@@ -179,7 +179,7 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
       )}
 
       {tab === 'vendors' && loading && rows.length === 0 && (
-        <AqLoaderBlock label="Loading vendors\u2026" />
+        <AqDrawingBlock label={'Loading vendors\u2026'} />
       )}
 
       {tab === 'vendors' && !(loading && rows.length === 0) && (

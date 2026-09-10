@@ -107,6 +107,32 @@ export function AqDrawingBlock({ label = 'Loading' }: { label?: string }) {
   );
 }
 
+/**
+ * The self-drawing mark in a centred panel, for a section-sized wait.
+ *
+ * The overlay above takes the whole screen; a panel inside a page that still
+ * has its header and filters wants the same mark without the fixed veil - so
+ * every wait in the app still looks like the same app waiting, whether it
+ * owns the screen or a card.
+ */
+export function AqDrawingBlock({ label = 'Loading' }: { label?: string }) {
+  return (
+    <div
+      className="aq-card animate-fade-in"
+      role="status"
+      aria-live="polite"
+      style={{
+        padding: 40, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 14,
+      }}
+    >
+      <AQLoadingStyle />
+      <AQDrawingMark size={56} />
+      <span style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', fontWeight: 500 }}>{label}</span>
+    </div>
+  );
+}
+
 /** The mark itself, drawing and filling on a loop. */
 export function AQDrawingMark({ size = 72 }: { size?: number }) {
   return (
