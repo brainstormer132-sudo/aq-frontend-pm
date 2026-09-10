@@ -105,7 +105,7 @@ export interface Scope {
   meta: string;
 }
 
-export type MatchField = 'name' | 'CR' | 'VAT' | 'ID' | 'licence';
+export type MatchField = 'name' | 'brand' | 'CR' | 'VAT' | 'ID' | 'licence';
 
 export interface SearchHit {
   kind: ScopeKind;
@@ -162,14 +162,17 @@ export function vendorMeta(v: DashVendor): string {
 }
 
 /**
- * One box, five fields. Whichever identifier somebody happens to have
- * pasted — name, CR, VAT, ID or licence — finds the row, and the hit says
- * which field it matched so a bare number is never mysterious.
+ * One box, several fields. Whichever identifier somebody happens to have
+ * pasted — company name, a brand of theirs, CR, VAT, ID or licence — finds
+ * the row, and the hit says which field it matched so a bare number is never
+ * mysterious. A brand match resolves to the client that owns it, so a brand
+ * is as good as the company name for finding a client.
  */
 export function searchEntities(
   query: string,
   clients: DashClient[],
   vendors: DashVendor[],
+  brandsByClient?: Map<string, string[]>,
   limit = 8,
 ): SearchHit[] {
   const q = norm(query);
@@ -184,6 +187,7 @@ export function searchEntities(
       ['CR', scoreId(c.cr_number, q, qd)],
       ['VAT', scoreId(c.vat_number, q, qd)],
     ];
+    for (const b of brandsByClient?.get(c.id) ?? []) candidates.push(['brand', score(b, q)]);
     const best = candidates.reduce((a, b) => (b[1] > a[1] ? b : a));
     if (!best[1]) continue;
     scored.push({

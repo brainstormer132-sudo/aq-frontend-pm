@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useClients, useLegacyVendors, useWorkspaceProfiles,
-  useTaskSources, useClientCategories, useServiceTypes,
+  useTaskSources, useClientCategories, useServiceTypes, useAllClientBrands,
 } from '@/hooks/use-workflow';
 import { useDashboardRows } from '@/hooks/use-dashboard';
 import { SkeletonDashboard } from '@/components/Skeleton';
@@ -81,6 +81,8 @@ export function DataView({
   const { items: sources } = useTaskSources(workspaceId);
   const { items: clientCategories } = useClientCategories(workspaceId);
   const { serviceTypes } = useServiceTypes(workspaceId);
+  // Client id -> its brand names, so a brand finds its client like the name does.
+  const brandsByClient = useAllClientBrands();
 
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -105,8 +107,8 @@ export function DataView({
   }, []);
 
   const hits: SearchHit[] = useMemo(
-    () => searchEntities(query, clients, vendors),
-    [query, clients, vendors],
+    () => searchEntities(query, clients, vendors, brandsByClient),
+    [query, clients, vendors, brandsByClient],
   );
 
   const range: DateRange = useMemo(() => {
@@ -198,7 +200,7 @@ export function DataView({
           <input
             className="aq-input"
             value={query}
-            placeholder="Search a client or vendor — name, CR, VAT, ID or licence"
+            placeholder="Search a client or vendor — name, brand, CR, VAT, ID or licence"
             onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
             onFocus={() => setOpen(true)}
             style={{ width: '100%', fontSize: 15, padding: '12px 14px' }}
@@ -255,8 +257,9 @@ export function DataView({
         </div>
 
         <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', margin: '8px 0 0' }}>
-          One box. It matches on name, CR number, VAT number, ID number and licence number, so you can
-          paste whichever one you happen to have. Leave it empty and you are looking at the whole workspace.
+          One box. It matches on name, a client's brand, CR number, VAT number, ID number and licence
+          number, so you can paste whichever one you happen to have. Leave it empty and you are looking at
+          the whole workspace.
         </p>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>

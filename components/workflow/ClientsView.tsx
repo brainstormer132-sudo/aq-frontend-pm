@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   usePendingClients,
   selectAllRows,
+  useAllClientBrands,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import {
@@ -54,6 +55,10 @@ export function ClientsView({
     setLoading(false);
   };
   useEffect(() => { refetch(); }, []);
+
+  // Client id -> its brand names, so the search box matches a brand and finds
+  // the client that owns it, the same as matching the company name.
+  const brandsByClient = useAllClientBrands();
 
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -193,8 +198,8 @@ export function ClientsView({
     [allClients, campaigns, rollup],
   );
   const shown = useMemo(
-    () => sortRows(filterRows(rows, { ...filter, query }), sort),
-    [rows, filter, query, sort],
+    () => sortRows(filterRows(rows, { ...filter, query }, (r) => brandsByClient.get(r.id) ?? []), sort),
+    [rows, filter, query, sort, brandsByClient],
   );
   const summary = summarise(rows, shown);
 
@@ -306,7 +311,7 @@ export function ClientsView({
       <RegistryToolbar
         query={query}
         onQuery={setQuery}
-        placeholder="Search name, CR, VAT, signatory, email or city…"
+        placeholder="Search name, brand, CR, VAT, signatory, email or city…"
       >
         <Chip
           label="Missing contract details"

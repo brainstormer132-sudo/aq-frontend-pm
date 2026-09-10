@@ -1,4 +1,4 @@
-import { EMPTY_FILTER, filterRows, buildRows } from '../.test-build/all-tasks.js';
+import { EMPTY_FILTER, filterRows, buildRows, sortRows, DEFAULT_SORT } from '../.test-build/all-tasks.js';
 let p=0,f=0;
 const eq=(n,g,w)=>{ if(JSON.stringify(g)===JSON.stringify(w)) p++; else {f++;console.log(`FAIL ${n}: ${JSON.stringify(g)} != ${JSON.stringify(w)}`);} };
 
@@ -31,6 +31,18 @@ eq('picking a stage still narrows', filterRows(rows, onlyLive, []).length, 1);
 // ── search still reaches a completed one ──
 eq('search finds a completed campaign',
    filterRows(rows, { ...EMPTY_FILTER, query: 'done one' }, []).length, 1);
+
+// ── All Tasks arrives newest-created first, undated last ──
+{
+  const dated = buildRows({ tasks: [
+    { id:'old', task_name:'Old', stage:'in_progress', status:'in_progress', created_at:'2024-01-01' },
+    { id:'new', task_name:'New', stage:'in_progress', status:'in_progress', created_at:'2026-08-01' },
+    { id:'mid', task_name:'Mid', stage:'in_progress', status:'in_progress', created_at:'2025-06-01' },
+    { id:'non', task_name:'Undated', stage:'in_progress', status:'in_progress' },
+  ], rollup: [], today: '2026-08-27' });
+  eq('default order is newest-created first, undated last',
+     sortRows(dated, DEFAULT_SORT).map((r) => r.id), ['new', 'mid', 'old', 'non']);
+}
 
 console.log(`\n${p} passed, ${f} failed`);
 process.exit(f?1:0);

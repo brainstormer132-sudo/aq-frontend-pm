@@ -4812,6 +4812,37 @@ export function useClientBrands(clientId: string | null) {
   return { brands, loading, refetch: fetch };
 }
 
+/**
+ * Every active brand in the workspace, as a map from client id to its brand
+ * names. The Clients and Data searches read it so typing a brand finds the
+ * client that owns it, the same as typing the company name. One paged read,
+ * keyed on id so paging stays deterministic past a thousand brands.
+ */
+export function useAllClientBrands(): Map<string, string[]> {
+  const [map, setMap] = useState<Map<string, string[]>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    selectAllRows<{ client_id: string; brand_name: string }>(
+      'useAllClientBrands',
+      () => supabase.from('client_brands')
+        .select('client_id, brand_name')
+        .eq('status', 'active')
+        .order('id', { ascending: true }),
+    ).then((rows) => {
+      if (!alive) return;
+      const m = new Map<string, string[]>();
+      for (const r of rows) {
+        if (!r.client_id || !r.brand_name) continue;
+        const list = m.get(r.client_id);
+        if (list) list.push(r.brand_name); else m.set(r.client_id, [r.brand_name]);
+      }
+      setMap(m);
+    });
+    return () => { alive = false; };
+  }, []);
+  return map;
+}
+
 // ── Is this request ready to send? ──────────────────────────────────
 //
 // The old flow opened a form and asked for details the app already had,

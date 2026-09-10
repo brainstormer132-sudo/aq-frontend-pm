@@ -271,13 +271,13 @@ export function buildRows(input: {
 
 /* ── Sorting ────────────────────────────────────────────────────── */
 
-export type SortKey = 'name' | 'client' | 'stage' | 'due' | 'keyAccount' | 'vendors' | 'value';
+export type SortKey = 'name' | 'client' | 'stage' | 'due' | 'keyAccount' | 'vendors' | 'value' | 'created';
 export type SortDir = 'asc' | 'desc';
 
 export interface Sort { key: SortKey; dir: SortDir }
 
-/** The order the table arrives in: soonest due first, late at the top. */
-export const DEFAULT_SORT: Sort = { key: 'due', dir: 'asc' };
+/** The order the table arrives in: newest task first, oldest last. */
+export const DEFAULT_SORT: Sort = { key: 'created', dir: 'desc' };
 
 /**
  * Which way a column should go the first time you click it.
@@ -322,6 +322,7 @@ export function sortRows(rows: TableRow[], sort: Sort): TableRow[] {
   const dir = sort.dir === 'asc' ? 1 : -1;
   const blank = (r: TableRow): boolean => {
     if (sort.key === 'due') return r.due == null;
+    if (sort.key === 'created') return !r.raw?.created_at;
     if (sort.key === 'keyAccount') return !r.keyAccount;
     if (sort.key === 'value') return r.value == null;
     if (sort.key === 'client') return !r.client;
@@ -340,6 +341,8 @@ export function sortRows(rows: TableRow[], sort: Sort): TableRow[] {
       case 'keyAccount': c = cmpText(a.keyAccount, b.keyAccount); break;
       case 'stage':      c = STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage); break;
       case 'due':        c = cmpNum(a.dueInDays, b.dueInDays); break;
+      // ISO created_at sorts lexically; desc (the default) puts newest first.
+      case 'created':    c = cmpText(a.raw?.created_at ?? null, b.raw?.created_at ?? null); break;
       case 'vendors':    c = a.vendors - b.vendors; break;
       case 'value':      c = cmpNum(a.value, b.value); break;
     }
