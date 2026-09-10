@@ -8,7 +8,10 @@ import {
   type Profile, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { countFollowUps } from '@/lib/crm-sync';
-import { attentionItems, attentionSummary, type AttentionItem, type Severity } from '@/lib/attention';
+import {
+  attentionItems, attentionSummary, groupAttention, groupNoun,
+  type AttentionItem, type AttentionGroup, type Severity,
+} from '@/lib/attention';
 import { SkeletonRows, SkeletonLine } from '@/components/Skeleton';
 import { FollowUps } from './FollowUps';
 
@@ -73,11 +76,24 @@ export function WorkflowDashboard({
     () => (today
       ? attentionItems(
           { tasks: rows, rollup: campaignRollup, followUps, requestSentAt, contractStatus },
-          today, { userId, limit: 7 },
+          today, { userId },
         )
       : { items: [], hiddenCount: 0, counts: { urgent: 0, soon: 0, tidy: 0 } }),
     [rows, campaignRollup, followUps, requestSentAt, contractStatus, today, userId],
   );
+
+  // Fold repeats (a creator with nine unrequested bookings is one line, not
+  // nine) then show the first seven groups. rule 17.
+  const allGroups = useMemo(() => groupAttention(attention.items), [attention.items]);
+  const shownGroups = allGroups.slice(0, 7);
+  const hiddenGroups = Math.max(0, allGroups.length - shownGroups.length);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setExpandedGroups((cur) => {
+      const nextSet = new Set(cur);
+      if (nextSet.has(key)) nextSet.delete(key); else nextSet.add(key);
+      return nextSet;
+    });
 
   const myTasks = useMemo(
     () => allTasks
@@ -121,13 +137,13 @@ export function WorkflowDashboard({
               Ranked by severity, longest-waiting first.
             </p>
           </div>
-          {attention.hiddenCount > 0 && (
+          {hiddenGroups > 0 && (
             <button
               type="button"
               className="aq-btn aq-btn-ghost"
               onClick={() => onGoTo('all-tasks')}
               style={{ padding: '4px 10px', fontSize: 12 }}
-            >{attention.hiddenCount} more</button>
+            >{hiddenGroups} more</button>
           )}
         </header>
 
@@ -140,9 +156,19 @@ export function WorkflowDashboard({
           </p>
         ) : (
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {attention.items.map((item, i) => (
-              <li key={item.key}>
-                <AttentionRow item={item} first={i === 0} onOpen={() => onOpenTask(item.taskId)} />
+            {shownGroups.map((group, i) => (
+              <li key={group.key}>
+                {group.count === 1 ? (
+                  <AttentionRow item={group.lead} first={i === 0} onOpen={() => onOpenTask(group.lead.taskId)} />
+                ) : (
+                  <AttentionGroupRow
+                    group={group}
+                    first={i === 0}
+                    expanded={expandedGroups.has(group.key)}
+                    onToggle={() => toggleGroup(group.key)}
+                    onOpen={onOpenTask}
+                  />
+                )}
               </li>
             ))}
           </ul>
@@ -332,6 +358,43 @@ const SEVERITY_STYLE: Record<Severity, { dot: string; label: string }> = {
   soon:   { dot: '#ca8a04', label: 'Soon' },
   tidy:   { dot: '#a8a29e', label: 'Missing data' },
 };
+
+function AttentionGroupRow({
+  group, first, expanded, onToggle, onOpen,
+}: {
+  group: AttentionGroup; first: boolean; expanded: boolean;
+  onToggle: () => void; onOpen: (taskId: string) => void;
+}) {
+  const s = SEVERITY_STYLE[group.lead.severity];
+  return (
+    <>
+      <button type="button" onClick={onToggle} style={rowButton(first)} data-severity={group.lead.severity}
+        aria-expanded={expanded}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, width: 88, flexShrink: 0 }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.dot, flexShrink: 0 }} />
+          <span style={{ fontSize: 10.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>{s.label}</span>
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, display: 'block', ...ellipsis }}>
+            {group.lead.title}
+            <span style={{ fontWeight: 400, color: 'var(--aq-text-muted)' }}>{' \u00b7 '}{groupNoun(group.lead.kind, group.count)}</span>
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--aq-text-secondary)' }}>{group.lead.message}</span>
+        </span>
+        <span aria-hidden style={{ color: 'var(--aq-text-muted)', fontSize: 11, flexShrink: 0 }}>
+          {expanded ? 'Hide' : `Show ${group.count}`}
+        </span>
+      </button>
+      {expanded && (
+        <div style={{ paddingLeft: 24, borderLeft: '2px solid var(--aq-border-light)', marginLeft: 8 }}>
+          {group.items.map((it) => (
+            <AttentionRow key={it.key} item={it} first={false} onOpen={() => onOpen(it.taskId)} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
 
 function AttentionRow({
   item, first, onOpen,

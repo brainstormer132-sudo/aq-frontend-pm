@@ -401,6 +401,66 @@ function money(n: number): string {
   return Math.round(Math.abs(n)).toLocaleString('en-US');
 }
 
+/**
+ * Fold repeats into one line each.
+ *
+ * A creator with nine bookings priced and unrequested was nine identical
+ * "priced, no contract" rows - Siraj's screenshot, and rule 17: five
+ * hundred copies of one fact are one fact. Items are grouped by what they
+ * are and who they are about (kind + subject), keeping the order they came
+ * in (already severity-ranked), so a group leads with its worst and carries
+ * the rest for a caller that wants to expand and act on each.
+ *
+ * Date-stamped events - overdue, due today, a late follow-up - are left
+ * alone: each has its own date and reads as its own line.
+ */
+export type AttentionGroup = {
+  key: string;
+  lead: AttentionItem;
+  items: AttentionItem[];
+  count: number;
+};
+
+const FOLDABLE: Record<AttentionKind, boolean> = {
+  overdue: false,
+  due_today: false,
+  triage_stalled: false,
+  vendor_missing: true,
+  price_missing: true,
+  contract_missing: true,
+  contract_stuck: true,
+  money_mismatch: false,
+  no_vendors: true,
+  no_due_date: true,
+  followup_overdue: false,
+};
+
+export function groupAttention(items: AttentionItem[]): AttentionGroup[] {
+  const order: string[] = [];
+  const byKey = new Map<string, AttentionItem[]>();
+  for (const it of items || []) {
+    const gk = FOLDABLE[it.kind]
+      ? `${it.kind}|${it.title.trim().toLowerCase()}`
+      : `one|${it.key}`;
+    let arr = byKey.get(gk);
+    if (!arr) { arr = []; byKey.set(gk, arr); order.push(gk); }
+    arr.push(it);
+  }
+  return order.map((gk) => {
+    const arr = byKey.get(gk)!;
+    return { key: gk, lead: arr[0], items: arr, count: arr.length };
+  });
+}
+
+/** The count line under a folded group: "9 bookings", "3 campaigns". */
+export function groupNoun(kind: AttentionKind, count: number): string {
+  const noun =
+    kind === 'no_vendors' ? 'campaign'
+    : kind === 'no_due_date' ? 'campaign'
+    : 'booking';
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
 /** The one-line summary above the list. */
 export function attentionSummary(counts: Record<Severity, number>): string {
   const total = counts.urgent + counts.soon + counts.tidy;

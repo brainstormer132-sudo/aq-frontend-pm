@@ -6,6 +6,7 @@ import {
   monthGrid, splitByDueDate, monthTitle, shiftMonth, isOverdue, WEEKDAYS,
   dayDetail, dayTitle, dayCountLine,
 } from '@/lib/task-calendar';
+import { AqLoaderBlock } from '@/components/AqLoader';
 
 /**
  * Tasks on a month grid, with the ones nobody dated beside it.
@@ -49,11 +50,7 @@ export function CalendarPanel({
   });
 
   if (loading) {
-    return (
-      <div className="aq-card" style={{ padding: 32, color: 'var(--aq-text-muted)' }}>
-        Loading campaigns, subtasks and ads...
-      </div>
-    );
+    return <AqLoaderBlock label="Loading campaigns, subtasks and ads..." />;
   }
 
   return (
