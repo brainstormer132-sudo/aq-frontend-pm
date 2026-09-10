@@ -19,7 +19,6 @@ const PUBLIC_PREFIXES = [
   '/portals',
   '/hub',
   '/contracts',     // includes /contracts/, /contracts/styles.css, etc.
-  '/api/invites',   // hit by server-only code; does its own auth
 ];
 
 function isPublicPath(path: string): boolean {
