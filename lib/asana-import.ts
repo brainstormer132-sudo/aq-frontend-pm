@@ -578,6 +578,11 @@ export interface PlanBooking {
   completedAt: string | null;
   dueDate: string | null;
   status: TaskStatus;
+  /** The sub-row's OWN approval and client-payment. Asana carries them per ad,
+   *  and the board's Approved / Unpaid tiles filter on them, not the campaign's
+   *  - so the Data view can only reproduce the board if the import keeps them. */
+  approval: ApprovalStage | null;
+  clientPayment: PayStatus | null;
   vendorKey: string;
   vendorFold: string;
   price: number | null;
@@ -810,6 +815,8 @@ export function planImport(rows: AsanaRow[], projectName = 'Asana'): Plan {
         completedAt: isoDate(k.completedAt),
         dueDate: isoDate(k.dueDate),
         status: kStatus,
+        approval: mapApproval(k.approval).stage,
+        clientPayment: mapPayment(k.clientPayment),
         vendorKey: v.key,
         vendorFold: fold(v.name),
         price,
@@ -1183,14 +1190,16 @@ function renderBookings(rows: PlanBooking[], opts: RenderOptions): string {
 create temp table asana_bookings (
   gid text primary key, parent_gid text, position int, title text, created_at date, completed_at date, due_date date,
   status text, vendor_key text, vendor_fold text, price numeric, net numeric, platform text, ad_type text,
-  quotation_no text, invoice_no text, vendor_payment text, vendor_payment_date date, assignee_email text, description text
+  quotation_no text, invoice_no text, vendor_payment text, vendor_payment_date date, assignee_email text, description text,
+  approval_stage text, client_payment_status text
 ) on commit drop;
 insert into asana_bookings values`);
   out.push((rows.length ? rows.map((b) => '  (' + [
     lit(b.gid), lit(b.parentGid), b.position, lit(b.title), lit(b.createdAt), lit(b.completedAt), lit(b.dueDate),
     lit(b.status), lit(b.vendorKey), lit(b.vendorFold), lit(b.price), lit(b.net), lit(b.platform), lit(b.adType),
     lit(b.quotationNo), lit(b.invoiceNo), lit(b.vendorPayment), lit(b.vendorPaymentDate), lit(b.assigneeEmail), lit(b.description),
-  ].join(', ') + ')').join(',\n') : '  (null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)') + ';');
+    lit(b.approval), lit(b.clientPayment),
+  ].join(', ') + ')').join(',\n') : '  (null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)') + ';');
 
   out.push(`
 do $chk$
@@ -1207,7 +1216,7 @@ insert into public.pm_tasks (
   workspace_id, creator_id, asana_gid, parent_task_id, position, title, description,
   status, stage, priority, subtask_kind, request_status, created_at, completed_at, due_date,
   vendor_id, price, net_amount, platform, ad_type, quotation_no, invoice_no,
-  vendor_payment_date, vendor_payment_amount, assignee_id
+  vendor_payment_date, vendor_payment_amount, assignee_id, approval_stage, client_payment_status
 )
 select
   ctx.ws, ctx.uid, b.gid, p.id, b.position, b.title, b.description,
@@ -1215,7 +1224,7 @@ select
   pg_temp._vendor(b.vendor_key, b.vendor_fold), b.price, b.net, b.platform, b.ad_type, b.quotation_no, b.invoice_no,
   b.vendor_payment_date,
   case when b.vendor_payment = 'paid' then b.net else null end,
-  pg_temp._user_by_email(b.assignee_email)
+  pg_temp._user_by_email(b.assignee_email), b.approval_stage, b.client_payment_status
 from asana_bookings b
 cross join ctx
 join public.pm_tasks p on p.workspace_id = ctx.ws and p.asana_gid = b.parent_gid
@@ -1226,6 +1235,7 @@ on conflict (workspace_id, asana_gid) where asana_gid is not null do update set
   vendor_id = excluded.vendor_id, price = excluded.price, net_amount = excluded.net_amount, platform = excluded.platform, ad_type = excluded.ad_type,
   quotation_no = excluded.quotation_no, invoice_no = excluded.invoice_no,
   vendor_payment_date = excluded.vendor_payment_date, vendor_payment_amount = excluded.vendor_payment_amount, assignee_id = excluded.assignee_id,
+  approval_stage = excluded.approval_stage, client_payment_status = excluded.client_payment_status,
   deleted_at = null, deleted_by = null;
 
 select 'bookings (this file)' as what,

@@ -232,10 +232,16 @@ test('plan: bookings keep money per ad, line status from Asana status', () => {
   assert.equal(b2.vendorPaymentDate, '2026-09-01');
   assert.equal(b2.completedAt, '2026-09-02');
   assert.equal(b2.position, 0);
+  // the sub-row's OWN approval and client-payment, so the board's tiles can be reproduced
+  assert.equal(b2.approval, 'approved');
+  assert.equal(b2.clientPayment, 'unpaid');
   const b3 = PLAN.bookings.find((b) => b.gid === '1000000000000003');
   assert.equal(b3.status, 'cancelled');
   assert.equal(b3.lineStatus, 'Cancelled');
   assert.equal(b3.position, 1);
+  // b3 has neither in the export, so both are null - the Data view falls back to the campaign
+  assert.equal(b3.approval, null);
+  assert.equal(b3.clientPayment, null);
   const b7 = PLAN.bookings.find((b) => b.gid === '1000000000000007');
   assert.equal(b7.price, null);
   assert.equal(b7.adType, null);
@@ -280,6 +286,10 @@ test('renderSql: keyed on asana_gid, and a forced workspace is honoured', () => 
   const [reg, camp, book, line, wipe] = renderSql(PLAN, { workspaceId: '11111111-1111-1111-1111-111111111111' });
   assert.match(camp.sql, /on conflict \(workspace_id, asana_gid\) where asana_gid is not null do update/);
   assert.match(book.sql, /on conflict \(workspace_id, asana_gid\) where asana_gid is not null do update/);
+  // the sub-row approval / client-payment reach pm_tasks so the board's tiles compute
+  assert.match(book.sql, /approval_stage, client_payment_status/);
+  assert.match(book.sql, /approval_stage = excluded.approval_stage/);
+  assert.match(book.sql, /'approved'/);
   assert.match(line.sql, /on conflict \(asana_gid\) where asana_gid is not null do update/);
   assert.match(reg.sql, /'11111111-1111-1111-1111-111111111111'::uuid as ws/);
   assert.doesNotMatch(reg.sql, /There are % workspaces/);
