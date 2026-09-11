@@ -570,6 +570,7 @@ export const LEDGER_COLUMNS: { key: LedgerSortKey; label: (s: Side) => string; a
   { key: 'party',       label: (s) => (s === 'clients' ? 'Client' : 'Vendor'), align: 'left' },
   { key: 'campaign',    label: () => 'Campaign', align: 'left' },
   { key: 'state',       label: () => 'Status', align: 'left' },
+  { key: 'due',         label: () => 'Due', align: 'left' },
   { key: 'total',       label: (s) => (s === 'clients' ? 'Billed (SAR)' : 'Booked (SAR)'), align: 'right' },
   { key: 'paid',        label: () => 'Paid (SAR)', align: 'right' },
   { key: 'outstanding', label: () => 'Balance due (SAR)', align: 'right' },
@@ -587,6 +588,9 @@ export function ledgerCsv(rows: LedgerRow[], side: Side): string {
   for (const r of rows) {
     lines.push([
       esc(r.party), esc(r.campaign), esc(r.stateLabel),
+      // The due date, marked when it is overdue or only projected, so the
+      // download says the same thing the screen does.
+      esc(r.due ? (r.overdue ? `${r.due} (overdue)` : r.dueBasis === 'actual' ? r.due : `${r.due} (projected)`) : ''),
       // Unformatted, so Excel reads them as numbers rather than as text.
       String(r.total), String(r.paid), String(r.outstanding),
     ].join(','));

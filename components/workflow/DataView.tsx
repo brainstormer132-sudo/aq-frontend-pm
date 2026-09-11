@@ -18,7 +18,7 @@ import {
   SIDES, PAY_KEYS, LEDGER_COLUMNS, EMPTY_LEDGER_FILTER, DEFAULT_LEDGER_SORT,
   payLabel, payTone,
   type LedgerFilter, type LedgerRow, type LedgerSort, type LedgerSortKey,
-  type LedgerTotals, type PayKey, type Side,
+  type LedgerTotals, type PayKey, type Side, type TermSet,
 } from '@/lib/money-ledger';
 
 /** The Asana board's tiles, in the order they sit on the board: field, label, sub-note. */
@@ -142,6 +142,16 @@ export function DataView({
     () => new Map(clients.map((c) => [c.id, c.company_name])), [clients]);
   const vendorNames = useMemo(
     () => new Map(vendors.map((v) => [String(v.id), v.name])), [vendors]);
+  // A client's standing terms, so the collection ledger can date a campaign
+  // that has not set its own. A campaign's own terms still win (ownTerms).
+  const clientTerms = useMemo(
+    () => new Map<string, TermSet>(clients
+      .filter((c) => c.payment_terms)
+      .map((c) => [c.id, {
+        terms: c.payment_terms,
+        splitPct: c.payment_split_pct,
+        netDays: c.payment_net_days,
+      }])), [clients]);
 
   const [side, setSide] = useState<Side>('clients');
   const [ledgerFilter, setLedgerFilter] = useState<LedgerFilter>(EMPTY_LEDGER_FILTER);
@@ -155,15 +165,15 @@ export function DataView({
   // the table below is keyed on the side so it is rebuilt, not patched.
   const ledgerView = useMemo(() => {
     const rows = side === 'clients'
-      ? clientLedger({ parents: scoped.parents, subtasks: scoped.allSubtasks, clientName: clientNames })
-      : vendorLedger({ subtasks: scoped.subtasks, parents: scoped.parents, vendorName: vendorNames });
+      ? clientLedger({ parents: scoped.parents, subtasks: scoped.allSubtasks, clientName: clientNames, clientTerms, today: today ?? undefined })
+      : vendorLedger({ subtasks: scoped.subtasks, parents: scoped.parents, vendorName: vendorNames, today: today ?? undefined });
     return {
       side,
       rows,
       totals: ledgerTotals(rows, side),
       shown: sortLedger(filterLedger(rows, ledgerFilter), ledgerSort),
     };
-  }, [side, scoped, clientNames, vendorNames, ledgerFilter, ledgerSort]);
+  }, [side, scoped, clientNames, vendorNames, clientTerms, today, ledgerFilter, ledgerSort]);
   const ledger = ledgerView.rows;
   const ledgerAll = ledgerView.totals;
   const ledgerShown = ledgerView.shown;
@@ -466,6 +476,13 @@ export function DataView({
                   ...f, outstandingOnly: !f.outstandingOnly, state: null,
                 }))}
               >Balance due</Chip>
+              {/* The chase list: past its due date and still unpaid. */}
+              <Chip
+                on={!!ledgerFilter.overdueOnly}
+                onClick={() => setLedgerFilter((f) => ({
+                  ...f, overdueOnly: !f.overdueOnly, state: null,
+                }))}
+              >Overdue</Chip>
 
               <input
                 className="aq-input"
@@ -806,6 +823,21 @@ function Ledger({
                   padding: '3px 9px', borderRadius: 9999, whiteSpace: 'nowrap',
                   background: TONE_BG[r.tone], color: TONE_FILL[r.tone],
                 }}>{r.stateLabel}</span>
+              </LTd>
+              <LTd muted={!r.due}>
+                {r.due ? (
+                  <span title={r.terms} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                    <span>{r.due}</span>
+                    {r.overdue ? (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 9999,
+                        background: TONE_BG.bad, color: TONE_FILL.bad,
+                      }}>{r.daysLate}d late</span>
+                    ) : r.dueBasis !== 'actual' ? (
+                      <span style={{ fontSize: 10, color: 'var(--aq-text-muted)' }}>projected</span>
+                    ) : null}
+                  </span>
+                ) : '—'}
               </LTd>
               <LTd align="right">{sar(r.total)}</LTd>
               <LTd align="right" muted={r.paid <= 0}>{r.paid > 0 ? sar(r.paid) : '—'}</LTd>

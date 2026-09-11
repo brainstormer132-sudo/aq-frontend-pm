@@ -9,6 +9,7 @@
 import { clientPaymentState, contractState, moneyByMonth, isComplete } from '../.test-build/dashboard-data.js';
 import {
   clientLedger, vendorLedger, sortLedger, filterLedger, EMPTY_LEDGER_FILTER,
+  LEDGER_COLUMNS, ledgerCsv,
 } from '../.test-build/money-ledger.js';
 import { totalsOf, groupByAdType, contractDetails, lineNet } from '../.test-build/ad-lines.js';
 import { contractPlan } from '../.test-build/vendor-contracts.js';
@@ -380,6 +381,21 @@ const TODAY = '2026-08-01';
   eq('both campaigns are in the ledger', rows.map((r) => r.id).sort(), ['late', 'soon']);
   const chase = filterLedger(rows, { ...EMPTY_LEDGER_FILTER, overdueOnly: true });
   eq('overdueOnly keeps only the past-due row', chase.map((r) => r.id), ['late']);
+}
+
+// The ledger's Due column: it sits after Status, and the CSV carries the
+// date the terms produce, marked when overdue.
+{
+  eq('LEDGER_COLUMNS has Due after Status',
+    LEDGER_COLUMNS.map((c) => c.key),
+    ['party', 'campaign', 'state', 'due', 'total', 'paid', 'outstanding']);
+  const rows = clientLedger({
+    parents: [camp18({ payment_terms: 'net_days', payment_net_days: 30 })],
+    subtasks: [bill(10000)], today: TODAY,
+  });
+  const csv = ledgerCsv(rows, 'clients');
+  ok('CSV header names Due', csv.split('\r\n')[0].includes('Due'));
+  ok('CSV row carries the due date, marked overdue', csv.includes('2026-07-01 (overdue)'));
 }
 
 console.log(`${pass} passed, ${fail} failed`);

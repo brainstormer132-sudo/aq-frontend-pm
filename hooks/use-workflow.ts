@@ -4740,6 +4740,11 @@ export interface ClientRow {
   country: string | null;
   status: string | null;
   zoho_customer_id: string | null;
+  /** The client's standing payment terms (081), inherited by every campaign
+   *  unless the campaign overrides them. split | on_delivery | in_advance | net_days. */
+  payment_terms: string | null;
+  payment_split_pct: number | null;
+  payment_net_days: number | null;
 }
 
 export interface ClientBrandRow {
@@ -4759,7 +4764,7 @@ export function useClients() {
       'useClients',
       () => supabase
         .from('clients')
-        .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id')
+        .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id, payment_terms, payment_split_pct, payment_net_days')
         .order('company_name', { ascending: true }),
     ), force);
     setClients(rows);
