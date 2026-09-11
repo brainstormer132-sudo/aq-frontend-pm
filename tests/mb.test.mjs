@@ -12,7 +12,7 @@ const eq = (name, got, want) => {
 // the vendors take 70,000 of it. AQ keeps 30,000.
 {
   const b = moneyBar({ budget: 100000, vendorCost: 70000, breakdown: 100000 });
-  eq('net is budget minus what vendors take', b.net, 30000);
+  eq('net is what is billed minus what vendors take', b.net, 30000);
   eq('margin', b.marginRate, 30);
   eq('vendorCost is the vendors', b.vendorCost, 70000);
   eq('breakdown is the client', b.breakdown, 100000);
@@ -30,10 +30,14 @@ const eq = (name, got, want) => {
 
 /* ── Budget vs breakdown ─────────────────────────────────────────── */
 {
+  // Margin is measured on what the client is billed (the breakdown), not the
+  // typed budget, so the campaign page agrees with the ledger. The typed
+  // budget stays on screen with its variance; it no longer drives the margin.
   const b = moneyBar({ budget: 100000, vendorCost: 60000, breakdown: 92000 });
   eq('under-billed variance', b.breakdownVariance, 8000);
-  eq('budget still leads the margin', b.net, 40000);
-  eq('budget is the typed one', b.budget, 100000);
+  eq('margin is off the breakdown, not the budget', b.net, 32000);  // 92000 - 60000; was 40000 off the typed budget
+  eq('rate is off the breakdown', b.marginRate, 34.8);              // 32000 / 92000
+  eq('budget shown is still the typed one', b.budget, 100000);
   eq('not inferred', b.budgetFromBreakdown, false);
 }
 {

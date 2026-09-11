@@ -218,7 +218,14 @@ export function moneyBar(input: {
   const breakdownVariance =
     typedBudget != null && breakdown != null ? typedBudget - breakdown : null;
 
-  if (budget == null) {
+  // What the client is billed is the breakdown, not the typed budget, and the
+  // ledger collects on the breakdown, so the margin is measured against it.
+  // The typed budget still shows on screen with its variance; it just no
+  // longer drives the margin. When nothing is billed yet the budget stands in.
+  const base = breakdown ?? typedBudget;
+  const baseIsBudget = breakdown == null && typedBudget != null;
+
+  if (base == null) {
     return {
       budget: null, budgetFromBreakdown: false, vendorCost,
       breakdown, breakdownVariance,
@@ -232,14 +239,14 @@ export function moneyBar(input: {
   }
 
   const cost = vendorCost ?? 0;
-  const net = budget - cost;
-  const rate = Math.round((net / budget) * 1000) / 10;
-  const costPct = Math.max(0, Math.min(100, (cost / budget) * 100));
-  const overspent = cost > budget;
+  const net = base - cost;
+  const rate = Math.round((net / base) * 1000) / 10;
+  const costPct = Math.max(0, Math.min(100, (cost / base) * 100));
+  const overspent = cost > base;
 
-  const worth = budgetFromBreakdown
-    ? `${moneyRound(budget)} of bookings`
-    : `a ${moneyRound(budget)} budget`;
+  const worth = baseIsBudget
+    ? `a ${moneyRound(base)} budget`
+    : `${moneyRound(base)} of bookings`;
 
   return {
     budget,
@@ -252,7 +259,7 @@ export function moneyBar(input: {
     costPct,
     overspent,
     sentence: overspent
-      ? `Vendors take ${moneyRound(cost)}, which is more than the ${moneyRound(budget)} this campaign is worth.`
+      ? `Vendors take ${moneyRound(cost)}, which is more than ${worth}.`
       : `Of ${worth}, ${moneyRound(cost)} goes to vendors and ${moneyRound(net)} is AQ's.`,
   };
 }
