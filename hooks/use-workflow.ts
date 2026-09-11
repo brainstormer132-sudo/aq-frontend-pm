@@ -5773,10 +5773,10 @@ export function usePendingClients() {
   const [items, setItems] = useState<PendingClient[]>([]);
   const [loading, setLoading] = useState(true);
   const fetch = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('pending_clients').select('*').order('submitted_at', { ascending: false });
-    if (error) logSbError('usePendingClients', error);
-    setItems((data || []) as PendingClient[]);
+    const data = await selectAllRows<PendingClient>('usePendingClients', () =>
+      supabase.from('pending_clients').select('*')
+        .order('submitted_at', { ascending: false }).order('id', { ascending: false }));
+    setItems(data as PendingClient[]);
     setLoading(false);
   }, []);
   useEffect(() => { fetch(); }, [fetch]);
@@ -5810,6 +5810,8 @@ export async function approvePendingVendor(id: number, reviewerName: string) {
   const { error: updateErr } = await supabase.from('pending_vendors')
     .update({ status: 'approved', reviewed_at: now }).eq('id', id);
   if (updateErr) throw updateErr;
+  // A newly approved vendor is now in the registry; drop the cached list so it shows.
+  invalidateRefCache('legacy-vendors');
 }
 export async function rejectPendingVendor(id: number) {
   const { error } = await supabase.from('pending_vendors')
@@ -5820,6 +5822,8 @@ export async function approvePendingClient(id: number) {
   const { error } = await supabase.from('pending_clients')
     .update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
+  // Approval promotes the row into `clients`; drop the cached client list so it shows.
+  invalidateRefCache('clients');
 }
 export async function rejectPendingClient(id: number) {
   const { error } = await supabase.from('pending_clients')
@@ -5854,6 +5858,8 @@ export async function createApprovedClientRegistration(input: {
     .select()
     .single();
   if (error) throw error;
+  // Pre-approved registration lands as a client; drop the cached client list.
+  invalidateRefCache('clients');
   return data as PendingClient;
 }
 
@@ -6201,13 +6207,11 @@ export function useCrmDeals(workspaceId: string | null) {
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    const { data, error } = await supabase
-      .from('crm_deals')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('stage_changed_at', { ascending: false });
-    if (error) logSbError('useCrmDeals', error, { workspaceId });
-    setItems((data || []) as CrmDeal[]);
+    const data = await selectAllRows<CrmDeal>('useCrmDeals', () =>
+      supabase.from('crm_deals').select('*')
+        .eq('workspace_id', workspaceId)
+        .order('stage_changed_at', { ascending: false }).order('id', { ascending: false }));
+    setItems(data as CrmDeal[]);
     setLoading(false);
   }, [workspaceId]);
 
@@ -6288,19 +6292,16 @@ export function useCrmTasks(workspaceId: string | null, opts?: {
 
   const fetch = useCallback(async () => {
     if (!workspaceId) { setItems([]); setLoading(false); return; }
-    let q = supabase
-      .from('crm_tasks')
-      .select('*')
-      .eq('workspace_id', workspaceId);
-    if (opts?.assignedTo)   q = q.eq('assigned_to_id', opts.assignedTo);
-    if (opts?.targetType)   q = q.eq('target_type', opts.targetType);
-    if (opts?.targetId)     q = q.eq('target_id', opts.targetId);
-    if (opts?.dealId)       q = q.eq('deal_id', opts.dealId);
-    if (!opts?.includeCompleted) q = q.is('completed_at', null);
-    q = q.order('due_at', { ascending: true, nullsFirst: false });
-    const { data, error } = await q;
-    if (error) logSbError('useCrmTasks', error, { workspaceId, opts });
-    setItems((data || []) as CrmTask[]);
+    const data = await selectAllRows<CrmTask>('useCrmTasks', () => {
+      let q = supabase.from('crm_tasks').select('*').eq('workspace_id', workspaceId);
+      if (opts?.assignedTo)   q = q.eq('assigned_to_id', opts.assignedTo);
+      if (opts?.targetType)   q = q.eq('target_type', opts.targetType);
+      if (opts?.targetId)     q = q.eq('target_id', opts.targetId);
+      if (opts?.dealId)       q = q.eq('deal_id', opts.dealId);
+      if (!opts?.includeCompleted) q = q.is('completed_at', null);
+      return q.order('due_at', { ascending: true, nullsFirst: false }).order('id', { ascending: true });
+    });
+    setItems(data as CrmTask[]);
     setLoading(false);
   }, [workspaceId, opts?.assignedTo, opts?.targetType, opts?.targetId, opts?.dealId, opts?.includeCompleted]);
 
