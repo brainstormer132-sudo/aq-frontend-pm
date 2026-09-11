@@ -1327,6 +1327,21 @@ export async function deleteClientCategory(id: string) {
   if (error) throw error;
 }
 
+/**
+ * A client's standing payment terms (081). A workspace member may write these
+ * (RLS "clients update by member"). Busts the client ref cache so the money
+ * ledger and every campaign's inherited-terms display pick the change up.
+ */
+export async function updateClientTerms(id: string, fields: {
+  payment_terms: string | null;
+  payment_split_pct: number | null;
+  payment_net_days: number | null;
+}) {
+  const { error } = await supabase.from('clients').update(fields).eq('id', id);
+  if (error) throw error;
+  invalidateRefCache('clients');
+}
+
 /** Workspace members (for sales closer / key account / assignee dropdowns). */
 export function useWorkspaceProfiles(workspaceId: string | null) {
   const [profiles, setProfiles] = useState<(Profile & { role: WorkspaceRole })[]>([]);

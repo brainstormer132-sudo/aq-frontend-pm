@@ -5,8 +5,10 @@ import {
   usePendingClients,
   selectAllRows,
   useAllClientBrands,
+  updateClientTerms,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
+import { TermsField } from './campaign/track';
 import {
   buildClients, sortRows, filterRows, nextSort, summarise, summaryLine,
   emptyMessage, isFiltered, deleteWarning, deletedMessage, resetWarning,
@@ -48,7 +50,7 @@ export function ClientsView({
         // this list and its count both sat at exactly 1000.
         const data = await selectAllRows<any>('ClientsView', () => supabase
       .from('clients')
-      .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, vat_number, street, city, postcode, country, invite_status, status')
+      .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, vat_number, street, city, postcode, country, invite_status, status, payment_terms, payment_split_pct, payment_net_days')
       .eq('status', 'active')
       .order('company_name'), (msg) => setError(msg));
     setAllClients(data ?? []);
@@ -398,6 +400,7 @@ export function ClientsView({
               isAdmin={role === 'owner' || role === 'admin'}
               onPortal={() => setPortalFor(r)}
               onDelete={() => setConfirmDeleteId(r.id)}
+              onSaveTerms={async (id, fields) => { await updateClientTerms(id, fields); refetch(); }}
             />
           )}
         />
@@ -630,12 +633,18 @@ const modalCard: React.CSSProperties = {
  * be missing in the contract too.
  */
 function ClientDetail({
-  row, isAdmin, onPortal, onDelete,
+  row, isAdmin, onPortal, onDelete, onSaveTerms,
 }: {
   row: RegistryRow;
   isAdmin: boolean;
   onPortal: () => void;
   onDelete: () => void;
+  /** Save this client's standing payment terms. */
+  onSaveTerms: (id: string, fields: {
+    payment_terms: string | null;
+    payment_split_pct: number | null;
+    payment_net_days: number | null;
+  }) => void;
 }) {
   const c = row.raw as any;
   const address = [c.street, c.city, c.postcode, c.country].filter(Boolean).join(', ');
@@ -649,6 +658,26 @@ function ClientDetail({
         <Detail label="Email" value={c.company_email || c.contact_email} />
         <Detail label="Phone" value={c.contact_phone} />
         <Detail label="Address" value={address} missing />
+      </div>
+
+      {/* Standing payment terms: set once, and every campaign for this client
+          inherits them unless the campaign sets its own. What dates the
+          collection ledger. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--aq-text-muted)', fontWeight: 600 }}>Payment terms</span>
+        <TermsField
+          label="When this client pays"
+          terms={c.payment_terms ?? null}
+          splitPct={c.payment_split_pct ?? null}
+          netDays={c.payment_net_days ?? null}
+          canEdit={isAdmin}
+          onCommit={(fields) => onSaveTerms(row.id, fields)}
+        />
+        {isAdmin && (
+          <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+            every campaign inherits this unless it sets its own
+          </span>
+        )}
       </div>
 
       <BrandManagerInline clientId={row.id} />
