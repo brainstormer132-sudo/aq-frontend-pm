@@ -393,6 +393,18 @@ export function isOpen(row: DashTask): boolean {
 export function isComplete(row: DashTask): boolean {
   return row.status === 'done' || row.stage === 'completed';}
 
+/**
+ * A cancelled booking: nothing was delivered, so it is neither money we can
+ * bill nor money we owe. `isComplete` already keeps cancelled *campaigns* out
+ * of the ledgers, but a completed campaign can still carry cancelled *bookings*
+ * among its live ones (see the sub-row note above), and those must not be
+ * summed into either side. Only `status` carries this value; the `task_stage`
+ * enum has no `cancelled` member, so a single check on `status` is enough.
+ */
+export function isCancelled(row: DashTask): boolean {
+  return row.status === 'cancelled';
+}
+
 /* ────────────────────────────────────────────────────────────────
    Scoping
    ──────────────────────────────────────────────────────────────── */

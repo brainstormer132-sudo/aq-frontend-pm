@@ -17,7 +17,7 @@
  */
 
 import {
-  clientPaymentState, vendorPaymentState, isOpen, isComplete,
+  clientPaymentState, vendorPaymentState, isOpen, isComplete, isCancelled,
   type DashTask, type PaymentState, type Tone,
 } from './dashboard-data';
 
@@ -123,7 +123,11 @@ export function clientLedger(input: {
 
   const out: LedgerRow[] = [];
   for (const p of input.parents) {
-    if (!isComplete(p)) continue;    const subs = byParent.get(p.id) ?? [];
+    if (!isComplete(p)) continue;
+    // A cancelled booking billed nothing, so it must not swell the campaign's
+    // total. isComplete keeps cancelled campaigns out; this keeps cancelled
+    // bookings out of a live campaign's bill.
+    const subs = (byParent.get(p.id) ?? []).filter((s) => !isCancelled(s));
     const total = r2(subs.reduce((a, s) => a + num(s.price), 0));
     // A campaign nobody has priced is not a debt. It is an unfinished
     // campaign, and putting it in a ledger of money owed is how a total
@@ -178,8 +182,11 @@ export function vendorLedger(input: {
 
   const out: LedgerRow[] = [];
   for (const s of input.subtasks) {
+    // A cancelled booking is nothing we owe, so skip it before it makes a row.
+    if (isCancelled(s)) continue;
     const campaign = parentById.get(s.parent_task_id ?? '');
-    if (!campaign || !isComplete(campaign)) continue;    const total = r2(num(s.net_amount));
+    if (!campaign || !isComplete(campaign)) continue;
+    const total = r2(num(s.net_amount));
     if (total <= 0) continue;
 
     const state = vendorPaymentState(s);

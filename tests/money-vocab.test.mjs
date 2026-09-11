@@ -224,5 +224,19 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   eq('liability: only bookings on completed campaigns, even when the booking itself is done', vl.map((r) => r.id).sort(), ['b2', 'b4']);
   eq('liability: the booking keeps its own net', vl.find((r) => r.id === 'b2').total, 800);
 }
+{
+  // A completed campaign can still carry cancelled bookings among its live
+  // ones. Cancelled means nothing was delivered, so it is neither money we
+  // can bill (collection) nor money we owe (liability). Before the fix, its
+  // price swelled the campaign's bill and its net became a vendor row.
+  const camp = { id: 'k', parent_task_id: null, title: 'k', client_id: 'c', created_at: '2026-06-01', status: 'done', stage: 'completed', client_payment_status: 'unpaid' };
+  const live = { id: 'live', parent_task_id: 'k', title: 'live booking', vendor_id: 1, price: 1000, net_amount: 800,  status: 'done',      stage: 'completed' };
+  const cxl  = { id: 'cxl',  parent_task_id: 'k', title: 'cxl booking',  vendor_id: 1, price: 5000, net_amount: 4000, status: 'cancelled', stage: 'in_progress' };
+  const cl = clientLedger({ parents: [camp], subtasks: [live, cxl] });
+  eq('collection: cancelled booking is not billed', cl.find((r) => r.id === 'k').total, 1000);
+  const vl = vendorLedger({ subtasks: [live, cxl], parents: [camp] });
+  eq('liability: cancelled booking never becomes a row', vl.map((r) => r.id).sort(), ['live']);
+  eq('liability: only the live net is owed', vl.reduce((a, r) => a + r.total, 0), 800);
+}
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
