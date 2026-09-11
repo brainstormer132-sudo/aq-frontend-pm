@@ -7,7 +7,9 @@
  * and the code did another, and nothing in between could tell.
  */
 import { clientPaymentState, contractState, moneyByMonth, isComplete } from '../.test-build/dashboard-data.js';
-import { clientLedger, vendorLedger } from '../.test-build/money-ledger.js';
+import {
+  clientLedger, vendorLedger, sortLedger, filterLedger, EMPTY_LEDGER_FILTER,
+} from '../.test-build/money-ledger.js';
 import { totalsOf, groupByAdType, contractDetails, lineNet } from '../.test-build/ad-lines.js';
 import { contractPlan } from '../.test-build/vendor-contracts.js';
 import { bookingRows } from '../.test-build/campaign-page.js';
@@ -238,5 +240,147 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   eq('liability: cancelled booking never becomes a row', vl.map((r) => r.id).sort(), ['live']);
   eq('liability: only the live net is owed', vl.reduce((a, r) => a + r.total, 0), 800);
 }
+/* ================================================================
+   4. Payment terms become due dates (#18)
+
+   067 gave campaigns and bookings terms and nothing read them. The ledger
+   now turns them into a date to chase by. Both ledgers are completed-only,
+   so a campaign's completion is a REAL delivery date, not a projection.
+   ================================================================ */
+
+// A completed campaign, its one booking billing the client `price`.
+const camp18 = (extra = {}) => ({
+  id: 'k', parent_task_id: null, title: 'Campaign', client_id: 'c',
+  created_at: '2026-05-01', status: 'done', stage: 'completed',
+  client_payment_status: 'unpaid', completed_at: '2026-06-01T09:00:00Z',
+  package_start_date: '2026-05-01', due_date: '2026-06-01', ...extra,
+});
+const bill = (price) => ({
+  id: 'b', parent_task_id: 'k', title: 'b', vendor_id: 1,
+  price, net_amount: 0, status: 'done', stage: 'completed',
+});
+const TODAY = '2026-08-01';
+
+// Net-30 from the campaign's completion, and it is a fact, not a guess.
+{
+  const rows = clientLedger({
+    parents: [camp18({ payment_terms: 'net_days', payment_net_days: 30 })],
+    subtasks: [bill(10000)], today: TODAY,
+  });
+  const r = rows[0];
+  eq('client net_days: due 30 days after completion', r.due, '2026-07-01');
+  eq('client net_days: the date is real', r.dueBasis, 'actual');
+  eq('client net_days: overdue by 1 Aug', r.overdue, true);
+  eq('client net_days: 31 days late', r.daysLate, 31);
+}
+
+// No terms on the campaign: it inherits the client's standing terms.
+{
+  const rows = clientLedger({
+    parents: [camp18()],
+    subtasks: [bill(10000)],
+    clientTerms: new Map([['c', { terms: 'net_days', splitPct: null, netDays: 60 }]]),
+    today: TODAY,
+  });
+  eq('client default net_60 is inherited', rows[0].due, '2026-07-31');
+}
+
+// The campaign's own terms override the client default.
+{
+  const rows = clientLedger({
+    parents: [camp18({ payment_terms: 'in_advance' })],
+    subtasks: [bill(10000)],
+    clientTerms: new Map([['c', { terms: 'net_days', splitPct: null, netDays: 60 }]]),
+    today: TODAY,
+  });
+  eq('campaign override beats client default', rows[0].due, '2026-05-01');
+  eq('in-advance is projected from the start date', rows[0].dueBasis, 'planned');
+}
+
+// Split: half up front (ahead of the start), half on delivery. A recorded
+// part-payment settles the first, so the chase date moves to the second.
+{
+  const unpaid = clientLedger({
+    parents: [camp18({ payment_terms: 'split', payment_split_pct: 50 })],
+    subtasks: [bill(10000)], today: TODAY,
+  })[0];
+  eq('split: soonest unpaid is the up-front half', unpaid.due, '2026-05-01');
+  eq('split: overdue', unpaid.overdue, true);
+
+  const halfPaid = clientLedger({
+    parents: [camp18({
+      payment_terms: 'split', payment_split_pct: 50,
+      client_payment_status: 'partial', client_payment_amount: 5000,
+    })],
+    subtasks: [bill(10000)], today: TODAY,
+  })[0];
+  eq('split: the paid half drops out, next is on-delivery', halfPaid.due, '2026-06-01');
+}
+
+// No terms anywhere: a date cannot be invented, and the row says so.
+{
+  const r = clientLedger({ parents: [camp18()], subtasks: [bill(10000)], today: TODAY })[0];
+  eq('no terms: no due date', r.due, null);
+  eq('no terms: not overdue', r.overdue, false);
+  eq('no terms: says so', r.terms, 'No payment terms agreed.');
+}
+
+// A campaign marked paid owes nothing, whatever its terms say.
+{
+  const r = clientLedger({
+    parents: [camp18({ payment_terms: 'net_days', payment_net_days: 30, client_payment_status: 'paid' })],
+    subtasks: [bill(10000)], today: TODAY,
+  })[0];
+  eq('paid: nothing left to chase', r.due, null);
+  eq('paid: not overdue', r.overdue, false);
+}
+
+// The vendor side reads the booking's own terms, delivered on the campaign.
+{
+  const vl = vendorLedger({
+    parents: [camp18()],
+    subtasks: [{
+      id: 'v', parent_task_id: 'k', title: 'v', vendor_id: 2,
+      price: 0, net_amount: 4200, status: 'done', stage: 'completed',
+      payment_terms: 'net_days', payment_net_days: 30,
+    }],
+    today: TODAY,
+  });
+  eq('vendor net_days: due 30 days after the campaign completed', vl[0].due, '2026-07-01');
+  eq('vendor net_days: overdue', vl[0].overdue, true);
+}
+
+// Sorting by due keeps a row with no date at the bottom, both directions.
+{
+  const dated = { due: '2026-07-01' }, later = { due: '2026-09-01' }, none = { due: null };
+  const mk = (o, i) => ({ party: `p${i}`, campaign: 'c', state: 'unpaid', ...o });
+  const rows = [mk(none, 0), mk(later, 1), mk(dated, 2)];
+  eq('due asc: soonest first, null last',
+    sortLedger(rows, { key: 'due', dir: 'asc' }).map((r) => r.due),
+    ['2026-07-01', '2026-09-01', null]);
+  eq('due desc: latest first, null STILL last',
+    sortLedger(rows, { key: 'due', dir: 'desc' }).map((r) => r.due),
+    ['2026-09-01', '2026-07-01', null]);
+}
+
+// overdueOnly is the chase list: only what is past its date and unpaid.
+{
+  // 'late' completed 1 Jun -> net-30 due 1 Jul, overdue on 1 Aug.
+  // 'soon' completed 20 Jul -> net-30 due 19 Aug, not due yet.
+  const late = { ...camp18(), id: 'late', payment_terms: 'net_days', payment_net_days: 30 };
+  const soon = { ...camp18(), id: 'soon', payment_terms: 'net_days', payment_net_days: 30, completed_at: '2026-07-20T00:00:00Z' };
+  const rows = clientLedger({
+    parents: [late, soon],
+    subtasks: [
+      { id: 'bl', parent_task_id: 'late', title: 'bl', price: 10000, net_amount: 0, status: 'done', stage: 'completed' },
+      { id: 'bs', parent_task_id: 'soon', title: 'bs', price: 5000, net_amount: 0, status: 'done', stage: 'completed' },
+    ],
+    today: TODAY,
+  });
+  eq('both campaigns are in the ledger', rows.map((r) => r.id).sort(), ['late', 'soon']);
+  const chase = filterLedger(rows, { ...EMPTY_LEDGER_FILTER, overdueOnly: true });
+  eq('overdueOnly keeps only the past-due row', chase.map((r) => r.id), ['late']);
+}
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

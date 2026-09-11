@@ -20,6 +20,35 @@ import {
   clientPaymentState, vendorPaymentState, isOpen, isComplete, isCancelled,
   type DashTask, type PaymentState, type Tone,
 } from './dashboard-data';
+import { paymentSchedule, type Basis } from './payment-schedule';
+
+/**
+ * A set of payment terms, however they were arrived at. On a campaign the
+ * effective terms are the campaign's own (an override) or, failing that, the
+ * client's standing terms; on a vendor booking they are the booking's.
+ */
+export interface TermSet {
+  terms: string | null;
+  splitPct: number | null;
+  netDays: number | null;
+}
+
+/** The campaign row's own terms, if it carries an override. */
+function ownTerms(t: DashTask): TermSet | null {
+  const terms = (t.payment_terms ?? '').trim();
+  if (!terms) return null;
+  return {
+    terms,
+    splitPct: t.payment_split_pct ?? null,
+    netDays: t.payment_net_days ?? null,
+  };
+}
+
+/** A campaign was completed on this day, as far as the money is concerned. */
+function completedOn(t: DashTask): string | null {
+  const c = (t.completed_at ?? '').slice(0, 10);
+  return c || null;
+}
 
 export type PayKey = 'paid' | 'partial' | 'unpaid';
 
@@ -73,6 +102,18 @@ export interface LedgerRow {
    * into an argument with a client six weeks later, so it is said out loud.
    */
   mismatch: string | null;
+
+  // When the money is due (from the payment terms)
+  /** The soonest still-unpaid instalment's due date. Null with no terms. */
+  due: string | null;
+  /** Whether `due` is a real date, a projection, or unknown. */
+  dueBasis: Basis;
+  /** Something is past its date and unpaid. */
+  overdue: boolean;
+  /** Days late on the worst instalment. Null when nothing is late. */
+  daysLate: number | null;
+  /** The terms in a sentence, shown even when no date could be worked out. */
+  terms: string;
 }
 
 function num(v: unknown): number {
@@ -88,6 +129,45 @@ function nameOf(t: DashTask | undefined): string {
 /** Round to the nearest halala before comparing, so 0.004 is not a debt. */
 function r2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * The due-date part of a ledger row, from its terms.
+ *
+ * Both ledgers hold completed campaigns only, so the campaign's completion is
+ * a real delivery date - the schedule's `actual` basis - not a guess. When
+ * nobody recorded a completion date the planned finish stands in (and reads as
+ * projected). The clamped `paid` figure the ledger already trusts is what
+ * settles the instalments, so a row the ledger calls paid owes nothing here
+ * either.
+ */
+function dueFields(args: {
+  terms: TermSet | null;
+  total: number;
+  paid: number;
+  delivered: string | null;
+  dueDate: string | null;
+  startDate: string | null;
+  today: string;
+}): Pick<LedgerRow, 'due' | 'dueBasis' | 'overdue' | 'daysLate' | 'terms'> {
+  const s = paymentSchedule({
+    terms: args.terms?.terms ?? null,
+    splitPct: args.terms?.splitPct ?? null,
+    netDays: args.terms?.netDays ?? null,
+    amount: args.total,
+    paid: args.paid,
+    deliveredOn: args.delivered,
+    dueDate: args.dueDate,
+    startDate: args.startDate,
+    today: args.today,
+  });
+  return {
+    due: s.nextDue,
+    dueBasis: s.nextBasis,
+    overdue: s.overdue,
+    daysLate: s.worstDaysLate,
+    terms: s.summary,
+  };
 }
 
 /* ── Clients owe us ─────────────────────────────────────────────── */
@@ -112,6 +192,10 @@ export function clientLedger(input: {
   parents: DashTask[];
   subtasks: DashTask[];
   clientName?: Map<string, string>;
+  /** A client's standing terms, keyed by client_id. A campaign's own terms override these. */
+  clientTerms?: Map<string, TermSet>;
+  /** Today, for judging overdue. Omit and dates still show but nothing reads as late. */
+  today?: string;
 }): LedgerRow[] {
   const byParent = new Map<string, DashTask[]>();
   for (const s of input.subtasks) {
@@ -141,6 +225,11 @@ export function clientLedger(input: {
       || (p.brand_name || '').trim()
       || 'Unknown client';
 
+    // The campaign's own terms win; failing that, the client's standing terms.
+    const terms = ownTerms(p)
+      || (p.client_id ? input.clientTerms?.get(p.client_id) : undefined)
+      || null;
+
     out.push({
       id: p.id,
       party,
@@ -155,6 +244,15 @@ export function clientLedger(input: {
       // The RECORDED amount, not the clamped one — the whole point of this
       // line is to notice when the two disagree.
       mismatch: disagreement(state.key, recorded, total, 'clients'),
+      ...dueFields({
+        terms,
+        total,
+        paid,
+        delivered: completedOn(p),
+        dueDate: p.due_date ?? null,
+        startDate: p.package_start_date ?? null,
+        today: input.today ?? '',
+      }),
     });
   }
   return out;
@@ -177,6 +275,8 @@ export function vendorLedger(input: {
   subtasks: DashTask[];
   parents: DashTask[];
   vendorName?: Map<string, string>;
+  /** Today, for judging overdue. Omit and dates still show but nothing reads as late. */
+  today?: string;
 }): LedgerRow[] {
   const parentById = new Map(input.parents.map((p) => [p.id, p]));
 
@@ -208,6 +308,18 @@ export function vendorLedger(input: {
       tone: payTone(state.key),
       open: isOpen(s),
       mismatch: disagreement(state.key, recorded, total, 'vendors'),
+      // The booking carries its own vendor terms. Delivery is the campaign's
+      // completion (it is done, so the vendor's work on it is delivered) and
+      // "in advance" is ahead of the campaign's start.
+      ...dueFields({
+        terms: ownTerms(s),
+        total,
+        paid,
+        delivered: completedOn(campaign),
+        dueDate: s.due_date ?? campaign.due_date ?? null,
+        startDate: campaign.package_start_date ?? null,
+        today: input.today ?? '',
+      }),
     });
   }
   return out;
@@ -307,27 +419,32 @@ export interface LedgerFilter {
   query: string;
   /** Hide rows that are fully settled — the default when chasing. */
   outstandingOnly: boolean;
+  /** Show only what is past its due date and unpaid - the chase list. */
+  overdueOnly?: boolean;
 }
 
-export const EMPTY_LEDGER_FILTER: LedgerFilter = { state: null, query: '', outstandingOnly: false };
+export const EMPTY_LEDGER_FILTER: LedgerFilter = {
+  state: null, query: '', outstandingOnly: false, overdueOnly: false,
+};
 
 export function filterLedger(rows: LedgerRow[], f: LedgerFilter): LedgerRow[] {
   const q = f.query.trim().toLowerCase();
   return rows.filter((r) => {
     if (f.state && r.state !== f.state) return false;
     if (f.outstandingOnly && r.outstanding <= 0) return false;
+    if (f.overdueOnly && !r.overdue) return false;
     if (!q) return true;
     return [r.party, r.campaign, r.stateLabel].join(' ').toLowerCase().includes(q);
   });
 }
 
 export function isLedgerFiltered(f: LedgerFilter): boolean {
-  return Boolean(f.state || f.query.trim() || f.outstandingOnly);
+  return Boolean(f.state || f.query.trim() || f.outstandingOnly || f.overdueOnly);
 }
 
 /* ── Sorting ────────────────────────────────────────────────────── */
 
-export type LedgerSortKey = 'party' | 'campaign' | 'total' | 'paid' | 'outstanding' | 'state';
+export type LedgerSortKey = 'party' | 'campaign' | 'total' | 'paid' | 'outstanding' | 'state' | 'due';
 export interface LedgerSort { key: LedgerSortKey; dir: 'asc' | 'desc' }
 
 /** Biggest debt first. It is the row somebody has to do something about. */
@@ -337,7 +454,7 @@ export function firstLedgerDir(key: LedgerSortKey): 'asc' | 'desc' {
   // Names read A→Z. Money reads biggest-first. And Status is not a magnitude
   // at all — clicking it means "show me the ones somebody has to deal with",
   // so it opens at the outstanding end rather than the settled one.
-  if (key === 'party' || key === 'campaign') return 'asc';
+  if (key === 'party' || key === 'campaign' || key === 'due') return 'asc';
   return 'desc';
 }
 
@@ -358,6 +475,16 @@ export function sortLedger(rows: LedgerRow[], sort: LedgerSort): LedgerRow[] {
       case 'paid':        c = a.paid - b.paid; break;
       case 'outstanding': c = a.outstanding - b.outstanding; break;
       case 'state':       c = PAY_KEYS.indexOf(a.state) - PAY_KEYS.indexOf(b.state); break;
+      case 'due': {
+        // A row with no due date has nothing to chase, so it sits at the
+        // bottom whichever way the column is pointed, never above a real
+        // date just because null sorts low.
+        if (a.due == null && b.due == null) { c = 0; break; }
+        if (a.due == null) return 1;
+        if (b.due == null) return -1;
+        c = a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+        break;
+      }
     }
     if (c !== 0) return c * dir;
     // Stable between refreshes.

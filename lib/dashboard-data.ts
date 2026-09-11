@@ -63,6 +63,20 @@ export interface DashTask {
   service_type_id?: string | null;
   source_id?: string | null;
   client_category_id?: string | null;
+
+  // payment timing (the collection / liability ledgers)
+  /** When the campaign was completed. The ledger's real delivery date. */
+  completed_at?: string | null;
+  /** When the campaign is planned to start - what "in advance" is ahead of. */
+  package_start_date?: string | null;
+  /**
+   * Payment terms. On a campaign these are the CLIENT's (a per-campaign
+   * override of the client's standing terms); on a vendor booking they are
+   * that vendor's. `split | on_delivery | in_advance | net_days`.
+   */
+  payment_terms?: string | null;
+  payment_split_pct?: number | null;
+  payment_net_days?: number | null;
 }
 
 /** id → name for the three campaign lookups the report prints by name. */
