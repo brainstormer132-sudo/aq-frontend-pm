@@ -154,7 +154,7 @@ const TERMS = [
  * The second control changes meaning with the first — a percentage for a
  * split, a number of days for net terms — rather than showing both greyed out.
  */
-export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
+export function TermsField({ terms, splitPct, netDays, canEdit, onCommit, label }: {
   terms: string | null | undefined;
   splitPct: number | null | undefined;
   netDays: number | null | undefined;
@@ -164,6 +164,8 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
     payment_split_pct: number | null;
     payment_net_days: number | null;
   }) => void;
+  /** Screen-reader label for the picker. Defaults to the vendor wording. */
+  label?: string;
 }) {
   const t = terms ?? '';
   if (!canEdit) {
@@ -186,7 +188,7 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit }: {
     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <select
         className="aq-select"
-        aria-label="When the vendor is paid"
+        aria-label={label ?? 'When the vendor is paid'}
         value={t}
         onChange={(e) => set(e.target.value)}
         style={{

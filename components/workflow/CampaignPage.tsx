@@ -18,6 +18,7 @@ import { SearchablePicker } from './SearchablePicker';
 import { CampaignBookings } from './campaign/CampaignBookings';
 import { CampaignPaperwork } from './campaign/CampaignPaperwork';
 import { CampaignVendorContracts } from './campaign/CampaignVendorContracts';
+import { TermsField } from './campaign/track';
 import { CampaignWork } from './campaign/CampaignWork';
 import { CampaignTracking } from './campaign/CampaignTracking';
 import { CampaignActivity } from './campaign/CampaignActivity';
@@ -1085,6 +1086,38 @@ export function CampaignPage({
                     onChange={(v) => save('client_payment_status', v)}
                     canEdit={canEdit}
                   />
+                </F>
+                {/* When the client pays us. A campaign's own terms override the
+                    client's standing terms; picking "terms not set" clears the
+                    override and the campaign falls back to the client default.
+                    This is what dates the collection ledger. */}
+                <F k="Client terms">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <TermsField
+                      label="When the client pays"
+                      terms={(view as any).payment_terms ?? currentClient?.payment_terms ?? null}
+                      splitPct={(view as any).payment_split_pct ?? currentClient?.payment_split_pct ?? null}
+                      netDays={(view as any).payment_net_days ?? currentClient?.payment_net_days ?? null}
+                      canEdit={canEdit}
+                      onCommit={(fields) => opt.setMany(taskId, fields, {
+                        labels: {
+                          payment_terms: 'Client terms',
+                          payment_split_pct: 'Up-front %',
+                          payment_net_days: 'Days after delivery',
+                        },
+                        was: {
+                          payment_terms: (view as any).payment_terms,
+                          payment_split_pct: (view as any).payment_split_pct,
+                          payment_net_days: (view as any).payment_net_days,
+                        },
+                      })}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
+                      {(view as any).payment_terms
+                        ? 'this campaign'
+                        : currentClient?.payment_terms ? 'from client' : ''}
+                    </span>
+                  </span>
                 </F>
                 <F k="Paid on">
                   {canEdit
