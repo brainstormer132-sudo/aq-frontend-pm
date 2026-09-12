@@ -4,12 +4,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useClients, useLegacyVendors, useWorkspaceProfiles,
   useTaskSources, useClientCategories, useServiceTypes, useAllClientBrands,
+  useClientCredits, addClientCredit,
 } from '@/hooks/use-workflow';
+import { creditBalance, overpaymentCandidates } from '@/lib/client-credits';
 import { useDashboardRows } from '@/hooks/use-dashboard';
 import { SkeletonDashboard } from '@/components/Skeleton';
 import {
   ALL_TIME, buildDashboard, scopeRows, sumMoney, searchEntities, compact, full, toCsv,
   type AsanaTiles, type Cell, type DateRange, type Scope, type SearchHit, type Tone,
+  type DashTask, type DashPerson,
 } from '@/lib/dashboard-data';
 import {
   clientLedger, vendorLedger, ledgerTotals, shares, filterLedger, sortLedger,
@@ -570,6 +573,15 @@ export function DataView({
               same name and ten. The Dashboard owns that question. A scoped
               view still gets its table — for a vendor that is AQ's own
               seventeen-column report, which is not a duplicate of anything. */}
+          {scope?.kind === 'client' && (
+            <CreditsPanel
+              clientId={scope.id}
+              workspaceId={workspaceId}
+              parents={scoped.parents}
+              subtasks={scoped.allSubtasks}
+              profiles={profiles}
+            />
+          )}
           {scope && (
             <Panel
               title={model.table.title}
@@ -1168,5 +1180,141 @@ function Bars({ panel }: { panel: { rows: { key: string; label: string; value: n
         })}
       </svg>
     </>
+  );
+}
+
+/**
+ * Client credit (#21): money the client has on account, shown to sales.
+ *
+ * Derived detection, controlled entry, logged: the app surfaces completed
+ * campaigns the client overpaid, but nothing becomes a credit until somebody
+ * records it, and every entry keeps who and when. Append-only -- a mistake is
+ * a compensating entry, never an edit.
+ */
+function CreditsPanel({ clientId, workspaceId, parents, subtasks, profiles }: {
+  clientId: string;
+  workspaceId: string;
+  parents: DashTask[];
+  subtasks: DashTask[];
+  profiles: DashPerson[];
+}) {
+  const { entries, refetch } = useClientCredits(clientId);
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const balance = creditBalance(entries);
+  const creditedByTask = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) {
+      if (!e.source_task_id) continue;
+      m.set(e.source_task_id, (m.get(e.source_task_id) ?? 0) + Number(e.amount || 0));
+    }
+    return m;
+  }, [entries]);
+  const suggestions = useMemo(
+    () => overpaymentCandidates({ parents, subtasks, creditedByTask }).filter((c) => c.clientId === clientId),
+    [parents, subtasks, creditedByTask, clientId],
+  );
+  const nameOf = useMemo(
+    () => new Map(profiles.map((p) => [p.id, (p.full_name ?? '').trim()])),
+    [profiles],
+  );
+
+  const record = async (amt: number, why: string, sourceTaskId?: string) => {
+    if (!Number.isFinite(amt) || amt === 0) { setErr('Enter an amount that is not zero.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await addClientCredit({ clientId, workspaceId, amount: amt, reason: why, sourceTaskId });
+      setAmount(''); setReason('');
+      await refetch();
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel
+      title="Client credit"
+      caption="Money the client has on account. Append-only: a mistake is corrected with a new entry, never edited."
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <span style={{ fontSize: 26, fontWeight: 800, color: balance > 0 ? TONE_FILL.ok : INK }}>
+            SAR {sar(balance)}
+          </span>
+          <span style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>on account</span>
+        </div>
+
+        {suggestions.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: '.06em',
+              textTransform: 'uppercase', color: 'var(--aq-text-muted)',
+            }}>Overpaid, not yet credited</span>
+            {suggestions.map((s) => (
+              <div key={s.taskId} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
+                <span>
+                  <strong>{s.campaign}</strong> &mdash; paid SAR {sar(s.recorded)} on SAR {sar(s.billed)} billed,
+                  over by <strong>SAR {sar(s.excess)}</strong>
+                </span>
+                <button
+                  type="button" className="aq-btn aq-btn-secondary" disabled={busy}
+                  onClick={() => record(s.excess, `Overpayment on ${s.campaign}`, s.taskId)}
+                  style={{ fontSize: 12, padding: '4px 10px' }}
+                >Log as credit</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <input
+            className="aq-input" inputMode="decimal" placeholder="Amount (+ add, - use)"
+            value={amount} onChange={(e) => setAmount(e.target.value)}
+            style={{ width: 160, fontSize: 12.5, padding: '6px 10px' }}
+          />
+          <input
+            className="aq-input" placeholder="Reason (deposit, applied to campaign X, ...)"
+            value={reason} onChange={(e) => setReason(e.target.value)}
+            style={{ flex: '1 1 220px', minWidth: 180, fontSize: 12.5, padding: '6px 10px' }}
+          />
+          <button
+            type="button" className="aq-btn aq-btn-secondary" disabled={busy || !amount.trim()}
+            onClick={() => record(Number(amount), reason)}
+            style={{ fontSize: 12.5, padding: '6px 12px' }}
+          >Record</button>
+        </div>
+        {err && <p style={{ fontSize: 12, color: TONE_FILL.bad, margin: 0 }}>{err}</p>}
+
+        {entries.length === 0 ? (
+          <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', margin: 0 }}>No credit recorded yet.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {entries.map((e) => (
+              <div key={e.id} style={{
+                display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 12.5,
+                borderTop: '1px solid var(--aq-border-light)', paddingTop: 6,
+              }}>
+                <span style={{
+                  fontWeight: 700, width: 120, textAlign: 'right', whiteSpace: 'nowrap',
+                  color: Number(e.amount) < 0 ? TONE_FILL.bad : TONE_FILL.ok,
+                }}>
+                  {Number(e.amount) < 0 ? '-' : '+'}SAR {sar(Math.abs(Number(e.amount)))}
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>{e.reason || '(no note)'}</span>
+                <span style={{ color: 'var(--aq-text-muted)', whiteSpace: 'nowrap' }}>
+                  {String(e.created_at).slice(0, 10)}
+                  {e.created_by && nameOf.get(e.created_by) ? ` · ${nameOf.get(e.created_by)}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }

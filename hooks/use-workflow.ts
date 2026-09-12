@@ -1348,6 +1348,68 @@ export async function updateClientTerms(id: string, fields: {
   invalidateRefCache('clients');
 }
 
+/* Client credits (082): an append-only, logged balance */
+
+export interface ClientCredit {
+  id: string;
+  client_id: string;
+  workspace_id: string;
+  /** Signed: positive is a grant, negative is the credit being used. */
+  amount: number;
+  reason: string;
+  source_task_id: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+/** A client's credit entries, newest first. Keyed on the client, so guarded. */
+export function useClientCredits(clientId: string | null) {
+  const [entries, setEntries] = useState<ClientCredit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const gen = useRef(0);
+
+  const fetch = useCallback(async () => {
+    const mine = ++gen.current;
+    if (!clientId) { setEntries([]); setLoading(false); return; }
+    const { data, error } = await supabase
+      .from('client_credits')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false });
+    if (error) logSbError('useClientCredits', error, { clientId });
+    if (mine !== gen.current) return;
+    setEntries((data || []) as ClientCredit[]);
+    setLoading(false);
+  }, [clientId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { entries, loading, refetch: fetch };
+}
+
+/**
+ * Record a client credit event. Append-only: a grant is positive, a use is
+ * negative, a mistake is a compensating entry. The row keeps who did it
+ * (auth.uid), which is the audit trail Siraj asked for.
+ */
+export async function addClientCredit(input: {
+  clientId: string;
+  workspaceId: string;
+  amount: number;
+  reason: string;
+  sourceTaskId?: string | null;
+}): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { error } = await supabase.from('client_credits').insert({
+    client_id: input.clientId,
+    workspace_id: input.workspaceId,
+    amount: input.amount,
+    reason: (input.reason ?? '').trim(),
+    source_task_id: input.sourceTaskId ?? null,
+    created_by: user?.id ?? null,
+  });
+  if (error) throw error;
+}
+
 /** Workspace members (for sales closer / key account / assignee dropdowns). */
 export function useWorkspaceProfiles(workspaceId: string | null) {
   const [profiles, setProfiles] = useState<(Profile & { role: WorkspaceRole })[]>([]);
