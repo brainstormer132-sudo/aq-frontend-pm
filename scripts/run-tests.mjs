@@ -79,6 +79,7 @@ const LIBS = [
   'lib/task-calendar.ts',
   'lib/registry.ts',
   'lib/concurrency.ts',
+  'lib/client-credits.ts',
 ];
 
 const GREEN = '\x1b[32m';
