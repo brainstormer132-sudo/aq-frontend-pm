@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { mapWithConcurrency, REQUEST_CONCURRENCY } from '@/lib/concurrency';
 import {
@@ -1019,8 +1019,13 @@ export function useTrackingCampaigns(workspaceId: string | null) {
 export function useTrackingRows(taskId: string | null) {
   const [rows, setRows] = useState<TrackingRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Guards against a stale response overwriting a newer one: switch campaign
+  // A -> B before A's paged rows land and, without this, A's rows render under
+  // B's heading and every edit then writes to B's task_id (audit 2026-09-07).
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!taskId) { setRows([]); setLoading(false); return; }
     setLoading(true);
     const all = await selectAllRows<TrackingRow>('useTrackingRows', () =>
@@ -1029,6 +1034,7 @@ export function useTrackingRows(taskId: string | null) {
         .select('*')
         .eq('task_id', taskId)
         .order('position', { ascending: true }));
+    if (mine !== gen.current) return;
     setRows(all);
     setLoading(false);
   }, [taskId]);
@@ -1417,8 +1423,11 @@ export function useWorkflowTasks(workspaceId: string | null, stage?: TaskStage |
 export function useTaskSubtasks(parentTaskId: string | null) {
   const [subtasks, setSubtasks] = useState<PMTask[]>([]);
   const [loading, setLoading] = useState(true);
+  // A newer parent's fetch must not be overwritten by an older one landing late.
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!parentTaskId) { setSubtasks([]); setLoading(false); return; }
     const { data, error } = await supabase
       .from('pm_tasks')
@@ -1426,6 +1435,7 @@ export function useTaskSubtasks(parentTaskId: string | null) {
       .eq('parent_task_id', parentTaskId)
       .order('position', { ascending: true });
     if (error) logSbError('useTaskSubtasks', error, { parentTaskId });
+    if (mine !== gen.current) return;
     setSubtasks((data || []) as PMTask[]);
     setLoading(false);
   }, [parentTaskId]);
@@ -1696,8 +1706,11 @@ export type PublishedTrackingRow = TrackingRow & {
 export function usePublishedTrackingRows(taskId: string | null) {
   const [rows, setRows] = useState<PublishedTrackingRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // See useTrackingRows: discard a superseded campaign's late response.
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!taskId) { setRows([]); setLoading(false); return; }
     setLoading(true);
     const all = await selectAllRows<PublishedTrackingRow>('usePublishedTrackingRows', () =>
@@ -1706,6 +1719,7 @@ export function usePublishedTrackingRows(taskId: string | null) {
         .select('*')
         .eq('task_id', taskId)
         .order('position', { ascending: true }));
+    if (mine !== gen.current) return;
     setRows(all);
     setLoading(false);
   }, [taskId]);
@@ -1770,16 +1784,23 @@ async function fetchVendorNames(ids: number[]): Promise<Map<number, string>> {
 export function useCampaignBookings(parentTaskId: string | null) {
   const [bookings, setBookings] = useState<BookingInput[]>([]);
   const [loading, setLoading] = useState(true);
+  // A newer campaign's bookings must not be overwritten by an older fetch.
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!parentTaskId) { setBookings([]); setLoading(false); return; }
     setLoading(true);
     try {
-      setBookings(await fetchCampaignBookings(parentTaskId));
+      const next = await fetchCampaignBookings(parentTaskId);
+      if (mine !== gen.current) return;
+      setBookings(next);
     } catch (e) {
       logSbError('useCampaignBookings', e as any, { parentTaskId });
+      if (mine !== gen.current) return;
       setBookings([]);
     }
+    if (mine !== gen.current) return;
     setLoading(false);
   }, [parentTaskId]);
 
@@ -3870,14 +3891,18 @@ export interface TaskMember {
 export function useTaskMembers(taskId: string | null) {
   const [members, setMembers] = useState<TaskMember[]>([]);
   const [loading, setLoading] = useState(true);
+  // A newer task's members must not be overwritten by an older fetch.
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!taskId) { setMembers([]); setLoading(false); return; }
     const { data, error } = await supabase
       .from('task_members')
       .select('*, user:profiles!task_members_user_id_fkey(id, full_name, avatar_url)')
       .eq('task_id', taskId);
     if (error) logSbError('useTaskMembers', error, { taskId });
+    if (mine !== gen.current) return;
     setMembers((data || []) as TaskMember[]);
     setLoading(false);
   }, [taskId]);
@@ -4192,8 +4217,11 @@ export function useOpenContractRequests(workspaceId: string | null) {
 export function useContractRequests(workspaceId: string | null, taskId?: string | null) {
   const [items, setItems] = useState<ContractRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  // Keyed on taskId too: a newer task's requests must not be overwritten late.
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!workspaceId) { setItems([]); setLoading(false); return; }
     // Paged. It was one unpaged select, so past the thousandth request the
     // older ones silently stopped appearing — on a register whose whole job
@@ -4203,6 +4231,7 @@ export function useContractRequests(workspaceId: string | null, taskId?: string 
       if (taskId) q = q.eq('pm_task_id', taskId);
       return q.order('created_at', { ascending: false });
     });
+    if (mine !== gen.current) return;
     setItems(rows);
     setLoading(false);
   }, [workspaceId, taskId]);
@@ -4815,8 +4844,11 @@ export async function createClientBrand(
 export function useClientBrands(clientId: string | null) {
   const [brands, setBrands] = useState<ClientBrandRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // A newer client's brands must not be overwritten by an older fetch.
+  const gen = useRef(0);
 
   const fetch = useCallback(async () => {
+    const mine = ++gen.current;
     if (!clientId) { setBrands([]); setLoading(false); return; }
     const { data, error } = await supabase
       .from('client_brands')
@@ -4824,6 +4856,7 @@ export function useClientBrands(clientId: string | null) {
       .eq('client_id', clientId)
       .order('brand_name', { ascending: true });
     if (error) logSbError('useClientBrands', error, { clientId });
+    if (mine !== gen.current) return;
     setBrands((data || []) as ClientBrandRow[]);
     setLoading(false);
   }, [clientId]);
