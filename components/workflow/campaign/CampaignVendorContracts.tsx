@@ -7,7 +7,7 @@ import {
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { Card, Note, Missing, inkButton, TONE } from './ui';
-import { LengthField, TrackRow, TermsField, termsLabel } from './track';
+import { TrackRow, TermsField, termsLabel } from './track';
 import {
   contractTrack, contractIsStuck, askAllLabel, lengthLabel, money, bulkResultLine,
 } from '@/lib/campaign-page';
@@ -268,21 +268,12 @@ export function CampaignVendorContracts({
           }
           actions={
             <>
-              <LengthField
-                canEdit={canEdit && r.track.state !== 'done'}
-                n={(r.sub as any).contract_length}
-                unit={(r.sub as any).contract_length_unit}
-                onCommit={(n, u) => opt.setMany(r.sub.id, {
-                  contract_length: n, contract_length_unit: u,
-                }, {
-                  labels: { contract_length: 'Contract length', contract_length_unit: 'Contract length' },
-                  was: {
-                    contract_length: (r.sub as any).contract_length,
-                    contract_length_unit: (r.sub as any).contract_length_unit,
-                  },
-                  rowName: r.name,
-                })}
-              />
+              {/* The only "days" here is the one the terms drive: Afterpay's
+                  days-after-delivery. The contract-length days box used to sit
+                  in front of it, so Afterpay showed two "days" inputs side by
+                  side. Siraj: "days when asking contract is doubled when after
+                  pay". Length was almost never set from here; it stays readable
+                  in the row's subtitle when a booking carries one. */}
               <TermsField
                 canEdit={canEdit && r.track.state !== 'done'}
                 terms={(r.sub as any).payment_terms}
