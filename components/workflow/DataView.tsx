@@ -9,6 +9,7 @@ import {
 import { creditBalance, overpaymentCandidates } from '@/lib/client-credits';
 import { useDashboardRows } from '@/hooks/use-dashboard';
 import { SkeletonDashboard } from '@/components/Skeleton';
+import { AsanaSyncButton } from './AsanaSyncButton';
 import {
   ALL_TIME, buildDashboard, scopeRows, sumMoney, searchEntities, compact, full, toCsv,
   type AsanaTiles, type Cell, type DateRange, type Scope, type SearchHit, type Tone,
@@ -67,9 +68,11 @@ type RangeKey = 'all' | 'year' | 'd90' | 'custom';
 /** Ledger rows drawn before the reader has to ask for more. */
 const LEDGER_PAGE = 200;
 export function DataView({
-  workspaceId, onOpenTask,
+  workspaceId, role, onOpenTask,
 }: {
   workspaceId: string;
+  /** The viewer's workspace role, so owner/admin/finance get the Asana sync control. */
+  role?: string | null;
   /** Click a table row → open that task in the detail panel. */
   onOpenTask?: (taskId: string) => void;
 }) {
@@ -381,6 +384,9 @@ export function DataView({
               <Months bars={model.months} />
             </div>
           </div>
+
+          {/* Pull from Asana on demand; the hourly cron does the same on a schedule. */}
+          <AsanaSyncButton workspaceId={workspaceId} role={role ?? ''} />
 
           {/* The board, reproduced. Every row's own Price and status, filtered the
               way the Asana tiles are, so the app and the board agree. Whole

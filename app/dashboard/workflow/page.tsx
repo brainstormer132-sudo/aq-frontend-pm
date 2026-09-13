@@ -402,7 +402,7 @@ export default function WorkflowPage() {
         {/* One search box over every client and vendor; the same panels
             narrowed to whoever is picked. Read-only — it writes nothing. */}
         {view === 'data' && (
-          <DataView workspaceId={workspace.id} onOpenTask={(id) => { void openTask(id); }} />
+          <DataView workspaceId={workspace.id} role={role} onOpenTask={(id) => { void openTask(id); }} />
         )}
 
         {view === 'finance' && (

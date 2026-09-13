@@ -1388,3 +1388,127 @@ export function report(plan: Plan, read: ReadResult, fileName = 'export.csv'): s
   }
   return lines.join('\n') + '\n';
 }
+
+// -----------------------------------------------------------------
+// Asana API -> AsanaRow[]  (the sync source, in place of a CSV export)
+// -----------------------------------------------------------------
+//
+// The hourly / on-demand sync pulls tasks from the Asana REST API instead of
+// a CSV export. The rest of the pipeline is unchanged: this turns API JSON
+// into the SAME `AsanaRow[]` that `readRows` produces from a CSV, so
+// `resolveParents`, `planImport` and `renderSql` all run exactly as they do
+// for an upload. One-way, Asana -> app.
+//
+// Why the same row shape and not a new path: the parent/child resolution, the
+// money rules (Price - Net = Gross), the vendor placeholders and the SQL are
+// all tested against `AsanaRow[]`. Re-deriving any of that for the API would
+// be a second, untested copy of the hardest logic in the import.
+//
+// Field mapping mirrors readRows: custom fields are matched to AsanaRow keys
+// by the SAME normalised header names (HEADERS) and the SAME prefix-clash rule
+// (so "net" never grabs "net payment"). Native Asana fields (name, notes,
+// dates, assignee, tags) come straight off the task. `display_value` is used
+// for every custom field: Asana renders numbers, enums, multi-enums (comma
+// -joined) and dates into it as text, which is exactly what the CSV had.
+
+/** The slice of an Asana task the adapter reads. A campaign carries `subtasks`. */
+export interface AsanaApiCustomField {
+  name?: string | null;
+  display_value?: string | null;
+}
+export interface AsanaApiTask {
+  gid: string;
+  name?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+  completed?: boolean | null;
+  completed_at?: string | null;
+  due_on?: string | null;
+  due_at?: string | null;
+  assignee?: { email?: string | null } | null;
+  tags?: { name?: string | null }[] | null;
+  custom_fields?: AsanaApiCustomField[] | null;
+  /** Filled by the fetch layer: a campaign's vendor bookings. */
+  subtasks?: AsanaApiTask[] | null;
+}
+
+/** Map custom-field display names to AsanaRow keys, the way readRows maps headers. */
+function customFieldIndex(fields: AsanaApiCustomField[]): Map<string, string> {
+  const byName = new Map<string, string>();
+  for (const f of fields) {
+    const n = normHeader(f.name ?? '');
+    if (n && !byName.has(n)) byName.set(n, clean(f.display_value ?? ''));
+  }
+  return byName;
+}
+
+/** One Asana task -> the custom-field half of an AsanaRow (native fields added by caller). */
+function customFieldsToRow(task: AsanaApiTask): Partial<Record<keyof AsanaRow, string>> {
+  const idx = customFieldIndex(task.custom_fields ?? []);
+  const out: Partial<Record<keyof AsanaRow, string>> = {};
+  for (const [key, want] of Object.entries(HEADERS) as [keyof AsanaRow, string][]) {
+    // These come from native task fields, never a custom field of the same name.
+    if (key === 'gid' || key === 'name' || key === 'parentName' || key === 'notes'
+      || key === 'createdAt' || key === 'completedAt' || key === 'dueDate'
+      || key === 'assigneeEmail' || key === 'tags') continue;
+    let v = idx.get(want);
+    if (v === undefined) {
+      for (const [nm, val] of idx) {
+        if (nm.startsWith(want) && !HEADERS_PREFIX_CLASH(want, nm)) { v = val; break; }
+      }
+    }
+    if (v !== undefined && v !== '') out[key] = v;
+  }
+  return out;
+}
+
+/** The native (built-in) Asana task fields, in AsanaRow terms. */
+function nativeFieldsToRow(task: AsanaApiTask, parentName: string): Partial<Record<keyof AsanaRow, string>> {
+  const completed = task.completed === true;
+  const tags = (task.tags ?? []).map((t) => clean(t?.name ?? '')).filter(Boolean).join(', ');
+  return {
+    gid: clean(task.gid ?? ''),
+    name: clean(task.name ?? ''),
+    parentName: clean(parentName),
+    notes: clean(task.notes ?? ''),
+    createdAt: clean(task.created_at ?? ''),
+    completedAt: completed ? clean(task.completed_at ?? '') : '',
+    dueDate: clean(task.due_on ?? task.due_at ?? ''),
+    assigneeEmail: clean(task.assignee?.email ?? ''),
+    tags,
+  };
+}
+
+function blankRow(index: number): AsanaRow {
+  const row = {} as AsanaRow;
+  for (const k of Object.keys(HEADERS) as (keyof AsanaRow)[]) (row as any)[k] = '';
+  row.index = index;
+  return row;
+}
+
+/**
+ * Asana project tasks (campaigns, each with its `subtasks`) -> `AsanaRow[]`.
+ *
+ * Emitted parent-then-children so `resolveParents`' nearest-preceding-parent
+ * tie-break binds every subtask to the campaign it actually sits under, even
+ * when two campaigns share a name -- the same guarantee Asana's own CSV row
+ * order gives. A task with no gid is skipped (nothing to key on).
+ */
+export function asanaApiToRows(campaigns: AsanaApiTask[]): AsanaRow[] {
+  const rows: AsanaRow[] = [];
+  let index = 0;
+  const emit = (task: AsanaApiTask, parentName: string) => {
+    const gid = clean(task.gid ?? '');
+    if (!gid) return;
+    const row = blankRow(index++);
+    Object.assign(row, customFieldsToRow(task), nativeFieldsToRow(task, parentName));
+    row.index = index - 1;
+    rows.push(row);
+  };
+  for (const campaign of campaigns) {
+    if (!clean(campaign.gid ?? '')) continue;
+    emit(campaign, '');
+    for (const sub of campaign.subtasks ?? []) emit(sub, campaign.name ?? '');
+  }
+  return rows;
+}

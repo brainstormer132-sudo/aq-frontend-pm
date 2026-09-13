@@ -1,6 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
 
+  "crons": [
+    { "path": "/api/asana/sync", "schedule": "0 * * * *" }
+  ],
+
   "rewrites": [
     {
       "source": "/contracts/api/:path*",
