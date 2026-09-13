@@ -323,6 +323,10 @@ export function DataView({
         </div>
       )}
 
+      {/* Sync the Asana project on demand; the hourly cron does the same on a schedule.
+          Sits at the top so it is the first thing on the page, not buried under the chart. */}
+      <AsanaSyncButton workspaceId={workspaceId} role={role ?? ''} />
+
       {loading && rows.length === 0 ? (
         // It really is loading every campaign and every subtask, so this is
         // the slowest screen in the app. Showing the shape of the answer
@@ -384,9 +388,6 @@ export function DataView({
               <Months bars={model.months} />
             </div>
           </div>
-
-          {/* Pull from Asana on demand; the hourly cron does the same on a schedule. */}
-          <AsanaSyncButton workspaceId={workspaceId} role={role ?? ''} />
 
           {/* The board, reproduced. Every row's own Price and status, filtered the
               way the Asana tiles are, so the app and the board agree. Whole
