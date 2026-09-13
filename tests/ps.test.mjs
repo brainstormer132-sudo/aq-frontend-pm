@@ -199,6 +199,27 @@ eq('a third, remainder on the last', splitAmount(100, 33), [33, 67]);
     Math.round(s.instalments.reduce((t, i) => t + i.amount, 0) * 100) / 100, 1001);
   eq('labels', s.instalments.map((i) => i.label), ['30% up front', '70% on delivery']);
 }
+// 50/50 where the second half falls due some days after delivery, not on it.
+{
+  const s = paymentSchedule({
+    terms: 'split', splitPct: 50, netDays: 30, amount: 30000,
+    startDate: '2026-08-01', deliveredOn: '2026-08-25', today: TODAY,
+  });
+  eq('up front still at the start', s.instalments[0].due, '2026-08-01');
+  eq('the balance is dated from delivery', s.instalments[1].due, '2026-09-24');
+  eq('and the label says so', s.instalments[1].label, '50% 30 days after delivery');
+  eq('summary carries the window',
+    s.summary, '50% up front, 50% 30 days after delivery');
+}
+// Blank net days on a 50/50 is still on delivery: the old behaviour, unchanged.
+{
+  const s = paymentSchedule({
+    terms: 'split', splitPct: 50, amount: 30000,
+    startDate: '2026-08-01', deliveredOn: '2026-08-25', today: TODAY,
+  });
+  eq('no window means on delivery', s.instalments[1].label, '50% on delivery');
+  eq('due on the delivery day', s.instalments[1].due, '2026-08-25');
+}
 
 /* ── Money already paid settles instalments IN ORDER ─────────────── */
 // The vendor has had their 50% up front. They are not also owed it on

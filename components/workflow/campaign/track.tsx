@@ -213,6 +213,17 @@ export function TermsField({ terms, splitPct, netDays, canEdit, onCommit, label 
           })}
         />
       )}
+
+      {/* 50/50's second half can fall due some days after delivery, or on it.
+          Blank means on delivery, which is what a 50/50 was before this. */}
+      {t === 'split' && (
+        <SplitDays
+          value={netDays}
+          onCommit={(n) => onCommit({
+            payment_terms: 'split', payment_split_pct: splitPct ?? 50, payment_net_days: n,
+          })}
+        />
+      )}
     </span>
   );
 }
@@ -263,6 +274,45 @@ function SmallNumber({ label, value, suffix, min, max, onCommit }: {
         style={{ width: 54, fontSize: 12.5, textAlign: 'right', padding: '5px 8px' }}
       />
       <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>{suffix}</span>
+    </span>
+  );
+}
+
+/**
+ * When the second half of a 50/50 falls due.
+ *
+ * Unlike Afterpay's days, this one is optional: blank means the balance is
+ * due on delivery, which is what every 50/50 meant before this field existed.
+ * A number 1-365 makes it "50% up front, 50% that many days after delivery".
+ * Blank commits null, a number commits itself; out of range goes back rather
+ * than through, since 067 would refuse it anyway.
+ */
+function SplitDays({ value, onCommit }: {
+  value: number | null | undefined;
+  onCommit: (n: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  useEffect(() => { setDraft(value == null ? '' : String(value)); }, [value]);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <input
+        className="aq-input"
+        aria-label="Days after delivery for the second half; blank means on delivery"
+        inputMode="numeric"
+        placeholder="on delivery"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const t = draft.trim();
+          if (!t) { if (value != null) onCommit(null); return; }
+          const n = Math.round(Number(t));
+          if (!Number.isFinite(n) || n < 1 || n > 365) { setDraft(value == null ? '' : String(value)); return; }
+          if (n !== value) onCommit(n);
+        }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        style={{ width: 92, fontSize: 12.5, textAlign: 'right', padding: '5px 8px' }}
+      />
+      <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>days after delivery</span>
     </span>
   );
 }

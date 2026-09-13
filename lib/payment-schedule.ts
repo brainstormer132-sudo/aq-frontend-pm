@@ -216,14 +216,21 @@ export function paymentSchedule(input: ScheduleInput): Schedule {
 
     case 'split': {
       const p = pct ?? 50;
+      // The second half can fall due some days after delivery, not only on
+      // it: "50% up front, 50% net 30". netDays null (or 0) is on delivery,
+      // which is what every split carried before this and stays the default.
+      const n = netDays ?? 0;
       const [first, rest] = total != null ? splitAmount(total, p) : [null, null];
       parts.push({
         key: 'split-up-front', label: `${p}% up front`,
         amount: first, due: advanceDue, basis: advanceBasis,
       });
       parts.push({
-        key: 'split-on-delivery', label: `${100 - p}% on delivery`,
-        amount: rest, due: delivered, basis,
+        key: 'split-on-delivery',
+        label: n ? `${100 - p}% ${n} days after delivery` : `${100 - p}% on delivery`,
+        amount: rest,
+        due: delivered ? addDays(delivered, n) : null,
+        basis,
       });
       break;
     }
@@ -304,7 +311,10 @@ function summarise(
     case 'net_days': return `Paid ${netDays ?? 30} days after delivery${tail}`;
     case 'split': {
       const p = pct ?? 50;
-      return `${p}% up front, ${100 - p}% on delivery${tail}`;
+      const n = netDays ?? 0;
+      return n
+        ? `${p}% up front, ${100 - p}% ${n} days after delivery${tail}`
+        : `${p}% up front, ${100 - p}% on delivery${tail}`;
     }
     default: return 'No payment terms agreed.';
   }
