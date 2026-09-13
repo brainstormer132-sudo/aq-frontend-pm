@@ -38,13 +38,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 async function ensureProfile(user: { id: string; email?: string | null; user_metadata?: any }) {
   const fullName = user.user_metadata?.full_name || user.email || 'User';
+  // Create the profile row on first sign-in, but NEVER overwrite it after.
+  // A plain upsert (ON CONFLICT DO UPDATE) ran on every boot and stamped
+  // full_name back to the email/metadata, so a name set in Settings vanished
+  // on the next refresh (the email then normalised to "Unnamed member").
+  // ignoreDuplicates makes this INSERT ... ON CONFLICT DO NOTHING: the row is
+  // created once, and the user's own name and avatar stand.
   const { error } = await supabase
     .from('profiles')
     .upsert({
       id: user.id,
       full_name: fullName,
       avatar_url: user.user_metadata?.avatar_url ?? null,
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id', ignoreDuplicates: true });
   if (error) throw error;
 }
 
