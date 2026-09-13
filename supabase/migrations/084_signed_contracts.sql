@@ -7,20 +7,29 @@
 --
 -- WHERE THE PIECES LIVE
 -- ---------------------
---   * The signed PDF itself lives in storage; aq-backend writes it and puts
---     the object path in storage_path. generated_contracts already works this
---     way (pdf_storage_path / docx_storage_path).
+--   * The signed PDF itself lives in the `contracts` storage bucket (private,
+--     service-role only, migration 015 on aq-backend). aq-backend writes it
+--     and stores the object path in storage_path -- same pattern the generated
+--     PDF/DOCX already use.
 --   * This table is the record of the upload and the review decision.
---   * The two review functions below are the ONLY way status changes from
---     'pending'. They are SECURITY DEFINER and refuse a caller who is not
---     staff, so a vendor or client cannot screen their own document even if
---     they reach the row.
+--   * The two review functions below are the ONLY RLS-checked path status can
+--     take out of 'pending'. They are SECURITY DEFINER and refuse a caller who
+--     is not staff, so a vendor or client cannot screen their own document even
+--     if they reach the row. (aq-backend, on the service-role key, bypasses RLS
+--     and writes directly; the CHECK + unique constraints below still hold it
+--     to the same invariants.)
 --
 -- contract_id is the same text id the portal already downloads by
 -- (generated_contracts.contract_id). It is not a declared FK because
 -- generated_contracts.contract_id carries no unique constraint and is owned by
 -- the backend; contract_requests.generated_contract_id references it the same
 -- loose way.
+--
+-- workspace_id is nullable on purpose: `vendors` carries no workspace_id and
+-- neither does `generated_contracts`, so a vendor upload often has no workspace
+-- to record. It is filled when known (client uploads, from clients.workspace_id)
+-- and left null otherwise. Staff visibility does NOT depend on it -- the select
+-- policy uses is_staff(), exactly like generated_contracts.
 --
 -- Idempotent: the table and its indexes/policies use IF NOT EXISTS, the
 -- functions use CREATE OR REPLACE, so a second run is a no-op.
@@ -31,10 +40,10 @@
 create table if not exists public.contract_signatures (
   id                uuid primary key default extensions.uuid_generate_v4(),
   contract_id       text not null,
-  workspace_id      uuid not null,
+  workspace_id      uuid,                       -- nullable; see header note
   uploaded_by       uuid,                       -- auth.users id of the external user
   uploader_role     text not null,
-  storage_path      text not null,              -- signed PDF object path in storage
+  storage_path      text not null,              -- signed PDF object path in the contracts bucket
   original_filename text,
   content_type      text,
   byte_size         bigint,
@@ -62,13 +71,13 @@ comment on table public.contract_signatures is
 comment on column public.contract_signatures.contract_id is
   'generated_contracts.contract_id (text). Loosely referenced, like contract_requests.generated_contract_id.';
 comment on column public.contract_signatures.storage_path is
-  'Object path of the signed PDF in storage, written by aq-backend.';
+  'Object path of the signed PDF in the contracts bucket, written by aq-backend.';
 
--- Lookups: the portal reads by contract, the review queue reads by workspace.
+-- Lookups: the portal reads by contract, the review queue reads by status.
 create index if not exists contract_signatures_contract_idx
   on public.contract_signatures (contract_id, created_at desc);
-create index if not exists contract_signatures_workspace_status_idx
-  on public.contract_signatures (workspace_id, status, created_at desc);
+create index if not exists contract_signatures_status_idx
+  on public.contract_signatures (status, created_at desc);
 create index if not exists contract_signatures_uploaded_by_idx
   on public.contract_signatures (uploaded_by);
 
@@ -82,8 +91,9 @@ create unique index if not exists contract_signatures_one_live_uniq
 -- ---------------------------------------------------------------------------
 -- 2. Row-level security.
 --    External users (vendors/clients) see and create only their own rows.
---    Staff (any workspace member of the row's workspace) can read them all.
---    Nobody changes status directly: the review functions below do that.
+--    Staff read them all -- is_staff() (any workspace member), mirroring the
+--    generated_contracts read policy. Nobody changes status directly through
+--    the table: the review functions below do that.
 -- ---------------------------------------------------------------------------
 alter table public.contract_signatures enable row level security;
 
@@ -94,7 +104,7 @@ begin
                    and policyname='contract_signatures select') then
     create policy "contract_signatures select" on public.contract_signatures
       for select using (
-        public.is_member_of(workspace_id) or uploaded_by = auth.uid()
+        public.is_staff() or uploaded_by = auth.uid()
       );
   end if;
 
@@ -115,7 +125,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 3. The review decision. These are the only path from 'pending'.
+-- 3. The review decision. The only RLS-checked path out of 'pending'.
 -- ---------------------------------------------------------------------------
 
 -- Accept. Idempotent: accepting an already-accepted row returns it unchanged.
