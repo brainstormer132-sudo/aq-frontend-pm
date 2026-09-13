@@ -3347,10 +3347,14 @@ export async function updateMyName(userId: string, fullName: string) {
   if (!name) throw new Error('Give your name.');
   if (looksLikeEmail(name)) throw new Error('That is an email address, not a name.');
   if (name.length > 80) throw new Error('That name is too long.');
+  // Upsert, not update: a legacy account (created before the signup trigger,
+  // or merged in from the contract app) may have no profiles row at all, and
+  // `update ... where id = userId` then touches zero rows and returns no
+  // error -- the save looks like it worked and the name is gone on refresh.
+  // Keyed on the primary key `id`; RLS still confines it to your own row.
   const { error } = await supabase
     .from('profiles')
-    .update({ full_name: name })
-    .eq('id', userId);
+    .upsert({ id: userId, full_name: name }, { onConflict: 'id' });
   if (error) { logSbError('updateMyName', error, { userId }); throw error; }
 }
 
@@ -3590,8 +3594,13 @@ export async function saveMyProfile(
   userId: string,
   fields: { full_name?: string; job_title?: string | null; avatar_url?: string | null },
 ): Promise<MyProfile | null> {
-  const { data, error } = await timed<any>('profiles.update', async () =>
-    supabase.from('profiles').update(fields).eq('id', userId)
+  // Upsert, not update: a legacy account may carry no profiles row, and an
+  // `update ... where id = userId` against a missing row changes nothing and
+  // raises no error, so the profile card says "Saved." while the name never
+  // lands. Upserting on the primary key creates the row the first time and
+  // updates it thereafter; RLS still confines the write to your own row.
+  const { data, error } = await timed<any>('profiles.upsert', async () =>
+    supabase.from('profiles').upsert({ id: userId, ...fields }, { onConflict: 'id' })
       .select('id, full_name, avatar_url, job_title').maybeSingle());
   if (error) { logSbError('saveMyProfile', error, { userId }); throw error; }
   invalidateRefCache();
