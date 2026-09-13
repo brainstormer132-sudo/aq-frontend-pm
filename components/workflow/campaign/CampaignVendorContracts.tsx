@@ -7,7 +7,7 @@ import {
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { Card, Note, Missing, inkButton, TONE } from './ui';
-import { TrackRow, TermsField, termsLabel } from './track';
+import { LengthField, TrackRow, TermsField, termsLabel } from './track';
 import {
   contractTrack, contractIsStuck, askAllLabel, lengthLabel, money, bulkResultLine,
 } from '@/lib/campaign-page';
@@ -268,12 +268,6 @@ export function CampaignVendorContracts({
           }
           actions={
             <>
-              {/* The only "days" here is the one the terms drive: Afterpay's
-                  days-after-delivery. The contract-length days box used to sit
-                  in front of it, so Afterpay showed two "days" inputs side by
-                  side. Siraj: "days when asking contract is doubled when after
-                  pay". Length was almost never set from here; it stays readable
-                  in the row's subtitle when a booking carries one. */}
               <TermsField
                 canEdit={canEdit && r.track.state !== 'done'}
                 terms={(r.sub as any).payment_terms}
@@ -293,6 +287,31 @@ export function CampaignVendorContracts({
                   rowName: r.name,
                 })}
               />
+              {/* Contract length, only where a term runs over time: 50/50 and
+                  Afterpay do, Prepay is a one-off. The "Length" label keeps it
+                  distinct from Afterpay's payment days, which is what made the
+                  two read as one doubled field. */}
+              {canEdit && r.track.state !== 'done'
+                && ['split', 'net_days'].includes((r.sub as any).payment_terms) && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>Length</span>
+                  <LengthField
+                    canEdit={canEdit}
+                    n={(r.sub as any).contract_length}
+                    unit={(r.sub as any).contract_length_unit}
+                    onCommit={(n, u) => opt.setMany(r.sub.id, {
+                      contract_length: n, contract_length_unit: u,
+                    }, {
+                      labels: { contract_length: 'Contract length', contract_length_unit: 'Contract length' },
+                      was: {
+                        contract_length: (r.sub as any).contract_length,
+                        contract_length_unit: (r.sub as any).contract_length_unit,
+                      },
+                      rowName: r.name,
+                    })}
+                  />
+                </span>
+              )}
               {canRequest && r.track.state === 'none' && (
                 <button type="button" style={inkButton(busy)} disabled={busy}
                   onClick={() => askOne(r)}>Ask</button>
