@@ -27,6 +27,7 @@ import { ClientsView } from '@/components/workflow/ClientsView';
 import { VendorsView } from '@/components/workflow/VendorsView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
 import { DataView } from '@/components/workflow/DataView';
+import { FinanceView } from '@/components/workflow/FinanceView';
 import { AllTasksView } from '@/components/workflow/AllTasksView';
 import { prefillFromDeal, type CampaignPrefill } from '@/lib/crm-sync';
 
@@ -398,6 +399,10 @@ export default function WorkflowPage() {
           <DataView workspaceId={workspace.id} onOpenTask={(id) => { void openTask(id); }} />
         )}
 
+        {view === 'finance' && (
+          <FinanceView workspaceId={workspace.id} role={role} onOpenTask={(id) => { void openTask(id); }} />
+        )}
+
         {/* Campaigns and the rollup are already loaded for the Dashboard
             and All Tasks, so the Clients register can say how much work each
             client has had without a new query. */}
@@ -568,6 +573,7 @@ function viewTitle(v: View) {
     : v === 'vendors'  ? 'Vendors'
     : v === 'tracking' ? 'Tracking Sheets'
     : v === 'data'     ? 'Data'
+    : v === 'finance'  ? 'Finance'
     : v === 'team'     ? 'Team'
     : 'Settings';
 }
@@ -583,6 +589,7 @@ function viewSubtitle(v: View) {
     : v === 'vendors'   ? 'Add vendors, bank details, and review pending registration requests.'
     : v === 'tracking'  ? 'Campaigns with a tracking sheet — open one to add and track vendors.'
     : v === 'data'      ? 'Everything, until you search for someone.'
+    : v === 'finance'   ? 'Generate and re-issue client quotations, created in Zoho.'
     : v === 'team'      ? 'Your profile, and everyone in this workspace.'
     : 'The lists campaigns pick from, and the numbers the app runs on.';
 }

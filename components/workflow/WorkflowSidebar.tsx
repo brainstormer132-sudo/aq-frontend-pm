@@ -8,7 +8,7 @@ import { AQMark } from '@/components/auth/AQMark';
 const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'crm'
-          | 'clients' | 'vendors' | 'tracking' | 'contracts' | 'data'
+          | 'clients' | 'vendors' | 'tracking' | 'contracts' | 'data' | 'finance'
           | 'team' | 'settings';
 
 interface NavItem {
@@ -55,6 +55,8 @@ const NAV: NavItem[] = [
   // are AQ's margin, so it is NOT visible to everyone: marketing and
   // operations have no reason to see what the agency makes on a job.
   { id: 'data',            label: 'Data',            icon: 'chart',     visibleTo: ['owner','admin','sales','key_account'] },
+  // Finance -> quotations (generate/re-quote via Zoho). Owner/admin/finance.
+  { id: 'finance',         label: 'Finance',         icon: 'chart',     visibleTo: ['owner','admin','finance'] },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'] },
 ];

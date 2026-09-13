@@ -80,6 +80,7 @@ const LIBS = [
   'lib/registry.ts',
   'lib/concurrency.ts',
   'lib/client-credits.ts',
+  'lib/finance.ts',
 ];
 
 const GREEN = '\x1b[32m';

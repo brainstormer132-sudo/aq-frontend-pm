@@ -82,6 +82,28 @@ export async function contractApi<T = unknown>(
 
 // ─── Typed wrappers for the routes the PM dashboard uses ────────────────────
 
+export interface GenerateQuotationResult {
+  ok: boolean;
+  finance_document_id?: string;
+  estimate_id?: string;
+  estimate_number?: string;
+  total?: number | string | null;
+  lines?: number;
+  breakdown?: boolean;
+}
+
+/**
+ * Generate (or re-issue) a client quotation for a campaign. The backend builds
+ * the line items from the campaign's bookings, creates the Zoho estimate, and
+ * records a finance_documents row. Owner/admin/finance only.
+ */
+export async function generateQuotation(taskId: string): Promise<GenerateQuotationResult> {
+  return contractApi<GenerateQuotationResult>(
+    `/finance/campaigns/${encodeURIComponent(taskId)}/quotation`,
+    { method: 'POST' },
+  );
+}
+
 export interface PendingVendorRow {
   id: number;
   full_name: string;
