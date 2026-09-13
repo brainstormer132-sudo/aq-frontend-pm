@@ -169,6 +169,17 @@ export type PortalMe =
       profile: PortalProfileClient;
     };
 
+export type SignedStatus = 'pending' | 'accepted' | 'rejected';
+
+export interface PortalSignature {
+  id: string;
+  status: SignedStatus;
+  rejection_reason: string | null;
+  original_filename: string | null;
+  uploaded_at: string | null;
+  reviewed_at: string | null;
+}
+
 export interface PortalContractRow {
   contract_id: string;
   brand_name: string;
@@ -178,6 +189,8 @@ export interface PortalContractRow {
   has_pdf: boolean;
   has_docx: boolean;
   pdf_error: string | null;
+  /** Latest signed-upload for this contract, or null if none uploaded yet. */
+  signature?: PortalSignature | null;
 }
 
 export interface PortalBrandRow {
@@ -193,6 +206,31 @@ export const portal = {
   brands: () => authedFetch<PortalBrandRow[]>('/external-portal/brands'),
   downloadUrl: (contractId: string, kind: 'pdf' | 'docx') =>
     `${resolveBase()}/external-portal/contracts/${encodeURIComponent(contractId)}/download/${kind}`,
+  /**
+   * Upload the signed PDF of one of the caller's own contracts. Multipart:
+   * we must NOT set Content-Type ourselves (the browser adds the boundary),
+   * so this bypasses authedFetch and attaches only the bearer token.
+   */
+  uploadSigned: async (contractId: string, file: File): Promise<{ ok: boolean; id: string; status: SignedStatus }> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error('Sign in again - your session expired.');
+    }
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(
+      `${resolveBase()}/external-portal/contracts/${encodeURIComponent(contractId)}/signed`,
+      { method: 'POST', headers: { Authorization: `Bearer ${session.access_token}` }, body: form },
+    );
+    const text = await res.text();
+    let body: any;
+    try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+    if (!res.ok) {
+      const detail = body?.detail || body || `Upload failed (${res.status})`;
+      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    }
+    return body;
+  },
   /**
    * Update the portal user's password and clear the must_change_password
    * flag in one round-trip. Backend uses Supabase Admin API (service role)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { portal, type PortalContractRow, type PortalMe } from '@/lib/portal-api';
 import { DownloadBtn, Icon, StatusBadge, exportContractsCsv } from './PortalUI';
 
@@ -19,14 +19,16 @@ export function PortalDocuments({ me }: { me: PortalMe }) {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [yearFilter, setYearFilter] = useState<string>('all');
 
-  useEffect(() => {
+  const load = () => {
     portal.contracts()
       .then(setRows)
       .catch((e: any) => {
         setRows([]);
         setError(e?.message ?? String(e));
       });
-  }, []);
+  };
+
+  useEffect(() => { load(); }, []);
 
   const allTypes = useMemo(() => {
     const set = new Set<string>();
@@ -126,14 +128,15 @@ export function PortalDocuments({ me }: { me: PortalMe }) {
                 <th className="num">Amount</th>
                 <th>Generated</th>
                 <th>Status</th>
+                <th>Signed copy</th>
                 <th style={{ textAlign: 'right' }}>Download</th>
               </tr>
             </thead>
             <tbody>
               {rows == null ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--aq-text-muted)' }}>Loading…</td></tr>
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--aq-text-muted)' }}>Loading…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--aq-text-muted)' }}>
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--aq-text-muted)' }}>
                   {rows.length === 0 ? 'No contracts yet.' : 'No contracts match those filters.'}
                 </td></tr>
               ) : (
@@ -145,6 +148,7 @@ export function PortalDocuments({ me }: { me: PortalMe }) {
                     <td className="num">{c.amount}</td>
                     <td>{c.generated_at}</td>
                     <td><StatusBadge row={c} /></td>
+                    <td><SignedCell row={c} onChanged={load} /></td>
                     <td className="actions">
                       <DownloadBtn contractId={c.contract_id} kind="pdf"  disabled={!c.has_pdf}  />
                       <DownloadBtn contractId={c.contract_id} kind="docx" disabled={!c.has_docx} variant="ghost" />
@@ -157,5 +161,78 @@ export function PortalDocuments({ me }: { me: PortalMe }) {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The signed-copy cell: shows where a contract's signed upload stands and lets
+ * the vendor/client upload one. A contract can have only one live upload, so
+ * the button appears only when there is no upload yet or the last one was
+ * rejected (re-upload); pending and accepted are read-only states.
+ */
+function SignedCell({ row, onChanged }: { row: PortalContractRow; onChanged: () => void }) {
+  const sig = row.signature ?? null;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be re-picked after an error
+    if (!file) return;
+    const looksPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!looksPdf) { setErr('Please choose a PDF.'); return; }
+    setBusy(true);
+    setErr('');
+    try {
+      await portal.uploadSigned(row.contract_id, file);
+      onChanged();
+    } catch (e: any) {
+      setErr(e?.message ?? 'Upload failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadButton = (label: string) => (
+    <button
+      type="button"
+      className="aq-btn aq-btn-secondary aq-btn-sm"
+      style={{ padding: '6px 10px', fontSize: 12 }}
+      disabled={busy}
+      onClick={() => { setErr(''); inputRef.current?.click(); }}
+    >
+      {busy ? 'Uploading...' : label}
+    </button>
+  );
+
+  const hiddenInput = (
+    <input ref={inputRef} type="file" accept="application/pdf,.pdf" hidden onChange={onFile} />
+  );
+
+  const errLine = err
+    ? <div style={{ fontSize: 11, color: 'var(--aq-error)', marginTop: 4 }}>{err}</div>
+    : null;
+
+  if (!sig) {
+    return <div>{hiddenInput}{uploadButton('Upload signed')}{errLine}</div>;
+  }
+  if (sig.status === 'pending') {
+    return <div><span className="aq-badge aq-badge-warning">Awaiting review</span></div>;
+  }
+  if (sig.status === 'accepted') {
+    return <div><span className="aq-badge aq-badge-success">Accepted</span></div>;
+  }
+  // rejected - show why, and allow a corrected re-upload.
+  return (
+    <div>
+      {hiddenInput}
+      <span className="aq-badge aq-badge-error">Rejected</span>
+      {sig.rejection_reason
+        ? <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '4px 0' }}>{sig.rejection_reason}</div>
+        : null}
+      {uploadButton('Re-upload')}
+      {errLine}
+    </div>
   );
 }
