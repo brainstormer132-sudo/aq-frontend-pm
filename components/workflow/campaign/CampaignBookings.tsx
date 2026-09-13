@@ -785,6 +785,19 @@ export function CampaignBookings({
           priority={(task as any).priority}
           existingVendorCount={vendorSubtasks.length}
           taskPlatforms={taskPlatforms as any}
+          {...(() => {
+            // Pre-fill the batch terms with the campaign's effective terms:
+            // the campaign's own default if set, else the client's standing
+            // terms (the #18 fallback). One entry point, one source of truth.
+            const t = (task as any).payment_terms ?? client?.payment_terms ?? null;
+            const useClient = !(task as any).payment_terms && !!client?.payment_terms;
+            const src = useClient ? client : (task as any);
+            return {
+              defaultTerms: t,
+              defaultSplitPct: t ? (src.payment_split_pct ?? null) : null,
+              defaultNetDays: t ? (src.payment_net_days ?? null) : null,
+            };
+          })()}
           onCreated={async (count, trackable) => {
             if (trackable && !(task as any).has_tracking) {
               await updateTaskFields(task.id, { has_tracking: true } as any);

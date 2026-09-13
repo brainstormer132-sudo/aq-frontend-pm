@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { inkButton } from './campaign/ui';
+import { TermsField } from './campaign/track';
 import {
   createVendorBatch, batchVendorTitle,
   MEDIA_TYPES, VENDOR_FORMATS, VENDOR_FORMAT_LABELS, formatIsTrackable,
@@ -29,6 +30,7 @@ import {
 export function AddVendorsModal({
   open, onClose, parentTaskId, workspaceId, currentUserId,
   brandName, priority, existingVendorCount, taskPlatforms, onCreated,
+  defaultTerms, defaultSplitPct, defaultNetDays,
 }: {
   open: boolean;
   onClose: () => void;
@@ -41,6 +43,14 @@ export function AddVendorsModal({
   existingVendorCount: number;
   taskPlatforms: TaskSource[];
   onCreated: (count: number, trackable: boolean) => Promise<void> | void;
+  /**
+   * The campaign's effective terms (campaign default, else the client's
+   * standing terms), used to pre-fill the picker so a batch that follows the
+   * usual terms needs no typing. Still editable per batch.
+   */
+  defaultTerms?: string | null;
+  defaultSplitPct?: number | null;
+  defaultNetDays?: number | null;
 }) {
   const [qty, setQty] = useState('10');
   const [adType, setAdType] = useState('');
@@ -48,6 +58,9 @@ export function AddVendorsModal({
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [price, setPrice] = useState('');
   const [format, setFormat] = useState<VendorFormat>('influencer');
+  const [terms, setTerms] = useState<string | null>(defaultTerms ?? null);
+  const [splitPct, setSplitPct] = useState<number | null>(defaultSplitPct ?? null);
+  const [netDays, setNetDays] = useState<number | null>(defaultNetDays ?? null);
   const [names, setNames] = useState<string[]>([]);
   /** Rows the user has actually typed into — never clobbered by a qty change. */
   const [touched, setTouched] = useState<Set<number>>(new Set());
@@ -61,8 +74,10 @@ export function AddVendorsModal({
     if (!open) return;
     setQty('10'); setAdType(''); setCustomAdType(''); setPlatforms([]);
     setPrice(''); setFormat('influencer'); setTouched(new Set());
+    setTerms(defaultTerms ?? null); setSplitPct(defaultSplitPct ?? null);
+    setNetDays(defaultNetDays ?? null);
     setError(''); setBusy(false);
-  }, [open]);
+  }, [open, defaultTerms, defaultSplitPct, defaultNetDays]);
 
   // Keep the name list the right length. Rows the user edited keep their text;
   // everything else re-derives, so changing the brand or count renumbers
@@ -126,6 +141,9 @@ export function AddVendorsModal({
         platforms,
         price_per_vendor: priceNum,
         format,
+        payment_terms: terms,
+        payment_split_pct: splitPct,
+        payment_net_days: netDays,
       });
       await onCreated(created, formatIsTrackable(format));
       onClose();
@@ -245,6 +263,22 @@ export function AddVendorsModal({
                 ))}
               </select>
             </div>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            <span style={LABEL}>When they are paid</span>
+            <TermsField
+              terms={terms}
+              splitPct={splitPct}
+              netDays={netDays}
+              canEdit
+              label="When these vendors are paid"
+              onCommit={(f) => {
+                setTerms(f.payment_terms);
+                setSplitPct(f.payment_split_pct);
+                setNetDays(f.payment_net_days);
+              }}
+            />
           </div>
 
           <div style={{ marginTop: 14 }}>

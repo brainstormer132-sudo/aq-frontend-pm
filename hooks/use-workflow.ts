@@ -2526,6 +2526,14 @@ export async function createVendorBatch(input: {
   /** Price per vendor, not a total to divide. */
   price_per_vendor?: number | null;
   format?: VendorFormat;
+  /**
+   * The vendor terms to stamp on every booking in the batch. Same trio and
+   * meaning as the per-booking TermsField, so the batch is created already
+   * carrying its payment terms rather than each one being set afterwards.
+   */
+  payment_terms?: string | null;
+  payment_split_pct?: number | null;
+  payment_net_days?: number | null;
 }): Promise<number> {
   const rows = input.rows.filter((r) => r != null);
   if (!rows.length) return 0;
@@ -2561,6 +2569,13 @@ export async function createVendorBatch(input: {
   // otherwise a custom ad type would be rejected by the database.
   const mediaType = adType && (MEDIA_TYPES as readonly string[]).includes(adType) ? adType : null;
 
+  // Terms, normalised the same way TermsField commits them: the companion
+  // number belongs to exactly one term and is nulled for the others, so the
+  // 067 pair checks cannot be tripped by a leftover value.
+  const terms = (input.payment_terms ?? '').trim() || null;
+  const splitPct = terms === 'split' ? (input.payment_split_pct ?? 50) : null;
+  const netDays = terms === 'net_days' ? (input.payment_net_days ?? 30) : null;
+
   const payload = rows.map((r, i) => ({
     workspace_id: input.workspace_id,
     parent_task_id: input.parent_task_id,
@@ -2576,6 +2591,9 @@ export async function createVendorBatch(input: {
     media_type: mediaType,
     platform: platformText,
     price,
+    payment_terms: terms,
+    payment_split_pct: splitPct,
+    payment_net_days: netDays,
   }));
 
   const { error } = await supabase.from('pm_tasks').insert(payload);
