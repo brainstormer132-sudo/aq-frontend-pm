@@ -12,7 +12,7 @@ import {
   adsExpectingProof, adsMissingProof, type AdLine,
 } from '@/lib/ad-lines';
 import {
-  vendorContractNeeds, contractPlan, contractCoverage,
+  vendorContractNeeds, contractPlan, contractCoverage, singleBankId,
   type SplitMode, type ContractGroup,
 } from '@/lib/vendor-contracts';
 import { avatarProblems, avatarPath, avatarStoragePath } from '@/lib/profile';
@@ -5378,6 +5378,14 @@ export async function sendVendorContractRequest(opts: {
    * contract was written. It now fetches all of them once, up front.
    */
   lines?: AdLine[];
+  /**
+   * All bank accounts, for resolving a line's chosen bank. A per-line
+   * contract uses the bank that its line points at (ad_lines.bank_account_id,
+   * migration 083); this list turns that id into the account. Omitted or no
+   * match falls back to `bank`, the vendor's default - which is what a
+   * combined contract, and every contract before 083, uses.
+   */
+  banks?: LegacyBankAccount[];
 }): Promise<string[]> {
   const { subtask, vendor, bank } = opts;
 
@@ -5420,9 +5428,18 @@ export async function sendVendorContractRequest(opts: {
     const covered = g.lineIds.length
       ? free.filter((l) => g.lineIds.includes(String((l as any).id)))
       : free;
+    // And its bank: the one the covered lines agree on (a per-line contract
+    // covers one line, so that is its line's bank), else the vendor's
+    // default. A bank must belong to this vendor to be used: a stale id
+    // pointing at someone else's account falls back rather than leaking it.
+    const bankId = singleBankId(covered as any);
+    const groupBank = bankId != null
+      ? (opts.banks?.find((b) => Number(b.id) === bankId
+          && Number(b.vendor_id) === Number(vendor.id)) ?? bank)
+      : bank;
     ids.push(await insertVendorContractRequest(
       subtask,
-      buildVendorContractPayload({ ...opts, vendor, bank, lines: covered }),
+      buildVendorContractPayload({ ...opts, vendor, bank: groupBank, lines: covered }),
       g.lineIds,
     ));
   }
@@ -5573,6 +5590,7 @@ export async function sendVendorContractRequests(opts: {
         subtask, parent: opts.parent, vendor, bank,
         client: opts.client, requestedBy: opts.requestedBy, split: opts.split,
         lines: linesBySubtask.get(subtask.id) ?? [],
+        banks: opts.banks,
       });
       sent += ids.length;
     } catch (e: any) {

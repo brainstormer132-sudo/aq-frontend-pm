@@ -179,6 +179,7 @@ export function CampaignVendorContracts({
       subtask: row.sub, parent: task, vendor: row.vendor,
       bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
       client, requestedBy: currentUserId, split,
+      banks: banks as any,
     });
     setNotice(ids.length === 1
       ? `Contract requested for ${row.name}.`

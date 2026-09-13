@@ -298,6 +298,36 @@ export function contractPlan(
 }
 
 /**
+ * The one bank every covered line agrees on, or null.
+ *
+ * A vendor contract carries exactly one bank. When a booking is contracted
+ * per line, each contract covers a single line, so its bank is that line's.
+ * When it is combined, the covered lines may point at different banks (or
+ * none), and there is no single answer - so this returns null and the caller
+ * falls back to the vendor's default bank, which is what a combined contract
+ * has always used.
+ *
+ * Null covers "nobody chose one", "not every line chose one", and "they
+ * disagree": in each case the default is the only honest single bank to put
+ * on one piece of paper. Only a unanimous, explicit choice wins - which is
+ * exactly the per-line case, where the group is one line and its one bank.
+ */
+export function singleBankId(lines: { bank_account_id?: unknown }[]): number | null {
+  const ls = lines ?? [];
+  if (!ls.length) return null;
+  let only: number | null = null;
+  for (const l of ls) {
+    const v = (l as any)?.bank_account_id;
+    if (v == null) return null;            // a line with no chosen bank: not unanimous
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    if (only == null) only = n;
+    else if (only !== n) return null;      // two lines, two banks
+  }
+  return only;
+}
+
+/**
  * The sentence on the button, so nobody has to count.
  *
  * Named for what will actually happen — the ask-all button already learned

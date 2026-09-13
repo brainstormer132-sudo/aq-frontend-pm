@@ -1,5 +1,6 @@
 import {
   vendorContractNeeds, contractPlan, contractCoverage, lineLabel, planSentence,
+  singleBankId,
 } from '../.test-build/vendor-contracts.js';
 
 let pass = 0, fail = 0;
@@ -255,6 +256,25 @@ eq('an unnamed line is still an ad', lineLabel({ quantity: 1 }), 'Ad');
   const c = contractCoverage([{ id: 'l1', quantity: 3 }]);
   eq('an uncontracted booking', c.complete, false);
   eq('three ads waiting', c.uncovered, 3);
+}
+
+/* -- singleBankId: the one bank a set of lines agrees on ---------- */
+{
+  eq('one line with a bank', singleBankId([{ bank_account_id: 7 }]), 7);
+  eq('several lines, same bank', singleBankId([
+    { bank_account_id: 7 }, { bank_account_id: 7 },
+  ]), 7);
+  eq('lines disagree -> null (use default)', singleBankId([
+    { bank_account_id: 7 }, { bank_account_id: 9 },
+  ]), null);
+  eq('no bank set -> null', singleBankId([{ quantity: 1 }, {}]), null);
+  eq('one set, one blank -> null (not unanimous)', singleBankId([
+    { bank_account_id: 7 }, { bank_account_id: null },
+  ]), null);
+  eq('string ids are coerced', singleBankId([
+    { bank_account_id: '7' }, { bank_account_id: 7 },
+  ]), 7);
+  eq('empty is null', singleBankId([]), null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
