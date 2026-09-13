@@ -49,6 +49,11 @@ export interface AdLine {
   net_payment_status?: string | null;
   proof_of_posting_attached?: boolean | null;
   posted_on?: string | null;
+
+  // -- which bank this ad is paid to (migration 083) ------------
+  // A vendor can use a different bank per ad. Null means the vendor's
+  // default; a per-line contract uses this, a combined one uses the default.
+  bank_account_id?: number | null;
 }
 
 export const AD_LINE_STATUSES = ['Not started', 'Scheduled', 'Shot', 'Posted', 'Cancelled'] as const;

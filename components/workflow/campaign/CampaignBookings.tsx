@@ -741,6 +741,13 @@ export function CampaignBookings({
               }}
               platformOptions={platformNames}
               defaultPlatform={(sub as any).platform ?? (task as any).platform ?? null}
+              bankOptions={(banks as any[])
+                .filter((x) => Number(x.vendor_id) === Number((sub as any).vendor_id))
+                .map((x) => ({
+                  id: Number(x.id),
+                  label: [x.bank_name, x.account_name].filter(Boolean).join(' - ')
+                    || `Account ${x.id}`,
+                }))}
               onTotalChanged={async () => {
                 // The write has to land before the reads — they are what
                 // shows the new price. After that the two reads are

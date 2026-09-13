@@ -34,7 +34,7 @@ import { SkeletonRows } from '@/components/Skeleton';
  */
 export function AdLinesCard({
   subtaskId, canEdit, lines, loading, refetch, platformOptions, defaultPlatform,
-  onTotalChanged, onAdsChanged,
+  bankOptions, onTotalChanged, onAdsChanged,
 }: {
   subtaskId: string;
   canEdit: boolean;
@@ -43,6 +43,12 @@ export function AdLinesCard({
   refetch: () => Promise<void> | void;
   platformOptions: string[];
   defaultPlatform?: string | null;
+  /**
+   * The vendor's bank accounts, for the per-ad bank picker. Empty (no vendor
+   * yet, or none on file) hides the picker: there is nothing to choose, and
+   * the contract falls back to the vendor's default either way.
+   */
+  bankOptions?: { id: number; label: string }[];
   /** Refresh the booking above — its Price is filled in from these ads. */
   onTotalChanged?: () => Promise<void> | void;
   /**
@@ -253,6 +259,7 @@ export function AdLinesCard({
                     busy={busy === l.id}
                     platformOptions={platformOptions}
                     defaultPlatform={defaultPlatform}
+                    bankOptions={bankOptions}
                     onPatch={(f) => patch(l, f)}
                     onRemove={() => remove(l)}
                   />
@@ -304,13 +311,14 @@ const AD_PAYMENT_STATES = [
 ];
 
 function AdDetail({
-  line, canEdit, busy, platformOptions, defaultPlatform, onPatch, onRemove,
+  line, canEdit, busy, platformOptions, defaultPlatform, bankOptions, onPatch, onRemove,
 }: {
   line: AdLine;
   canEdit: boolean;
   busy: boolean;
   platformOptions: string[];
   defaultPlatform?: string | null;
+  bankOptions?: { id: number; label: string }[];
   onPatch: (fields: Partial<AdLine>) => void;
   onRemove: () => void;
 }) {
@@ -519,6 +527,28 @@ function AdDetail({
               ))}
             </select>
           </Cell>
+          {/* Which bank this ad is paid to. Only shown when the vendor has
+              accounts on file; blank means the vendor's default, which is
+              what a combined contract uses. A per-line contract uses this. */}
+          {bankOptions && bankOptions.length > 0 && (
+            <Cell label="Bank account" width={200}>
+              <select
+                className="aq-select"
+                aria-label="Bank account this ad is paid to"
+                value={line.bank_account_id ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => onPatch({
+                  bank_account_id: e.target.value ? Number(e.target.value) : null,
+                } as any)}
+                style={{ width: '100%', fontSize: 12.5 }}
+              >
+                <option value="">Vendor&apos;s default</option>
+                {bankOptions.map((b) => (
+                  <option key={b.id} value={b.id}>{b.label}</option>
+                ))}
+              </select>
+            </Cell>
+          )}
         </div>
       </div>
 
