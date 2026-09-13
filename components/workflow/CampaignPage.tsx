@@ -25,8 +25,7 @@ import { CampaignActivity } from './campaign/CampaignActivity';
 import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
   TONE,
-  Card, Group, Fields, F, Val, Pick, Text, HILITE, Money,
-  Chip, platformTone } from './campaign/ui';
+  Card, Group, Fields, F, Val, Pick, Text, HILITE, Money } from './campaign/ui';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
 import { useCoalesced } from '@/hooks/use-coalesced';
@@ -323,6 +322,42 @@ export function CampaignPage({
   // whose vendors are posting Store Visits to Instagram should say so on
   // the page rather than only in the lines twelve scrolls down.
   const spread = useMemo(() => campaignSpread(bookings), [bookings]);
+
+  // Ad type and Platforms are the PLAN, but the bookings underneath already
+  // say what the campaign is. So the fields auto-pull from the bookings and
+  // stay editable: type once on the vendors, and the campaign reflects it.
+  // A single-value ad_type column still holds it, so contracts are unchanged:
+  // one type stores as itself, many store as 'Multi Service' + the list in
+  // ad_type_custom, which is exactly the shape that column already had.
+  const AD_TYPE_CHOICES = useMemo(
+    () => AD_TYPES.filter((t) => t !== AD_TYPE_NEEDS_DETAIL).map((t) => String(t)),
+    [],
+  );
+  const effectiveAdTypes = useMemo(() => {
+    if (task?.ad_type === AD_TYPE_NEEDS_DETAIL) {
+      return String((view as any)?.ad_type_custom ?? '')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    if (task?.ad_type) return [String(task.ad_type)];
+    return spread.adTypes;  // nothing typed on the campaign: show what is booked
+  }, [task?.ad_type, (view as any)?.ad_type_custom, spread.adTypes]);
+  const saveAdTypes = (next: string[]) => {
+    if (!task) return;
+    const clean = next.map((s) => s.trim()).filter(Boolean);
+    const fields = clean.length === 0
+      ? { ad_type: null, ad_type_custom: null }
+      : clean.length === 1
+        ? { ad_type: clean[0], ad_type_custom: null }
+        : { ad_type: AD_TYPE_NEEDS_DETAIL, ad_type_custom: clean.join(', ') };
+    opt.setMany(task.id, fields, {
+      labels: { ad_type: 'Ad type', ad_type_custom: 'Ad types' },
+      was: { ad_type: task.ad_type, ad_type_custom: (view as any)?.ad_type_custom },
+    });
+  };
+  const effectivePlatforms = useMemo(() => {
+    const p = ((view as any)?.platforms ?? []) as string[];
+    return p.length ? p : spread.platforms;
+  }, [(view as any)?.platforms, spread.platforms]);
 
   // The masthead adds up the SAME rows the Bookings card shows, rather than
   // reading price off each subtask separately. rollupCampaignMoney reads the
@@ -952,58 +987,25 @@ export function CampaignPage({
 
               <Group title="What it is" />
               <Fields>
+                {/* Auto-pulled from the bookings (union of their ad types),
+                    still editable. One type stores as itself; several store as
+                    'Multi Service' + the list, so contracts are unchanged. */}
                 <F k="Ad type">
-                  <Pick
-                    value={task.ad_type}
-                    options={AD_TYPES.map((t) => ({ v: t, l: t }))}
-                    // Moving off Multi Service takes its detail with it.
-                    // Leaving a stale ad_type_custom behind means the
-                    // generated contract reads "Reel" and lists three
-                    // services underneath it.
-                    onChange={(v) => (v === AD_TYPE_NEEDS_DETAIL
-                      ? save('ad_type', v)
-                      : opt.setMany(task.id, { ad_type: v, ad_type_custom: null }, {
-                          labels: { ad_type: 'Ad type', ad_type_custom: 'Which services' },
-                          was: { ad_type: task.ad_type, ad_type_custom: (view as any).ad_type_custom },
-                        }))}
+                  <MultiPick
+                    values={effectiveAdTypes}
+                    options={AD_TYPE_CHOICES}
+                    onChange={saveAdTypes}
                     canEdit={canEdit}
                   />
                 </F>
-                {task.ad_type === AD_TYPE_NEEDS_DETAIL && (
-                  <F k="Which services">
-                    <Text
-                      value={(view as any).ad_type_custom}
-                      placeholder="Required for Multi Service"
-                      onCommit={(v) => save('ad_type_custom', v || null)}
-                      canEdit={canEdit}
-                      warn={!(view as any).ad_type_custom}
-                    />
-                  </F>
-                )}
                 <F k="Platforms">
                   <MultiPick
-                    values={((view as any).platforms ?? []) as string[]}
+                    values={effectivePlatforms}
                     options={(taskPlatforms as any[]).map((p) => String(p.name ?? '')).filter(Boolean)}
                     onChange={(next) => save('platforms', next)}
                     canEdit={canEdit}
                   />
                 </F>
-                {/* The two fields above are the PLAN — typed when the campaign
-                    was created. This is what the bookings are actually doing.
-                    They are shown together because the gap between them is the
-                    thing worth seeing: a campaign sold as one ad type whose
-                    vendors are posting three has drifted, and until now that
-                    was only visible by opening every booking. */}
-                {(spread.adTypes.length > 0 || spread.platforms.length > 0) && (
-                  <F k="Booked">
-                    <Running
-                      adTypes={spread.adTypes}
-                      platforms={spread.platforms}
-                      planAdType={task.ad_type}
-                      planPlatforms={((view as any).platforms ?? []) as string[]}
-                    />
-                  </F>
-                )}
                 {/* One date could not say when a campaign runs — only when it
                     was due. Both are kept: the run is start → end, and the due
                     date stays as the deadline everything else already sorts by. */}
@@ -1584,58 +1586,6 @@ function Fig({ k, v, sub, lead, bad }: {
  * Text's `numeric` prop silently did nothing here. Deleted; the shared ones
  * are a superset.
  */
-
-/**
- * What the bookings are actually running, against what was sold.
- *
- * Reported, never edited — the ads own these, and a control here would set a
- * number nothing reads. Anything the bookings carry that the plan above does
- * not gets an outline rather than a fill, so drift is visible without a
- * sentence: filled chips are on plan, outlined ones were added underneath.
- */
-function Running({ adTypes, platforms, planAdType, planPlatforms }: {
-  adTypes: string[];
-  platforms: string[];
-  planAdType?: string | null;
-  planPlatforms: string[];
-}) {
-  const plannedTypes = new Set([String(planAdType ?? '')].filter(Boolean));
-  const plannedPlatforms = new Set(planPlatforms.map((p) => String(p)));
-
-  return (
-    <span style={{
-      display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-      minHeight: 32, padding: '5px 10px', borderRadius: 8,
-      border: '1px dashed var(--aq-border)', background: 'var(--aq-bg-sunken)',
-    }}>
-      {adTypes.map((t) => (
-        plannedTypes.has(t)
-          ? <Chip key={`t-${t}`} label={t} />
-          : <Outline key={`t-${t}`} label={t} title="Booked, but not what the campaign says it is" />
-      ))}
-      {adTypes.length > 0 && platforms.length > 0 && (
-        <span aria-hidden style={{ color: 'var(--aq-border)' }}>·</span>
-      )}
-      {platforms.map((p) => (
-        plannedPlatforms.has(p)
-          ? <Chip key={`p-${p}`} label={p} colours={platformTone(p)} />
-          : <Outline key={`p-${p}`} label={p} title="Booked, but not on the campaign's platform list" />
-      ))}
-    </span>
-  );
-}
-
-/** A chip for something the plan above does not mention. */
-function Outline({ label, title }: { label: string; title: string }) {
-  return (
-    <span title={title} style={{
-      display: 'inline-flex', alignItems: 'center',
-      fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-      border: '1px dashed #b45309', color: '#92400e', background: 'transparent',
-      whiteSpace: 'nowrap', lineHeight: 1.5,
-    }}>{label}</span>
-  );
-}
 
 function GapRow({ gap }: { gap: Gap }) {
   const blocking = gap.weight === 'blocking';
