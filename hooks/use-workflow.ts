@@ -45,7 +45,7 @@ function logSbError(label: string, err: any, ctx?: Record<string, unknown>) {
 
 export type TaskStage = 'draft' | 'pending_marketing' | 'in_progress' | 'awaiting_review' | 'completed';
 export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
-export type WorkspaceRole = 'owner' | 'admin' | 'operations' | 'sales' | 'marketing' | 'key_account' | 'member';
+export type WorkspaceRole = 'owner' | 'admin' | 'operations' | 'sales' | 'marketing' | 'key_account' | 'finance' | 'member';
 
 export interface ServiceType {
   id: string;

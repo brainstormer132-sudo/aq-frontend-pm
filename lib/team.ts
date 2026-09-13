@@ -60,7 +60,7 @@ export function dayMs(value: unknown): number {
 // ── Roles ───────────────────────────────────────────────────────────
 
 export const ROLES = [
-  'owner', 'admin', 'operations', 'sales', 'marketing', 'key_account', 'member',
+  'owner', 'admin', 'operations', 'sales', 'marketing', 'key_account', 'finance', 'member',
 ] as const;
 export type Role = typeof ROLES[number];
 
@@ -71,6 +71,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   sales: 'Sales',
   marketing: 'Marketing',
   key_account: 'Key account',
+  finance: 'Finance',
   member: 'Member',
 };
 
@@ -86,6 +87,7 @@ export const ROLE_BLURB: Record<Role, string> = {
   sales: 'New Task, CRM, Clients, Tracking Sheets and Data. Can delete a campaign they raised.',
   marketing: 'Marketing Inbox, New Task, CRM, Clients, Vendors, Tracking Sheets and every task.',
   key_account: 'All Tasks, CRM, Tracking Sheets and Data. Approves and rejects contract requests.',
+  finance: 'Dashboard, Inbox and Team for now. The finance menu - quotations, invoices and the money ledgers - is rolling out.',
   member: 'Dashboard, Inbox and Team. Can be assigned work and mentioned on it.',
 };
 
