@@ -146,3 +146,106 @@ export function financeRows(campaigns: CampaignLite[], docs: FinanceDocLite[]): 
   return rows.sort((a, b) => rank(a) - rank(b) || b.amount - a.amount
     || a.title.localeCompare(b.title));
 }
+
+// -----------------------------------------------------------------
+// Finance menu: tabs keyed on Asana tags, and paging
+// -----------------------------------------------------------------
+//
+// Finance opens on "All" (every campaign, like the old screen) and then has a
+// tab per Asana tag. A tag tab shows only campaigns carrying that tag
+// (pm_tasks.tags, imported from Asana); "All" shows everything, so the screen
+// is never mysteriously empty before anything is tagged. Tags are matched
+// case-insensitively and with a leading '#' ignored.
+
+export type FinanceTabKey = 'all' | 'quotation' | 'requotation' | 'invoice' | 'transaction';
+
+export interface FinanceTab {
+  key: FinanceTabKey;
+  /** The Asana tag a campaign must carry; empty means "no filter" (All). */
+  tag: string;
+  label: string;
+  blurb: string;
+}
+
+/** The finance tabs, in order. All first, then one per Asana tag Siraj uses. */
+export const FINANCE_TABS: FinanceTab[] = [
+  { key: 'all',         tag: '',            label: 'All',          blurb: 'Every campaign.' },
+  { key: 'quotation',   tag: 'quotation',   label: 'Quotation',    blurb: 'Client wants a quotation - generate it.' },
+  { key: 'requotation', tag: 'requotation', label: 'Re-quotation', blurb: 'A new quotation was asked for - re-issue it.' },
+  { key: 'invoice',     tag: 'invoice',     label: 'Invoice',      blurb: 'Ready to invoice.' },
+  { key: 'transaction', tag: 'transaction', label: 'Transaction',  blurb: 'Record the client payment.' },
+];
+
+/** Lowercase, trim, and drop a leading '#'. "#Quotation " -> "quotation". */
+export function normalizeTag(tag: unknown): string {
+  return txt(tag).toLowerCase().replace(/^#+/, '').trim();
+}
+
+/** True when the tag list contains the wanted tag (case- and #-insensitive). */
+export function hasTag(tags: string[] | null | undefined, wanted: string): boolean {
+  const w = normalizeTag(wanted);
+  if (!w) return false;
+  return (tags ?? []).some((t) => normalizeTag(t) === w);
+}
+
+function tagsOf(
+  tagsByTask: Record<string, string[]> | Map<string, string[]>,
+  id: string,
+): string[] {
+  return tagsByTask instanceof Map ? (tagsByTask.get(id) ?? []) : (tagsByTask[id] ?? []);
+}
+
+/**
+ * Rows for a tab. An empty `tag` (the All tab) returns every row; otherwise
+ * only the rows whose campaign carries that tag. `tagsByTask` maps a task id
+ * to its Asana tags.
+ */
+export function rowsForTab(
+  rows: FinanceRow[],
+  tagsByTask: Record<string, string[]> | Map<string, string[]>,
+  tag: string,
+): FinanceRow[] {
+  if (!normalizeTag(tag)) return rows ?? [];
+  return (rows ?? []).filter((r) => hasTag(tagsOf(tagsByTask, r.taskId), tag));
+}
+
+/** Back-compat alias: filter to a specific tag (never the All behaviour). */
+export function rowsForTag(
+  rows: FinanceRow[],
+  tagsByTask: Record<string, string[]> | Map<string, string[]>,
+  tag: string,
+): FinanceRow[] {
+  return (rows ?? []).filter((r) => hasTag(tagsOf(tagsByTask, r.taskId), tag));
+}
+
+/** How many campaigns each tab holds, for the tab badges. */
+export function tabCounts(
+  rows: FinanceRow[],
+  tagsByTask: Record<string, string[]> | Map<string, string[]>,
+): Record<FinanceTabKey, number> {
+  const out = { all: 0, quotation: 0, requotation: 0, invoice: 0, transaction: 0 } as Record<FinanceTabKey, number>;
+  for (const tab of FINANCE_TABS) out[tab.key] = rowsForTab(rows, tagsByTask, tab.tag).length;
+  return out;
+}
+
+export const FINANCE_PAGE_SIZES = [10, 25, 50] as const;
+
+export interface Paged<T> {
+  items: T[];
+  page: number;       // 1-based, clamped into range
+  pageCount: number;  // at least 1
+  total: number;
+}
+
+/**
+ * One page of `items`. `page` is 1-based and clamped so an out-of-range page
+ * (e.g. after the list shrinks) lands on the last real page rather than empty.
+ */
+export function paginate<T>(items: T[], page: number, pageSize: number): Paged<T> {
+  const all = items ?? [];
+  const size = Math.max(1, Math.floor(pageSize) || 1);
+  const pageCount = Math.max(1, Math.ceil(all.length / size));
+  const p = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
+  const start = (p - 1) * size;
+  return { items: all.slice(start, start + size), page: p, pageCount, total: all.length };
+}

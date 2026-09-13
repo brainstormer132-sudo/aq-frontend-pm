@@ -257,6 +257,18 @@ function HEADERS_PREFIX_CLASH(want: string, h: string): boolean {
   return false;
 }
 
+/**
+ * Asana's Tags cell is a comma-separated list ("#Transaction, Q3"). Split it
+ * into cleaned tag names, dropping blanks. Case and the leading # are left as
+ * typed; the app compares them case-insensitively and #-insensitively.
+ */
+export function splitTags(s: string): string[] {
+  return (s ?? '')
+    .split(',')
+    .map((t) => clean(t))
+    .filter((t) => t.length > 0);
+}
+
 /** Trim, fold non-breaking spaces, drop the leading apostrophe Excel/Asana put on phone numbers. */
 export function clean(s: string): string {
   return s.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().replace(/^'+(?=\+?\d)/, '');
@@ -567,6 +579,8 @@ export interface PlanCampaign {
   kam: string | null;
   assigneeEmail: string | null;
   description: string | null;
+  /** Asana tag names on the campaign (e.g. #quotation), for the Finance menu. */
+  tags: string[];
 }
 
 export interface PlanBooking {
@@ -780,6 +794,7 @@ export function planImport(rows: AsanaRow[], projectName = 'Asana'): Plan {
       kam,
       assigneeEmail: clean(p.assigneeEmail).toLowerCase() || null,
       description,
+      tags: splitTags(p.tags),
     });
     bump('campaigns');
 
@@ -1118,7 +1133,7 @@ create temp table asana_campaigns (
   client_key text, client_fold text, brand text, platforms text[], ad_type text, ad_type_custom text,
   approval text, budget numeric, quotation_numbers text[], invoice_numbers text[],
   client_payment text, client_payment_date date, client_payment_amount numeric, net_payment_date date,
-  contract text, kam text, assignee_email text, description text
+  contract text, kam text, assignee_email text, description text, tags text[]
 ) on commit drop;
 insert into asana_campaigns values`);
   out.push(plan.campaigns.map((c) => '  (' + [
@@ -1127,7 +1142,7 @@ insert into asana_campaigns values`);
     lit(c.clientKey), lit(c.clientFold), lit(c.brandName), arr(c.platforms), lit(c.adType), lit(c.adTypeCustom),
     lit(c.approval), lit(c.budget), arr(c.quotationNumbers), arr(c.invoiceNumbers),
     lit(c.clientPayment), lit(c.clientPaymentDate), lit(c.clientPaymentAmount), lit(c.netPaymentDate),
-    lit(c.contract), lit(c.kam), lit(c.assigneeEmail), lit(c.description),
+    lit(c.contract), lit(c.kam), lit(c.assigneeEmail), lit(c.description), arr(c.tags),
   ].join(', ') + ')').join(',\n') + ';');
 
   out.push(`
@@ -1139,7 +1154,7 @@ insert into public.pm_tasks (
   platforms, ad_type, ad_type_custom, approval_stage, budget,
   quotation_numbers, invoice_numbers, quotation_no, invoice_no,
   client_payment_status, client_payment_date, client_payment_amount, net_payment_date,
-  contract_status, key_account_id, assignee_id, request_status, position
+  contract_status, key_account_id, assignee_id, request_status, position, tags
 )
 select
   ctx.ws, ctx.uid, a.gid, a.title, a.title, a.description,
@@ -1153,7 +1168,7 @@ select
   a.platforms, a.ad_type, a.ad_type_custom, a.approval, a.budget,
   a.quotation_numbers, a.invoice_numbers, a.quotation_numbers[1], a.invoice_numbers[1],
   a.client_payment, a.client_payment_date, a.client_payment_amount, a.net_payment_date,
-  a.contract, pg_temp._profile_prefix(a.kam), pg_temp._user_by_email(a.assignee_email), 'not_requested', 0
+  a.contract, pg_temp._profile_prefix(a.kam), pg_temp._user_by_email(a.assignee_email), 'not_requested', 0, a.tags
 from asana_campaigns a
 cross join ctx
 left join public.clients cl on cl.id = pg_temp._client(a.client_key, a.client_fold)
@@ -1166,6 +1181,7 @@ on conflict (workspace_id, asana_gid) where asana_gid is not null do update set
   quotation_numbers = excluded.quotation_numbers, invoice_numbers = excluded.invoice_numbers, quotation_no = excluded.quotation_no, invoice_no = excluded.invoice_no,
   client_payment_status = excluded.client_payment_status, client_payment_date = excluded.client_payment_date, client_payment_amount = excluded.client_payment_amount, net_payment_date = excluded.net_payment_date,
   contract_status = excluded.contract_status, key_account_id = excluded.key_account_id, assignee_id = excluded.assignee_id,
+  tags = excluded.tags,
   deleted_at = null, deleted_by = null;
 
 -- Service type (Department Ctg.) - the junction and the legacy column.

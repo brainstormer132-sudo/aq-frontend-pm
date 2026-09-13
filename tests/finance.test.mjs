@@ -1,5 +1,7 @@
 import {
   latestQuotation, financeRows, statusLabel, statusBadge,
+  normalizeTag, hasTag, rowsForTag, rowsForTab, tabCounts, paginate,
+  FINANCE_TABS, FINANCE_PAGE_SIZES,
 } from '../.test-build/finance.js';
 
 let pass = 0, fail = 0;
@@ -74,6 +76,47 @@ eq('sent label', statusLabel('sent'), 'Sent to client');
 eq('accepted badge', statusBadge('accepted'), 'aq-badge-success');
 eq('rejected badge', statusBadge('rejected'), 'aq-badge-error');
 eq('generated badge is a waiting colour', statusBadge('generated'), 'aq-badge-warning');
+
+// -- tags: normalize / hasTag -------------------------------------
+eq('normalizeTag strips # and lowercases', normalizeTag('#Quotation '), 'quotation');
+eq('normalizeTag of blank', normalizeTag('  '), '');
+ok('hasTag is case- and #-insensitive', hasTag(['#Quotation'], 'quotation'));
+ok('hasTag no match', !hasTag(['#invoice'], 'quotation'));
+ok('hasTag empty list', !hasTag([], 'quotation'));
+
+// -- rowsForTab / rowsForTag / tabCounts --------------------------
+{
+  const rows = [
+    { taskId: 't1', title: 'A', brand: '', amount: 10, quotation: null, actionLabel: 'Generate quotation' },
+    { taskId: 't2', title: 'B', brand: '', amount: 20, quotation: null, actionLabel: 'Generate quotation' },
+    { taskId: 't3', title: 'C', brand: '', amount: 30, quotation: null, actionLabel: 'Generate quotation' },
+  ];
+  const tags = { t1: ['#Quotation'], t2: ['#invoice', '#transaction'], t3: [] };
+  eq('rowsForTab All (empty tag) -> everything', rowsForTab(rows, tags, '').map((r) => r.taskId), ['t1', 't2', 't3']);
+  eq('rowsForTab quotation -> t1', rowsForTab(rows, tags, 'quotation').map((r) => r.taskId), ['t1']);
+  eq('rowsForTab invoice -> t2', rowsForTab(rows, tags, 'invoice').map((r) => r.taskId), ['t2']);
+  eq('rowsForTag never returns All', rowsForTag(rows, tags, '').length, 0);
+  eq('rowsForTab requotation -> none', rowsForTab(rows, tags, 'requotation').length, 0);
+  const m = new Map(Object.entries(tags));
+  eq('rowsForTab accepts a Map', rowsForTab(rows, m, 'quotation').map((r) => r.taskId), ['t1']);
+  const counts = tabCounts(rows, tags);
+  eq('tabCounts includes All', counts, { all: 3, quotation: 1, requotation: 0, invoice: 1, transaction: 1 });
+}
+
+// -- paginate -----------------------------------------------------
+{
+  const items = Array.from({ length: 23 }, (_, i) => i);
+  eq('page 1 size 10', paginate(items, 1, 10).items.length, 10);
+  eq('page count', paginate(items, 1, 10).pageCount, 3);
+  eq('total', paginate(items, 1, 10).total, 23);
+  eq('last page is short', paginate(items, 3, 10).items, [20, 21, 22]);
+  eq('out-of-range page clamps to last', paginate(items, 99, 10).page, 3);
+  eq('page below 1 clamps to 1', paginate(items, 0, 10).page, 1);
+  eq('empty list is one page', paginate([], 1, 10).pageCount, 1);
+  eq('bigger page size', paginate(items, 1, 25).items.length, 23);
+  eq('default sizes', FINANCE_PAGE_SIZES[0], 10);
+  eq('five tabs, All first', FINANCE_TABS.map((t) => t.key), ['all', 'quotation', 'requotation', 'invoice', 'transaction']);
+}
 
 console.log(`finance: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
