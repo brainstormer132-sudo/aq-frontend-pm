@@ -489,6 +489,7 @@ export function CampaignPage({
     adsTotal: trackingRows.length,
     reports: (docRequests as any[]).length,
     comments: comments.length,
+    taskNoun: serviceTypes.find((t) => t.id === (view as any)?.service_type_id)?.name || 'Task',
     // A booking that has no price, or no contract asked for, is the reason
     // somebody opens this page. The index says so before you scroll to it.
     bookingsUnready: bookings.filter((b) => b.price == null || b.contract === 'none').length,
@@ -505,7 +506,7 @@ export function CampaignPage({
       + (((view as any)?.quotation_numbers ?? []).length ? 1 : 0)
       + (((view as any)?.invoice_numbers ?? []).length ? 1 : 0),
   }), [bookings, vendorRequests, trackingRows.length, totals.Posted, docRequests,
-       comments.length, view, gaps, publishedRows.length]);
+       comments.length, view, serviceTypes, gaps, publishedRows.length]);
 
   // Named after the vendor where there is one, so a comment says which
   // booking it was left on rather than showing a uuid.

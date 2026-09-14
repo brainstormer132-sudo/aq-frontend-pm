@@ -876,6 +876,8 @@ export interface PageIndexInput {
   bookingsUnready?: number;
   /** Fields on the campaign itself that something downstream is waiting on. */
   campaignMissing?: number;
+  /** The task's noun (its service type name) for the left-rail label. */
+  taskNoun?: string;
   /** The client is reading the sheet, and what they are reading is current. */
   trackingPublished?: boolean;
   trackingStale?: boolean;
@@ -890,7 +892,7 @@ export function pageIndex(input: PageIndexInput): IndexEntry[] {
   // `settled` is null where the section has no such thing — see IndexEntry.step.
   const rows: (Omit<IndexEntry, 'step'> & { settled: boolean | null })[] = [
     {
-      key: 'campaign', label: 'Campaign', anchor: '#fields', count: '',
+      key: 'campaign', label: input.taskNoun || 'Task', anchor: '#fields', count: '',
       flag: missing > 0,
       tone: missing > 0 ? 'amber' : 'green',
       settled: missing === 0,
