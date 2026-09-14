@@ -6,7 +6,7 @@ import { usePmTaskCampaignRollup } from '@/hooks/use-workflow';
 import {
   buildRows, sortRows, filterRows, nextSort, summarise, summaryLine, emptyMessage,
   isFiltered, money, shortDate, stageLabel, COLUMNS, STAGE_ORDER, DEFAULT_SORT, EMPTY_FILTER,
-  sortHint,
+  sortHint, pageRows,
   type Filter, type Sort, type SortKey, type StageKey, type TableRow,
   type TaskRow, type PersonLike,
 } from '@/lib/all-tasks';
@@ -79,6 +79,13 @@ export function AllTasksView({
     [rows, filter, sort, profiles],
   );
   const summary = summarise(shown, rows.length);
+
+  // Page the table. Rendering every campaign at once was the freeze on the
+  // busiest workspaces; the summary counts above still cover the whole set.
+  // A filter or sort change goes back to the first page.
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [filter, sort]);
+  const paged = useMemo(() => pageRows(shown, page), [shown, page]);
 
   // Which stages exist here at all. Offering "Draft" to a workspace that has
   // never had one is a filter that can only ever empty the table.
@@ -252,7 +259,7 @@ export function AllTasksView({
               </tr>
             </thead>
             <tbody>
-              {shown.map((r) => (
+              {paged.rows.map((r) => (
                 <Row
                   key={r.id}
                   row={r}
@@ -263,6 +270,32 @@ export function AllTasksView({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {mode === 'table' && paged.pageCount > 1 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, paddingLeft: 2, fontSize: 12,
+        }}>
+          <button
+            type="button"
+            className="aq-btn aq-btn-ghost"
+            disabled={paged.page <= 0}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </button>
+          <span style={{ color: 'var(--aq-text-muted)' }}>
+            {paged.from}-{paged.to} of {paged.total}
+          </span>
+          <button
+            type="button"
+            className="aq-btn aq-btn-ghost"
+            disabled={paged.page >= paged.pageCount - 1}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </button>
         </div>
       )}
 

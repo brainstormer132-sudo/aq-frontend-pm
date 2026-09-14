@@ -519,3 +519,48 @@ export function sortHint(col: Column, sort: Sort): string {
   }
   return sort.dir === 'asc' ? 'Sorted ascending' : 'Sorted descending';
 }
+
+/**
+ * How many rows the table renders at once. The register puts every campaign
+ * in one table, and four thousand of them was four thousand table rows in a
+ * single render - the screen froze on the busiest workspaces. One page at a
+ * time; the counts above the table still cover the whole set.
+ */
+export const PAGE_SIZE = 100;
+
+export interface Page<T> {
+  /** The rows for this page only. */
+  rows: T[];
+  /** The page actually shown, clamped into range. */
+  page: number;
+  /** How many pages the rows fill (at least 1, even when empty). */
+  pageCount: number;
+  /** Rows in total, across every page. */
+  total: number;
+  /** 1-based index of the first row shown (0 when there are none). */
+  from: number;
+  /** 1-based index of the last row shown (0 when there are none). */
+  to: number;
+}
+
+/**
+ * One page of rows, plus the numbers the pager shows. `page` is clamped, so a
+ * page left stranded past the end by a filter change quietly lands on the last
+ * real page rather than showing an empty table.
+ */
+export function pageRows<T>(rows: T[], page: number, size: number = PAGE_SIZE): Page<T> {
+  const total = rows.length;
+  const step = size > 0 ? size : PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(total / step));
+  const clamped = Math.min(Math.max(0, Math.floor(page) || 0), pageCount - 1);
+  const start = clamped * step;
+  const slice = rows.slice(start, start + step);
+  return {
+    rows: slice,
+    page: clamped,
+    pageCount,
+    total,
+    from: total === 0 ? 0 : start + 1,
+    to: start + slice.length,
+  };
+}
