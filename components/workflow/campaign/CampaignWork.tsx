@@ -189,7 +189,7 @@ export function CampaignWork({
 
       {!shown.length && !pending.length && (
         <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: '4px 0' }}>
-          No tasks on this campaign yet.
+          No items on this task yet.
         </p>
       )}
 
@@ -389,7 +389,7 @@ function GeneralFields({ sub, kind, canEdit, profiles, save, taskPlatforms, camp
           {inherited && (
             <F k="">
               <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
-                Inherited from the campaign. Changing it here overrides it for
+                Inherited from the task. Changing it here overrides it for
                 this report only.
               </span>
             </F>

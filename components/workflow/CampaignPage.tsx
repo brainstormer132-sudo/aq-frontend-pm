@@ -101,7 +101,7 @@ export function CampaignPage({
   const { comments, refetch: refetchComments } = useCommentsForTasks(activityIds);
   const { attachments, refetch: refetchFiles } = useAttachmentsForTasks(activityIds);
   const { items: docRequests, refetch: refetchDocs } = useDocumentRequests(taskId);
-  const { steps } = useServiceTypes(workspaceId);
+  const { serviceTypes, steps } = useServiceTypes(workspaceId);
   // The refetch again. Publishing set tracking_published_at and returned "12
   // rows are now what the client sees" — while the card beside it recomputed
   // from a publishedCount still holding 0 and printed "The client is reading
@@ -238,7 +238,7 @@ export function CampaignPage({
     opt.set(task.id, field, value, {
       label: FIELD_LABELS[field] ?? field,
       was: (task as any)[field],
-      rowName: task.task_name ?? task.title ?? 'this campaign',
+      rowName: task.task_name ?? task.title ?? 'this task',
     });
   };
 
@@ -261,7 +261,7 @@ export function CampaignPage({
       router.push(backHref);
       await deleteTask(task.id);
     } catch (e: any) {
-      setError(`The campaign was not deleted — ${e?.message ?? String(e)}`);
+      setError(`The task was not deleted — ${e?.message ?? String(e)}`);
     }
   };
 
@@ -632,12 +632,14 @@ export function CampaignPage({
   if (!task || !view) {
     return (
       <div style={{ padding: 40, color: 'var(--aq-text-muted)' }}>
-        That campaign is not here.
+        That task is not here.
       </div>
     );
   }
 
-  const name = view.task_name || view.title || 'Untitled campaign';
+  const name = view.task_name || view.title || 'Untitled task';
+  // The task's service type as its noun - Campaign, Ad Hook, and so on.
+  const taskNoun = serviceTypes.find((t) => t.id === (view as any).service_type_id)?.name || 'Task';
   // Keyed on the client so every campaign of theirs wears the same colour.
   const mark = brandMark(clientName ?? view.brand_name);
 
@@ -690,7 +692,7 @@ export function CampaignPage({
               className="aq-btn aq-btn-secondary"
               style={{ ...SMALL_BTN, color: '#b91c1c' }}
               onClick={startDelete}
-            >Delete campaign</button>
+            >Delete task</button>
           )}
         </span>
       </div>
@@ -843,7 +845,7 @@ export function CampaignPage({
         gap: 26, alignItems: 'start',
       }}>
         <nav
-          aria-label="Sections of this campaign"
+          aria-label="Sections of this task"
           style={{ position: 'sticky', top: 16, display: 'flex', flexDirection: 'column', gap: 1 }}
         >
           <Progress done={progress.done} total={progress.total} line={progress.line} />
@@ -859,7 +861,7 @@ export function CampaignPage({
             fontSize: 11, color: 'var(--aq-text-muted)', padding: '12px 11px 0',
             lineHeight: 1.5, borderTop: '1px solid var(--aq-border-light)', marginTop: 10,
           }}>
-            Everything belonging to this campaign, in one page.
+            Everything belonging to this task, in one page.
           </p>
         </nav>
 
@@ -875,7 +877,7 @@ export function CampaignPage({
           )}
 
           <section id="fields">
-            <Card title="The campaign" hint={canEdit ? 'click any value to change it' : 'read only'}>
+            <Card title={taskNoun} hint={canEdit ? 'click any value to change it' : 'read only'}>
               <Group title="Who it's for" />
               <Fields>
                 {/* The campaign's own name. The page could show it and not
@@ -888,11 +890,11 @@ export function CampaignPage({
                   <Text
                     canEdit={canEdit}
                     value={(view as any).task_name ?? view.title ?? ''}
-                    placeholder="Campaign name"
+                    placeholder="Task name"
                     onCommit={(v) => opt.setMany(taskId, {
                       task_name: v || null, title: v || null,
                     }, {
-                      labels: { task_name: 'Campaign name', title: 'Campaign name' },
+                      labels: { task_name: 'Task name', title: 'Task name' },
                       was: { task_name: (view as any).task_name, title: view.title },
                     })}
                   />
