@@ -13,7 +13,6 @@ import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { SkeletonShell, SkeletonRows } from '@/components/Skeleton';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
-import { MarketingInbox } from '@/components/workflow/MarketingInbox';
 // NotificationsBell removed from topbar 2026-05-17 — the inbox is now an
 // item in the left sidebar (see WorkflowSidebar "Inbox" entry) which opens
 // a searchable list view backed by the same notifications + mentions data.
@@ -355,19 +354,6 @@ export default function WorkflowPage() {
             currentUserId={user.id}
             currentUserName={user.full_name}
             onStartCampaign={(deal) => { setTaskPrefill(prefillFromDeal(deal)); setView('new-task'); }}
-          />
-        )}
-
-        {view === 'marketing-triage' && (
-          <MarketingInbox
-            tasks={pendingMarketing}
-            serviceTypes={serviceTypes}
-            steps={steps}
-            profiles={profiles}
-            currentUserId={user.id}
-            workspaceId={workspace.id}
-            role={role}
-            onTriaged={onTaskTriaged}
           />
         )}
 
