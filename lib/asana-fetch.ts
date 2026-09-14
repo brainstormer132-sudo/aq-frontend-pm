@@ -69,9 +69,22 @@ export async function fetchAsanaProjectTasks(pat: string, projectGid: string): P
   if (!projectGid) throw new Error('ASANA_PROJECT_GID is not set.');
 
   const campaigns = await getPaged(`/projects/${encodeURIComponent(projectGid)}/tasks`, pat);
-  for (const campaign of campaigns) {
-    if (!campaign.gid) continue;
-    campaign.subtasks = await getPaged(`/tasks/${encodeURIComponent(campaign.gid)}/subtasks`, pat);
+
+  // Fetch each campaign's subtasks, but with a concurrency pool rather than one
+  // at a time: a project with hundreds of campaigns is hundreds of round trips,
+  // and serial that overran the serverless time limit. A small pool keeps well
+  // under Asana's rate limit (~150 req/min) while cutting the wall-clock time.
+  const targets = campaigns.filter((c) => c.gid);
+  const CONCURRENCY = 6;
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < targets.length) {
+      const c = targets[next++];
+      c.subtasks = await getPaged(`/tasks/${encodeURIComponent(c.gid)}/subtasks`, pat);
+    }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker()),
+  );
   return campaigns;
 }

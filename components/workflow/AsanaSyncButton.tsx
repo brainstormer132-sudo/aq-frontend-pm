@@ -36,8 +36,19 @@ export function AsanaSyncButton({ workspaceId, role }: { workspaceId: string; ro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace_id: workspaceId }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? `Sync failed (${res.status})`);
+      // The response may not be JSON: a Vercel timeout/crash returns a plain-text
+      // error page. Read as text and parse defensively so the real problem shows
+      // instead of "Unexpected token 'A'".
+      const text = await res.text();
+      let json: any = null;
+      try { json = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+      if (!res.ok || !json?.ok) {
+        const msg = json?.error
+          ?? (res.status === 504 || res.status === 408
+            ? 'The sync timed out - the Asana project is large for a single run. Tell me and I will move it to a longer-running job.'
+            : `Sync failed (HTTP ${res.status}). ${text.slice(0, 200)}`);
+        throw new Error(msg);
+      }
       setResult(json as SyncSummary);
     } catch (e: any) {
       setError(e?.message ?? String(e));
