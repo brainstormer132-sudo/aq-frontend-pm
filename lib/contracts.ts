@@ -174,6 +174,50 @@ export function waitingLabel(days: number): string {
   return `waiting ${days} days`;
 }
 
+/* -- Chasing a stuck request ------------------------------------- */
+
+/**
+ * How many whole days a request may sit waiting on a person before it is
+ * worth telling someone. The register already SHOWS the wait (see `stale`,
+ * STALE_DAYS above); this is the point at which a request also chases itself
+ * into the inbox, so a contract stuck with Legal is not silent until someone
+ * happens to open the register.
+ */
+export const CHASE_AFTER_DAYS = 3;
+
+/** A request that has waited long enough to chase, with how long. */
+export interface ChaseCandidate { id: string; ageDays: number }
+
+/** The minimum a request row needs for the chase decision. */
+export interface ChaseInput {
+  id: string;
+  status?: string | null;
+  created_at?: string | null;
+}
+
+/**
+ * Which requests are stuck long enough to chase. Pure: it decides *which*,
+ * never *who* is told or whether a chase already went out - the caller
+ * (the cron route) owns the recipients and the de-duplication. A request is a
+ * candidate only while it is genuinely waiting on a person (pending/approved,
+ * not generated/rejected/cancelled) and has waited at least `afterDays`.
+ */
+export function chaseCandidates(
+  rows: ChaseInput[],
+  today: string,
+  afterDays: number = CHASE_AFTER_DAYS,
+): ChaseCandidate[] {
+  const out: ChaseCandidate[] = [];
+  for (const r of rows) {
+    if (!isWaiting(statusOf(r.status))) continue;
+    const created = isoDay(r.created_at);
+    if (!created) continue;
+    const ageDays = daysBetween(created, today);
+    if (ageDays >= afterDays) out.push({ id: r.id, ageDays });
+  }
+  return out;
+}
+
 /* ── Building the rows ──────────────────────────────────────────── */
 
 function txt(v: unknown): string {
