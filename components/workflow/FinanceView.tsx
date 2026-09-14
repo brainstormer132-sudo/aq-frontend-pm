@@ -56,6 +56,8 @@ export function FinanceView({
   const [tab, setTab] = useState<FinanceTabKey>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(FINANCE_PAGE_SIZES[0]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState<string>('');
 
   const loadDocs = useCallback(async () => {
     if (!workspaceId) { setDocs([]); return; }
@@ -89,6 +91,19 @@ export function FinanceView({
   }, [workspaceId]);
 
   useEffect(() => { loadDocs(); loadTags(); }, [loadDocs, loadTags]);
+
+  // Refresh with visible feedback: the button says "Refreshing..." while the
+  // three reloads run, and a timestamp appears when they finish, so the finance
+  // team can see the list actually pulled the latest.
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true); setError('');
+    try {
+      await Promise.all([Promise.resolve(refetchCampaigns()), loadDocs(), loadTags()]);
+      setRefreshedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchCampaigns, loadDocs, loadTags]);
 
   // Full row set, then narrowed to the active tab, then searched.
   const allRows = useMemo(
@@ -175,9 +190,15 @@ export function FinanceView({
             style={{ minWidth: 220 }}
           />
           <button type="button" className="aq-btn aq-btn-secondary aq-btn-sm"
-            onClick={() => { refetchCampaigns(); loadDocs(); loadTags(); }}>
-            Refresh
+            disabled={refreshing}
+            onClick={doRefresh}>
+            {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
+          {refreshedAt && !refreshing && (
+            <span style={{ fontSize: 12, color: 'var(--aq-text-muted)', alignSelf: 'center' }}>
+              Updated {refreshedAt}
+            </span>
+          )}
         </div>
       </div>
 
