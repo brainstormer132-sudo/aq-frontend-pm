@@ -17,6 +17,7 @@ import {
 import { SearchablePicker } from './SearchablePicker';
 import { CampaignBookings } from './campaign/CampaignBookings';
 import { CampaignPaperwork } from './campaign/CampaignPaperwork';
+import { TaskTriagePopup } from './TaskTriagePopup';
 import { CampaignVendorContracts } from './campaign/CampaignVendorContracts';
 import { TermsField } from './campaign/track';
 import { CampaignWork } from './campaign/CampaignWork';
@@ -163,6 +164,13 @@ export function CampaignPage({
   // the server last sent, plus whatever is still in flight.
   const view = task ? opt.view(task as any) : null;
   const shownSubtasks = useMemo(() => opt.viewAll(subtasks as any), [opt, subtasks]);
+
+  // A task that has not been triaged yet (sales just created it) opens with a
+  // set-up popup - the triage that used to live in the Marketing Inbox.
+  const canTriage = !!role && ['owner', 'admin', 'marketing'].includes(role);
+  const untriaged = (view as any)?.stage === 'pending_marketing';
+  const [triageOpen, setTriageOpen] = useState(false);
+  useEffect(() => { if (untriaged && canTriage) setTriageOpen(true); }, [untriaged, canTriage, taskId]);
 
   /* ── Nobody should have to press refresh ───────────────────────── */
   //
@@ -654,6 +662,30 @@ export function CampaignPage({
 
   return (
     <div style={{ background: 'var(--aq-bg)', minHeight: '100vh' }}>
+      {triageOpen && untriaged && canTriage && (
+        <TaskTriagePopup
+          task={view as any}
+          serviceTypes={serviceTypes}
+          steps={steps}
+          profiles={profiles as any}
+          workspaceId={workspaceId}
+          currentUserId={currentUserId}
+          onClose={() => setTriageOpen(false)}
+          onDone={async () => { await Promise.all([refetch(), refetchSubtasks()]); }}
+        />
+      )}
+      {untriaged && canTriage && !triageOpen && (
+        <button
+          type="button"
+          onClick={() => setTriageOpen(true)}
+          style={{
+            display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+            font: 'inherit', fontSize: 13, fontWeight: 600, color: '#92400e',
+            background: '#fef3c7', border: 'none', borderBottom: '1px solid #fcd34d',
+            padding: '10px 22px',
+          }}
+        >This task has not been set up yet - set the type of work and its subtasks. Set it up</button>
+      )}
       {/* ── Breadcrumb ─────────────────────────────────────────── */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
