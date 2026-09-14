@@ -1218,7 +1218,7 @@ export function CampaignPage({
             currentUserId={currentUserId}
             today={today ?? ''}
             opt={opt}
-            onChanged={async () => { await Promise.all([refetch(), refetchSubtasks()]); }}
+            onChanged={async () => { await Promise.all([refetch(), refetchSubtasks(), refetchDocs(), refetchRequests()]); }}
           />
 
           <CampaignVendorContracts
