@@ -19,7 +19,7 @@ import { DateField } from '../DateField';
 import {
   Card, Group, Fields, F, Val, Pick, Text, Check, Note, UndoBar, Missing,
   inkButton, quietButton, SMALL_BTN, TONE, Chip, toneOf, HILITE, Money,
-  platformTone } from './ui';
+  platformTone, MultiPick } from './ui';
 import {
   money, initials, parseMoney, bulkResultLine, bookingSubtitle, brandMark,
   type BookingRow,
@@ -83,72 +83,6 @@ const STATUS_DOT: Record<string, string> = {
   pending: '#d97706', on_hold: '#6b7280', done: '#16a34a', cancelled: '#b91c1c',
 };
 
-/**
- * Platform as visible checkboxes, not a dropdown.
- *
- * Siraj: *"instead of having a drop down for platform make it a choosable
- * checked boxes."* A booking is one vendor across several platforms -
- * SnapChat and TikTok is one booking - so this writes the whole list, not a
- * single value. Only shown when the ads below have not already answered the
- * platform themselves (then it reports, like Client price).
- */
-function PlatformChecks({ canEdit, options, values, onChange }: {
-  canEdit: boolean;
-  options: string[];
-  values: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const set = new Set(values);
-
-  if (!canEdit) {
-    return values.length ? (
-      <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-        {values.map((v) => <Chip key={v} label={v} colours={platformTone(v)} />)}
-      </span>
-    ) : <Val>{'\u2014'}</Val>;
-  }
-  if (!options.length) {
-    return (
-      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
-        No platforms configured yet.
-      </span>
-    );
-  }
-
-  const toggle = (name: string) =>
-    onChange(set.has(name) ? values.filter((v) => v !== name) : [...values, name]);
-
-  return (
-    <span style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-      {options.map((o) => {
-        const on = set.has(o);
-        const tone = platformTone(o);
-        return (
-          <label
-            key={o}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 7,
-              padding: '5px 10px', borderRadius: 8, cursor: 'pointer',
-              fontSize: 12.5, whiteSpace: 'nowrap',
-              border: `1px solid ${on ? 'transparent' : 'var(--aq-border)'}`,
-              background: on ? tone.bg : 'var(--aq-bg-elevated)',
-              color: on ? tone.fg : 'var(--aq-text-secondary)',
-              fontWeight: on ? 600 : 400,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={on}
-              onChange={() => toggle(o)}
-              style={{ width: 14, height: 14 }}
-            />
-            {o}
-          </label>
-        );
-      })}
-    </span>
-  );
-}
 
 const BOOKING_LABELS: Record<string, string> = {
   price: 'Client price', net_amount: 'Vendors cost', platform: 'Platform', ad_type: 'Ad type',
@@ -780,8 +714,9 @@ export function CampaignBookings({
                     lines={lines.length}
                   />
                 ) : (
-                  <PlatformChecks
+                  <MultiPick
                     canEdit={canEdit}
+                    label="Platform"
                     options={platformNames}
                     values={bookingPlatforms(sub)}
                     onChange={(next) => saveOn(sub.id, 'platforms', next, (sub as any).platforms)}
