@@ -1512,10 +1512,17 @@ function blankRow(index: number): AsanaRow {
  */
 export function asanaApiToRows(campaigns: AsanaApiTask[]): AsanaRow[] {
   const rows: AsanaRow[] = [];
+  // Every task keyed once. Asana's project task list can return a task more
+  // than once (offset-pagination overlap, or a subtask pinned to the project
+  // board as well), which otherwise produces two rows for one gid and a
+  // duplicate-key error when the import writes the bookings. First occurrence
+  // wins.
+  const seen = new Set<string>();
   let index = 0;
   const emit = (task: AsanaApiTask, parentName: string) => {
     const gid = clean(task.gid ?? '');
-    if (!gid) return;
+    if (!gid || seen.has(gid)) return;
+    seen.add(gid);
     const row = blankRow(index++);
     Object.assign(row, customFieldsToRow(task), nativeFieldsToRow(task, parentName));
     row.index = index - 1;

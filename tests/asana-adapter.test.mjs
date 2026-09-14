@@ -192,5 +192,15 @@ test('planImport turns the API rows into a campaign with its bookings and money'
   assert.ok(plan.clients.some((c) => c.name === 'Coffee Company LLC'));
 });
 
+test('a gid returned twice by Asana is emitted only once', () => {
+  const [c] = fixture();
+  // Same campaign listed twice (pagination overlap), and one subtask repeated.
+  const dupSub = { gid: '1000000000000002', name: 'dup', custom_fields: [] };
+  const rows = asanaApiToRows([c, c, { ...c, subtasks: [dupSub] }]);
+  const gids = rows.map((r) => r.gid);
+  assert.equal(new Set(gids).size, gids.length);           // no duplicate gids
+  assert.equal(rows.length, 3);                            // still just the 3 real tasks
+});
+
 console.log(`\n  asana-adapter: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
