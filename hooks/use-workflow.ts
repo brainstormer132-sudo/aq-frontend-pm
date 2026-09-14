@@ -952,7 +952,7 @@ export function useTrackingCampaigns(workspaceId: string | null) {
     }
     setLoading(true);
 
-    const campaigns = await selectAllRows<PMTask>('useTrackingCampaigns', () =>
+    const campaigns = await selectAllRowsParallel<PMTask>('useTrackingCampaigns', () =>
       supabase
         .from('pm_tasks')
         .select('*')
@@ -1463,7 +1463,7 @@ export function useWorkflowTasks(workspaceId: string | null, stage?: TaskStage |
     // looks like a deleted campaign.
     const rows = await cachedFetch<PMTask[]>(
       `workflowTasks:${workspaceId}:${stage ?? 'all'}`,
-      () => selectAllRows<PMTask>('useWorkflowTasks', () => {
+      () => selectAllRowsParallel<PMTask>('useWorkflowTasks', () => {
         let query = supabase.from('pm_tasks').select('*')
           .eq('workspace_id', workspaceId).is('parent_task_id', null);
         if (stage && stage !== 'all') query = query.eq('stage', stage);
@@ -4893,7 +4893,7 @@ export function useClients() {
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async (force = false) => {
-    const rows = await cachedFetch<ClientRow[]>('clients', () => selectAllRows<ClientRow>(
+    const rows = await cachedFetch<ClientRow[]>('clients', () => selectAllRowsParallel<ClientRow>(
       'useClients',
       () => supabase
         .from('clients')
