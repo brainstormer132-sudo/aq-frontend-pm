@@ -329,7 +329,7 @@ export function NewTaskForm({
 
               {step.key === 'what' && (
                 <>
-                  <Field label="Campaign name">
+                  <Field label="Task name">
                     <input
                       className="aq-input"
                       value={draft.taskName}
@@ -390,7 +390,7 @@ export function NewTaskForm({
                   </Field>
 
                   {/* ── Files ────────────────────────────────────────
-                      Held here until the campaign exists — there is
+                      Held here until the task exists — there is
                       nothing to attach them to before that. */}
                   <div>
                     <div className="aq-label" style={{ marginBottom: 5 }}>Files</div>
@@ -433,7 +433,7 @@ export function NewTaskForm({
                       >{files.length ? 'Add another file' : 'Attach a file'}</button>
                       <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
                         {files.length >= MAX_BRIEF_FILES
-                          ? `${MAX_BRIEF_FILES} is the limit here — the rest go on the campaign.`
+                          ? `${MAX_BRIEF_FILES} is the limit here — the rest go on the task.`
                           : 'Decks, PDFs, references. Up to 10MB each.'}
                       </span>
                     </div>

@@ -61,7 +61,7 @@ export function stepStatuses(draft: Draft): StepStatus[] {
   else if (!txt(draft.brandId)) whoMissing.push('Pick the brand.');
 
   const whatMissing: string[] = [];
-  if (!txt(draft.taskName)) whatMissing.push('Give the campaign a name.');
+  if (!txt(draft.taskName)) whatMissing.push('Give the task a name.');
   else if (txt(draft.taskName).length < 3) whatMissing.push('That name is too short to find later.');
 
   return [
@@ -159,7 +159,7 @@ export function attachmentProblems(existing: PickedFile[], incoming: PickedFile[
   const all = [...(existing || []), ...(incoming || [])];
 
   if (all.length > MAX_BRIEF_FILES) {
-    out.push(`Up to ${MAX_BRIEF_FILES} files. Put the rest on the campaign once it exists.`);
+    out.push(`Up to ${MAX_BRIEF_FILES} files. Put the rest on the task once it exists.`);
   }
   for (const f of incoming || []) {
     if (f.size === 0) out.push(`${f.name} is empty.`);
@@ -213,7 +213,7 @@ export function uploadOutcome(total: number, failed: number): string {
     return `Sent to marketing with ${total} file${total === 1 ? '' : 's'}.`;
   }
   if (failed === total) {
-    return `Sent to marketing — but no files uploaded. Open the campaign and attach them there.`;
+    return `Sent to marketing — but no files uploaded. Open the task and attach them there.`;
   }
-  return `Sent to marketing. ${failed} of ${total} files did not upload — attach them on the campaign.`;
+  return `Sent to marketing. ${failed} of ${total} files did not upload — attach them on the task.`;
 }
