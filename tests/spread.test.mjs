@@ -76,6 +76,45 @@ const names = new Map([[1, 'Reem'], [2, 'Bright Studios'], [3, 'Layla']]);
   eq('not from ads', rows[0].adTypesFromAds, false);
   eq('platform not from ads', rows[0].platformsFromAds, false);
 }
+
+/* -- The booking's own multi-select platforms, with no ads -----------
+   Checkboxes on the vendor write a `platforms` array. A booking with no
+   lines shows that whole list - one vendor can be SnapChat AND TikTok -
+   and the field stays editable because the ads have not answered it.    */
+{
+  const rows = bookingRows({
+    subtasks: [{ id: 'a', vendor_id: 1, platforms: ['SnapChat', 'TikTok'] }],
+    ads: [],
+  });
+  eq('both chosen platforms', rows[0].platformList, ['SnapChat', 'TikTok']);
+  eq('two platforms is mixed', rows[0].mixedPlatforms, true);
+  eq('still editable, not from ads', rows[0].platformsFromAds, false);
+}
+// The array wins over the legacy single field when both are set.
+{
+  const rows = bookingRows({
+    subtasks: [{ id: 'a', vendor_id: 1, platform: 'TikTok', platforms: ['SnapChat'] }],
+    ads: [],
+  });
+  eq('the array is preferred', rows[0].platformList, ['SnapChat']);
+}
+// An empty array falls through to the legacy single field.
+{
+  const rows = bookingRows({
+    subtasks: [{ id: 'a', vendor_id: 1, platform: 'TikTok', platforms: [] }],
+    ads: [],
+  });
+  eq('empty array falls back to the single', rows[0].platformList, ['TikTok']);
+}
+// The ads still win over the booking's own array when they carry platforms.
+{
+  const rows = bookingRows({
+    subtasks: [{ id: 'a', vendor_id: 1, platforms: ['SnapChat', 'TikTok'] }],
+    ads: [{ subtask_id: 'a', platform: 'Instagram' }],
+  });
+  eq('the ads own it', rows[0].platformList, ['Instagram']);
+  eq('and it reports', rows[0].platformsFromAds, true);
+}
 // One line, one type: still the ads' answer, so the field reports rather
 // than edits. Otherwise typing on the booking would set a value the tile
 // never reads and the next line edit would contradict.

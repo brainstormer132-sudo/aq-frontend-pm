@@ -398,6 +398,13 @@ export function stripTotals(ads: AdForStrip[]): Record<AdStatusKey, number> {
 // ── The bookings list ───────────────────────────────────────────────
 
 export interface BookingSubtask {
+  /**
+   * The booking's own platforms - the multi-select the vendor form writes.
+   * A booking is one vendor, not one platform: SnapChat AND TikTok is one
+   * booking. Preferred over the single `platform` when present; both are a
+   * fallback for a booking that has no ads to answer for it.
+   */
+  platforms?: string[] | null;
   /** The booking's own single platform — a fallback when its ads carry none. */
   platform?: string | null;
   /** Typed on the booking only when it has no ads to be priced by. */
@@ -506,7 +513,16 @@ export function bookingRows(input: {
     // No ads, or ads nobody has typed a type on: fall back to the booking's
     // own single field, which is all a booking without lines ever had.
     if (!types.length && txt(s.ad_type)) types.push(txt(s.ad_type));
-    if (!platforms.length && txt(s.platform)) platforms.push(txt(s.platform));
+    if (!platforms.length) {
+      // The booking's own multi-select first, then its legacy single field.
+      const own = Array.isArray(s.platforms)
+        ? s.platforms.map((p) => txt(p)).filter(Boolean) : [];
+      if (own.length) {
+        for (const p of own) if (!platforms.includes(p)) platforms.push(p);
+      } else if (txt(s.platform)) {
+        platforms.push(txt(s.platform));
+      }
+    }
 
     // Where the money is typed depends on whether the booking has ads.
     //

@@ -64,6 +64,92 @@ function campaignPlatformText(t: any): string | null {
   return Array.isArray(list) && list.length ? list.join(', ') : null;
 }
 
+/**
+ * A booking's chosen platforms.
+ *
+ * The multi-select array if it has one, else the legacy single `platform` so
+ * a booking picked before checkboxes existed still shows its choice.
+ */
+function bookingPlatforms(sub: any): string[] {
+  const arr = Array.isArray(sub?.platforms)
+    ? sub.platforms.map((p: unknown) => String(p ?? '')).filter(Boolean) : [];
+  if (arr.length) return arr;
+  const one = String(sub?.platform ?? '');
+  return one ? [one] : [];
+}
+
+/** A colour per status, for the little dot on each group heading. */
+const STATUS_DOT: Record<string, string> = {
+  pending: '#d97706', on_hold: '#6b7280', done: '#16a34a', cancelled: '#b91c1c',
+};
+
+/**
+ * Platform as visible checkboxes, not a dropdown.
+ *
+ * Siraj: *"instead of having a drop down for platform make it a choosable
+ * checked boxes."* A booking is one vendor across several platforms -
+ * SnapChat and TikTok is one booking - so this writes the whole list, not a
+ * single value. Only shown when the ads below have not already answered the
+ * platform themselves (then it reports, like Client price).
+ */
+function PlatformChecks({ canEdit, options, values, onChange }: {
+  canEdit: boolean;
+  options: string[];
+  values: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const set = new Set(values);
+
+  if (!canEdit) {
+    return values.length ? (
+      <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+        {values.map((v) => <Chip key={v} label={v} colours={platformTone(v)} />)}
+      </span>
+    ) : <Val>{'\u2014'}</Val>;
+  }
+  if (!options.length) {
+    return (
+      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+        No platforms configured yet.
+      </span>
+    );
+  }
+
+  const toggle = (name: string) =>
+    onChange(set.has(name) ? values.filter((v) => v !== name) : [...values, name]);
+
+  return (
+    <span style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {options.map((o) => {
+        const on = set.has(o);
+        const tone = platformTone(o);
+        return (
+          <label
+            key={o}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 7,
+              padding: '5px 10px', borderRadius: 8, cursor: 'pointer',
+              fontSize: 12.5, whiteSpace: 'nowrap',
+              border: `1px solid ${on ? 'transparent' : 'var(--aq-border)'}`,
+              background: on ? tone.bg : 'var(--aq-bg-elevated)',
+              color: on ? tone.fg : 'var(--aq-text-secondary)',
+              fontWeight: on ? 600 : 400,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={on}
+              onChange={() => toggle(o)}
+              style={{ width: 14, height: 14 }}
+            />
+            {o}
+          </label>
+        );
+      })}
+    </span>
+  );
+}
+
 const BOOKING_LABELS: Record<string, string> = {
   price: 'Client price', net_amount: 'Vendors cost', platform: 'Platform', ad_type: 'Ad type',
   title: 'Name', assignee_id: 'Assigned to', due_date: 'Due date',
@@ -355,6 +441,33 @@ export function CampaignBookings({
   const pendingIds = new Set(pending.map((p) => p.id));
   const shown = bookings.filter((b) => !pendingIds.has(b.id));
 
+  // Vendors split by their booking status - pending, on hold, done, cancelled,
+  // then anything else - so a campaign of forty does not mix the live vendors
+  // in with the cancelled ones. Siraj: *"separate vendors by booking status
+  // whether they are cancelled pending or something else."* The status lives
+  // on the subtask, not on the BookingRow, so it is read through subtaskById.
+  const statusGroups = useMemo(() => {
+    const order = [...TASK_STATUSES] as string[];
+    const byStatus = new Map<string, BookingRow[]>();
+    for (const b of shown) {
+      const raw = String((subtaskById.get(b.id) as any)?.status ?? '') || 'pending';
+      const key = order.includes(raw) ? raw : 'other';
+      const list = byStatus.get(key);
+      if (list) list.push(b); else byStatus.set(key, [b]);
+    }
+    const out: { key: string; label: string; rows: BookingRow[] }[] = [];
+    for (const k of order) {
+      const rows = byStatus.get(k);
+      if (rows?.length) out.push({ key: k, label: labelFor(k), rows });
+    }
+    const other = byStatus.get('other');
+    if (other?.length) out.push({ key: 'other', label: 'Other', rows: other });
+    return out;
+    // shown is a fresh array each render but cheap to regroup; keying the memo
+    // on the bookings and pending set keeps it from running on every keystroke.
+  }, [bookings, pending, subtaskById]); // eslint-disable-line react-hooks/exhaustive-deps
+  const manyGroups = statusGroups.length > 1;
+
   // Everything the opened booking's form needs, worked out once. It used to
   // be computed inside the map for all of them, which meant running the
   // contract-readiness check on twenty vendors to draw one form.
@@ -480,47 +593,71 @@ export function CampaignBookings({
           carries a toggle back to rows. Nothing is hidden in either — the
           same bookings, drawn two ways.
       */}
-      {asGrid ? (
-        <div style={{
-          display: 'grid', gap: 11,
-          gridTemplateColumns: 'repeat(auto-fill, minmax(214px, 1fr))',
-        }}>
-          {shown.map((b) => (
-            <VendorTile
-              key={b.id}
-              row={b}
-              ads={adLinesBySubtask.get(b.id)?.length ?? 0}
-              open={openId === b.id}
-              canEdit={canEdit}
-              selected={selected.has(b.id)}
-              onSelect={(on) => setSelected((prev) => {
-                const n = new Set(prev);
-                if (on) n.add(b.id); else n.delete(b.id);
-                return n;
-              })}
-              onOpen={() => setOpenId(openId === b.id ? null : b.id)}
-            />
-          ))}
+      {statusGroups.map((g) => (
+        <div key={g.key}>
+          {/* The status heading. Hidden when every vendor is the same status -
+              one "Pending" bar over the whole card says nothing. */}
+          {manyGroups && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0 9px',
+            }}>
+              <span aria-hidden style={{
+                width: 8, height: 8, borderRadius: 999, flex: '0 0 auto',
+                background: STATUS_DOT[g.key] ?? 'var(--aq-text-muted)',
+              }} />
+              <span style={{
+                fontSize: 11.5, fontWeight: 700, letterSpacing: '.03em',
+                textTransform: 'uppercase', color: 'var(--aq-text-secondary)',
+              }}>{g.label}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+                {g.rows.length}
+              </span>
+            </div>
+          )}
+
+          {asGrid ? (
+            <div style={{
+              display: 'grid', gap: 11,
+              gridTemplateColumns: 'repeat(auto-fill, minmax(214px, 1fr))',
+            }}>
+              {g.rows.map((b) => (
+                <VendorTile
+                  key={b.id}
+                  row={b}
+                  ads={adLinesBySubtask.get(b.id)?.length ?? 0}
+                  open={openId === b.id}
+                  canEdit={canEdit}
+                  selected={selected.has(b.id)}
+                  onSelect={(on) => setSelected((prev) => {
+                    const n = new Set(prev);
+                    if (on) n.add(b.id); else n.delete(b.id);
+                    return n;
+                  })}
+                  onOpen={() => setOpenId(openId === b.id ? null : b.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            g.rows.map((b, i) => (
+              <VendorRow
+                key={b.id}
+                row={b}
+                ads={adLinesBySubtask.get(b.id)?.length ?? 0}
+                first={i === 0}
+                open={openId === b.id}
+                canEdit={canEdit}
+                selected={selected.has(b.id)}
+                onSelect={(on) => setSelected((prev) => {
+                  const n = new Set(prev);
+                  if (on) n.add(b.id); else n.delete(b.id);
+                  return n;
+                })}
+                onOpen={() => setOpenId(openId === b.id ? null : b.id)}
+              />
+            ))
+          )}
         </div>
-      ) : (
-        shown.map((b, i) => (
-          <VendorRow
-            key={b.id}
-            row={b}
-            ads={adLinesBySubtask.get(b.id)?.length ?? 0}
-            first={i === 0}
-            open={openId === b.id}
-            canEdit={canEdit}
-            selected={selected.has(b.id)}
-            onSelect={(on) => setSelected((prev) => {
-              const n = new Set(prev);
-              if (on) n.add(b.id); else n.delete(b.id);
-              return n;
-            })}
-            onOpen={() => setOpenId(openId === b.id ? null : b.id)}
-          />
-        ))
-      )}
+      ))}
 
       {/* The opened booking, full width under the grid.
           A booking's detail is thirty fields; squeezing it into a 214px
@@ -646,11 +783,11 @@ export function CampaignBookings({
                     lines={lines.length}
                   />
                 ) : (
-                  <Pick
+                  <PlatformChecks
                     canEdit={canEdit}
-                    value={(sub as any).platform}
-                    options={platformNames.map((p) => ({ v: p, l: p }))}
-                    onChange={(v) => saveOn(sub.id, 'platform', v, (sub as any).platform)}
+                    options={platformNames}
+                    values={bookingPlatforms(sub)}
+                    onChange={(next) => saveOn(sub.id, 'platforms', next, (sub as any).platforms)}
                   />
                 )}
               </F>
