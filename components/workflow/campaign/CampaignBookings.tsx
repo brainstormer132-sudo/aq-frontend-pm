@@ -466,7 +466,6 @@ export function CampaignBookings({
     // shown is a fresh array each render but cheap to regroup; keying the memo
     // on the bookings and pending set keeps it from running on every keystroke.
   }, [bookings, pending, subtaskById]); // eslint-disable-line react-hooks/exhaustive-deps
-  const manyGroups = statusGroups.length > 1;
 
   // Everything the opened booking's form needs, worked out once. It used to
   // be computed inside the map for all of them, which meant running the
@@ -595,25 +594,23 @@ export function CampaignBookings({
       */}
       {statusGroups.map((g) => (
         <div key={g.key}>
-          {/* The status heading. Hidden when every vendor is the same status -
-              one "Pending" bar over the whole card says nothing. */}
-          {manyGroups && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0 9px',
-            }}>
-              <span aria-hidden style={{
-                width: 8, height: 8, borderRadius: 999, flex: '0 0 auto',
-                background: STATUS_DOT[g.key] ?? 'var(--aq-text-muted)',
-              }} />
-              <span style={{
-                fontSize: 11.5, fontWeight: 700, letterSpacing: '.03em',
-                textTransform: 'uppercase', color: 'var(--aq-text-secondary)',
-              }}>{g.label}</span>
-              <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
-                {g.rows.length}
-              </span>
-            </div>
-          )}
+          {/* The status heading, always shown so the split is visible even
+              when every vendor is the same status - Siraj wants to see it. */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0 9px',
+          }}>
+            <span aria-hidden style={{
+              width: 8, height: 8, borderRadius: 999, flex: '0 0 auto',
+              background: STATUS_DOT[g.key] ?? 'var(--aq-text-muted)',
+            }} />
+            <span style={{
+              fontSize: 11.5, fontWeight: 700, letterSpacing: '.03em',
+              textTransform: 'uppercase', color: 'var(--aq-text-secondary)',
+            }}>{g.label}</span>
+            <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+              {g.rows.length}
+            </span>
+          </div>
 
           {asGrid ? (
             <div style={{
