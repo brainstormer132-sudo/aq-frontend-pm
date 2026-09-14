@@ -87,7 +87,7 @@ const STATUS_DOT: Record<string, string> = {
 const BOOKING_LABELS: Record<string, string> = {
   price: 'Client price', net_amount: 'Vendors cost', platform: 'Platform', ad_type: 'Ad type',
   title: 'Name', assignee_id: 'Assigned to', due_date: 'Due date',
-  vendor_payment_date: 'Paid on', insight_link: 'Insight link',
+  status: 'Status', vendor_payment_date: 'Paid on', insight_link: 'Insight link',
   insight_attached: 'Insight file', proof_of_posting_link: 'Proof link',
   proof_of_posting_attached: 'Proof file', vendor_id: 'Vendor',
 };
@@ -152,6 +152,9 @@ export function CampaignBookings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Filter the vendors by status (Pending to start) and by a name search.
+  const [statusFilter, setStatusFilter] = useState<string>('pending');
+  const [query, setQuery] = useState('');
 
   // Pending removals, each with its own countdown. Kept in a ref as well so
   // the pagehide flush can reach them without a stale closure.
@@ -375,31 +378,47 @@ export function CampaignBookings({
   const pendingIds = new Set(pending.map((p) => p.id));
   const shown = bookings.filter((b) => !pendingIds.has(b.id));
 
-  // Vendors split by their booking status - pending, on hold, done, cancelled,
-  // then anything else - so a campaign of forty does not mix the live vendors
-  // in with the cancelled ones. Siraj: *"separate vendors by booking status
-  // whether they are cancelled pending or something else."* The status lives
-  // on the subtask, not on the BookingRow, so it is read through subtaskById.
-  const statusGroups = useMemo(() => {
-    const order = [...TASK_STATUSES] as string[];
+  // A booking's status bucket - pending / on_hold / done / cancelled, else
+  // "other". The status lives on the subtask, read through subtaskById, so
+  // changing it on the vendor card below re-buckets the tile at once.
+  const STATUS_ORDER = [...TASK_STATUSES] as string[];
+  const statusKeyOf = (id: string) => {
+    const raw = String((subtaskById.get(id) as any)?.status ?? '') || 'pending';
+    return (TASK_STATUSES as readonly string[]).includes(raw) ? raw : 'other';
+  };
+
+  // How many vendors sit in each status - the filter bar's counts, taken over
+  // every vendor rather than only the ones the current filter shows.
+  const statusCounts: Record<string, number> = {};
+  for (const b of shown) {
+    const k = statusKeyOf(b.id);
+    statusCounts[k] = (statusCounts[k] ?? 0) + 1;
+  }
+
+  // The filter: one status (Pending to start) and a name search. Siraj:
+  // *"add a search or filter by cancelled and make the starting as pending."*
+  const q = query.trim().toLowerCase();
+  const visible = shown.filter((b) =>
+    (statusFilter === 'all' || statusKeyOf(b.id) === statusFilter)
+    && (!q || b.name.toLowerCase().includes(q)));
+
+  // The visible vendors split by status, in a fixed order then Other.
+  const statusGroups: { key: string; label: string; rows: BookingRow[] }[] = (() => {
     const byStatus = new Map<string, BookingRow[]>();
-    for (const b of shown) {
-      const raw = String((subtaskById.get(b.id) as any)?.status ?? '') || 'pending';
-      const key = order.includes(raw) ? raw : 'other';
+    for (const b of visible) {
+      const key = statusKeyOf(b.id);
       const list = byStatus.get(key);
       if (list) list.push(b); else byStatus.set(key, [b]);
     }
     const out: { key: string; label: string; rows: BookingRow[] }[] = [];
-    for (const k of order) {
+    for (const k of STATUS_ORDER) {
       const rows = byStatus.get(k);
       if (rows?.length) out.push({ key: k, label: labelFor(k), rows });
     }
     const other = byStatus.get('other');
     if (other?.length) out.push({ key: 'other', label: 'Other', rows: other });
     return out;
-    // shown is a fresh array each render but cheap to regroup; keying the memo
-    // on the bookings and pending set keeps it from running on every keystroke.
-  }, [bookings, pending, subtaskById]); // eslint-disable-line react-hooks/exhaustive-deps
+  })();
 
   // Everything the opened booking's form needs, worked out once. It used to
   // be computed inside the map for all of them, which meant running the
@@ -504,6 +523,54 @@ export function CampaignBookings({
         <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: '4px 0' }}>
           Nobody is booked on this campaign yet.
           {canEdit ? ' Add vendors and their prices roll up into the money above.' : ''}
+        </p>
+      )}
+
+      {/* Filter by status (Pending to start) and search by vendor name. */}
+      {shown.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', margin: '2px 0 10px',
+        }}>
+          {(['all', ...STATUS_ORDER, ...(statusCounts.other ? ['other'] : [])] as string[]).map((k) => {
+            const on = statusFilter === k;
+            const count = k === 'all' ? shown.length : (statusCounts[k] ?? 0);
+            const label = k === 'all' ? 'All' : k === 'other' ? 'Other' : labelFor(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setStatusFilter(k)}
+                style={{
+                  padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+                  fontSize: 12, fontFamily: 'inherit', whiteSpace: 'nowrap',
+                  border: `1px solid ${on ? 'transparent' : 'var(--aq-border)'}`,
+                  background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
+                  color: on ? '#fff' : 'var(--aq-text-secondary)',
+                  fontWeight: on ? 600 : 400,
+                }}
+              >{label} {count}</button>
+            );
+          })}
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search vendors..."
+            aria-label="Search vendors"
+            style={{
+              marginLeft: 'auto', flex: '0 1 220px', minWidth: 150,
+              padding: '5px 10px', borderRadius: 8, fontSize: 12.5,
+              border: '1px solid var(--aq-border)', background: 'var(--aq-bg)',
+              color: 'var(--aq-text)', fontFamily: 'inherit',
+            }}
+          />
+        </div>
+      )}
+
+      {shown.length > 0 && !statusGroups.length && (
+        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', margin: '10px 0' }}>
+          No vendors {statusFilter === 'all' ? '' : `in ${statusFilter === 'other' ? 'Other' : labelFor(statusFilter)} `}
+          {q ? `match "${query.trim()}"` : 'here'}.
         </p>
       )}
 
@@ -699,6 +766,18 @@ export function CampaignBookings({
                       onCommit={(v) => saveOn(sub.id, 'due_date', v, (sub as any).due_date)}
                     />
                   : <Val>{(sub as any).due_date ?? '—'}</Val>}
+              </F>
+              {/* Booking status. Changing it here re-buckets the tile above
+                  under its new heading, and the filter follows suit. */}
+              <F k="Status">
+                <Pick
+                  canEdit={canEdit}
+                  stateful
+                  clearable={false}
+                  value={(sub as any).status ?? 'pending'}
+                  options={[...TASK_STATUSES].map((s) => ({ v: String(s), l: labelFor(String(s)) }))}
+                  onChange={(v) => saveOn(sub.id, 'status', v ?? 'pending', (sub as any).status)}
+                />
               </F>
               {/* Platform and Ad type follow the same rule as Client price:
                   once the ads below carry them, the ads are the source and
