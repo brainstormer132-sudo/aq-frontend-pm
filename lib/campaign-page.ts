@@ -678,16 +678,6 @@ export function campaignGaps(input: {
   endDate?: unknown;
   approval?: unknown;
   contractStatus?: unknown;
-  // Core task fields that gate completeness. Ad type, platforms and key
-  // account are deliberately NOT here - they do not make a task incomplete.
-  taskName?: unknown;
-  brandName?: unknown;
-  categoryId?: unknown;
-  hasCloser?: boolean;
-  startDate?: unknown;
-  endDate?: unknown;
-  approval?: unknown;
-  contractStatus?: unknown;
   today: string;
 }): Gap[] {
   const out: Gap[] = [];
@@ -780,19 +770,6 @@ export function campaignGaps(input: {
       anchor: '#fields',
     });
   }
-
-  // The task's own fields. A task is not complete until these are filled.
-  const need = (present: boolean, key: string, what: string, why: string) => {
-    if (!present) out.push({ key, weight: 'soon', what, why, action: 'Set it', anchor: '#fields' });
-  };
-  need(!!txt(input.taskName), 'name', 'No task name.', 'It is unfindable the moment there are two.');
-  need(!!txt(input.brandName), 'brand', 'No brand.', 'The contract and the reports name it.');
-  need(!!txt(input.categoryId), 'category', 'No category.', 'It groups the task in the registers.');
-  need(!!input.hasCloser, 'closer', 'No one set as closed by.', 'The commission and the credit hang on it.');
-  need(!!isoDay(input.startDate), 'start', 'No start date.', 'The run has no beginning to schedule from.');
-  need(!!isoDay(input.endDate), 'end', 'No end date.', 'The run has no end to schedule to.');
-  need(!!txt(input.approval), 'approval', 'No approval stage.', 'Nobody can tell where it stands with the client.');
-  need(!!txt(input.contractStatus), 'contract-status', 'No client contract status.', 'It cannot be counted done without it.');
 
   // The task's own fields. A task is not complete until these are filled.
   const need = (present: boolean, key: string, what: string, why: string) => {
