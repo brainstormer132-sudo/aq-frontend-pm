@@ -168,13 +168,43 @@ export function Dot() {
   return <span aria-hidden style={{ opacity: .4 }}>·</span>;
 }
 
-export function Card({ title, hint, right, id, bead, children }: {
+/**
+ * The team that handles this part of a task, as a small coloured tag.
+ * Sales / Marketing / Operations / Legal / Finance - so each area of a task
+ * reads at a glance for whose desk it is.
+ */
+export const TEAM_TONE: Record<string, { bg: string; fg: string; edge: string }> = {
+  sales:      { bg: '#e0f2fe', fg: '#075985', edge: '#0284c7' },
+  marketing:  { bg: '#ede9fe', fg: '#5b21b6', edge: '#7c3aed' },
+  operations: { bg: '#ccfbf1', fg: '#115e59', edge: '#0d9488' },
+  legal:      { bg: '#fef3c7', fg: '#92400e', edge: '#d97706' },
+  finance:    { bg: '#dcfce7', fg: '#166534', edge: '#16a34a' },
+};
+const TEAM_LABEL: Record<string, string> = {
+  sales: 'Sales', marketing: 'Marketing', operations: 'Operations', legal: 'Legal', finance: 'Finance',
+};
+
+export function TeamTag({ team }: { team?: string }) {
+  const t = team ? TEAM_TONE[team] : undefined;
+  if (!t) return null;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 999,
+      fontSize: 10, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',
+      background: t.bg, color: t.fg, flex: '0 0 auto',
+    }}>{TEAM_LABEL[team as string]}</span>
+  );
+}
+
+export function Card({ title, hint, right, id, bead, team, children }: {
   title: string;
   hint?: string;
   right?: React.ReactNode;
   id?: string;
   /** A colour for this section, so a long page reads as places rather than cards. */
   bead?: string;
+  /** The team that handles this card, shown as a small coloured tag. */
+  team?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -190,6 +220,7 @@ export function Card({ title, hint, right, id, bead, children }: {
           }} />
         )}
         <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>{title}</h2>
+        <TeamTag team={team} />
         {hint && <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{hint}</span>}
         {right && <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>{right}</span>}
       </header>
@@ -198,7 +229,7 @@ export function Card({ title, hint, right, id, bead, children }: {
   );
 }
 
-export function Group({ title }: { title: string }) {
+export function Group({ title, team }: { title: string; team?: string }) {
   return (
     <div style={{
       fontSize: 10.5, fontWeight: 700, letterSpacing: '.09em', textTransform: 'uppercase',
@@ -206,6 +237,7 @@ export function Group({ title }: { title: string }) {
       display: 'flex', alignItems: 'center', gap: 10,
     }}>
       {title}
+      <TeamTag team={team} />
       <span aria-hidden style={{ flex: 1, height: 1, background: 'var(--aq-border-light)' }} />
     </div>
   );

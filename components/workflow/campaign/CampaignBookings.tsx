@@ -455,6 +455,7 @@ export function CampaignBookings({
       bead={TONE[tally.requested >= tally.total && tally.total > 0 ? 'green' : 'amber'].edge}
       id="bookings"
       title="Bookings"
+      team="operations"
       hint={`${bookings.length} vendor${bookings.length === 1 ? '' : 's'} · ${tally.requested} of ${tally.total} contracts requested`}
       right={
         <>

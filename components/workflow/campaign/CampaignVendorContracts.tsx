@@ -215,6 +215,7 @@ export function CampaignVendorContracts({
       ].edge}
       id="vendor-contracts"
       title="Vendor contracts"
+      team="legal"
       hint={[
         signed ? `${signed} signed` : null,
         waiting ? `${waiting} with Legal` : null,

@@ -886,7 +886,7 @@ export function CampaignPage({
 
           <section id="fields">
             <Card title={taskNoun} hint={canEdit ? 'click any value to change it' : 'read only'}>
-              <Group title="Who it's for" />
+              <Group title="Who it's for" team="sales" />
               <Fields>
                 {/* The campaign's own name. The page could show it and not
                     change it, which meant a typo in a campaign title was a
@@ -995,7 +995,7 @@ export function CampaignPage({
                 </F>
               </Fields>
 
-              <Group title="What it is" />
+              <Group title="What it is" team="marketing" />
               <Fields>
                 {/* Auto-pulled from the bookings (union of their ad types),
                     still editable. One type stores as itself; several store as
@@ -1073,14 +1073,14 @@ export function CampaignPage({
               {/* The client's own words. It is the one field on a campaign
                   that is not a value but a paragraph, so it gets its own
                   full-width row rather than being squeezed into the grid. */}
-              <Group title="The brief" />
+              <Group title="The brief" team="marketing" />
               <Brief
                 value={(view as any).description ?? ''}
                 canEdit={canEdit}
                 onCommit={(v) => save('description', v || null)}
               />
 
-              <Group title="Money & paperwork" />
+              <Group title="Money & paperwork" team="finance" />
               <Fields>
                 <F k="Budget">
                   <Money
