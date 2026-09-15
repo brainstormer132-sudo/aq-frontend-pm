@@ -53,10 +53,10 @@ export const HILITE_SOFT = '#93c5fd';
 
 export const TONE: Record<ToneName, { bg: string; fg: string; edge: string }> = {
   grey:   { bg: 'var(--aq-bg-sunken)',    fg: 'var(--aq-text-muted)', edge: 'var(--aq-border)' },
-  blue:   { bg: '#dbeafe',                fg: '#1e40af',              edge: '#60a5fa' },
-  amber:  { bg: '#fef3c7',                fg: '#92400e',              edge: '#f59e0b' },
-  green:  { bg: 'var(--aq-accent-light)', fg: '#14603a',              edge: 'var(--aq-accent)' },
-  red:    { bg: '#fee2e2',                fg: '#991b1b',              edge: '#ef4444' },
+  blue:   { bg: 'var(--aq-blue-bg)',                fg: 'var(--aq-blue)',              edge: '#60a5fa' },
+  amber:  { bg: 'var(--aq-amber-bg)',                fg: 'var(--aq-amber-strong)',              edge: '#f59e0b' },
+  green:  { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)',              edge: 'var(--aq-accent)' },
+  red:    { bg: 'var(--aq-red-bg)',                fg: 'var(--aq-red-strong)',              edge: '#ef4444' },
   violet: { bg: '#ede9fe',                fg: '#5b21b6',              edge: '#8b5cf6' },
 };
 
@@ -100,15 +100,15 @@ export function toneOf(value: unknown, fallback: ToneName = 'grey'): ToneName {
  */
 const PLATFORM_TONE: Record<string, { bg: string; fg: string }> = {
   instagram: { bg: '#fce7f3', fg: '#9d174d' },
-  snapchat:  { bg: '#fef9c3', fg: '#854d0e' },
+  snapchat:  { bg: 'var(--aq-amber-bg-soft)', fg: '#854d0e' },
   tiktok:    { bg: '#e0f2f1', fg: '#134e4a' },
-  youtube:   { bg: '#fee2e2', fg: '#991b1b' },
+  youtube:   { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red-strong)' },
   x:         { bg: '#e7e5e4', fg: '#1c1917' },
-  twitter:   { bg: '#e0f2fe', fg: '#075985' },
-  facebook:  { bg: '#dbeafe', fg: '#1e3a8a' },
-  linkedin:  { bg: '#e0f2fe', fg: '#0c4a6e' },
-  whatsapp:  { bg: '#dcfce7', fg: '#14532d' },
-  telegram:  { bg: '#e0f2fe', fg: '#075985' },
+  twitter:   { bg: 'var(--aq-blue-bg-soft)', fg: '#075985' },
+  facebook:  { bg: 'var(--aq-blue-bg)', fg: '#1e3a8a' },
+  linkedin:  { bg: 'var(--aq-blue-bg-soft)', fg: '#0c4a6e' },
+  whatsapp:  { bg: 'var(--aq-green-bg)', fg: '#14532d' },
+  telegram:  { bg: 'var(--aq-blue-bg-soft)', fg: '#075985' },
 };
 
 export function platformTone(name: unknown): { bg: string; fg: string } {
@@ -145,7 +145,7 @@ export function inkButton(disabled?: boolean): React.CSSProperties {
     padding: '6px 13px', borderRadius: 8,
     border: '1px solid transparent',
     background: disabled ? 'var(--aq-bg-sunken)' : 'var(--aq-text)',
-    color: disabled ? 'var(--aq-text-muted)' : '#fff',
+    color: disabled ? 'var(--aq-text-muted)' : 'var(--aq-text-inverse)',
     borderColor: disabled ? 'var(--aq-border-light)' : 'var(--aq-text)',
     cursor: disabled ? 'not-allowed' : 'pointer',
     whiteSpace: 'nowrap',
@@ -174,11 +174,11 @@ export function Dot() {
  * reads at a glance for whose desk it is.
  */
 export const TEAM_TONE: Record<string, { bg: string; fg: string; edge: string }> = {
-  sales:      { bg: '#e0f2fe', fg: '#075985', edge: '#0284c7' },
+  sales:      { bg: 'var(--aq-blue-bg-soft)', fg: '#075985', edge: '#0284c7' },
   marketing:  { bg: '#ede9fe', fg: '#5b21b6', edge: '#7c3aed' },
   operations: { bg: '#ccfbf1', fg: '#115e59', edge: '#0d9488' },
-  legal:      { bg: '#fef3c7', fg: '#92400e', edge: '#d97706' },
-  finance:    { bg: '#dcfce7', fg: '#166534', edge: '#16a34a' },
+  legal:      { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)', edge: '#d97706' },
+  finance:    { bg: 'var(--aq-green-bg)', fg: '#166534', edge: '#16a34a' },
 };
 const TEAM_LABEL: Record<string, string> = {
   sales: 'Sales', marketing: 'Marketing', operations: 'Operations', legal: 'Legal', finance: 'Finance',
@@ -280,10 +280,10 @@ export function Val({ children, calc, mono, warn, label }: {
   return (
     <span data-field={label} data-calc={calc ? 'yes' : undefined} style={{
       display: 'flex', alignItems: 'center', minHeight: 32,
-      border: `1px ${calc ? 'dashed' : 'solid'} ${warn ? '#b45309' : 'var(--aq-border)'}`,
+      border: `1px ${calc ? 'dashed' : 'solid'} ${warn ? 'var(--aq-amber)' : 'var(--aq-border)'}`,
       borderRadius: 8, padding: '6px 10px', fontSize: 13,
-      background: calc ? 'var(--aq-bg-sunken)' : warn ? '#fef3c7' : 'var(--aq-bg-elevated)',
-      color: calc ? 'var(--aq-text-secondary)' : warn ? '#92400e' : 'var(--aq-text)',
+      background: calc ? 'var(--aq-bg-sunken)' : warn ? 'var(--aq-amber-bg)' : 'var(--aq-bg-elevated)',
+      color: calc ? 'var(--aq-text-secondary)' : warn ? 'var(--aq-amber-strong)' : 'var(--aq-text)',
       fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
       fontVariantNumeric: 'tabular-nums',
     }}>{children}</span>
@@ -377,8 +377,8 @@ export function Text({ value, placeholder, onCommit, canEdit, warn, label, numer
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
       style={{
         width: '100%', fontSize: 13,
-        borderColor: warn ? '#b45309' : undefined,
-        background: warn ? '#fef3c7' : undefined,
+        borderColor: warn ? 'var(--aq-amber)' : undefined,
+        background: warn ? 'var(--aq-amber-bg)' : undefined,
       }}
     />
   );
@@ -438,8 +438,8 @@ export function Money({ value, placeholder, onCommit, canEdit, label, warn }: {
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
       style={{
         width: '100%', fontSize: 13, fontVariantNumeric: 'tabular-nums',
-        borderColor: warn ? '#b45309' : undefined,
-        background: warn ? '#fef3c7' : undefined,
+        borderColor: warn ? 'var(--aq-amber)' : undefined,
+        background: warn ? 'var(--aq-amber-bg)' : undefined,
       }}
     />
   );
@@ -468,11 +468,11 @@ export function Note({ tone = 'info', children }: {
   children: React.ReactNode;
 }) {
   const c = tone === 'bad'
-    ? { bg: '#fee2e2', fg: '#991b1b' }
+    ? { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red-strong)' }
     : tone === 'warn'
-      ? { bg: '#fef3c7', fg: '#78350f' }
+      ? { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-deep)' }
       : tone === 'good'
-        ? { bg: 'var(--aq-accent-light)', fg: '#14603a' }
+        ? { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' }
         : { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-secondary)' };
   return (
     <div role={tone === 'bad' ? 'alert' : 'status'} style={{
@@ -497,13 +497,13 @@ export function UndoBar({ label, seconds, onUndo, onNow }: {
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
       padding: '9px 13px', borderRadius: 9, fontSize: 12.5,
-      background: '#fef3c7', color: '#78350f',
+      background: 'var(--aq-amber-bg)', color: 'var(--aq-amber-deep)',
     }}>
       <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
       <button type="button" onClick={onUndo} style={quietButton()}>
         Undo ({seconds}s)
       </button>
-      <button type="button" onClick={onNow} style={{ ...quietButton(), color: '#991b1b' }}>
+      <button type="button" onClick={onNow} style={{ ...quietButton(), color: 'var(--aq-red-strong)' }}>
         Delete now
       </button>
     </div>
@@ -514,7 +514,7 @@ export function UndoBar({ label, seconds, onUndo, onNow }: {
 export function Missing({ items }: { items: { label: string; hint?: string }[] }) {
   if (!items.length) return null;
   return (
-    <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, color: '#78350f' }}>
+    <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, color: 'var(--aq-amber-deep)' }}>
       {items.map((m, i) => (
         <li key={i} style={{ marginBottom: 2 }}>
           {m.label}{m.hint ? <span style={{ opacity: .8 }}> — {m.hint}</span> : null}
@@ -546,7 +546,7 @@ export function FailureBanner({ failures, summary, lines, onRetry, onDiscard }: 
   return (
     <div role="alert" style={{
       padding: '12px 15px', borderRadius: 10, marginBottom: 14,
-      background: '#fee2e2', color: '#991b1b',
+      background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)',
       border: '1px solid #fca5a5',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

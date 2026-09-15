@@ -17,7 +17,7 @@ export function AqLoader({ size = 22, title }: { size?: number; title?: string }
     <span
       role={title ? 'status' : undefined}
       aria-label={title}
-      style={{ display: 'inline-flex', color: 'var(--aq-accent, #14603a)' }}
+      style={{ display: 'inline-flex', color: 'var(--aq-accent, var(--aq-green-strong))' }}
     >
       <svg
         width={size}

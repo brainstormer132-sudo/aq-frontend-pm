@@ -122,7 +122,7 @@ export function DealEditor({
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0,
-        background: 'rgba(15,15,20,0.45)',
+        background: 'var(--aq-backdrop)',
         zIndex: 60,
         display: 'flex', justifyContent: 'flex-end',
       }}
@@ -299,7 +299,7 @@ export function DealEditor({
 
           {error && (
             <div style={{
-              padding: '8px 12px', background: '#fee2e2', color: '#991b1b',
+              padding: '8px 12px', background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)',
               borderRadius: 'var(--aq-radius)', fontSize: 13,
             }}>{error}</div>
           )}

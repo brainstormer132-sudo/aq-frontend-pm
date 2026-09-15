@@ -57,10 +57,10 @@ const BOARD_TILES: [keyof AsanaTiles, string, string][] = [
 const INK = '#18181b';
 const SERIES: [string, string, string] = ['#18181b', '#71717a', '#b4b4bb'];  // price, net, gross
 const TONE_FILL: Record<Tone, string> = {
-  ok: '#15803d', wait: '#a16207', bad: '#b91c1c', none: '#71717a',
+  ok: 'var(--aq-green)', wait: 'var(--aq-amber-text)', bad: 'var(--aq-red)', none: '#71717a',
 };
 const TONE_BG: Record<Tone, string> = {
-  ok: '#dcfce7', wait: '#fef9c3', bad: '#fee2e2', none: '#f1f1f3',
+  ok: 'var(--aq-green-bg)', wait: 'var(--aq-amber-bg-soft)', bad: 'var(--aq-red-bg)', none: '#f1f1f3',
 };
 
 type RangeKey = 'all' | 'year' | 'd90' | 'custom';
@@ -355,7 +355,7 @@ export function DataView({
               <span style={{
                 fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
                 color: rate == null ? 'var(--aq-text-muted)'
-                  : rate < 0 ? '#b91c1c' : 'var(--aq-text-secondary)',
+                  : rate < 0 ? 'var(--aq-red)' : 'var(--aq-text-secondary)',
               }}>{ratePct(rate)} margin</span>
             </div>
 
@@ -827,7 +827,7 @@ function Ledger({
                     client six weeks later. */}
                 {r.mismatch && (
                   <span style={{
-                    display: 'block', fontSize: 11, color: '#a16207', fontWeight: 600, marginTop: 2,
+                    display: 'block', fontSize: 11, color: 'var(--aq-amber-text)', fontWeight: 600, marginTop: 2,
                     // The cell is nowrap so the money columns line up; this
                     // sentence is prose and has to be allowed to wrap, or it
                     // drags the whole table off the side of its card.

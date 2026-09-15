@@ -80,7 +80,7 @@ function bookingPlatforms(sub: any): string[] {
 
 /** A colour per status, for the little dot on each group heading. */
 const STATUS_DOT: Record<string, string> = {
-  pending: '#d97706', on_hold: '#6b7280', done: '#16a34a', cancelled: '#b91c1c',
+  pending: '#d97706', on_hold: 'var(--aq-gray)', done: '#16a34a', cancelled: 'var(--aq-red)',
 };
 
 
@@ -498,7 +498,7 @@ export function CampaignBookings({
           )}
 
           <button
-            type="button" style={{ ...quietButton(busy), color: '#991b1b' }} disabled={busy}
+            type="button" style={{ ...quietButton(busy), color: 'var(--aq-red-strong)' }} disabled={busy}
             onClick={() => { selectedList.forEach((s) => startRemove(s.id, s.title ?? '')); }}
           >Remove</button>
 
@@ -547,7 +547,7 @@ export function CampaignBookings({
                   fontSize: 12, fontFamily: 'inherit', whiteSpace: 'nowrap',
                   border: `1px solid ${on ? 'transparent' : 'var(--aq-border)'}`,
                   background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
-                  color: on ? '#fff' : 'var(--aq-text-secondary)',
+                  color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
                   fontWeight: on ? 600 : 400,
                 }}
               >{label} {count}</button>
@@ -918,7 +918,7 @@ export function CampaignBookings({
               {canEdit && (
                 <button
                   type="button"
-                  style={{ ...quietButton(busy), color: '#991b1b', marginLeft: 'auto' }}
+                  style={{ ...quietButton(busy), color: 'var(--aq-red-strong)', marginLeft: 'auto' }}
                   disabled={busy}
                   onClick={() => { setOpenId(null); startRemove(sub.id, b.name); }}
                 >Remove this booking</button>

@@ -80,7 +80,7 @@ export function AddAdLinesDialog({
       aria-modal="true"
       aria-label="Add ads to this booking"
     >
-      <div onClick={onCancel} style={{ position: 'absolute', inset: 0, background: 'rgba(15, 29, 34, 0.45)' }} aria-hidden="true" />
+      <div onClick={onCancel} style={{ position: 'absolute', inset: 0, background: 'var(--aq-backdrop)' }} aria-hidden="true" />
 
       <div
         className="aq-card"
@@ -183,7 +183,7 @@ export function AddAdLinesDialog({
           </Field>
         </div>
 
-        {error && <p style={{ fontSize: 12.5, color: '#b91c1c', marginTop: 10 }}>{error}</p>}
+        {error && <p style={{ fontSize: 12.5, color: 'var(--aq-red)', marginTop: 10 }}>{error}</p>}
         {!error && problems.length > 0 && (
           <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 10 }}>{problems[0]}</p>
         )}

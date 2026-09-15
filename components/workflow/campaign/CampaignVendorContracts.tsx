@@ -379,7 +379,7 @@ function SplitChoice({ value, onChange, disabled }: {
               padding: '5px 11px', border: 'none', whiteSpace: 'nowrap',
               cursor: disabled ? 'not-allowed' : 'pointer',
               background: on ? 'var(--aq-text)' : 'transparent',
-              color: on ? '#fff' : 'var(--aq-text-secondary)',
+              color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
             }}
           >{o.l}</button>
         );

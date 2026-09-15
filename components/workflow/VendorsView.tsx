@@ -168,13 +168,13 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
       {error && (
         <div role="alert" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+          background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 13,
         }}>{error}</div>
       )}
       {message && !error && (
         <div role="status" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+          background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)', fontSize: 13, fontWeight: 600,
         }}>{message}</div>
       )}
 
@@ -380,7 +380,7 @@ function VendorDetail({
           textTransform: 'uppercase', color: 'var(--aq-text-muted)', marginBottom: 5,
         }}>Bank accounts</div>
         {banks.length === 0 ? (
-          <p style={{ fontSize: 12.5, color: '#b91c1c', fontWeight: 600, margin: 0 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--aq-red)', fontWeight: 600, margin: 0 }}>
             None on file — this vendor cannot be paid, and the contract goes out
             with the payment block blank.
           </p>
@@ -393,7 +393,7 @@ function VendorDetail({
                 <span style={{ color: 'var(--aq-text-secondary)' }}>{b.bank_name || '—'}</span>
                 <span style={{
                   fontFamily: 'ui-monospace, monospace',
-                  color: b.iban ? 'var(--aq-text)' : '#b91c1c',
+                  color: b.iban ? 'var(--aq-text)' : 'var(--aq-red)',
                   fontWeight: b.iban ? 400 : 600,
                 }}>{b.iban || 'no IBAN'}</span>
               </li>
@@ -430,7 +430,7 @@ function VendorDetail({
         {isAdmin && (
           <button
             type="button" className="aq-btn aq-btn-ghost" onClick={onDelete}
-            style={{ fontSize: 12, padding: '5px 11px', color: '#b91c1c' }}
+            style={{ fontSize: 12, padding: '5px 11px', color: 'var(--aq-red)' }}
           >Delete vendor…</button>
         )}
       </div>
@@ -562,7 +562,7 @@ const modalBackdrop: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
   zIndex: 200,
-  background: 'rgba(15, 23, 42, 0.45)',
+  background: 'var(--aq-backdrop)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',

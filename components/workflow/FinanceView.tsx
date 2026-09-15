@@ -231,7 +231,7 @@ export function FinanceView({
         <div style={{ marginBottom: 14, border: '1px solid var(--aq-border-light)', borderRadius: 'var(--aq-radius)', overflow: 'hidden' }}>
           <div style={{ padding: '8px 12px', background: 'var(--aq-bg-sunken)', fontWeight: 700, fontSize: 13 }}>
             Requests
-            <span style={{ marginLeft: 6, fontSize: 11, padding: '1px 7px', borderRadius: 999, background: 'var(--aq-accent-light)', color: '#14603a' }}>
+            <span style={{ marginLeft: 6, fontSize: 11, padding: '1px 7px', borderRadius: 999, background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)' }}>
               {requestStrip.length}
             </span>
           </div>

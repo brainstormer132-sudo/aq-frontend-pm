@@ -272,14 +272,14 @@ function StatusBadge({ status }: { status?: string | null }) {
   if (!status) return <>—</>;
   // Zoho returns statuses like 'paid', 'sent', 'overdue', 'draft', 'partially_paid', 'void'
   const map: Record<string, { bg: string; fg: string }> = {
-    paid:            { bg: '#dcfce7', fg: '#166534' },
-    sent:            { bg: '#dbeafe', fg: '#1e40af' },
-    overdue:         { bg: '#fee2e2', fg: '#991b1b' },
-    draft:           { bg: '#f3f4f6', fg: '#374151' },
-    partially_paid:  { bg: '#fef9c3', fg: '#854d0e' },
-    void:            { bg: '#f3f4f6', fg: '#6b7280' },
+    paid:            { bg: 'var(--aq-green-bg)', fg: '#166534' },
+    sent:            { bg: 'var(--aq-blue-bg)', fg: 'var(--aq-blue)' },
+    overdue:         { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red-strong)' },
+    draft:           { bg: 'var(--aq-gray-bg)', fg: '#374151' },
+    partially_paid:  { bg: 'var(--aq-amber-bg-soft)', fg: '#854d0e' },
+    void:            { bg: 'var(--aq-gray-bg)', fg: 'var(--aq-gray)' },
   };
-  const colors = map[status] || { bg: '#f3f4f6', fg: '#374151' };
+  const colors = map[status] || { bg: 'var(--aq-gray-bg)', fg: '#374151' };
   return (
     <span style={{
       display: 'inline-block',

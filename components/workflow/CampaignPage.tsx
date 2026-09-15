@@ -680,8 +680,8 @@ export function CampaignPage({
           onClick={() => setTriageOpen(true)}
           style={{
             display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-            font: 'inherit', fontSize: 13, fontWeight: 600, color: '#92400e',
-            background: '#fef3c7', border: 'none', borderBottom: '1px solid #fcd34d',
+            font: 'inherit', fontSize: 13, fontWeight: 600, color: 'var(--aq-amber-strong)',
+            background: 'var(--aq-amber-bg)', border: 'none', borderBottom: '1px solid #fcd34d',
             padding: '10px 22px',
           }}
         >This task has not been set up yet - set the type of work and its subtasks. Set it up</button>
@@ -731,7 +731,7 @@ export function CampaignPage({
             <button
               type="button"
               className="aq-btn aq-btn-secondary"
-              style={{ ...SMALL_BTN, color: '#b91c1c' }}
+              style={{ ...SMALL_BTN, color: 'var(--aq-red)' }}
               onClick={startDelete}
             >Delete task</button>
           )}
@@ -757,7 +757,7 @@ export function CampaignPage({
           {error && (
             <div role="alert" style={{
               padding: '12px 15px', borderRadius: 10, marginBottom: 10,
-              background: '#fee2e2', color: '#991b1b', fontSize: 13,
+              background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 13,
             }}>{error}</div>
           )}
           <FailureBanner
@@ -800,7 +800,7 @@ export function CampaignPage({
             <span>{[view.brand_name, clientName].filter(Boolean).join(' · ') || 'No client yet'}</span>
             <span style={{
               fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
-              background: '#2c2825', color: '#d6d3d1', whiteSpace: 'nowrap',
+              background: 'var(--aq-ink-soft)', color: '#d6d3d1', whiteSpace: 'nowrap',
             }}>{labelFor(String(view.stage ?? ''))}</span>
             <span style={{ opacity: .45 }}>·</span>
             <span>due <strong style={{ color: '#f5f5f4', fontWeight: 700 }}>
@@ -852,7 +852,7 @@ export function CampaignPage({
             title={bar.sentence}
             style={{
               display: 'flex', height: 8, borderRadius: 99, overflow: 'hidden',
-              background: '#2c2825', marginTop: 20,
+              background: 'var(--aq-ink-soft)', marginTop: 20,
             }}
           >
             {bar.vendorCost != null && (
@@ -874,7 +874,7 @@ export function CampaignPage({
       {error && (
         <div role="alert" style={{
           maxWidth: 1280, margin: '14px auto 0', padding: '10px 14px',
-          background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b',
+          background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)', color: 'var(--aq-red-strong)',
           borderRadius: 'var(--aq-radius)', fontSize: 12.5,
         }}>{error}</div>
       )}
@@ -1504,7 +1504,7 @@ function Step({ step, flag, tone }: {
   if (step === 'done') {
     return (
       <i aria-hidden title="settled" style={{
-        ...box, background: 'var(--aq-accent-light)', color: '#14603a',
+        ...box, background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)',
       }}>✓</i>
     );
   }
@@ -1636,8 +1636,8 @@ function GapRow({ gap }: { gap: Gap }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
       borderRadius: 10, marginBottom: 8, fontSize: 13,
-      background: blocking ? '#fee2e2' : '#fef3c7',
-      color: blocking ? '#991b1b' : '#78350f',
+      background: blocking ? 'var(--aq-red-bg)' : 'var(--aq-amber-bg)',
+      color: blocking ? 'var(--aq-red-strong)' : 'var(--aq-amber-deep)',
     }}>
       <i aria-hidden style={{
         width: 7, height: 7, borderRadius: '50%', background: 'currentColor', flex: '0 0 auto',
@@ -1668,7 +1668,7 @@ function BookingLine({ row, first, href }: { row: BookingRow; first: boolean; hr
         <span style={{ fontSize: 13.5, fontWeight: 600, display: 'block' }}>{row.name}</span>
         <span style={{
           fontSize: 11.5, marginTop: 1, display: 'block',
-          color: row.problem ? '#b45309' : 'var(--aq-text-muted)',
+          color: row.problem ? 'var(--aq-amber)' : 'var(--aq-text-muted)',
         }}>{row.meta}</span>
       </span>
       <span style={{ width: 74, height: 5, borderRadius: 3, background: 'var(--aq-bg-sunken)', overflow: 'hidden' }}>
@@ -1677,7 +1677,7 @@ function BookingLine({ row, first, href }: { row: BookingRow; first: boolean; hr
       <span style={{
         fontSize: 13.5, fontWeight: 600, textAlign: 'right', whiteSpace: 'nowrap',
         fontVariantNumeric: 'tabular-nums',
-        color: row.price == null ? '#b91c1c' : undefined,
+        color: row.price == null ? 'var(--aq-red)' : undefined,
       }}>{row.price == null ? '—' : moneyRound(row.price)}</span>
     </a>
   );

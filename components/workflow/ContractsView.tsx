@@ -182,13 +182,13 @@ export function ContractsView({
       {error && (
         <div role="alert" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+          background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 13,
         }}>{error}</div>
       )}
       {message && !error && (
         <div role="status" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+          background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)', fontSize: 13, fontWeight: 600,
         }}>{message}</div>
       )}
 
@@ -362,7 +362,7 @@ function Row({
             aria-hidden
             style={{
               width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: row.stale ? '#b91c1c' : 'transparent',
+              background: row.stale ? 'var(--aq-red)' : 'transparent',
             }}
           />
           <span>
@@ -379,7 +379,7 @@ function Row({
                 {/* The PDF failure, on the row. It used to exist only in a
                     message that vanished on the next click. */}
                 {note && note !== 'PDF and DOCX' && (
-                  <span style={{ color: '#92400e', fontWeight: 600 }}> · {note}</span>
+                  <span style={{ color: 'var(--aq-amber-strong)', fontWeight: 600 }}> · {note}</span>
                 )}
               </span>
             )}
@@ -405,7 +405,7 @@ function Row({
       <Td>
         <span style={{
           whiteSpace: 'nowrap',
-          color: row.stale ? '#b91c1c' : 'var(--aq-text-secondary)',
+          color: row.stale ? 'var(--aq-red)' : 'var(--aq-text-secondary)',
           fontWeight: row.stale ? 700 : 400,
         }}>{row.ageLabel}</span>
       </Td>
@@ -474,10 +474,10 @@ function Td({
 }
 
 const STATUS_STYLE: Record<ContractStatus, { bg: string; fg: string }> = {
-  pending:   { bg: '#fef3c7', fg: '#92400e' },
+  pending:   { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
   approved:  { bg: '#e0e7ff', fg: '#3730a3' },
-  generated: { bg: 'var(--aq-accent-light)', fg: '#14603a' },
-  rejected:  { bg: '#fee2e2', fg: '#b91c1c' },
+  generated: { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
+  rejected:  { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red)' },
   cancelled: { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)' },
 };
 
@@ -497,8 +497,8 @@ function KindPill({ kind, label }: { kind: ContractKind; label: string }) {
     <span style={{
       display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
       textTransform: 'uppercase', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap',
-      background: kind === 'vendor' ? '#eef2ff' : '#ecfdf5',
-      color: kind === 'vendor' ? '#3730a3' : '#14603a',
+      background: kind === 'vendor' ? '#eef2ff' : 'var(--aq-green-bg-soft)',
+      color: kind === 'vendor' ? '#3730a3' : 'var(--aq-green-strong)',
     }}>{label}</span>
   );
 }
@@ -521,7 +521,7 @@ function Chip({
         padding: '5px 11px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
         border: `1px solid ${on ? 'var(--aq-text)' : 'var(--aq-border-light)'}`,
         background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
-        color: on ? '#fff' : 'var(--aq-text-secondary)',
+        color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
       }}
     >
       {label}

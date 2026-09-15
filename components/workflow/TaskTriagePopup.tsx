@@ -94,7 +94,7 @@ export function TaskTriagePopup({
       aria-label="Set up this task"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
-        position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(15,23,42,.45)',
+        position: 'fixed', inset: 0, zIndex: 60, background: 'var(--aq-backdrop)',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
         padding: '5vh 16px', overflowY: 'auto',
       }}
@@ -165,7 +165,7 @@ export function TaskTriagePopup({
               ))}
             </select>
             {keyAccounts.length === 0 && (
-              <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--aq-red)', marginTop: 6 }}>
                 Nobody can be a key account yet. Promote somebody in Settings -&gt; Team.
               </div>
             )}
@@ -202,7 +202,7 @@ export function TaskTriagePopup({
         </div>
 
         {error && (
-          <p style={{ fontSize: 12.5, color: '#b91c1c', margin: 0, padding: '10px 20px 0' }}>{error}</p>
+          <p style={{ fontSize: 12.5, color: 'var(--aq-red)', margin: 0, padding: '10px 20px 0' }}>{error}</p>
         )}
 
         <footer style={{

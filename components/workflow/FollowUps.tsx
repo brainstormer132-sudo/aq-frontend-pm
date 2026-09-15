@@ -45,8 +45,8 @@ export function FollowUps({
 
   const tone = (t: CrmTask) => {
     const u = today ? followUpUrgency(t.due_at, today, t.completed_at) : 'none';
-    if (u === 'overdue') return { label: 'Overdue', bg: '#fee2e2', fg: '#b91c1c' };
-    if (u === 'today') return { label: 'Today', bg: '#fef9c3', fg: '#a16207' };
+    if (u === 'overdue') return { label: 'Overdue', bg: 'var(--aq-red-bg)', fg: 'var(--aq-red)' };
+    if (u === 'today') return { label: 'Today', bg: 'var(--aq-amber-bg-soft)', fg: 'var(--aq-amber-text)' };
     return null;
   };
 

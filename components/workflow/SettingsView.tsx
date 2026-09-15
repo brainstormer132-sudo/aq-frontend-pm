@@ -119,7 +119,7 @@ export function SettingsView({
 
       {error && (
         <div role="alert" style={{
-          background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b',
+          background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)', color: 'var(--aq-red-strong)',
           padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 12.5,
         }}>{error}</div>
       )}
@@ -174,7 +174,7 @@ export function SettingsView({
 
         {trackingWarning && (
           <div role="alert" style={{
-            background: '#fef3c7', border: '1px solid #fde68a', color: '#78350f',
+            background: 'var(--aq-amber-bg)', border: '1px solid var(--aq-amber-border)', color: 'var(--aq-amber-deep)',
             padding: '10px 12px', borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 12,
           }}>{trackingWarning}</div>
         )}
@@ -256,7 +256,7 @@ export function SettingsView({
                   <span style={{
                     fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap',
                     fontVariantNumeric: 'tabular-nums',
-                    color: d.days_left <= 7 ? '#b91c1c' : 'var(--aq-text-muted)',
+                    color: d.days_left <= 7 ? 'var(--aq-red)' : 'var(--aq-text-muted)',
                   }}>
                     {d.days_left === 0
                       ? 'gone today'
@@ -482,7 +482,7 @@ function LookupCard({
 
       {problems.length > 0 && (
         <div role="alert" style={{
-          background: '#fef3c7', border: '1px solid #fde68a', color: '#78350f',
+          background: 'var(--aq-amber-bg)', border: '1px solid var(--aq-amber-border)', color: 'var(--aq-amber-deep)',
           padding: '9px 12px', borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 10,
         }}>{problems[0]}</div>
       )}
@@ -595,7 +595,7 @@ function LookupCard({
                     >Rename</button>
                     <button
                       type="button" className="aq-btn aq-btn-ghost"
-                      style={{ padding: '4px 10px', fontSize: 12, color: '#b91c1c' }}
+                      style={{ padding: '4px 10px', fontSize: 12, color: 'var(--aq-red)' }}
                       onClick={() => setDeletingId(row.id)}
                       disabled={busy || deletingId === row.id}
                     >Delete</button>

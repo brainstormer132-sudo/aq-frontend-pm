@@ -476,13 +476,13 @@ export function NewTaskForm({
       {error && (
         <div role="alert" style={{
           marginTop: 14, padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+          background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 13,
         }}>{error}</div>
       )}
       {success && !error && (
         <div role="status" style={{
           marginTop: 14, padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+          background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)', fontSize: 13, fontWeight: 600,
         }}>{success}</div>
       )}
 
@@ -537,7 +537,7 @@ function Step({
           fontSize: 11.5, fontWeight: 700,
           background: open ? 'var(--aq-text)' : 'var(--aq-bg-sunken)',
           border: open ? 'none' : '1px solid var(--aq-border-light)',
-          color: open ? '#fff' : 'var(--aq-text-muted)',
+          color: open ? 'var(--aq-text-inverse)' : 'var(--aq-text-muted)',
         }}>{done && reachable ? '✓' : index}</span>
         {!last && <span style={{ width: 1, flex: 1, background: 'var(--aq-border-light)', marginTop: 4 }} />}
       </div>
@@ -599,7 +599,7 @@ function inkButton(disabled?: boolean): React.CSSProperties {
     padding: '10px 18px', borderRadius: 'var(--aq-radius)',
     border: '1px solid transparent',
     background: disabled ? 'var(--aq-bg-sunken)' : 'var(--aq-text)',
-    color: disabled ? 'var(--aq-text-muted)' : '#fff',
+    color: disabled ? 'var(--aq-text-muted)' : 'var(--aq-text-inverse)',
     borderColor: disabled ? 'var(--aq-border-light)' : 'var(--aq-text)',
     cursor: disabled ? 'not-allowed' : 'pointer',
     whiteSpace: 'nowrap',

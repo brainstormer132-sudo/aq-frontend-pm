@@ -326,7 +326,7 @@ function DealCard({
         <span>{deal.owner_name || 'unassigned'}</span>
         <span>
           {deal.expected_close_date
-            ? <span style={{ color: overdue ? '#b91c1c' : undefined, fontWeight: overdue ? 700 : undefined }}>
+            ? <span style={{ color: overdue ? 'var(--aq-red)' : undefined, fontWeight: overdue ? 700 : undefined }}>
                 {new Date(deal.expected_close_date).toLocaleDateString()}
               </span>
             : '—'}
@@ -347,9 +347,9 @@ function stageColor(s: DealStage): string {
     case 'prospect':    return '#64748b';
     case 'qualified':   return '#0369a1';
     case 'proposal':    return '#6d28d9';
-    case 'negotiation': return '#b45309';
-    case 'won':         return '#15803d';
-    case 'lost':        return '#991b1b';
+    case 'negotiation': return 'var(--aq-amber)';
+    case 'won':         return 'var(--aq-green)';
+    case 'lost':        return 'var(--aq-red-strong)';
     default:            return '#64748b';
   }
 }

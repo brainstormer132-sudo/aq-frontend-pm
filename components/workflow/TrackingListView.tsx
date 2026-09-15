@@ -209,9 +209,9 @@ export function TrackingListView({
 /* ── Bits ───────────────────────────────────────────────────────── */
 
 const STAGE_STYLE: Record<string, { bg: string; fg: string }> = {
-  completed: { bg: 'var(--aq-accent-light)', fg: '#14603a' },
-  pending_marketing: { bg: '#fef3c7', fg: '#92400e' },
-  awaiting_review: { bg: '#dbeafe', fg: '#1e40af' },
+  completed: { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
+  pending_marketing: { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
+  awaiting_review: { bg: 'var(--aq-blue-bg)', fg: 'var(--aq-blue)' },
 };
 
 function StagePill({ label, stage }: { label: string; stage: string }) {
@@ -226,8 +226,8 @@ function StagePill({ label, stage }: { label: string; stage: string }) {
 }
 
 const PUBLISH_STYLE = {
-  warn: { bg: '#fef3c7', fg: '#92400e' },
-  ok:   { bg: 'var(--aq-accent-light)', fg: '#14603a' },
+  warn: { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
+  ok:   { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
   none: { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)' },
 } as const;
 

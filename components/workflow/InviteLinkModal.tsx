@@ -82,7 +82,7 @@ export function InviteLinkModal({
 
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 1200,
-  background: 'rgba(15, 23, 42, 0.45)',
+  background: 'var(--aq-backdrop)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
 };
 

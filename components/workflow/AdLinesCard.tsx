@@ -184,7 +184,7 @@ export function AdLinesCard({
         </div>
       )}
 
-      {error && <p style={{ fontSize: 12.5, color: '#b91c1c', marginBottom: 8 }}>{error}</p>}
+      {error && <p style={{ fontSize: 12.5, color: 'var(--aq-red)', marginBottom: 8 }}>{error}</p>}
 
       {loading ? (
         // An empty booking and one that has not loaded yet used to look the
@@ -239,7 +239,7 @@ export function AdLinesCard({
                   {!hasProof(l) && (l.status ?? '') !== 'Cancelled' && (
                     <span style={{
                       fontSize: 10.5, padding: '2px 7px', borderRadius: 99,
-                      background: '#fef2f2', color: '#b91c1c', whiteSpace: 'nowrap', flexShrink: 0,
+                      background: 'var(--aq-red-bg-soft)', color: 'var(--aq-red)', whiteSpace: 'nowrap', flexShrink: 0,
                     }}>no proof</span>
                   )}
 
@@ -271,7 +271,7 @@ export function AdLinesCard({
       )}
 
       {undated.length > 0 && (
-        <p style={{ fontSize: 12, color: '#b91c1c', marginTop: 10 }}>
+        <p style={{ fontSize: 12, color: 'var(--aq-red)', marginTop: 10 }}>
           {undated.length} ad{undated.length === 1 ? '' : 's'} with no due date —
           they stay off the calendar and out of the contract&apos;s schedule until they have one.
         </p>

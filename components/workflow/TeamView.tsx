@@ -106,7 +106,7 @@ export function TeamView({
 
       {error && (
         <div role="alert" style={{
-          background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b',
+          background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)', color: 'var(--aq-red-strong)',
           padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 12.5,
         }}>{error}</div>
       )}
@@ -334,7 +334,7 @@ function MemberLine({
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--aq-text-muted)' }}>(you)</span>
           )}
           {!member.named && (
-            <span style={{ display: 'block', fontSize: 11, color: '#a16207', fontWeight: 600, marginTop: 2 }}>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--aq-amber-text)', fontWeight: 600, marginTop: 2 }}>
               They have not set a name — their tasks and comments show as blank.
             </span>
           )}
@@ -345,10 +345,10 @@ function MemberLine({
             display: 'inline-block', fontSize: 10.5, fontWeight: 700,
             padding: '2px 9px', borderRadius: 999, whiteSpace: 'nowrap',
             background: member.role === 'owner' ? 'var(--aq-accent-light)'
-              : member.role === 'admin' ? '#dbeafe'
+              : member.role === 'admin' ? 'var(--aq-blue-bg)'
               : 'var(--aq-bg-sunken)',
-            color: member.role === 'owner' ? '#14603a'
-              : member.role === 'admin' ? '#1e40af'
+            color: member.role === 'owner' ? 'var(--aq-green-strong)'
+              : member.role === 'admin' ? 'var(--aq-blue)'
               : 'var(--aq-text-secondary)',
           }}>{member.roleLabel}</span>
           {member.blurb && (
@@ -378,7 +378,7 @@ function MemberLine({
               <button
                 type="button"
                 className="aq-btn aq-btn-ghost"
-                style={{ padding: '4px 10px', fontSize: 12, whiteSpace: 'nowrap', color: removeVerdict.allowed ? '#b91c1c' : undefined }}
+                style={{ padding: '4px 10px', fontSize: 12, whiteSpace: 'nowrap', color: removeVerdict.allowed ? 'var(--aq-red)' : undefined }}
                 disabled={busy || open || !removeVerdict.allowed}
                 title={removeVerdict.reason || (member.isYou ? 'Leave this workspace' : 'Remove from the workspace')}
                 onClick={() => setRemoving(true)}
@@ -422,7 +422,7 @@ function MemberLine({
               </div>
 
               {next && !changeVerdict.allowed && (
-                <p style={{ fontSize: 12, color: '#b91c1c', margin: 0 }}>{changeVerdict.reason}</p>
+                <p style={{ fontSize: 12, color: 'var(--aq-red)', margin: 0 }}>{changeVerdict.reason}</p>
               )}
 
               {/* A role change is a permissions change, so it is a question —
@@ -533,7 +533,7 @@ function CreateAccountCard({
 
           {problems.length > 0 && (
             <div role="alert" style={{
-              background: '#fef3c7', border: '1px solid #fde68a', color: '#78350f',
+              background: 'var(--aq-amber-bg)', border: '1px solid var(--aq-amber-border)', color: 'var(--aq-amber-deep)',
               padding: '9px 12px', borderRadius: 'var(--aq-radius)', fontSize: 12.5,
             }}>{problems[0]}</div>
           )}
@@ -755,9 +755,9 @@ function LegacyInvites({
             <span style={{
               fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999,
               background: row.state === 'accepted' ? 'var(--aq-accent-light)'
-                : row.state === 'expired' ? 'var(--aq-bg-sunken)' : '#fef3c7',
-              color: row.state === 'accepted' ? '#14603a'
-                : row.state === 'expired' ? 'var(--aq-text-muted)' : '#92400e',
+                : row.state === 'expired' ? 'var(--aq-bg-sunken)' : 'var(--aq-amber-bg)',
+              color: row.state === 'accepted' ? 'var(--aq-green-strong)'
+                : row.state === 'expired' ? 'var(--aq-text-muted)' : 'var(--aq-amber-strong)',
             }}>{row.state === 'pending' ? 'still works' : row.state}</span>
             <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>{row.roleLabel}</span>
             {row.copyable && (
@@ -771,7 +771,7 @@ function LegacyInvites({
             <button
               type="button"
               className="aq-btn aq-btn-ghost"
-              style={{ padding: '4px 10px', fontSize: 12, color: '#b91c1c' }}
+              style={{ padding: '4px 10px', fontSize: 12, color: 'var(--aq-red)' }}
               onClick={() => setDeleting(row)}
               disabled={busy}
             >Delete</button>

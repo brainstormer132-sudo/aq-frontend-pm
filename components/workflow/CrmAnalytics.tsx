@@ -58,7 +58,7 @@ export function CrmAnalytics({ workspaceId }: { workspaceId: string }) {
       }}>
         <StatCard label="Open pipeline"      value={fmtMoney(m.openValue)}    sub={`${m.openCount} deals`} />
         <StatCard label="Weighted forecast"  value={fmtMoney(m.weightedValue)} sub="probability-weighted" />
-        <StatCard label="Won — last 90d"     value={fmtMoney(m.wonValue90)}    sub={`${m.wonCount90} closed`} accent="#15803d" />
+        <StatCard label="Won — last 90d"     value={fmtMoney(m.wonValue90)}    sub={`${m.wonCount90} closed`} accent="var(--aq-green)" />
         <StatCard label="Win rate"           value={`${Math.round(m.winRate * 100)}%`} sub="won vs won+lost" />
         <StatCard label="Avg deal size"      value={fmtMoney(m.avgDealSize)}   sub="all-time" />
         <StatCard label="Avg cycle (days)"   value={m.avgCycleDays ? String(m.avgCycleDays) : '—'} sub="prospect → won" />
@@ -124,8 +124,8 @@ export function CrmAnalytics({ workspaceId }: { workspaceId: string }) {
                 <tr key={o.name} style={{ borderTop: '1px solid var(--aq-border-light)' }}>
                   <td style={td}><strong>{o.name}</strong></td>
                   <td style={tdR}>{fmtMoney(o.openValue)}</td>
-                  <td style={{ ...tdR, color: '#15803d', fontWeight: 600 }}>{fmtMoney(o.wonValue90)}</td>
-                  <td style={{ ...tdR, color: '#991b1b' }}>{fmtMoney(o.lostValue90)}</td>
+                  <td style={{ ...tdR, color: 'var(--aq-green)', fontWeight: 600 }}>{fmtMoney(o.wonValue90)}</td>
+                  <td style={{ ...tdR, color: 'var(--aq-red-strong)' }}>{fmtMoney(o.lostValue90)}</td>
                   <td style={tdR}>{o.dealCount}</td>
                 </tr>
               ))}
@@ -181,9 +181,9 @@ export function CrmAnalytics({ workspaceId }: { workspaceId: string }) {
           </header>
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <Row label="Open tasks"     value={String(m.tasksOpen)} />
-            <Row label="Overdue"        value={String(m.tasksOverdue)} accent={m.tasksOverdue > 0 ? '#b91c1c' : undefined} />
-            <Row label="Due this week"  value={String(m.tasksDueWeek)} accent={m.tasksDueWeek > 0 ? '#92400e' : undefined} />
-            <Row label="Completed 30d"  value={String(m.tasksCompleted30)} accent="#15803d" />
+            <Row label="Overdue"        value={String(m.tasksOverdue)} accent={m.tasksOverdue > 0 ? 'var(--aq-red)' : undefined} />
+            <Row label="Due this week"  value={String(m.tasksDueWeek)} accent={m.tasksDueWeek > 0 ? 'var(--aq-amber-strong)' : undefined} />
+            <Row label="Completed 30d"  value={String(m.tasksCompleted30)} accent="var(--aq-green)" />
             <Row label="Avg time to complete" value={m.avgCompleteDays ? `${m.avgCompleteDays}d` : '—'} />
             <Row label="Stuck (no due date)"  value={String(m.tasksNoDate)} />
           </ul>
@@ -431,9 +431,9 @@ function stageColor(s: DealStage): string {
     case 'prospect':    return '#64748b';
     case 'qualified':   return '#0369a1';
     case 'proposal':    return '#6d28d9';
-    case 'negotiation': return '#b45309';
-    case 'won':         return '#15803d';
-    case 'lost':        return '#991b1b';
+    case 'negotiation': return 'var(--aq-amber)';
+    case 'won':         return 'var(--aq-green)';
+    case 'lost':        return 'var(--aq-red-strong)';
     default:            return '#64748b';
   }
 }

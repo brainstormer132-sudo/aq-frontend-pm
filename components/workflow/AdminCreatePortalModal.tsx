@@ -159,7 +159,7 @@ function DetailLine({ label, value }: { label: string; value: string }) {
 
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 1300,
-  background: 'rgba(15, 23, 42, 0.45)',
+  background: 'var(--aq-backdrop)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
 };
 const panel: React.CSSProperties = {
@@ -172,7 +172,7 @@ const labelStyle: React.CSSProperties = {
 };
 const errorBlock: React.CSSProperties = {
   fontSize: 13, color: 'var(--aq-error)',
-  padding: '12px 14px', background: '#fef2f2',
+  padding: '12px 14px', background: 'var(--aq-red-bg-soft)',
   borderRadius: 'var(--aq-radius)',
   whiteSpace: 'pre-wrap', lineHeight: 1.5,
 };

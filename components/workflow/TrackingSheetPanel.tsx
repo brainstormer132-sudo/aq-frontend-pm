@@ -215,7 +215,7 @@ export function TrackingSheetPanel({
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 190,
-        background: 'rgba(15, 29, 34, 0.55)',
+        background: 'var(--aq-backdrop)',
         display: 'flex', justifyContent: 'flex-end',
       }}
       onClick={onClose}
@@ -287,11 +287,11 @@ export function TrackingSheetPanel({
         <div style={{
           padding: '10px 24px', display: 'flex', alignItems: 'center', gap: 10,
           flexWrap: 'wrap', fontSize: 12.5,
-          background: publish.tone === 'warn' ? '#fef3c7'
+          background: publish.tone === 'warn' ? 'var(--aq-amber-bg)'
             : publish.tone === 'ok' ? 'var(--aq-accent-light)'
             : 'var(--aq-bg-sunken)',
-          color: publish.tone === 'warn' ? '#78350f'
-            : publish.tone === 'ok' ? '#14603a'
+          color: publish.tone === 'warn' ? 'var(--aq-amber-deep)'
+            : publish.tone === 'ok' ? 'var(--aq-green-strong)'
             : 'var(--aq-text-secondary)',
           borderBottom: '1px solid var(--aq-border-light)',
         }}>
@@ -313,7 +313,7 @@ export function TrackingSheetPanel({
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {error && (
             <div role="alert" style={{
-              background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b',
+              background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)', color: 'var(--aq-red-strong)',
               padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 12.5,
             }}>{error}</div>
           )}
@@ -339,7 +339,7 @@ export function TrackingSheetPanel({
           {canEdit && syncSentence(plan) && confirming !== 'sync' && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-              background: 'var(--aq-accent-light)', color: '#14603a',
+              background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)',
               padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 12.5,
             }}>
               <span style={{ flex: 1, minWidth: 220 }}>{syncSentence(plan)}</span>
@@ -423,7 +423,7 @@ export function TrackingSheetPanel({
               </div>
 
               {exportWarn && (
-                <p style={{ fontSize: 12, color: '#92400e', margin: 0 }}>{exportWarn}</p>
+                <p style={{ fontSize: 12, color: 'var(--aq-amber-strong)', margin: 0 }}>{exportWarn}</p>
               )}
 
               <div className="aq-card" style={{ padding: 0, overflowX: 'auto' }}>
@@ -480,14 +480,14 @@ export function TrackingSheetPanel({
                                 background: origins.get(r.id)?.orphaned
                                   ? 'var(--aq-bg-sunken)' : 'var(--aq-accent-light)',
                                 color: origins.get(r.id)?.orphaned
-                                  ? 'var(--aq-text-muted)' : '#14603a',
+                                  ? 'var(--aq-text-muted)' : 'var(--aq-green-strong)',
                               }}
                             >{origins.get(r.id)?.label}</span>
                           )}
                           {r.isEvent && (
                             <span style={{
                               marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 7px',
-                              borderRadius: 999, background: '#fef3c7', color: '#92400e',
+                              borderRadius: 999, background: 'var(--aq-amber-bg)', color: 'var(--aq-amber-strong)',
                             }}>event</span>
                           )}
                         </Td>
@@ -631,7 +631,7 @@ function TrackingRowModal({
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 210,
-        background: 'rgba(15, 29, 34, 0.45)',
+        background: 'var(--aq-backdrop)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
       }}
       onClick={onClose}
@@ -653,7 +653,7 @@ function TrackingRowModal({
 
         {problems.length > 0 && (
           <div role="alert" style={{
-            background: '#fef3c7', border: '1px solid #fde68a', color: '#78350f',
+            background: 'var(--aq-amber-bg)', border: '1px solid var(--aq-amber-border)', color: 'var(--aq-amber-deep)',
             padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 14,
           }}>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
@@ -664,7 +664,7 @@ function TrackingRowModal({
 
         {error && (
           <div role="alert" style={{
-            background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b',
+            background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)', color: 'var(--aq-red-strong)',
             padding: '10px 14px', borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 14,
           }}>{error}</div>
         )}
@@ -837,7 +837,7 @@ function TrackingRowModal({
             {!isNew && !confirmDelete && (
               <button type="button" className="aq-btn aq-btn-ghost" disabled={busy}
                       onClick={() => setConfirmDelete(true)}
-                      style={{ color: '#b91c1c' }}>Delete row</button>
+                      style={{ color: 'var(--aq-red)' }}>Delete row</button>
             )}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -908,10 +908,10 @@ function Td({ children, align = 'left', muted = false }: {
 }
 
 const STATUS_STYLE = {
-  ok:   { bg: 'var(--aq-accent-light)', fg: '#14603a' },
-  info: { bg: '#dbeafe', fg: '#1e40af' },
-  warn: { bg: '#fef3c7', fg: '#92400e' },
-  bad:  { bg: '#fee2e2', fg: '#991b1b' },
+  ok:   { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
+  info: { bg: 'var(--aq-blue-bg)', fg: 'var(--aq-blue)' },
+  warn: { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
+  bad:  { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red-strong)' },
   none: { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)' },
 } as const;
 

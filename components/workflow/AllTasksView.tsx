@@ -358,7 +358,7 @@ function Row({ row, today, href, onOpen }: {
             aria-hidden
             style={{
               width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: late ? '#b91c1c' : todayish ? '#d97706' : 'transparent',
+              background: late ? 'var(--aq-red)' : todayish ? '#d97706' : 'transparent',
             }}
           />
           {href ? (
@@ -378,7 +378,7 @@ function Row({ row, today, href, onOpen }: {
       <Td>
         <span style={{
           whiteSpace: 'nowrap',
-          color: late ? '#b91c1c' : todayish ? '#a16207' : 'var(--aq-text-secondary)',
+          color: late ? 'var(--aq-red)' : todayish ? 'var(--aq-amber-text)' : 'var(--aq-text-secondary)',
           fontWeight: late || todayish ? 700 : 400,
           fontStyle: row.due ? 'normal' : 'italic',
         }}>
@@ -398,7 +398,7 @@ function Row({ row, today, href, onOpen }: {
           fontVariantNumeric: 'tabular-nums',
           // A zero here is the thing people are usually hunting for, so it
           // is not left to look like every other number.
-          color: row.vendors === 0 && row.chased ? '#b91c1c' : 'var(--aq-text-secondary)',
+          color: row.vendors === 0 && row.chased ? 'var(--aq-red)' : 'var(--aq-text-secondary)',
           fontWeight: row.vendors === 0 && row.chased ? 700 : 400,
         }}>{row.vendors}</span>
       </Td>
@@ -429,10 +429,10 @@ function Td({
 }
 
 const STAGE_STYLE: Record<string, { bg: string; fg: string }> = {
-  pending_marketing: { bg: '#fef3c7', fg: '#92400e' },
+  pending_marketing: { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
   in_progress:       { bg: '#e0e7ff', fg: '#3730a3' },
   awaiting_review:   { bg: '#ede9fe', fg: '#5b21b6' },
-  completed:         { bg: 'var(--aq-accent-light)', fg: '#14603a' },
+  completed:         { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
 };
 
 function StagePill({ stage, label }: { stage: StageKey; label: string }) {
@@ -464,7 +464,7 @@ function Chip({
         padding: '5px 11px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
         border: `1px solid ${on ? 'var(--aq-text)' : 'var(--aq-border-light)'}`,
         background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
-        color: on ? '#fff' : 'var(--aq-text-secondary)',
+        color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
       }}
     >
       {label}

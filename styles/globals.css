@@ -57,6 +57,98 @@
   --aq-radius-xl: 20px;
 
   --aq-transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Status tints. A pill is a soft background with a strong text of the same
+     hue; components used to inline these as hex, which made them the one
+     part of the page dark mode could not reach. Light values are the exact
+     hex they replaced, so this block changes nothing in light mode. */
+  --aq-red-bg:        #fee2e2;
+  --aq-red-bg-soft:   #fef2f2;
+  --aq-red-border:    #fecaca;
+  --aq-red:           #b91c1c;
+  --aq-red-strong:    #991b1b;
+  --aq-amber-bg:      #fef3c7;
+  --aq-amber-bg-soft: #fef9c3;
+  --aq-amber-border:  #fde68a;
+  --aq-amber:         #b45309;
+  --aq-amber-strong:  #92400e;
+  --aq-amber-deep:    #78350f;
+  --aq-amber-text:    #a16207;
+  --aq-green-bg:      #dcfce7;
+  --aq-green-bg-soft: #ecfdf5;
+  --aq-green:         #15803d;
+  --aq-green-strong:  #14603a;
+  --aq-blue-bg:       #dbeafe;
+  --aq-blue-bg-soft:  #e0f2fe;
+  --aq-blue:          #1e40af;
+  --aq-gray:          #6b7280;
+  --aq-gray-bg:       #f3f4f6;
+  --aq-ink-soft:      #2c2825;
+
+  /* Modal backdrops: one value, so dark mode can deepen it. */
+  --aq-backdrop:      rgba(15, 23, 42, 0.45);
+
+  color-scheme: light;
+}
+
+/* ============================================================
+   Dark mode. One class on <html>, set before first paint by the boot
+   script in app/layout.tsx and toggled from the sidebar (lib/theme.ts).
+   Only variables change here; nothing below this block knows about it.
+   The sidebar is already dark and stays as it is.
+   ============================================================ */
+html.dark {
+  --aq-bg:           #131516;
+  --aq-bg-elevated:  #1c1f21;
+  --aq-bg-sunken:    #0e1011;
+  --aq-bg-hover:     #262a2d;
+
+  --aq-border:        #383d41;
+  --aq-border-light:  #2a2e31;
+
+  --aq-text:           #ecedee;
+  --aq-text-secondary: #c5c8cb;
+  --aq-text-muted:     #8b9196;
+  --aq-text-inverse:   #131516;
+
+  --aq-accent:         #22995a;
+  --aq-accent-hover:   #27a35f;
+  --aq-accent-light:   #163d27;
+
+  --aq-sidebar-bg:        #0b1518;
+  --aq-sidebar-border:    #172529;
+
+  --aq-shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.35);
+  --aq-shadow:       0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.30);
+  --aq-shadow-md:    0 4px 8px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.30);
+  --aq-shadow-lg:    0 12px 24px rgba(0, 0, 0, 0.55), 0 4px 8px rgba(0, 0, 0, 0.35);
+
+  --aq-red-bg:        #3b1717;
+  --aq-red-bg-soft:   #2a1212;
+  --aq-red-border:    #6f2626;
+  --aq-red:           #f87171;
+  --aq-red-strong:    #fca5a5;
+  --aq-amber-bg:      #3a2a0a;
+  --aq-amber-bg-soft: #2e230a;
+  --aq-amber-border:  #6f5210;
+  --aq-amber:         #fbbf24;
+  --aq-amber-strong:  #fcd34d;
+  --aq-amber-deep:    #fde68a;
+  --aq-amber-text:    #facc15;
+  --aq-green-bg:      #12321f;
+  --aq-green-bg-soft: #0f281a;
+  --aq-green:         #4ade80;
+  --aq-green-strong:  #86efac;
+  --aq-blue-bg:       #172a4a;
+  --aq-blue-bg-soft:  #10263a;
+  --aq-blue:          #93c5fd;
+  --aq-gray:          #9ca3af;
+  --aq-gray-bg:       #24272a;
+  --aq-ink-soft:      #3a3f43;
+
+  --aq-backdrop:      rgba(0, 0, 0, 0.62);
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -190,10 +282,10 @@ html, body {
   text-transform: uppercase;
 }
 .aq-badge-success { background: var(--aq-accent-light); color: var(--aq-accent); }
-.aq-badge-warning { background: #fef3c7; color: #92400e; }
-.aq-badge-info    { background: #dbeafe; color: #1e40af; }
+.aq-badge-warning { background: var(--aq-amber-bg); color: var(--aq-amber-strong); }
+.aq-badge-info    { background: var(--aq-blue-bg); color: var(--aq-blue); }
 .aq-badge-muted   { background: var(--aq-bg-sunken); color: var(--aq-text-secondary); }
-.aq-badge-error   { background: #fee2e2; color: #991b1b; }
+.aq-badge-error   { background: var(--aq-red-bg); color: var(--aq-red-strong); }
 
 .registry-tab {
   appearance: none;

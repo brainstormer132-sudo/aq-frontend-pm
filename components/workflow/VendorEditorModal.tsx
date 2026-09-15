@@ -948,7 +948,7 @@ function TabButton({ active, onClick, label, icon }: { active: boolean; onClick:
 
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 1200,
-  background: 'rgba(15, 23, 42, 0.5)',
+  background: 'var(--aq-backdrop)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   padding: 20,
 };

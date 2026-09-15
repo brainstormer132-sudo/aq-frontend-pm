@@ -41,7 +41,7 @@ export function CampaignLoading() {
       <header style={{ background: '#141210' }}>
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 22px 22px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <span style={{ width: 22, height: 22, borderRadius: 6, background: '#2c2825' }} />
+            <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--aq-ink-soft)' }} />
             <Bone w={190} h={11} />
             <Bone w={74} h={16} r={999} />
           </div>
@@ -126,7 +126,7 @@ export function CampaignLoading() {
 function Bone({ w, h, r = 4 }: { w: number | string; h: number; r?: number }) {
   return (
     <span aria-hidden style={{
-      display: 'block', width: w, height: h, borderRadius: r, background: '#2c2825',
+      display: 'block', width: w, height: h, borderRadius: r, background: 'var(--aq-ink-soft)',
     }} />
   );
 }

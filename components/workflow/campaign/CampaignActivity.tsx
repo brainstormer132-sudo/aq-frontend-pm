@@ -232,7 +232,7 @@ export function CampaignActivity({
               {(mine || isPrivileged) && (
                 <button
                   type="button"
-                  style={{ ...quietButton(busy), color: '#991b1b', padding: '4px 9px' }}
+                  style={{ ...quietButton(busy), color: 'var(--aq-red-strong)', padding: '4px 9px' }}
                   disabled={busy}
                   onClick={() => startRemove(String(f.id), f.file_name || 'the file',
                     async () => { await deleteAttachment(String(f.id)); await refetchFiles(); })}

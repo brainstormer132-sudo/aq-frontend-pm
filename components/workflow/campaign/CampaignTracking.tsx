@@ -100,7 +100,7 @@ export function CampaignTracking({
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                   padding: '10px 13px', borderRadius: 9,
-                  background: '#fee2e2', color: '#991b1b', fontSize: 12.5,
+                  background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 12.5,
                 }}>
                   <span style={{ flex: 1, minWidth: 200 }}>
                     Withdraw the sheet? The client stops seeing it entirely — this
@@ -120,7 +120,7 @@ export function CampaignTracking({
               ) : (
                 <button
                   type="button"
-                  style={{ ...quietButton(busy), color: '#991b1b' }}
+                  style={{ ...quietButton(busy), color: 'var(--aq-red-strong)' }}
                   disabled={busy}
                   onClick={() => setConfirmWithdraw(true)}
                 >Withdraw it from the client</button>

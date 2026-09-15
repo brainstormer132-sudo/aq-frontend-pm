@@ -110,7 +110,7 @@ export function Chip({
           // A count worth acting on is worth reading. Red only where the
           // number IS the problem, and never as the only signal — the label
           // beside it already says what it is.
-          color: danger && !on ? '#b91c1c' : undefined,
+          color: danger && !on ? 'var(--aq-red)' : undefined,
           fontWeight: danger && !on ? 700 : undefined,
         }}>{count}</span>
       )}
@@ -166,16 +166,16 @@ export function Confirm({
   return (
     <div role="alertdialog" aria-label="Confirm" style={{
       padding: '12px 14px', borderRadius: 'var(--aq-radius)',
-      background: '#fee2e2', border: '1px solid #fecaca',
+      background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)',
     }}>
-      <p style={{ fontSize: 12.5, color: '#991b1b', margin: 0, lineHeight: 1.5 }}>{text}</p>
+      <p style={{ fontSize: 12.5, color: 'var(--aq-red-strong)', margin: 0, lineHeight: 1.5 }}>{text}</p>
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
         <button
           type="button"
           className="aq-btn"
           onClick={onConfirm}
           disabled={busy}
-          style={{ background: '#b91c1c', color: '#fff', border: 'none', fontSize: 12.5 }}
+          style={{ background: 'var(--aq-red)', color: '#fff', border: 'none', fontSize: 12.5 }}
         >{busy ? 'Working…' : confirmLabel}</button>
         <button
           type="button"
@@ -192,7 +192,7 @@ export function Confirm({
 /* ── The table ──────────────────────────────────────────────────── */
 
 const PORTAL_STYLE: Record<PortalState, { bg: string; fg: string }> = {
-  active:  { bg: 'var(--aq-accent-light)', fg: '#14603a' },
+  active:  { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
   invited: { bg: '#e0e7ff', fg: '#3730a3' },
   none:    { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)' },
 };
@@ -280,13 +280,13 @@ export function RegistryTable({
                           under the name — never colour on its own. */}
                       <span aria-hidden style={{
                         width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                        background: r.gaps.length ? '#b91c1c' : 'transparent',
+                        background: r.gaps.length ? 'var(--aq-red)' : 'transparent',
                       }} />
                       <span>
                         <span style={{ fontWeight: 600 }}>{r.name}</span>
                         {r.gaps.length > 0 && (
                           <span style={{
-                            display: 'block', fontSize: 11, color: '#a16207',
+                            display: 'block', fontSize: 11, color: 'var(--aq-amber-text)',
                             fontWeight: 600, marginTop: 2, whiteSpace: 'normal', maxWidth: 300,
                           }}>{gapLine(r.gaps)}</span>
                         )}
@@ -305,7 +305,7 @@ export function RegistryTable({
                   <Td align="right">
                     <span style={{
                       fontVariantNumeric: 'tabular-nums',
-                      color: r.count === 0 ? '#b91c1c' : 'var(--aq-text)',
+                      color: r.count === 0 ? 'var(--aq-red)' : 'var(--aq-text)',
                       fontWeight: r.count === 0 ? 700 : 400,
                     }}>{r.count}</span>
                   </Td>
@@ -378,7 +378,7 @@ export function Detail({
       }}>{label}</div>
       <div style={{
         fontSize: 12.5, marginTop: 2, wordBreak: 'break-word',
-        color: empty ? (missing ? '#b91c1c' : 'var(--aq-text-muted)') : 'var(--aq-text)',
+        color: empty ? (missing ? 'var(--aq-red)' : 'var(--aq-text-muted)') : 'var(--aq-text)',
         fontWeight: empty && missing ? 600 : 400,
         fontStyle: empty ? 'italic' : 'normal',
       }}>{empty ? (missing ? 'missing' : '—') : value}</div>

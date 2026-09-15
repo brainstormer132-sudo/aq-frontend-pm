@@ -166,7 +166,7 @@ export function AddVendorsModal({
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(15, 29, 34, 0.45)', padding: 20,
+        background: 'var(--aq-backdrop)', padding: 20,
       }}
       role="dialog"
       aria-modal="true"

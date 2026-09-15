@@ -194,8 +194,8 @@ function SegBtn({ active, onClick, children }: { active: boolean; onClick: () =>
       onClick={onClick}
       style={{
         padding: '6px 14px',
-        background: active ? '#0b0b0e' : 'transparent',
-        color: active ? '#fff' : 'var(--aq-text-muted)',
+        background: active ? 'var(--aq-text)' : 'transparent',
+        color: active ? 'var(--aq-text-inverse)' : 'var(--aq-text-muted)',
         border: 'none', borderRadius: 999,
         fontWeight: 700, fontSize: 12,
         cursor: 'pointer', fontFamily: 'inherit',
@@ -243,7 +243,7 @@ function TaskRow({
           }}>{task.title}</strong>
           <span style={{
             fontSize: 11,
-            color: overdue ? '#b91c1c' : 'var(--aq-text-muted)',
+            color: overdue ? 'var(--aq-red)' : 'var(--aq-text-muted)',
             fontWeight: overdue ? 700 : 400,
           }}>
             {task.due_at ? formatWhen(task.due_at) : 'no date'}
@@ -293,9 +293,9 @@ const BUCKET_LABEL: Record<Bucket, string> = {
 
 function bucketColor(b: Bucket): string {
   switch (b) {
-    case 'overdue': return '#fee2e2';
-    case 'today':   return '#fef3c7';
-    case 'week':    return '#dbeafe';
+    case 'overdue': return 'var(--aq-red-bg)';
+    case 'today':   return 'var(--aq-amber-bg)';
+    case 'week':    return 'var(--aq-blue-bg)';
     case 'later':   return 'var(--aq-bg-sunken)';
     case 'none':    return 'var(--aq-bg-sunken)';
     case 'done':    return 'var(--aq-bg-sunken)';
@@ -303,9 +303,9 @@ function bucketColor(b: Bucket): string {
 }
 function bucketTextColor(b: Bucket): string {
   switch (b) {
-    case 'overdue': return '#991b1b';
-    case 'today':   return '#92400e';
-    case 'week':    return '#1e40af';
+    case 'overdue': return 'var(--aq-red-strong)';
+    case 'today':   return 'var(--aq-amber-strong)';
+    case 'week':    return 'var(--aq-blue)';
     default:        return 'var(--aq-text-secondary)';
   }
 }

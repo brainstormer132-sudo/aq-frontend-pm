@@ -108,8 +108,8 @@ function TaskCalendar({
         display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
         fontSize: 11, padding: '2px 5px', marginTop: 2, cursor: 'pointer',
         borderRadius: 5, border: '1px solid var(--aq-border-light)',
-        background: overdue ? '#fee2e2' : 'var(--aq-bg-sunken)',
-        color: overdue ? '#b91c1c' : 'var(--aq-text)',
+        background: overdue ? 'var(--aq-red-bg)' : 'var(--aq-bg-sunken)',
+        color: overdue ? 'var(--aq-red)' : 'var(--aq-text)',
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       }}
     >{name(t)}</button>
@@ -189,7 +189,7 @@ function TaskCalendar({
               <h3 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>{dayTitle(day.day)}</h3>
               <p style={{
                 fontSize: 12, margin: '2px 0 0',
-                color: day.overdue ? '#b91c1c' : 'var(--aq-text-muted)',
+                color: day.overdue ? 'var(--aq-red)' : 'var(--aq-text-muted)',
               }}>{dayCountLine(day)}</p>
             </div>
             <button
@@ -224,15 +224,15 @@ function TaskCalendar({
                         display: 'grid', gridTemplateColumns: '58px minmax(0, 1fr)', gap: 8, alignItems: 'center',
                         width: '100%', textAlign: 'left', font: 'inherit', fontSize: 12.5,
                         padding: '6px 9px', cursor: 'pointer', borderRadius: 7,
-                        border: `1px solid ${t.overdue ? '#fecaca' : 'var(--aq-border-light)'}`,
-                        background: t.overdue ? '#fef2f2' : 'var(--aq-bg-sunken)',
-                        color: t.overdue ? '#b91c1c' : t.done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
+                        border: `1px solid ${t.overdue ? 'var(--aq-red-border)' : 'var(--aq-border-light)'}`,
+                        background: t.overdue ? 'var(--aq-red-bg-soft)' : 'var(--aq-bg-sunken)',
+                        color: t.overdue ? 'var(--aq-red)' : t.done ? 'var(--aq-text-muted)' : 'var(--aq-text)',
                         textDecoration: t.done ? 'line-through' : 'none',
                       }}
                     >
                       <span style={{
                         fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase',
-                        color: t.overdue ? '#b91c1c' : 'var(--aq-text-muted)',
+                        color: t.overdue ? 'var(--aq-red)' : 'var(--aq-text-muted)',
                       }}>{t.kind === 'subtask' ? 'booking' : t.kind}</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
                     </button>
@@ -243,8 +243,8 @@ function TaskCalendar({
           </div>
         </div>
       ) : (
-      <div className="aq-card" style={{ padding: 16, border: undated.length ? '1px solid #b91c1c' : undefined }}>
-        <h3 style={{ fontSize: 13, fontWeight: 700, color: undated.length ? '#b91c1c' : 'var(--aq-text)' }}>
+      <div className="aq-card" style={{ padding: 16, border: undated.length ? '1px solid var(--aq-red)' : undefined }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: undated.length ? 'var(--aq-red)' : 'var(--aq-text)' }}>
           No due date {undated.length ? `| ${undated.length}` : ''}
         </h3>
         <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', margin: '2px 0 10px' }}>
@@ -261,7 +261,7 @@ function TaskCalendar({
               style={{
                 display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
                 fontSize: 12.5, padding: '7px 9px', cursor: 'pointer',
-                border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
+                border: '1px solid var(--aq-red-border)', background: 'var(--aq-red-bg-soft)', color: 'var(--aq-red)',
                 borderRadius: 7,
               }}
             >

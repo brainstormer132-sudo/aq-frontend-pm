@@ -300,13 +300,13 @@ export function ClientsView({
       {error && (
         <div role="alert" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+          background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 13,
         }}>{error}</div>
       )}
       {message && !error && (
         <div role="status" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+          background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)', fontSize: 13, fontWeight: 600,
         }}>{message}</div>
       )}
 
@@ -364,7 +364,7 @@ export function ClientsView({
               className="aq-btn aq-btn-ghost"
               onClick={() => setConfirmReset(true)}
               disabled={importBusy}
-              style={{ marginLeft: 'auto', fontSize: 12, color: '#b91c1c', padding: '4px 8px' }}
+              style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--aq-red)', padding: '4px 8px' }}
             >Wipe all clients and re-import from Zoho…</button>
           </div>
         )
@@ -437,11 +437,11 @@ export function ClientsView({
               <div style={{
                 padding: '10px 14px',
                 borderRadius: 'var(--aq-radius)',
-                background: importResult.status === 'done' ? '#dcfce7'
-                          : importResult.status === 'error' ? '#fee2e2'
+                background: importResult.status === 'done' ? 'var(--aq-green-bg)'
+                          : importResult.status === 'error' ? 'var(--aq-red-bg)'
                           : 'var(--aq-bg-sunken)',
                 color: importResult.status === 'done' ? '#166534'
-                      : importResult.status === 'error' ? '#991b1b'
+                      : importResult.status === 'error' ? 'var(--aq-red-strong)'
                       : 'var(--aq-text)',
                 fontSize: 13, fontWeight: 600,
               }}>
@@ -459,7 +459,7 @@ export function ClientsView({
                 <ImportStat label="Scanned" value={importResult.scanned} />
                 <ImportStat label="Created" value={importResult.created} accent="#16a34a" />
                 <ImportStat label="Updated" value={importResult.updated} accent="#2563eb" />
-                <ImportStat label="Skipped" value={importResult.skipped} accent="#6b7280" />
+                <ImportStat label="Skipped" value={importResult.skipped} accent="var(--aq-gray)" />
               </div>
               {importResult.errors.length > 0 && (
                 <details>
@@ -605,7 +605,7 @@ const modalBackdrop: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
   zIndex: 200,
-  background: 'rgba(15, 23, 42, 0.45)',
+  background: 'var(--aq-backdrop)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -694,7 +694,7 @@ function ClientDetail({
             type="button"
             className="aq-btn aq-btn-ghost"
             onClick={onDelete}
-            style={{ fontSize: 12, padding: '5px 11px', color: '#b91c1c' }}
+            style={{ fontSize: 12, padding: '5px 11px', color: 'var(--aq-red)' }}
           >Delete client…</button>
         </div>
       )}

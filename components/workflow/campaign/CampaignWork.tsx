@@ -243,7 +243,7 @@ export function CampaignWork({
                   <div style={{ display: 'flex', marginTop: 14 }}>
                     <button
                       type="button"
-                      style={{ ...quietButton(busy), color: '#991b1b', marginLeft: 'auto' }}
+                      style={{ ...quietButton(busy), color: 'var(--aq-red-strong)', marginLeft: 'auto' }}
                       disabled={busy}
                       onClick={() => { setOpenId(null); startRemove(s.id, s.title ?? ''); }}
                     >Remove</button>

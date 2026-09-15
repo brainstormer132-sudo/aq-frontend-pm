@@ -317,7 +317,7 @@ export function FinancePayments({
 
       {advanceFor && (
         <div onClick={() => { if (!saving) setAdvanceFor(null); }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(15,15,20,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          style={{ position: 'fixed', inset: 0, background: 'var(--aq-backdrop)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={(e) => e.stopPropagation()} className="portal-card" style={{ width: 'min(440px, 96vw)', padding: 22 }}>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
               Record {side === 'clients' ? 'client' : 'vendor'} advance

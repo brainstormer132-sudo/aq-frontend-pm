@@ -336,7 +336,7 @@ function StatCard({
   const toneColor =
     tone === 'info' ? 'var(--aq-accent)'
     : tone === 'good' ? '#16a34a'
-    : tone === 'warn' ? '#b45309'
+    : tone === 'warn' ? 'var(--aq-amber)'
     : 'var(--aq-text)';
   return (
     <div className="aq-card" style={{ padding: 18 }}>
@@ -357,7 +357,7 @@ function KindDonut({ byKind }: { byKind: Record<string, number> }) {
   const total = entries.reduce((s, [, v]) => s + v, 0);
   const colors: Record<string, string> = {
     note: '#0ea5e9', call: '#22c55e', meeting: '#a855f7',
-    email: '#f59e0b', status_change: '#6b7280',
+    email: '#f59e0b', status_change: 'var(--aq-gray)',
   };
   const radius = 60;
   const circumference = 2 * Math.PI * radius;

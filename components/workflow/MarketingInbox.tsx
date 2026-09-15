@@ -203,13 +203,13 @@ export function MarketingInbox({
       {error && (
         <div role="alert" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: '#fee2e2', color: '#991b1b', fontSize: 13,
+          background: 'var(--aq-red-bg)', color: 'var(--aq-red-strong)', fontSize: 13,
         }}>{error}</div>
       )}
       {message && !error && (
         <div role="status" style={{
           padding: '10px 14px', borderRadius: 'var(--aq-radius)',
-          background: 'var(--aq-accent-light)', color: '#14603a', fontSize: 13, fontWeight: 600,
+          background: 'var(--aq-accent-light)', color: 'var(--aq-green-strong)', fontSize: 13, fontWeight: 600,
         }}>{message}</div>
       )}
 
@@ -239,7 +239,7 @@ export function MarketingInbox({
             <h2 style={{ fontSize: 19, fontWeight: 700 }}>{item.name}</h2>
             <span style={{
               fontSize: 12.5, whiteSpace: 'nowrap',
-              color: item.stale ? '#b91c1c' : 'var(--aq-text-muted)',
+              color: item.stale ? 'var(--aq-red)' : 'var(--aq-text-muted)',
               fontWeight: item.stale ? 700 : 400,
             }}>{item.waitedLabel}</span>
             <span style={{
@@ -323,7 +323,7 @@ export function MarketingInbox({
                   ))}
                 </select>
                 {keyAccounts.length === 0 && (
-                  <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 6 }}>
+                  <div style={{ fontSize: 12, color: 'var(--aq-red)', marginTop: 6 }}>
                     Nobody can be a key account yet. Promote somebody in Settings → Team.
                   </div>
                 )}
@@ -419,7 +419,7 @@ export function MarketingInbox({
                 className="aq-btn aq-btn-ghost"
                 onClick={() => setConfirmDelete(true)}
                 disabled={busy}
-                style={{ marginLeft: 'auto', fontSize: 12.5, color: '#b91c1c' }}
+                style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--aq-red)' }}
               >Delete campaign…</button>
             )}
           </div>
@@ -431,9 +431,9 @@ export function MarketingInbox({
           {confirmDelete && (
             <div role="alertdialog" aria-label="Confirm delete" style={{
               marginTop: 14, padding: '12px 14px', borderRadius: 'var(--aq-radius)',
-              background: '#fee2e2', border: '1px solid #fecaca',
+              background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)',
             }}>
-              <p style={{ fontSize: 12.5, color: '#991b1b', margin: 0, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 12.5, color: 'var(--aq-red-strong)', margin: 0, lineHeight: 1.5 }}>
                 {deleteWarning(item)}
               </p>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
@@ -442,7 +442,7 @@ export function MarketingInbox({
                   className="aq-btn"
                   onClick={remove}
                   disabled={busy}
-                  style={{ background: '#b91c1c', color: '#fff', border: 'none', fontSize: 12.5 }}
+                  style={{ background: 'var(--aq-red)', color: '#fff', border: 'none', fontSize: 12.5 }}
                 >{busy ? 'Deleting…' : 'Yes, delete it'}</button>
                 <button
                   type="button"
@@ -502,7 +502,7 @@ function QueueList({
         >
           <span aria-hidden style={{
             width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-            background: i.stale ? '#b91c1c' : 'transparent',
+            background: i.stale ? 'var(--aq-red)' : 'transparent',
           }} />
           <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{i.name}</span>
@@ -512,7 +512,7 @@ function QueueList({
           </span>
           <span style={{
             fontSize: 11.5, whiteSpace: 'nowrap',
-            color: i.stale ? '#b91c1c' : 'var(--aq-text-muted)',
+            color: i.stale ? 'var(--aq-red)' : 'var(--aq-text-muted)',
             fontWeight: i.stale ? 700 : 400,
           }}>{i.waitedLabel}</span>
         </button>

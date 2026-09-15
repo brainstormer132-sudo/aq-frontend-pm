@@ -159,7 +159,7 @@ export function RequestContractModal({
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
-        background: 'rgba(15, 29, 34, 0.45)',
+        background: 'var(--aq-backdrop)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: 20,
       }}

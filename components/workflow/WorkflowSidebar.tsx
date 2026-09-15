@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 import { AQMark } from '@/components/auth/AQMark';
+import { applyTheme, currentTheme, nextTheme, type Theme } from '@/lib/theme';
 
 /** Remembered across sessions so the sidebar opens the way you left it. */
 const COLLAPSED_KEY = 'aq_sidebar_collapsed';
@@ -109,6 +110,16 @@ export function WorkflowSidebar({
   useEffect(() => {
     try { setCollapsed(localStorage.getItem(COLLAPSED_KEY) === '1'); } catch { /* private mode */ }
   }, []);
+
+  // Same rule as `collapsed`: the boot script in app/layout.tsx has already
+  // painted the right theme, so this only has to catch up after mount.
+  const [theme, setTheme] = useState<Theme>('light');
+  useEffect(() => { setTheme(currentTheme()); }, []);
+  const toggleTheme = () => {
+    const next = nextTheme(theme);
+    applyTheme(next);
+    setTheme(next);
+  };
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -299,6 +310,32 @@ export function WorkflowSidebar({
             <div style={{ color: 'var(--aq-sidebar-text)', fontSize: 11, opacity: 0.7 }}>{roleLabel(role)}</div>
           </div>
         )}
+        <button
+          type="button"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-pressed={theme === 'dark'}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            background: 'transparent',
+            border: '1px solid var(--aq-sidebar-border)',
+            color: 'var(--aq-sidebar-text)',
+            padding: collapsed ? '8px 0' : '8px 12px',
+            borderRadius: 'var(--aq-radius)',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 13,
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {theme === 'dark'
+              ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>
+              : <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />}
+          </svg>
+          {!collapsed && <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>}
+        </button>
         <button
           type="button"
           onClick={onSignOut}
