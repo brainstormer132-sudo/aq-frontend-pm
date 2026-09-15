@@ -20,18 +20,38 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
-import { usePmTaskCampaignRollup, selectAllRows } from '@/hooks/use-workflow';
+import { usePmTaskCampaignRollup, useWorkspaceProfiles, selectAllRows } from '@/hooks/use-workflow';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import {
   financeRows, statusLabel, statusBadge, rowsForTab, tabCounts, paginate,
+  openRequests, hasOpenRequest,
   FINANCE_TABS, FINANCE_PAGE_SIZES,
-  type FinanceDocLite, type FinanceRow, type FinanceTabKey,
+  type FinanceDocLite, type FinanceRow, type FinanceTabKey, type DocRequestLite,
 } from '@/lib/finance';
 import { generateQuotation } from '@/lib/contract-api';
 import { FinancePayments } from './FinancePayments';
 
 function money(n: number): string {
   return n ? `SAR ${Math.round(n).toLocaleString('en-US')}` : '-';
+}
+
+const REQUEST_KIND_LABEL: Record<'quotation' | 'requotation' | 'invoice', string> = {
+  quotation: 'Quotation', requotation: 'Re-quotation', invoice: 'Invoice',
+};
+
+/** "today" / "3d ago" / "just now" (undated). */
+function ageLabel(days: number | null): string {
+  if (days == null) return 'just now';
+  if (days === 0) return 'today';
+  return `${days}d ago`;
+}
+
+/** The "X requested" badge text for a campaign row with open requests. */
+function requestBadge(r: FinanceRow): string {
+  const parts: string[] = [];
+  if (r.requests?.quotation) parts.push(r.quotationBucket === 'requotation' ? 'Re-quotation requested' : 'Quotation requested');
+  if (r.requests?.invoice) parts.push('Invoice requested');
+  return parts.join(' + ');
 }
 
 /** Tabs whose primary action is live today. */
@@ -49,8 +69,9 @@ export function FinanceView({
   const { rows: campaigns, loading: campaignsLoading, refetch: refetchCampaigns } =
     usePmTaskCampaignRollup(workspaceId);
 
+  const { profiles } = useWorkspaceProfiles(workspaceId);
   const [docs, setDocs] = useState<FinanceDocLite[] | null>(null);
-  const [tagsByTask, setTagsByTask] = useState<Record<string, string[]> | null>(null);
+  const [reqs, setReqs] = useState<DocRequestLite[] | null>(null);
   const [error, setError] = useState('');
   const [busyTask, setBusyTask] = useState<string | null>(null);
   const [q, setQ] = useState('');
@@ -73,26 +94,25 @@ export function FinanceView({
     setDocs((data ?? []) as FinanceDocLite[]);
   }, [workspaceId]);
 
-  const loadTags = useCallback(async () => {
-    if (!workspaceId) { setTagsByTask({}); return; }
+  // Open (pending) quotation / invoice requests raised on campaigns (048).
+  // Without this the Finance menu never learned an ask existed - it lived only
+  // on the campaign's paperwork panel. Workspace-wide, pending only.
+  const loadReqs = useCallback(async () => {
+    if (!workspaceId) { setReqs([]); return; }
     const supabase = createSupabase();
-    // Parent campaigns only, paged (a workspace can hold thousands). A missing
-    // tags column (before migration 088) just yields empty tags, not an error.
-    const rows = await selectAllRows<{ id: string; tags: string[] | null }>(
-      'financeCampaignTags',
-      () => supabase.from('pm_tasks')
-        .select('id, tags')
+    const rows = await selectAllRows<DocRequestLite>(
+      'financeDocumentRequests',
+      () => supabase.from('document_requests')
+        .select('pm_task_id, doc_kind, status, requested_by, requested_at')
         .eq('workspace_id', workspaceId)
-        .is('parent_task_id', null)
-        .order('id', { ascending: true }),
-      () => { /* tags are optional; ignore and treat as untagged */ },
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: true }),
+      () => { /* requests are supplementary; ignore a read error, treat as none */ },
     );
-    const map: Record<string, string[]> = {};
-    for (const r of rows) map[r.id] = r.tags ?? [];
-    setTagsByTask(map);
+    setReqs(rows);
   }, [workspaceId]);
 
-  useEffect(() => { loadDocs(); loadTags(); }, [loadDocs, loadTags]);
+  useEffect(() => { loadDocs(); loadReqs(); }, [loadDocs, loadReqs]);
 
   // Refresh with visible feedback: the button says "Refreshing..." while the
   // three reloads run, and a timestamp appears when they finish, so the finance
@@ -100,25 +120,45 @@ export function FinanceView({
   const doRefresh = useCallback(async () => {
     setRefreshing(true); setError('');
     try {
-      await Promise.all([Promise.resolve(refetchCampaigns()), loadDocs(), loadTags()]);
+      await Promise.all([Promise.resolve(refetchCampaigns()), loadDocs(), loadReqs()]);
       setRefreshedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     } finally {
       setRefreshing(false);
     }
-  }, [refetchCampaigns, loadDocs, loadTags]);
+  }, [refetchCampaigns, loadDocs, loadReqs]);
 
   // Full row set, then narrowed to the active tab, then searched.
   const allRows = useMemo(
-    () => financeRows(campaigns ?? [], docs ?? []),
-    [campaigns, docs],
+    () => financeRows(campaigns ?? [], docs ?? [], reqs ?? []),
+    [campaigns, docs, reqs],
   );
+
+  // Tags now ride the campaign rollup (migration 094), so the Finance screen
+  // reads them straight off `campaigns` instead of a second full scan of
+  // pm_tasks - one campaign read for the whole screen.
+  const tagsByTask = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    for (const c of campaigns ?? []) m[c.parent_task_id] = c.tags ?? [];
+    return m;
+  }, [campaigns]);
+
+  // Who to name in the Requests strip: requested_by -> full name.
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of profiles ?? []) if (p?.id) m.set(String(p.id), p.full_name ?? '');
+    return m;
+  }, [profiles]);
+
+  // Every open ask, most-waiting first, for the strip above the tabs.
+  const today = new Date().toISOString().slice(0, 10);
+  const requestStrip = useMemo(() => openRequests(allRows, today), [allRows, today]);
   const counts = useMemo(
-    () => tabCounts(allRows, tagsByTask ?? {}),
+    () => tabCounts(allRows, tagsByTask),
     [allRows, tagsByTask],
   );
   const activeTab = FINANCE_TABS.find((t) => t.key === tab)!;
   const tabbed = useMemo(
-    () => rowsForTab(allRows, tagsByTask ?? {}, activeTab.tag),
+    () => rowsForTab(allRows, tagsByTask, activeTab.tag),
     [allRows, tagsByTask, activeTab.tag],
   );
   const filtered = useMemo(() => {
@@ -177,6 +217,36 @@ export function FinanceView({
         <FinancePayments workspaceId={workspaceId} role={role} onOpenTask={onOpenTask} />
       ) : (
       <>
+
+      {/* Requests strip: what campaigns have asked finance for, so the ask is
+          seen here and not only on the campaign's paperwork panel. */}
+      {requestStrip.length > 0 && (
+        <div style={{ marginBottom: 14, border: '1px solid var(--aq-border-light)', borderRadius: 'var(--aq-radius)', overflow: 'hidden' }}>
+          <div style={{ padding: '8px 12px', background: 'var(--aq-bg-sunken)', fontWeight: 700, fontSize: 13 }}>
+            Requests
+            <span style={{ marginLeft: 6, fontSize: 11, padding: '1px 7px', borderRadius: 999, background: 'var(--aq-accent-light)', color: '#14603a' }}>
+              {requestStrip.length}
+            </span>
+          </div>
+          {requestStrip.map((rq) => {
+            const who = rq.requestedBy ? nameById.get(rq.requestedBy) : '';
+            return (
+              <div key={`${rq.taskId}:${rq.kind}`}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: '1px solid var(--aq-border-light)', fontSize: 13, flexWrap: 'wrap' }}>
+                <span className="aq-badge aq-badge-warning">{REQUEST_KIND_LABEL[rq.kind]}</span>
+                <strong>{rq.brand || rq.title}</strong>
+                <span style={{ color: 'var(--aq-text-muted)' }}>
+                  asked{who ? ` by ${who}` : ''} {ageLabel(rq.ageDays)}
+                </span>
+                {onOpenTask && (
+                  <button type="button" className="aq-btn aq-btn-ghost aq-btn-sm" style={{ marginLeft: 'auto' }}
+                    onClick={() => onOpenTask(rq.taskId)}>Open</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Tabs: All, then one per Asana tag, with how many campaigns each holds. */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14, borderBottom: '1px solid var(--aq-border-light)' }}>
@@ -276,6 +346,11 @@ export function FinanceView({
                     ) : r.title}
                     {r.brand && r.brand !== r.title
                       ? <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{r.brand}</div> : null}
+                    {hasOpenRequest(r) && (
+                      <div style={{ marginTop: 3 }}>
+                        <span className="aq-badge aq-badge-warning" style={{ fontSize: 11 }}>{requestBadge(r)}</span>
+                      </div>
+                    )}
                   </td>
                   <td className="num">{money(r.amount)}</td>
                   <td>{r.quotation ? <code style={{ fontSize: 12 }}>{r.quotation.number}</code> : <span style={{ color: 'var(--aq-text-muted)' }}>-</span>}</td>

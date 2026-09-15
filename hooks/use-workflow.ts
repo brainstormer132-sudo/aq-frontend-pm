@@ -814,6 +814,9 @@ export interface PmTaskCampaignRollup {
   sum_aq_gross: number;
   /** sum_prices - parent_total_amount. Non-zero = data-entry mismatch. */
   price_vs_total_variance: number;
+  /** Asana tags on the campaign (094 folded them into the view, so the Finance
+   *  screen reads them here instead of a second full scan of pm_tasks). */
+  tags?: string[] | null;
 }
 
 export interface Profile {

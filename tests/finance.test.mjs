@@ -2,6 +2,7 @@ import {
   latestQuotation, financeRows, statusLabel, statusBadge,
   normalizeTag, hasTag, rowsForTag, rowsForTab, tabCounts, paginate,
   FINANCE_TABS, FINANCE_PAGE_SIZES,
+  rowMatchesTab, hasOpenRequest, openRequests, daysAgo,
 } from '../.test-build/finance.js';
 
 let pass = 0, fail = 0;
@@ -117,6 +118,67 @@ ok('hasTag empty list', !hasTag([], 'quotation'));
   eq('default sizes', FINANCE_PAGE_SIZES[0], 10);
   eq('five tabs, All first', FINANCE_TABS.map((t) => t.key), ['all', 'quotation', 'requotation', 'invoice', 'transaction']);
 }
+
+// -- open requests: Finance sees what the campaign asked for ------
+const req = (t, kind, at, by) => ({ pm_task_id: t, doc_kind: kind, status: 'pending',
+  requested_by: by ?? 'u1', requested_at: at ?? '2026-09-10T00:00:00Z' });
+const TODAY = '2026-09-15';
+
+{
+  const rows = financeRows([camp('t1')], [], [req('t1', 'quotation', '2026-09-12T00:00:00Z')]);
+  eq('open quotation request captured', !!rows[0].requests.quotation, true);
+  eq('first quotation bucket', rows[0].quotationBucket, 'quotation');
+  ok('has open request', hasOpenRequest(rows[0]));
+  const tags = { t1: [] };
+  eq('routes to Quotation tab by request (no tag)', rowsForTab(rows, tags, 'quotation').map((r) => r.taskId), ['t1']);
+  eq('NOT in Re-quotation tab', rowsForTab(rows, tags, 'requotation').length, 0);
+  eq('NOT in Invoice tab', rowsForTab(rows, tags, 'invoice').length, 0);
+}
+{
+  const rows = financeRows(
+    [camp('t2')],
+    [doc({ t: 't2', status: 'accepted' })],
+    [req('t2', 'quotation', '2026-09-13T00:00:00Z')],
+  );
+  eq('re-quotation bucket', rows[0].quotationBucket, 'requotation');
+  const tags = { t2: [] };
+  eq('routes to Re-quotation tab', rowsForTab(rows, tags, 'requotation').map((r) => r.taskId), ['t2']);
+  eq('NOT in first Quotation tab', rowsForTab(rows, tags, 'quotation').length, 0);
+}
+{
+  const rows = financeRows([camp('t3')], [], [req('t3', 'invoice')]);
+  eq('open invoice request captured', !!rows[0].requests.invoice, true);
+  const tags = { t3: [] };
+  eq('routes to Invoice tab', rowsForTab(rows, tags, 'invoice').map((r) => r.taskId), ['t3']);
+}
+{
+  const rows = financeRows(
+    [camp('q'), camp('i'), camp('rq')],
+    [doc({ t: 'rq', status: 'accepted' })],
+    [req('q', 'quotation'), req('i', 'invoice'), req('rq', 'quotation')],
+  );
+  const counts = tabCounts(rows, { q: [], i: [], rq: [] });
+  eq('counts reflect requests', counts, { all: 3, quotation: 1, requotation: 1, invoice: 1, transaction: 0 });
+}
+{
+  const rows = financeRows(
+    [camp('a'), camp('b')],
+    [],
+    [req('a', 'quotation', '2026-09-14T00:00:00Z'), req('b', 'invoice', '2026-09-09T00:00:00Z')],
+  );
+  const strip = openRequests(rows, TODAY);
+  eq('two open requests', strip.length, 2);
+  eq('oldest first (b waited longer)', strip.map((s) => s.taskId), ['b', 'a']);
+  eq('kind carried', strip[0].kind, 'invoice');
+  eq('age in days', strip[0].ageDays, 6);
+}
+{
+  const rows = financeRows([camp('t')], [], []);
+  ok('tag still matches', rowMatchesTab(rows[0], { t: ['#invoice'] }, 'invoice'));
+  ok('no tag, no request -> no match', !rowMatchesTab(rows[0], { t: [] }, 'invoice'));
+}
+eq('daysAgo undated -> null', daysAgo('', TODAY), null);
+eq('daysAgo future -> 0 (never negative)', daysAgo('2026-09-20T00:00:00Z', TODAY), 0);
 
 console.log(`finance: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -50,6 +50,25 @@ export interface QuotationSummary {
   amount: number;
 }
 
+/**
+ * An open (pending) document_request (migration 048) as the Finance menu reads
+ * it. A campaign someone asked a quotation or invoice for - so finance is told,
+ * instead of the ask living only on the campaign's paperwork panel.
+ */
+export interface DocRequestLite {
+  pm_task_id: string;
+  doc_kind: string;             // 'quotation' | 'invoice'
+  status?: string | null;       // only 'pending' rows surface here
+  requested_by?: string | null;
+  requested_at?: string | null;
+}
+
+/** Who raised an open request, and when. */
+export interface RequestInfo {
+  requestedBy: string | null;
+  requestedAt: string | null;
+}
+
 export interface FinanceRow {
   taskId: string;
   title: string;
@@ -58,6 +77,12 @@ export interface FinanceRow {
   quotation: QuotationSummary | null;
   /** What this campaign is asking finance to do next. */
   actionLabel: 'Generate quotation' | 'Re-quote';
+  /** Open quotation / invoice requests raised on this campaign (048). */
+  requests: { quotation: RequestInfo | null; invoice: RequestInfo | null };
+  /** Which tab a pending quotation request routes to: 'quotation' before any
+   *  quotation is issued, 'requotation' once one already exists. Null when
+   *  there is no open quotation request. */
+  quotationBucket: 'quotation' | 'requotation' | null;
 }
 
 /** Human label for a quotation status. */
@@ -116,7 +141,11 @@ function summarise(doc: FinanceDocLite | null): QuotationSummary | null {
  * sort to the top (that is the work), then rejected ones (a decision is owed),
  * then the rest by value, biggest first.
  */
-export function financeRows(campaigns: CampaignLite[], docs: FinanceDocLite[]): FinanceRow[] {
+export function financeRows(
+  campaigns: CampaignLite[],
+  docs: FinanceDocLite[],
+  requests: DocRequestLite[] = [],
+): FinanceRow[] {
   const byTask = new Map<string, FinanceDocLite[]>();
   for (const d of docs ?? []) {
     const k = txt(d.pm_task_id);
@@ -124,10 +153,33 @@ export function financeRows(campaigns: CampaignLite[], docs: FinanceDocLite[]): 
     (byTask.get(k) ?? byTask.set(k, []).get(k)!).push(d);
   }
 
+  // Open (pending) requests per task and kind. The newest pending of each kind
+  // is the live ask; anything issued/cancelled is not surfaced here.
+  const reqByTask = new Map<string, { quotation: RequestInfo | null; invoice: RequestInfo | null }>();
+  for (const r of requests ?? []) {
+    if (txt(r.status).toLowerCase() !== 'pending') continue;
+    const k = txt(r.pm_task_id);
+    const kind = txt(r.doc_kind).toLowerCase();
+    if (!k || (kind !== 'quotation' && kind !== 'invoice')) continue;
+    const entry = reqByTask.get(k) ?? { quotation: null, invoice: null };
+    const info: RequestInfo = { requestedBy: txt(r.requested_by) || null, requestedAt: txt(r.requested_at) || null };
+    const existing = (entry as any)[kind] as RequestInfo | null;
+    // Keep the newest pending of this kind.
+    if (!existing || createdMs(info.requestedAt) >= createdMs(existing.requestedAt)) {
+      (entry as any)[kind] = info;
+    }
+    reqByTask.set(k, entry);
+  }
+
   const rows: FinanceRow[] = (campaigns ?? []).map((c): FinanceRow => {
     const taskId = txt(c.parent_task_id);
     const q = summarise(latestQuotation(byTask.get(taskId) ?? []));
     const amount = num(c.parent_total_amount) || num(c.sum_prices);
+    const req = reqByTask.get(taskId) ?? { quotation: null, invoice: null };
+    // A pending quotation request is a re-quotation when a quotation already
+    // exists (issued or otherwise on file), else it is the first quotation.
+    const quotationBucket: 'quotation' | 'requotation' | null =
+      req.quotation ? (q ? 'requotation' : 'quotation') : null;
     return {
       taskId,
       title: txt(c.title) || txt(c.brand_name) || 'Untitled campaign',
@@ -135,6 +187,8 @@ export function financeRows(campaigns: CampaignLite[], docs: FinanceDocLite[]): 
       amount,
       quotation: q,
       actionLabel: q ? 'Re-quote' : 'Generate quotation',
+      requests: req,
+      quotationBucket,
     };
   }).filter((r) => r.taskId);
 
@@ -200,13 +254,88 @@ function tagsOf(
  * only the rows whose campaign carries that tag. `tagsByTask` maps a task id
  * to its Asana tags.
  */
+/**
+ * Does a row belong in this tab? A campaign qualifies by its Asana tag (the
+ * original behaviour) OR by having an open request that routes to this tab: an
+ * open quotation request routes to 'quotation' (first time) or 'requotation'
+ * (a quotation already exists); an open invoice request routes to 'invoice'.
+ * So a raised request surfaces in Finance even when nobody tagged it in Asana.
+ */
+export function rowMatchesTab(
+  row: FinanceRow,
+  tagsByTask: Record<string, string[]> | Map<string, string[]>,
+  tag: string,
+): boolean {
+  const t = normalizeTag(tag);
+  if (!t) return true; // All
+  if (hasTag(tagsOf(tagsByTask, row.taskId), tag)) return true;
+  if (t === 'quotation')   return row.quotationBucket === 'quotation';
+  if (t === 'requotation') return row.quotationBucket === 'requotation';
+  if (t === 'invoice')     return !!(row.requests && row.requests.invoice);
+  return false;
+}
+
 export function rowsForTab(
   rows: FinanceRow[],
   tagsByTask: Record<string, string[]> | Map<string, string[]>,
   tag: string,
 ): FinanceRow[] {
   if (!normalizeTag(tag)) return rows ?? [];
-  return (rows ?? []).filter((r) => hasTag(tagsOf(tagsByTask, r.taskId), tag));
+  return (rows ?? []).filter((r) => rowMatchesTab(r, tagsByTask, tag));
+}
+
+/** True when a row has any open request (a "Requested" badge belongs on it). */
+export function hasOpenRequest(row: FinanceRow): boolean {
+  return !!(row.requests && (row.requests.quotation || row.requests.invoice));
+}
+
+/** One entry per open request, for the Requests strip at the top of Finance. */
+export interface OpenRequest {
+  taskId: string;
+  title: string;
+  brand: string;
+  kind: 'quotation' | 'requotation' | 'invoice';
+  requestedBy: string | null;
+  requestedAt: string | null;
+  /** Whole days since the request was raised. 0 = today; null when undated. */
+  ageDays: number | null;
+}
+
+/** Whole days from an ISO timestamp to `today` (YYYY-MM-DD). Null when undated. */
+export function daysAgo(iso: unknown, today: string): number | null {
+  const from = Date.parse(txt(iso));
+  const to = Date.parse(`${txt(today).slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const d = Math.floor((to - from) / 86_400_000);
+  return d < 0 ? 0 : d;
+}
+
+/**
+ * Every open request across the campaigns, most-waiting first, for the strip
+ * that tells finance what has been asked of them. A campaign with both a
+ * quotation and an invoice request yields two entries.
+ */
+export function openRequests(rows: FinanceRow[], today: string): OpenRequest[] {
+  const out: OpenRequest[] = [];
+  for (const r of rows ?? []) {
+    const q = r.requests?.quotation;
+    if (q) {
+      out.push({
+        taskId: r.taskId, title: r.title, brand: r.brand,
+        kind: r.quotationBucket === 'requotation' ? 'requotation' : 'quotation',
+        requestedBy: q.requestedBy, requestedAt: q.requestedAt, ageDays: daysAgo(q.requestedAt, today),
+      });
+    }
+    const inv = r.requests?.invoice;
+    if (inv) {
+      out.push({
+        taskId: r.taskId, title: r.title, brand: r.brand, kind: 'invoice',
+        requestedBy: inv.requestedBy, requestedAt: inv.requestedAt, ageDays: daysAgo(inv.requestedAt, today),
+      });
+    }
+  }
+  // Oldest first: the request that has waited longest needs finance first.
+  return out.sort((a, b) => createdMs(a.requestedAt) - createdMs(b.requestedAt));
 }
 
 /** Back-compat alias: filter to a specific tag (never the All behaviour). */
