@@ -141,6 +141,13 @@ export function CampaignPaperwork({
                 <button type="button" style={inkButton(busy)} disabled={busy}
                   onClick={() => requestDoc(kind)}
                 >Ask</button>
+              ) : t.state === 'done' && kind === 'quotation' ? (
+                // A quotation was issued; a new campaign scope means finance may
+                // need to re-quote. Ask again raises a fresh quotation request,
+                // which Finance routes to its Re-quotation tab.
+                <button type="button" style={inkButton(busy)} disabled={busy}
+                  onClick={() => requestDoc('quotation')}
+                >Ask for re-quotation</button>
               ) : null
             ) : null}
           />

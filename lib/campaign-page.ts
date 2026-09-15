@@ -1288,7 +1288,30 @@ export function docTrack(
     (r) => txt((r as any).doc_kind) === kind && txt((r as any).status) !== 'cancelled',
   );
 
-  const issued = mine.find((r) => txt((r as any).status) === 'issued');
+  const reqMs = (r: unknown): number => {
+    const t = Date.parse(txt((r as any)?.requested_at));
+    return Number.isFinite(t) ? t : 0;
+  };
+  const newest = (list: DocLike[]): DocLike | undefined =>
+    list.slice().sort((a, b) => reqMs(b) - reqMs(a))[0];
+
+  const issued = newest(mine.filter((r) => txt((r as any).status) === 'issued'));
+  const pending = newest(mine.filter((r) => txt((r as any).status) === 'pending'));
+
+  // A pending request newer than the last issued one is a live (re-)request:
+  // once a quotation is issued, asking again raises a fresh pending request,
+  // and the card must show that as waiting, not stay stuck on "issued".
+  if (pending && (!issued || reqMs(pending) >= reqMs(issued))) {
+    const days = daysBetween((pending as any).requested_at, today);
+    return {
+      state: 'waiting',
+      badge: days == null ? 'Waiting' : days === 0 ? 'Asked today' : `Waiting ${days} day${days === 1 ? '' : 's'}`,
+      askedLabel: askedOn((pending as any).requested_at, today),
+      answeredLabel: 'Not issued',
+      waitingDays: days,
+    };
+  }
+
   if (issued) {
     const num = txt((issued as any).document_number);
     return {
@@ -1297,18 +1320,6 @@ export function docTrack(
       askedLabel: askedOn((issued as any).requested_at, today),
       answeredLabel: `Issued ${shortDate((issued as any).issued_at, today)}`,
       waitingDays: null,
-    };
-  }
-
-  const pending = mine.find((r) => txt((r as any).status) === 'pending');
-  if (pending) {
-    const days = daysBetween((pending as any).requested_at, today);
-    return {
-      state: 'waiting',
-      badge: days == null ? 'Waiting' : days === 0 ? 'Asked today' : `Waiting ${days} day${days === 1 ? '' : 's'}`,
-      askedLabel: askedOn((pending as any).requested_at, today),
-      answeredLabel: 'Not issued',
-      waitingDays: days,
     };
   }
 
