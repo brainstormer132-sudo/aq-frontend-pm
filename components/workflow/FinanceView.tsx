@@ -28,6 +28,7 @@ import {
   type FinanceDocLite, type FinanceRow, type FinanceTabKey,
 } from '@/lib/finance';
 import { generateQuotation } from '@/lib/contract-api';
+import { FinancePayments } from './FinancePayments';
 
 function money(n: number): string {
   return n ? `SAR ${Math.round(n).toLocaleString('en-US')}` : '-';
@@ -53,6 +54,7 @@ export function FinanceView({
   const [error, setError] = useState('');
   const [busyTask, setBusyTask] = useState<string | null>(null);
   const [q, setQ] = useState('');
+  const [mode, setMode] = useState<'quotations' | 'payments'>('quotations');
   const [tab, setTab] = useState<FinanceTabKey>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(FINANCE_PAGE_SIZES[0]);
@@ -155,6 +157,26 @@ export function FinanceView({
           All campaigns, or grouped by their Asana tag. Quotations are created in Zoho.
         </p>
       </div>
+
+      {/* Quotations (the Asana-tag tabs) or Payments (All / Partial paid / Advanced). */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {(['quotations', 'payments'] as const).map((m) => (
+          <button key={m} type="button" className="aq-btn aq-btn-sm"
+            onClick={() => setMode(m)}
+            style={{
+              fontWeight: mode === m ? 700 : 500,
+              background: mode === m ? 'var(--aq-accent-light)' : 'transparent',
+              border: '1px solid var(--aq-border-light)',
+            }}>
+            {m === 'quotations' ? 'Quotations' : 'Payments'}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'payments' ? (
+        <FinancePayments workspaceId={workspaceId} role={role} onOpenTask={onOpenTask} />
+      ) : (
+      <>
 
       {/* Tabs: All, then one per Asana tag, with how many campaigns each holds. */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14, borderBottom: '1px solid var(--aq-border-light)' }}>
@@ -306,6 +328,8 @@ export function FinanceView({
             </button>
           </div>
         </div>
+      )}
+      </>
       )}
     </>
   );
