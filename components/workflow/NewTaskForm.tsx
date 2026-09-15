@@ -535,9 +535,9 @@ function Step({
           width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 11.5, fontWeight: 700,
-          background: open ? 'var(--aq-text)' : 'var(--aq-bg-sunken)',
+          background: open ? 'var(--aq-ink-btn)' : 'var(--aq-bg-sunken)',
           border: open ? 'none' : '1px solid var(--aq-border-light)',
-          color: open ? 'var(--aq-text-inverse)' : 'var(--aq-text-muted)',
+          color: open ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-muted)',
         }}>{done && reachable ? '✓' : index}</span>
         {!last && <span style={{ width: 1, flex: 1, background: 'var(--aq-border-light)', marginTop: 4 }} />}
       </div>
@@ -598,8 +598,8 @@ function inkButton(disabled?: boolean): React.CSSProperties {
     font: 'inherit', fontSize: 14, fontWeight: 600,
     padding: '10px 18px', borderRadius: 'var(--aq-radius)',
     border: '1px solid transparent',
-    background: disabled ? 'var(--aq-bg-sunken)' : 'var(--aq-text)',
-    color: disabled ? 'var(--aq-text-muted)' : 'var(--aq-text-inverse)',
+    background: disabled ? 'var(--aq-bg-sunken)' : 'var(--aq-ink-btn)',
+    color: disabled ? 'var(--aq-text-muted)' : 'var(--aq-ink-btn-text)',
     borderColor: disabled ? 'var(--aq-border-light)' : 'var(--aq-text)',
     cursor: disabled ? 'not-allowed' : 'pointer',
     whiteSpace: 'nowrap',

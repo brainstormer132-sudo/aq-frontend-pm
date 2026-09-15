@@ -30,6 +30,13 @@
   --aq-accent-light:   #d2f0d8;
   --aq-accent-text:    #ffffff;
 
+  /* Primary action buttons: ink (near-black) in light, dark charcoal in
+     dark - never green, and never white in dark mode. */
+  --aq-ink-btn:        #1c1917;
+  --aq-ink-btn-hover:  #000000;
+  --aq-ink-btn-text:   #ffffff;
+  --aq-ink-btn-border: transparent;
+
   /* Sidebar (dark slate) */
   --aq-sidebar-bg:        #0f1d22;
   --aq-sidebar-text:       #b6c8c2;
@@ -114,6 +121,11 @@ html.dark {
   --aq-accent:         #22995a;
   --aq-accent-hover:   #27a35f;
   --aq-accent-light:   #163d27;
+
+  --aq-ink-btn:        #2a2e30;
+  --aq-ink-btn-hover:  #363b3e;
+  --aq-ink-btn-text:   #f5f5f4;
+  --aq-ink-btn-border: var(--aq-border);
 
   --aq-sidebar-bg:        #0b1518;
   --aq-sidebar-border:    #172529;
@@ -302,13 +314,14 @@ button.aq-band-chip:active { transform: scale(0.97); }
 .aq-btn:active:not(:disabled) { transform: translateY(1px); }
 
 .aq-btn-primary {
-  background: var(--aq-accent);
-  color: var(--aq-accent-text);
-  box-shadow: 0 1px 3px rgba(31, 143, 79, 0.25);
+  background: var(--aq-ink-btn);
+  color: var(--aq-ink-btn-text);
+  border: 1px solid var(--aq-ink-btn-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 .aq-btn-primary:hover:not(:disabled) {
-  background: var(--aq-accent-hover);
-  box-shadow: 0 3px 10px rgba(31, 143, 79, 0.35);
+  background: var(--aq-ink-btn-hover);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
 }
 .aq-btn-secondary {
   background: var(--aq-bg-elevated);

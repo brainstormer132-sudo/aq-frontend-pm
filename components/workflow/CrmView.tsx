@@ -152,8 +152,8 @@ function ModeBtn({ active, onClick, children }: { active: boolean; onClick: () =
       onClick={onClick}
       style={{
         padding: '7px 16px',
-        background: active ? 'var(--aq-text)' : 'transparent',
-        color: active ? 'var(--aq-text-inverse)' : 'var(--aq-text-muted)',
+        background: active ? 'var(--aq-ink-btn)' : 'transparent',
+        color: active ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-muted)',
         border: 'none', borderRadius: 999,
         fontWeight: 700, fontSize: 13,
         cursor: 'pointer', fontFamily: 'inherit',
@@ -276,8 +276,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       onClick={onClick}
       style={{
         flex: 1, padding: '8px 14px',
-        background: active ? 'var(--aq-text)' : 'transparent',
-        color: active ? 'var(--aq-text-inverse)' : 'var(--aq-text-muted)',
+        background: active ? 'var(--aq-ink-btn)' : 'transparent',
+        color: active ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-muted)',
         border: 'none', borderRadius: 999,
         fontWeight: 700, fontSize: 13,
         cursor: 'pointer', fontFamily: 'inherit',

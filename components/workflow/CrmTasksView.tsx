@@ -194,8 +194,8 @@ function SegBtn({ active, onClick, children }: { active: boolean; onClick: () =>
       onClick={onClick}
       style={{
         padding: '6px 14px',
-        background: active ? 'var(--aq-text)' : 'transparent',
-        color: active ? 'var(--aq-text-inverse)' : 'var(--aq-text-muted)',
+        background: active ? 'var(--aq-ink-btn)' : 'transparent',
+        color: active ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-muted)',
         border: 'none', borderRadius: 999,
         fontWeight: 700, fontSize: 12,
         cursor: 'pointer', fontFamily: 'inherit',

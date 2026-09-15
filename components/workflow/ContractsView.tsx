@@ -520,8 +520,8 @@ function Chip({
         font: 'inherit', fontSize: 12, fontWeight: on ? 600 : 500,
         padding: '5px 11px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
         border: `1px solid ${on ? 'var(--aq-text)' : 'var(--aq-border-light)'}`,
-        background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
-        color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
+        background: on ? 'var(--aq-ink-btn)' : 'var(--aq-bg-elevated)',
+        color: on ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-secondary)',
       }}
     >
       {label}

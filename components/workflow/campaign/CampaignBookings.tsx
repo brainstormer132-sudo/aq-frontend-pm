@@ -546,8 +546,8 @@ export function CampaignBookings({
                   padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
                   fontSize: 12, fontFamily: 'inherit', whiteSpace: 'nowrap',
                   border: `1px solid ${on ? 'transparent' : 'var(--aq-border)'}`,
-                  background: on ? 'var(--aq-text)' : 'var(--aq-bg-elevated)',
-                  color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
+                  background: on ? 'var(--aq-ink-btn)' : 'var(--aq-bg-elevated)',
+                  color: on ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-secondary)',
                   fontWeight: on ? 600 : 400,
                 }}
               >{label} {count}</button>

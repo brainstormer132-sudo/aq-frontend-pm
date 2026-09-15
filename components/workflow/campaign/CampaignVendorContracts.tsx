@@ -378,8 +378,8 @@ function SplitChoice({ value, onChange, disabled }: {
               font: 'inherit', fontSize: 12, fontWeight: on ? 700 : 600,
               padding: '5px 11px', border: 'none', whiteSpace: 'nowrap',
               cursor: disabled ? 'not-allowed' : 'pointer',
-              background: on ? 'var(--aq-text)' : 'transparent',
-              color: on ? 'var(--aq-text-inverse)' : 'var(--aq-text-secondary)',
+              background: on ? 'var(--aq-ink-btn)' : 'transparent',
+              color: on ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-secondary)',
             }}
           >{o.l}</button>
         );
