@@ -4541,6 +4541,10 @@ export interface LegacyVendor {
   name: string;
   license_number: string | null;
   created_at: string | null;
+  // 089: the licence-holder org. org_id links a talent to a shared agency/company;
+  //       org (attached at fetch) is that record, so the contract can name it.
+  org_id?: string | null;
+  org?: { id: string; name: string; license_number: string | null; id_number: string | null; vat_number: string | null } | null;
   // 029 additions
   category_id?: string | null;
   id_number?: string | null;
@@ -4816,12 +4820,13 @@ export function useLegacyVendors() {
         // Vendors and bank accounts are both paged: the vendor book was at
         // 495 rows when this was written, which is close enough to the 1000
         // cap that hitting it was a matter of time, and the failure is silent.
-        const [v, b, { data: cats }] = await Promise.all([
+        const [v, b, { data: cats }, { data: orgs }] = await Promise.all([
           selectAllRows<LegacyVendor>('useLegacyVendors vendors',
             () => supabase.from('vendors').select('*').order('name', { ascending: true })),
           selectAllRows<LegacyBankAccount>('useLegacyVendors banks',
             () => supabase.from('bank_accounts').select('*').order('id', { ascending: true })),
           supabase.from('vendor_categories').select('id, key'),
+          supabase.from('vendor_orgs').select('id, name, license_number, id_number, vat_number'),
         ]);
 
         // Backfill the legacy free-text category from the 029 FK, ONCE, here.
@@ -4834,11 +4839,17 @@ export function useLegacyVendors() {
         // form, which writes `category_id`. Repairing it at the source fixes
         // all six; repairing it at each call site would have fixed five.
         const categories = (cats || []) as { id: string; key: string }[];
-        const vendors = ((v || []) as LegacyVendor[]).map((row) => (
-          (row.vendor_category ?? '').trim()
-            ? row
-            : { ...row, vendor_category: vendorCategoryKey(row, categories) }
-        ));
+        // Attach the licence-holder org once, here, so every place that reads a
+        // vendor (readiness, the contract payload, the registry) gets it without
+        // its own fetch - the same reasoning as the category backfill above.
+        const orgById = new Map(((orgs || []) as any[]).map((o) => [String(o.id), o]));
+        const vendors = ((v || []) as LegacyVendor[]).map((row) => {
+          const vendor_category = (row.vendor_category ?? '').trim()
+            ? row.vendor_category
+            : vendorCategoryKey(row, categories);
+          const org = (row as any).org_id ? (orgById.get(String((row as any).org_id)) ?? null) : null;
+          return { ...row, vendor_category, org };
+        });
 
         return { vendors, banks: (b || []) as LegacyBankAccount[] };
       },
@@ -5137,6 +5148,7 @@ export function vendorContractReadiness(
     booking: subtask as any,
     campaign: (parent ?? null) as any,
     vendor: vendor as any,
+    org: (vendor as any).org ?? null,
     identifier: vendorIdentifier(vendor as any),
     bank: bank as any,
     amount,
@@ -5238,6 +5250,17 @@ function buildVendorContractPayload(opts: {
     return s.length ? s : null;
   };
 
+  // The licence party. When this talent performs under an org licence, the ORG
+  // is the party: its name leads the contract, and its licence number and VAT
+  // are the licence. The vendor's own contact_name still names the performer
+  // (below). No org: the vendor is the party, exactly as before.
+  const org = (vendor as any).org ?? null;
+  const licenceName = txt(org?.name) ? String(org.name).trim() : vendor.name;
+  const licenceNumber = org
+    ? (txt(org.license_number) ?? txt(org.id_number) ?? txt(vendor.license_number) ?? txt(vendor.id_number))
+    : (txt(vendor.license_number) ?? txt(vendor.id_number));
+  const licenceVat = org ? txt(org.vat_number) : null;
+
   // Subtask first, campaign second. A vendor booked on Instagram inside a
   // campaign that also runs TikTok should say Instagram, not both.
   const platforms = txt(subtask.platform) ?? campaignPlatformText(parent);
@@ -5275,7 +5298,7 @@ function buildVendorContractPayload(opts: {
     // has none, nothing ever filled it, and requiring it blocked every
     // vendor contract on a field with no source. What a vendor contract
     // does need is below: the person, their handle, and the terms.
-    cr_number: null, vat_number: null, signatory_name: null,
+    cr_number: null, vat_number: licenceVat, signatory_name: null,
     street: null, city: null, postcode: null, country: null,
     email: null, phone: null,
 
@@ -5289,7 +5312,7 @@ function buildVendorContractPayload(opts: {
 
     pending_vendor_id: null,
     vendor_id: vendor.id,
-    vendor_name: vendor.name,
+    vendor_name: licenceName,
     vendor_category: category,
     vendor_email: txt(vendor.email),
     vendor_phone: txt(vendor.phone),
@@ -5299,7 +5322,7 @@ function buildVendorContractPayload(opts: {
     iban: bank?.iban ?? null,
     account_number: bank?.account_number ?? null,
     swift_code: bank?.swift_code ?? null,
-    license_number: txt(vendor.license_number) ?? txt(vendor.id_number),
+    license_number: licenceNumber,
     is_influencer: isTrackableVendorCategory(vendor.vendor_category),
     platforms,
     // "6 × Home Ad, 6 × Store Visit, 3 × Reminder" rather than one ad type,
