@@ -1188,16 +1188,31 @@ export function usePmTaskCampaignRollup(workspaceId: string | null) {
     // its thousandth campaign was silently handing back 1000 rows, and every
     // campaign after that showed no vendors and no value. A zero in the
     // vendors column is a thing people act on.
-    const data = await cachedFetch(`campaignRollup:${workspaceId}`, () =>
-      selectAllRows<PmTaskCampaignRollup>('usePmTaskCampaignRollup', () =>
-        supabase
-          .from('pm_task_campaign_rollup')
-          .select('*')
-          .eq('workspace_id', workspaceId)
-          .order('parent_task_id', { ascending: false })),
-      force);
-    setRows(data);
-    setLoading(false);
+    const load = (bust: boolean) =>
+      cachedFetch(`campaignRollup:${workspaceId}`, () =>
+        selectAllRows<PmTaskCampaignRollup>('usePmTaskCampaignRollup', () =>
+          supabase
+            .from('pm_task_campaign_rollup')
+            .select('*')
+            .eq('workspace_id', workspaceId)
+            .order('parent_task_id', { ascending: false })),
+        bust);
+    try {
+      let data = await load(force);
+      // A cached EMPTY result on a fresh mount is suspicious: the module-level
+      // cache survives client-side navigation, so an empty read taken before
+      // the session was ready (RLS returns zero rows, not an error) is then
+      // served to Finance - and every other screen sharing this rollup - for
+      // the rest of the visit. That is the "have to refresh every time" bug.
+      // Re-validate once, uncached, so the screen self-heals instead of
+      // waiting for a full page reload.
+      if (!force && data.length === 0) data = await load(true);
+      setRows(data);
+    } finally {
+      // Always clear loading: a thrown fetch must not wedge the screen on its
+      // skeleton until a refresh.
+      setLoading(false);
+    }
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
