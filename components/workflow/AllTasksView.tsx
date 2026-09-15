@@ -11,6 +11,8 @@ import {
   type TaskRow, type PersonLike,
 } from '@/lib/all-tasks';
 import { SkeletonRows } from '@/components/Skeleton';
+import { useBandExtras } from './ScreenBand';
+import { allTasksHero, type BandExtras } from '@/lib/band';
 import { CalendarPanel } from './TaskCalendarView';
 
 /**
@@ -99,8 +101,19 @@ export function AllTasksView({
 
   const waiting = loading && tasks.length === 0;
 
+  // The band's hero: the money on the table as it is filtered, named honestly
+  // (priced rows only, "(filtered)" when a filter is on). The summary line
+  // under the title below keeps the counts; the band carries the figure.
+  const bandExtras = useMemo<BandExtras | null>(
+    () => (waiting || !today ? null : { hero: allTasksHero(summary) }),
+    // summary is rebuilt every render; its fields are what matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [waiting, today, summary.shown, summary.total, summary.value, summary.unpriced],
+  );
+  useBandExtras(bandExtras);
+
   return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <header style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 20, fontWeight: 700 }}>All tasks</h2>
         <span style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>

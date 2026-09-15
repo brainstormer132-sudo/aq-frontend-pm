@@ -13,6 +13,8 @@ import {
   type AttentionItem, type AttentionGroup, type Severity,
 } from '@/lib/attention';
 import { SkeletonRows, SkeletonLine } from '@/components/Skeleton';
+import { useBandExtras } from './ScreenBand';
+import { dashboardHero, attentionChips, welcomeTitle, type BandExtras } from '@/lib/band';
 import { FollowUps } from './FollowUps';
 
 /**
@@ -111,25 +113,37 @@ export function WorkflowDashboard({
     [profiles, counts],
   );
 
+  // The band above this screen: a welcome, the one-line state of your work,
+  // the severity counts as chips (click one: the list scrolls into view), and
+  // the hero - how many of YOUR live campaigns have nothing wrong with them.
+  // Your campaigns only, the same rule the list below uses; the label says so.
+  const bandExtras = useMemo<BandExtras>(() => ({
+    title: welcomeTitle(userName),
+    sub: loading || !today
+      ? 'Checking what needs your attention\u2026'
+      : attention.counts.urgent + attention.counts.soon === 0
+        ? `Nothing is overdue and nothing is stuck${role ? `, in your ${roleLabel(role)} view` : ''}.`
+        : attentionSummary(attention.counts),
+    hero: loading || !today ? null : dashboardHero(rows, attention.items, userId),
+    // Three zero chips while loading, so the band does not grow when the
+    // counts arrive and the click target does not move under the cursor.
+    chips: loading || !today
+      ? attentionChips({ urgent: 0, soon: 0, tidy: 0 })
+      : attentionChips(attention.counts, () => {
+          document.getElementById('aq-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }),
+  }), [userName, loading, today, attention, role, rows, userId]);
+  useBandExtras(bandExtras);
+
   return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <header>
-        <h2 style={{ fontSize: 24, fontWeight: 800 }}>Hello, {userName.split(' ')[0]}.</h2>
-        <p style={{ color: 'var(--aq-text-secondary)', marginTop: 4, fontSize: 14 }}>
-          {loading || !today
-            ? 'Checking what needs your attention…'
-            : attention.counts.urgent + attention.counts.soon === 0
-              ? `Nothing is overdue and nothing is stuck${role ? `, in your ${roleLabel(role)} view` : ''}.`
-              : attentionSummary(attention.counts)}
-        </p>
-      </header>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
 
       {/* ── 1. What is wrong ──────────────────────────────────────
           The part that did not exist. A campaign with a vendor booked, no
           price on it and no contract requested used to look exactly like a
           campaign that was fine, and stayed that way until somebody opened
           it. What counts as a problem lives in lib/attention.ts. */}
-      <section className="aq-card" style={{ padding: 20 }}>
+      <section id="aq-attention" className="aq-card" style={{ padding: 20, scrollMarginTop: 12 }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 700 }}>Needs attention</h3>

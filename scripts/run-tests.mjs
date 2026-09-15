@@ -84,6 +84,7 @@ const LIBS = [
   'lib/finance-notify.ts',
   'lib/crm-sync.ts',
   'lib/theme.ts',
+  'lib/band.ts',
 ];
 
 const GREEN = '\x1b[32m';

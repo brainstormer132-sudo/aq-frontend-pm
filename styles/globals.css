@@ -175,7 +175,70 @@ html, body {
   border-radius: var(--aq-radius-sm);
 }
 
-/* ============== Reusable element classes ================== */
+/* ============== The screen band ============================
+   One dark band at the top of every screen (components/workflow/ScreenBand).
+   It bleeds to the edges of <main>, whose padding is 28px. Same slate as the
+   sidebar, one step lighter, so the two read as one shell. Already dark, so
+   html.dark changes nothing here. */
+.aq-band {
+  margin: -28px -28px 22px;
+  padding: 22px 28px 20px;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(31, 143, 79, 0.32), transparent 55%),
+    radial-gradient(circle at 0% 100%, rgba(15, 29, 34, 0.45), transparent 60%),
+    #13252b;
+  border-bottom: 1px solid var(--aq-sidebar-border);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap;
+  animation: aqBandIn 0.28s ease-out both;
+}
+@keyframes aqBandIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.aq-band-text { min-width: 0; flex: 1 1 320px; }
+.aq-band-eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--aq-sidebar-text); opacity: 0.8;
+}
+.aq-band-title { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; margin-top: 2px; line-height: 1.15; }
+.aq-band-sub { font-size: 13.5px; color: var(--aq-sidebar-text); margin-top: 4px; max-width: 70ch; }
+.aq-band-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.aq-band-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.08); color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font: inherit; font-size: 12px; font-weight: 600; line-height: 1.2;
+  transition: background var(--aq-transition), transform 120ms ease;
+}
+.aq-band-chip b { font-variant-numeric: tabular-nums; }
+.aq-band-chip.is-zero { opacity: 0.55; }
+button.aq-band-chip { cursor: pointer; }
+button.aq-band-chip:hover { background: rgba(255, 255, 255, 0.16); }
+button.aq-band-chip:active { transform: scale(0.97); }
+.aq-band-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.aq-band-hero { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.aq-band-hero strong {
+  display: block; font-size: 30px; font-weight: 800; line-height: 1;
+  letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+}
+.aq-band-hero small { display: block; font-size: 11.5px; color: var(--aq-sidebar-text); margin-top: 4px; max-width: 26ch; }
+.aq-band-ring { width: 56px; height: 56px; transform: rotate(-90deg); flex-shrink: 0; }
+.aq-band-ring circle { fill: none; stroke-width: 6; }
+.aq-band-ring .bg { stroke: rgba(255, 255, 255, 0.14); }
+.aq-band-ring .fg {
+  stroke: #34c46f; stroke-linecap: round; stroke-dasharray: 138.23;
+  animation: aqRingDraw 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes aqRingDraw { from { stroke-dashoffset: 138.23; } }
+
+/* The view under the band. Keyed on the view in page.tsx, so a sidebar click
+   has a visible result: the old screen is gone, the new one slides in. */
+.aq-view { animation: aqViewIn 0.18s ease-out both; }
+@keyframes aqViewIn { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .aq-band, .aq-view, .aq-band-ring .fg { animation: none; }
+}
 
 .aq-card {
   background: var(--aq-bg-elevated);

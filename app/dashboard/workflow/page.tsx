@@ -12,6 +12,8 @@ import { useRealtime } from '@/hooks/use-realtime';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { SkeletonShell, SkeletonRows } from '@/components/Skeleton';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
+import { ScreenBand, BandContext } from '@/components/workflow/ScreenBand';
+import type { BandExtras } from '@/lib/band';
 import { NewTaskForm } from '@/components/workflow/NewTaskForm';
 // NotificationsBell removed from topbar 2026-05-17 — the inbox is now an
 // item in the left sidebar (see WorkflowSidebar "Inbox" entry) which opens
@@ -61,6 +63,8 @@ export default function WorkflowPage() {
   const [bootError, setBootError] = useState('');
   const [booting, setBooting] = useState(true);
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  /** What the current view adds to the band: hero, chips, its own title. */
+  const [bandExtras, setBandExtras] = useState<BandExtras | null>(null);
   /**
    * Open a task — which now means going to its campaign's page.
    *
@@ -286,24 +290,14 @@ export default function WorkflowPage() {
       />
 
       <main style={{ flex: 1, padding: 28, overflow: 'auto', position: 'relative' }}>
-        <header style={{
-          marginBottom: 22, display: 'flex',
-          justifyContent: 'space-between', alignItems: 'flex-end',
-          gap: 16,
-        }}>
-          <div>
-            <p style={{
-              fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
-              textTransform: 'uppercase', color: 'var(--aq-text-muted)',
-            }}>
-              {workspace.name} · {role ?? 'no role'}
-            </p>
-            <h1 style={{ fontSize: 28, fontWeight: 800, marginTop: 2 }}>{viewTitle(view)}</h1>
-            <p style={{ fontSize: 14, color: 'var(--aq-text-secondary)', marginTop: 4 }}>
-              {viewSubtitle(view)}
-            </p>
-          </div>
-        </header>
+        {/* One band per screen. The view underneath may add a hero figure and
+            chips through BandContext; the title and question are the defaults. */}
+        <ScreenBand
+          title={viewTitle(view)}
+          sub={viewSubtitle(view)}
+          extras={bandExtras}
+          eyebrow={`${workspace.name} \u00b7 ${role ?? 'no role'}`}
+        />
 
         {/* Only while this person still has no real name of their own.
             Saving it updates every view that renders them. */}
@@ -317,6 +311,10 @@ export default function WorkflowPage() {
           />
         )}
 
+        <BandContext.Provider value={setBandExtras}>
+        {/* Keyed on the view so a screen change rebuilds rather than patches
+            the subtree, and .aq-view gets to play its entrance each time. */}
+        <div key={view} className="aq-view">
         {view === 'dashboard' && (
           <WorkflowDashboard
             workspaceId={workspace.id}
@@ -430,6 +428,8 @@ export default function WorkflowPage() {
         {view === 'settings' && (
           <SettingsView workspaceId={workspace.id} role={role} />
         )}
+        </div>
+        </BandContext.Provider>
 
         {/* Floating toast */}
         {toast && (
