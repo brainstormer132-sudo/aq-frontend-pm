@@ -249,3 +249,90 @@ export function paginate<T>(items: T[], page: number, pageSize: number): Paged<T
   const start = (p - 1) * size;
   return { items: all.slice(start, start + size), page: p, pageCount, total: all.length };
 }
+// -----------------------------------------------------------------
+// Payment sections: All / Partial paid / Advanced (2026-09-15)
+// -----------------------------------------------------------------
+//
+// Finance needs three views over the money the ledger tracks: everything, the
+// partially-paid rows (a balance is still owed), and advances - money that
+// moved before a campaign completed. Advances are recorded in their own
+// columns (client_advance_amount/date, vendor_advance_amount/date, migration
+// 092) so they are distinct from the final settlement, and they get their own
+// section so the completed-only Collection / Liability totals stay clean.
+//
+// Pure section placement + arithmetic. The rows are built from the money
+// ledger (plus the advance columns) by the caller; here we only decide which
+// section a row belongs to and what balance it still owes.
+
+export type PaymentSectionKey = 'all' | 'partial' | 'advanced';
+
+export interface PaymentSection {
+  key: PaymentSectionKey;
+  label: string;
+  blurb: string;
+}
+
+/** The finance payment sections, in order. All first. */
+export const PAYMENT_SECTIONS: PaymentSection[] = [
+  { key: 'all',      label: 'All',          blurb: 'Every campaign with money in play.' },
+  { key: 'partial',  label: 'Partial paid', blurb: 'Part of the bill is in; a balance is still owed.' },
+  { key: 'advanced', label: 'Advanced',     blurb: 'Paid in advance, before the campaign completed.' },
+];
+
+/**
+ * The bits of a row a section needs. A money-ledger LedgerRow satisfies
+ * `state`; `advance` / `advanceDate` come from the advance columns (092).
+ */
+export interface PaymentRowLike {
+  state: 'paid' | 'partial' | 'unpaid';
+  advance?: number | null;
+  advanceDate?: string | null;
+}
+
+/** An advance was recorded on this row. */
+export function hasAdvance(row: PaymentRowLike): boolean {
+  return num(row?.advance) > 0;
+}
+
+/** Does this row belong in the given section? */
+export function inPaymentSection(row: PaymentRowLike, key: PaymentSectionKey): boolean {
+  if (key === 'all') return true;
+  if (key === 'partial') return txt(row?.state).toLowerCase() === 'partial';
+  return hasAdvance(row); // 'advanced'
+}
+
+/** The rows of one section, preserving the caller's order. */
+export function paymentSectionRows<T extends PaymentRowLike>(rows: T[], key: PaymentSectionKey): T[] {
+  return (rows ?? []).filter((r) => inPaymentSection(r, key));
+}
+
+/** How many rows each section holds, for the section tab badges. */
+export function paymentSectionCounts(rows: PaymentRowLike[]): Record<PaymentSectionKey, number> {
+  const out = { all: 0, partial: 0, advanced: 0 } as Record<PaymentSectionKey, number>;
+  for (const s of PAYMENT_SECTIONS) out[s.key] = paymentSectionRows(rows ?? [], s.key).length;
+  return out;
+}
+
+/**
+ * Remaining balance to collect (client) or pay (vendor): billed minus paid,
+ * capped so an overpayment - which is a typo, not a credit note - never shows a
+ * negative balance. Same rule the money ledger already trusts.
+ */
+export function paymentRemaining(billed: unknown, paid: unknown): number {
+  const b = num(billed);
+  const p = Math.min(num(paid), b);
+  return Math.round(Math.max(0, b - p) * 100) / 100;
+}
+
+/**
+ * Pay state worked out from the amounts, for when no recorded status is on the
+ * row. Nothing paid -> unpaid; paid covers the bill -> paid; in between ->
+ * partial. The recorded status still wins when the caller has one.
+ */
+export function payStateOf(billed: unknown, paid: unknown): 'paid' | 'partial' | 'unpaid' {
+  const b = num(billed);
+  const p = num(paid);
+  if (p <= 0) return 'unpaid';
+  if (p >= b && b > 0) return 'paid';
+  return 'partial';
+}
