@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict xjLfndadJhsxi31xb09bX6mHwHlEgalJkLuYJ0TD5x8HefjM4xtsp8excCYRBLj
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.11
@@ -23,7 +22,7 @@ SET row_security = off;
 -- Name: public; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA public;
+CREATE SCHEMA IF NOT EXISTS public;
 
 
 --
@@ -8981,5 +8980,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
-\unrestrict xjLfndadJhsxi31xb09bX6mHwHlEgalJkLuYJ0TD5x8HefjM4xtsp8excCYRBLj
 
