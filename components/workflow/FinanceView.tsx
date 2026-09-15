@@ -20,8 +20,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
-import { usePmTaskCampaignRollup, useWorkspaceProfiles, selectAllRows } from '@/hooks/use-workflow';
+import { usePmTaskCampaignRollup, useWorkspaceProfiles, selectAllRows, cachedFetch } from '@/hooks/use-workflow';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
+import { AqDrawingBlock } from '@/components/AQLoading';
 import {
   financeRows, statusLabel, statusBadge, rowsForTab, tabCounts, paginate,
   openRequests, hasOpenRequest,
@@ -82,33 +83,39 @@ export function FinanceView({
   const [refreshing, setRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string>('');
 
-  const loadDocs = useCallback(async () => {
+  // Cached (like the rollup) so returning to Finance is instant; `force` skips
+  // the cache after a mutation (generate) or an explicit Refresh.
+  const loadDocs = useCallback(async (force = false) => {
     if (!workspaceId) { setDocs([]); return; }
-    const supabase = createSupabase();
-    const { data, error: e } = await supabase
-      .from('finance_documents')
-      .select('id, pm_task_id, kind, document_number, status, amount, created_at')
-      .eq('workspace_id', workspaceId)
-      .order('created_at', { ascending: false });
-    if (e) { setDocs([]); setError(e.message ?? String(e)); return; }
-    setDocs((data ?? []) as FinanceDocLite[]);
+    try {
+      const data = await cachedFetch(`financeDocs:${workspaceId}`, async () => {
+        const supabase = createSupabase();
+        const { data: rows, error: e } = await supabase
+          .from('finance_documents')
+          .select('id, pm_task_id, kind, document_number, status, amount, created_at')
+          .eq('workspace_id', workspaceId)
+          .order('created_at', { ascending: false });
+        if (e) throw e;
+        return (rows ?? []) as FinanceDocLite[];
+      }, force);
+      setDocs(data);
+    } catch (e: any) { setDocs([]); setError(e?.message ?? String(e)); }
   }, [workspaceId]);
 
   // Open (pending) quotation / invoice requests raised on campaigns (048).
   // Without this the Finance menu never learned an ask existed - it lived only
   // on the campaign's paperwork panel. Workspace-wide, pending only.
-  const loadReqs = useCallback(async () => {
+  const loadReqs = useCallback(async (force = false) => {
     if (!workspaceId) { setReqs([]); return; }
-    const supabase = createSupabase();
-    const rows = await selectAllRows<DocRequestLite>(
+    const rows = await cachedFetch(`financeReqs:${workspaceId}`, () => selectAllRows<DocRequestLite>(
       'financeDocumentRequests',
-      () => supabase.from('document_requests')
+      () => createSupabase().from('document_requests')
         .select('pm_task_id, doc_kind, status, requested_by, requested_at')
         .eq('workspace_id', workspaceId)
         .eq('status', 'pending')
         .order('requested_at', { ascending: true }),
       () => { /* requests are supplementary; ignore a read error, treat as none */ },
-    );
+    ), force);
     setReqs(rows);
   }, [workspaceId]);
 
@@ -120,7 +127,7 @@ export function FinanceView({
   const doRefresh = useCallback(async () => {
     setRefreshing(true); setError('');
     try {
-      await Promise.all([Promise.resolve(refetchCampaigns()), loadDocs(), loadReqs()]);
+      await Promise.all([Promise.resolve(refetchCampaigns()), loadDocs(true), loadReqs(true)]);
       setRefreshedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     } finally {
       setRefreshing(false);
@@ -177,7 +184,7 @@ export function FinanceView({
     setError('');
     try {
       await generateQuotation(r.taskId);
-      await loadDocs();
+      await loadDocs(true);
     } catch (e: any) {
       setError(`${r.title}: ${e?.message ?? 'Could not generate the quotation.'}`);
     } finally {
@@ -325,7 +332,7 @@ export function FinanceView({
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={actionable ? 5 : 4} style={{ textAlign: 'center', color: 'var(--aq-text-muted)', padding: 18 }}>Loading...</td></tr>
+              <tr><td colSpan={actionable ? 5 : 4} style={{ padding: 8 }}><AqDrawingBlock label={'Loading finance\u2026'} /></td></tr>
             ) : paged.items.length === 0 ? (
               <tr><td colSpan={actionable ? 5 : 4} style={{ textAlign: 'center', color: 'var(--aq-text-muted)', padding: 18 }}>
                 {tab === 'all'

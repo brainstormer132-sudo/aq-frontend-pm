@@ -237,7 +237,7 @@ async function timed<T>(label: string, run: () => Promise<T>): Promise<T> {
   }
 }
 
-async function cachedFetch<T>(key: string, loader: () => Promise<T>, force = false): Promise<T> {
+export async function cachedFetch<T>(key: string, loader: () => Promise<T>, force = false): Promise<T> {
   const now = Date.now();
   const hit = REF_CACHE.get(key) as CacheEntry<T> | undefined;
   if (!force && hit) {

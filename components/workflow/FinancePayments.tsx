@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 import { usePmTaskCampaignRollup, selectAllRows } from '@/hooks/use-workflow';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
+import { AqDrawingBlock } from '@/components/AQLoading';
 import {
   buildPaymentRows, paymentSectionRows, paymentSectionCounts,
   paginate, PAYMENT_SECTIONS, FINANCE_PAGE_SIZES,
@@ -241,7 +242,7 @@ export function FinancePayments({
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--aq-text-muted)', padding: 18 }}>Loading...</td></tr>
+              <tr><td colSpan={6} style={{ padding: 8 }}><AqDrawingBlock label={'Loading payments\u2026'} /></td></tr>
             ) : paged.items.length === 0 ? (
               <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--aq-text-muted)', padding: 18 }}>
                 {rows.length === 0 ? 'Nothing with money in play yet.'
