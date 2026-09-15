@@ -141,6 +141,9 @@ test('serviceTypeCandidates: aliases first, raw last', () => {
   assert.deepEqual(serviceTypeCandidates('BillBoard'), ['Billboards', 'BillBoard']);
   assert.deepEqual(serviceTypeCandidates('Campaign'), ['Influencers Campaign', 'Campaign']);
   assert.deepEqual(serviceTypeCandidates('Social Media'), ['Social Media']);
+  // 'Ad Hook' first, so an import matches the canonical type (and creates it if
+  // absent) instead of resurrecting the old 'AD Hoc' the workspace was renamed off.
+  assert.deepEqual(serviceTypeCandidates('Ad Hoc'), ['Ad Hook', 'AD Hoc', 'Ad Hoc']);
   assert.deepEqual(serviceTypeCandidates(''), []);
 });
 

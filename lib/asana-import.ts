@@ -463,7 +463,7 @@ export function serviceTypeCandidates(s: string): string[] {
     'billboards': ['Billboards'],
     'package ad': ['Package Ad', 'Package AD'],
     'campaign': ['Influencers Campaign', 'Campaign'],
-    'ad hoc': ['AD Hoc', 'Ad Hoc'],
+    'ad hoc': ['Ad Hook', 'AD Hoc', 'Ad Hoc'],
     'annual contracts': ['Annual Contracts', 'Annual Contract'],
   };
   const list = alias[f] ?? [];
