@@ -42,6 +42,17 @@ eq('a complete booking needs nothing', vendorContractNeeds(good()), []);
   eq('name on the licence', labels(vendorContractNeeds(i)), ['Name on the licence or ID']);
 }
 {
+  // Talent under an org licence: the org supplies the licence name, so a blank
+  // vendor name is NOT a gap - the org is the party.
+  const i = good(); i.vendor.name = ''; i.org = { name: 'Grid Agency' };
+  eq('org supplies the licence name', labels(vendorContractNeeds(i)), []);
+}
+{
+  // An org with no name of its own does not paper over a missing licence name.
+  const i = good(); i.vendor.name = ''; i.org = { name: '' };
+  eq('a nameless org is still a gap', labels(vendorContractNeeds(i)), ['Name on the licence or ID']);
+}
+{
   const i = good(); i.identifier = { kind: 'license', value: null };
   eq('licence number', labels(vendorContractNeeds(i)), ['Licence number']);
 }

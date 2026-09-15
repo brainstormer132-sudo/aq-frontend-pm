@@ -70,6 +70,13 @@ export interface VendorContractInput {
   } | null;
   /** Licence or ID, already resolved by the caller — they know the category. */
   identifier: { kind: 'license' | 'id'; value: string | null };
+  /**
+   * The licence-holding organization, when this talent performs under one.
+   * The org is the contract's party: its name goes on the licence line and its
+   * number resolves the identifier. The vendor's contact_name is still the
+   * performer. Absent/null when the talent is on their own licence.
+   */
+  org?: { name?: unknown } | null;
   bank: { iban?: unknown } | null;
   /** What the vendor is owed. Null when nobody has priced the booking. */
   amount: number | null;
@@ -98,8 +105,15 @@ export function vendorContractNeeds(input: VendorContractInput): Missing[] {
 
   const onVendor = `Vendors → ${txt(vendor.name) || 'this vendor'}`;
 
-  // 1. The name on the licence or ID, and the number itself.
-  if (!has(vendor.name)) out.push({ label: 'Name on the licence or ID', where: onVendor });
+  // 1. The name on the licence or ID, and the number itself. When the talent
+  //    is under an org licence, that name is the ORG's - it is the party - so
+  //    it is not a gap on the vendor, and the org's name is where to look.
+  const org = input.org;
+  const licenceName = org && has(org.name) ? org.name : vendor.name;
+  const licenceWhere = org && has(org.name)
+    ? `Vendor organizations \u2192 ${txt(org.name)}`
+    : onVendor;
+  if (!has(licenceName)) out.push({ label: 'Name on the licence or ID', where: licenceWhere });
   if (!identifier.value) {
     out.push({
       label: identifier.kind === 'license' ? 'Licence number' : 'ID number',
