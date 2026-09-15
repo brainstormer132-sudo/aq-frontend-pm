@@ -13,6 +13,7 @@ const deal = (over = {}) => ({
   value: 120000,
   target_type: 'client',
   target_id: 'c-9',
+  brand_id: 'b-3',
   owner_id: 'p-7',
   expected_close_date: '2026-03-01',
   notes: 'Two reels, one static.',
@@ -28,6 +29,7 @@ const deal = (over = {}) => ({
   eq('deal link', p.deal_id, 'd-1');
   eq('owner becomes closer', p.sales_closer_id, 'p-7');
   eq('close date becomes due date', p.due_date, '2026-03-01');
+  eq('brand carries', p.brand_id, 'b-3');
 }
 
 // A vendor deal has no client to hang a campaign on.
@@ -37,6 +39,8 @@ const deal = (over = {}) => ({
   // The link and the closer still carry - they are not client-specific.
   eq('vendor deal still links', p.deal_id, 'd-1');
   eq('vendor deal keeps closer', p.sales_closer_id, 'p-7');
+  // A brand belongs to a client, so a vendor deal drops it even if one is set.
+  eq('vendor deal drops brand', p.brand_id, null);
 }
 
 // The new fields degrade to null, never to an empty string.
@@ -48,6 +52,7 @@ const deal = (over = {}) => ({
   eq('no owner => null closer', p.sales_closer_id, null);
   eq('no close date => null due', p.due_date, null);
   eq('no value => null budget', p.budget, null);
+  eq('no brand => null brand', p.brand_id, null);
 }
 
 // A datetime close date is trimmed to the day.

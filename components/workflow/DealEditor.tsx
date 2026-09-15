@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   addCrmDeal, updateCrmDeal,
-  useClients, useLegacyVendors,
+  useClients, useLegacyVendors, useClientBrands,
   DEAL_STAGES, type CrmDeal, type DealStage,
 } from '@/hooks/use-workflow';
 
@@ -45,8 +45,15 @@ export function DealEditor({
   const [expectedClose, setExpectedClose] = useState<string>(deal?.expected_close_date ?? '');
   const [targetType, setTargetType]     = useState<'' | 'client' | 'vendor'>(deal?.target_type ?? '');
   const [targetId, setTargetId]         = useState<string>(deal?.target_id ?? '');
+  const [brandId, setBrandId]           = useState<string>(deal?.brand_id ?? '');
   const [ownerName, setOwnerName]       = useState(deal?.owner_name ?? currentUserName);
   const [notes, setNotes]               = useState(deal?.notes ?? '');
+
+  // A brand belongs to a client, so it is only offered on a client deal, and
+  // only the linked client's brands. Winning the deal carries this brand into
+  // the New Task form so marketing does not pick it again.
+  const linkedClientId = targetType === 'client' && targetId ? targetId : null;
+  const { brands } = useClientBrands(linkedClientId);
 
   const [busy, setBusy]                 = useState(false);
   const [error, setError]               = useState('');
@@ -88,6 +95,8 @@ export function DealEditor({
         expected_close_date: expectedClose || null,
         target_type: (targetType || null) as 'client' | 'vendor' | null,
         target_id: (targetType && targetId) ? targetId : null,
+        // A brand is client-specific, so it is dropped on a vendor / unlinked deal.
+        brand_id: (targetType === 'client' && targetId && brandId) ? brandId : null,
         owner_name: ownerName || '',
         notes: notes || '',
       };
@@ -230,7 +239,7 @@ export function DealEditor({
               <select
                 className="aq-select"
                 value={targetType}
-                onChange={(e) => { setTargetType(e.target.value as any); setTargetId(''); }}
+                onChange={(e) => { setTargetType(e.target.value as any); setTargetId(''); setBrandId(''); }}
               >
                 <option value="">— none —</option>
                 <option value="client">Client</option>
@@ -241,7 +250,7 @@ export function DealEditor({
               <select
                 className="aq-select"
                 value={targetId}
-                onChange={(e) => setTargetId(e.target.value)}
+                onChange={(e) => { setTargetId(e.target.value); setBrandId(''); }}
                 disabled={!targetType}
               >
                 <option value="">{targetType ? '— pick one —' : '(pick a type first)'}</option>
@@ -251,6 +260,23 @@ export function DealEditor({
               </select>
             </Field>
           </div>
+
+          {/* Brand: only when the deal is for a client. Winning the deal carries
+              this into the New Task form, so marketing starts with it set. */}
+          {linkedClientId && (
+            <Field label="Brand">
+              <select
+                className="aq-select"
+                value={brandId}
+                onChange={(e) => setBrandId(e.target.value)}
+              >
+                <option value="">{'\u2014 none \u2014'}</option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>{b.brand_name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
 
           <Field label="Owner">
             <input

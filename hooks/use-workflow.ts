@@ -6394,6 +6394,9 @@ export interface CrmDeal {
   workspace_id: string;
   target_type: 'client' | 'vendor' | null;
   target_id: string | null;
+  /** The client brand this deal is for (091). Only meaningful when the deal
+   *  is linked to a client; the New Task form fills its Brand from it. */
+  brand_id: string | null;
   name: string;
   value: number;
   currency_code: string;
@@ -6437,6 +6440,7 @@ export async function addCrmDeal(deal: {
   expected_close_date?: string | null;
   target_type?: 'client' | 'vendor' | null;
   target_id?: string | null;
+  brand_id?: string | null;
   owner_id?: string | null;
   owner_name?: string;
   notes?: string;

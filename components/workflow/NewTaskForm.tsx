@@ -72,6 +72,9 @@ export function NewTaskForm({
     // The deal owner closed the sale, so they are the sales closer. The picker
     // keys team members as `p:<id>`; the person can still change it.
     salesCloser: prefill?.sales_closer_id ? `p:${prefill.sales_closer_id}` : '',
+    // The deal's brand (091). Kept through mount by the guard on the
+    // client-change effect below.
+    brandId: prefill?.brand_id ?? '',
   });
   const set = <K extends keyof Draft>(k: K) => (v: Draft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
@@ -101,7 +104,15 @@ export function NewTaskForm({
   const influencerClosers = useMemo(() => closerOptions([], vendors || []), [vendors]);
 
   // A brand belongs to a client; changing the client makes the old one wrong.
-  useEffect(() => { setDraft((d) => ({ ...d, brandId: '' })); }, [draft.clientId]);
+  // But a form arriving from a won deal opens with BOTH a client and its brand
+  // already set, and this effect must not wipe that on the first render - only
+  // on a real, later change of client.
+  const brandClientRef = useRef<string>(draft.clientId);
+  useEffect(() => {
+    if (brandClientRef.current === draft.clientId) return;
+    brandClientRef.current = draft.clientId;
+    setDraft((d) => ({ ...d, brandId: '' }));
+  }, [draft.clientId]);
 
   const selectedClient = useMemo(
     () => clients.find((c) => c.id === draft.clientId) ?? null, [clients, draft.clientId]);

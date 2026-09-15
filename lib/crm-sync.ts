@@ -200,6 +200,9 @@ export interface CampaignPrefill {
   sales_closer_id: string | null;
   /** The deal's expected close date becomes the campaign's due date. */
   due_date: string | null;
+  /** The deal's brand fills the campaign's Brand (091). Only when the deal is
+   *  linked to a client, since a brand belongs to a client. */
+  brand_id: string | null;
 }
 
 export function prefillFromDeal(deal: {
@@ -208,6 +211,7 @@ export function prefillFromDeal(deal: {
   value: number | null;
   target_type: string | null;
   target_id: string | null;
+  brand_id?: string | null;
   owner_id?: string | null;
   expected_close_date?: string | null;
   notes?: string | null;
@@ -224,6 +228,8 @@ export function prefillFromDeal(deal: {
     deal_id: txt(deal.id) || null,
     sales_closer_id: txt(deal.owner_id) || null,
     due_date: due || null,
+    // A brand belongs to a client, so it only carries on a client deal.
+    brand_id: isClient ? (txt(deal.brand_id) || null) : null,
     details: notes ? `From won deal “${txt(deal.name)}”.\n\n${notes}` : `From won deal “${txt(deal.name)}”.`,
   };
 }
