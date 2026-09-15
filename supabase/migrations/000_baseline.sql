@@ -1,32 +1,8 @@
 --
 -- PostgreSQL database dump
 --
---
--- AQ BASELINE.  The production schema as pg_dump found it (server 17.6),
--- WITH privileges: 357 GRANTs and 5 REVOKEs.  Do not re-dump this with
--- --no-privileges.  A privilege-less baseline rebuilds a database that
--- nobody can read, and it silently turns the grant assertions in
--- supabase/tests/ green, because they are phrased as "this must NOT be
--- granted" and nothing is.  See the long note in scripts/test-migrations.mjs.
---
--- It replaces migrations 001-074, kept in supabase/migrations/archive/ as
--- a changelog.  Those were never replayable from empty: 002 references a
--- column and a function that later files add.  Everything numbered above
--- 000 replays on top of this.
---
--- Three things were done to the raw dump, all of them mechanical:
---
---   * The \restrict / \unrestrict meta-commands pg_dump 17.11 emits are
---     removed. They are psql-17-only and make the file unreadable to any
---     older client.
---   * CREATE SCHEMA public gained IF NOT EXISTS, so the replay is not
---     order-sensitive about who creates the schema.
---   * The UTF-8 BOM and the CP437 mojibake that PowerShell's `Out-File
---     -Encoding utf8` introduced were undone. Next time redirect with
---     pg_dump's own --file= flag and neither happens.
---
 
-
+\restrict xjLfndadJhsxi31xb09bX6mHwHlEgalJkLuYJ0TD5x8HefjM4xtsp8excCYRBLj
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.11
@@ -47,7 +23,7 @@ SET row_security = off;
 -- Name: public; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE SCHEMA IF NOT EXISTS public;
+CREATE SCHEMA public;
 
 
 --
@@ -131,27 +107,16 @@ CREATE FUNCTION public._invite_accepted_trigger() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   if old.accepted_at is null and new.accepted_at is not null then
-
     perform public._log_invite_event(
-
       new.id, new.workspace_id, new.email, new.role,
-
       'accepted', new.accepted_by,
-
       jsonb_build_object()
-
     );
-
   end if;
-
   return new;
-
 end;
-
 $$;
 
 
@@ -163,37 +128,21 @@ CREATE FUNCTION public._invite_revoked_trigger() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   is_expired boolean;
-
 begin
-
   is_expired := old.accepted_at is null and old.expires_at <= now();
-
   perform public._log_invite_event(
-
     null, old.workspace_id, old.email, old.role,
-
     case when is_expired then 'expired' else 'revoked' end,
-
     auth.uid(),
-
     jsonb_build_object(
-
       'original_invite_id', old.id,
-
       'was_accepted', old.accepted_at is not null
-
     )
-
   );
-
   return old;
-
 end;
-
 $$;
 
 
@@ -205,20 +154,116 @@ CREATE FUNCTION public._log_invite_event(p_invite_id uuid, p_workspace_id uuid, 
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   insert into public.invite_events
-
     (invite_id, workspace_id, invite_email, invite_role, action, actor_id, detail)
-
   values
-
     (p_invite_id, p_workspace_id, p_email, p_role, p_action, p_actor, p_detail);
-
 end;
-
 $$;
+
+
+--
+-- Name: _pm_client_state(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._pm_client_state(s text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+    when lower(btrim(coalesce(s,''))) in ('partial','partially_paid','part_paid','partial_payment','deposit') then 'partial'
+    when lower(btrim(coalesce(s,''))) in ('paid','paid_in_full','done','settled','complete','completed') then 'paid'
+    else 'unpaid' end;
+$$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: contract_signatures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.contract_signatures (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    contract_id text NOT NULL,
+    workspace_id uuid NOT NULL,
+    uploaded_by uuid,
+    uploader_role text NOT NULL,
+    storage_path text NOT NULL,
+    original_filename text,
+    content_type text,
+    byte_size bigint,
+    status text DEFAULT 'pending'::text NOT NULL,
+    rejection_reason text,
+    reviewed_by uuid,
+    reviewed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT contract_signatures_reason_chk CHECK (((status = 'rejected'::text) = ((rejection_reason IS NOT NULL) AND (btrim(rejection_reason) <> ''::text)))),
+    CONSTRAINT contract_signatures_role_chk CHECK ((uploader_role = ANY (ARRAY['vendor'::text, 'client'::text]))),
+    CONSTRAINT contract_signatures_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text])))
+);
+
+
+--
+-- Name: TABLE contract_signatures; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.contract_signatures IS 'Signed contracts uploaded by vendors/clients and the internal accept/reject decision on each. One row per upload attempt; rejected attempts are kept and can be superseded by a new upload.';
+
+
+--
+-- Name: COLUMN contract_signatures.contract_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.contract_signatures.contract_id IS 'generated_contracts.contract_id (text). Loosely referenced, like contract_requests.generated_contract_id.';
+
+
+--
+-- Name: COLUMN contract_signatures.storage_path; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.contract_signatures.storage_path IS 'Object path of the signed PDF in storage, written by aq-backend.';
+
+
+--
+-- Name: accept_signed_contract(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.accept_signed_contract(p_id uuid) RETURNS public.contract_signatures
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  row public.contract_signatures;
+begin
+  if not public.is_staff() then
+    raise exception 'Only staff can review signed contracts';
+  end if;
+
+  select * into row from public.contract_signatures where id = p_id;
+  if row.id is null then
+    raise exception 'Signed contract % not found', p_id;
+  end if;
+
+  if row.status = 'accepted' then
+    return row;
+  end if;
+  if row.status = 'rejected' then
+    raise exception 'Signed contract % was rejected; the uploader must send a corrected copy', p_id;
+  end if;
+
+  update public.contract_signatures
+     set status           = 'accepted',
+         rejection_reason = null,
+         reviewed_by      = auth.uid(),
+         reviewed_at      = now()
+   where id = p_id
+   returning * into row;
+
+  return row;
+end $$;
 
 
 --
@@ -229,23 +274,14 @@ CREATE FUNCTION public.activity_feed(p_workspace_id uuid, p_limit integer DEFAUL
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select a.id, a.task_id, a.action, a.entity_name, a.entity_kind, a.details,
-
          a.user_id, p.full_name, a.created_at, a.task_id is not null
-
     from public.activity_log a
-
     left join public.profiles p on p.id = a.user_id
-
    where a.workspace_id = p_workspace_id
-
      and public.is_member_of(a.workspace_id)
-
    order by a.created_at desc
-
    limit greatest(1, least(coalesce(p_limit, 50), 500));
-
 $$;
 
 
@@ -257,19 +293,12 @@ CREATE FUNCTION public.add_workspace_owner_as_member() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   insert into public.workspace_members (workspace_id, user_id, role)
-
   values (new.id, new.owner_id, 'owner')
-
   on conflict (workspace_id, user_id) do nothing;
-
   return new;
-
 end;
-
 $$;
 
 
@@ -281,105 +310,55 @@ CREATE FUNCTION public.approve_pending_client(p_id bigint) RETURNS TABLE(client_
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   pc record;
-
   existing_client_id uuid;
-
   new_client_id uuid;
-
 begin
-
   select * into pc from public.pending_clients where id = p_id;
-
   if pc.id is null then
-
     raise exception 'Pending client % not found', p_id;
-
   end if;
-
-
 
   -- Idempotency: if a clients row already references this pending row,
-
   -- return it instead of creating a duplicate.
-
   select id into existing_client_id
-
     from public.clients
-
     where pending_client_id = p_id
-
     limit 1;
 
-
-
   if existing_client_id is not null then
-
     update public.pending_clients
-
        set status = 'approved',
-
            reviewed_at = now()
-
      where id = p_id and status <> 'approved';
-
     return query select existing_client_id, true;
-
     return;
-
   end if;
 
-
-
   insert into public.clients (
-
     company_name, contact_name, contact_email, contact_phone,
-
     cr_number, vat_number, signatory_name, company_email,
-
     street, city, postcode, country, national_address,
-
     pending_client_id, invite_status, status
-
   ) values (
-
     pc.company_name,
-
     pc.signatory_name,
-
     coalesce(nullif(pc.company_email, ''), pc.email),
-
     pc.phone,
-
     pc.cr_number, pc.vat_number, pc.signatory_name, pc.company_email,
-
     pc.street, pc.city, pc.postcode, pc.country, pc.national_address,
-
     pc.id, 'pending_invite', 'active'
-
   )
-
   returning id into new_client_id;
 
-
-
   update public.pending_clients
-
      set status = 'approved',
-
          reviewed_at = now()
-
    where id = p_id;
 
-
-
   return query select new_client_id, false;
-
 end;
-
 $$;
 
 
@@ -391,123 +370,64 @@ CREATE FUNCTION public.approve_pending_vendor(p_id bigint) RETURNS TABLE(vendor_
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   pv record;
-
   existing_vendor_id bigint;
-
   new_vendor_id bigint;
-
   normalized_iban text;
-
 begin
-
   select * into pv from public.pending_vendors where id = p_id;
-
   if pv.id is null then
-
     raise exception 'Pending vendor % not found', p_id;
-
   end if;
-
-
 
   select id into existing_vendor_id
-
     from public.vendors
-
     where pending_vendor_id = p_id
-
     limit 1;
 
-
-
   if existing_vendor_id is not null then
-
     update public.pending_vendors
-
        set status = 'approved', reviewed_at = now()
-
      where id = p_id and status <> 'approved';
-
     return query select existing_vendor_id, true;
-
     return;
-
   end if;
-
-
 
   -- Bump the sequence past any existing max(id) before inserting.
-
   perform public.resync_vendor_sequence();
 
-
-
   insert into public.vendors (
-
     name, license_number, created_at,
-
     pending_vendor_id, email, phone, vendor_category, platforms,
-
     invite_status
-
   ) values (
-
     pv.full_name, pv.license_number, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
-
     pv.id, pv.email, pv.phone, pv.vendor_category, pv.platforms,
-
     'pending_invite'
-
   )
-
   returning id into new_vendor_id;
 
-
-
   normalized_iban := upper(replace(coalesce(pv.iban, ''), ' ', ''));
-
   if normalized_iban <> '' then
-
     insert into public.bank_accounts (
-
       vendor_id, bank_name, account_name, iban, account_number, swift_code
-
     ) values (
-
       new_vendor_id,
-
       coalesce(nullif(pv.bank_name, ''), 'Unknown bank'),
-
       coalesce(nullif(pv.account_name, ''), pv.full_name),
-
       normalized_iban,
-
       coalesce(pv.account_number, ''),
-
       coalesce(pv.swift_code, '')
-
     );
-
   end if;
 
-
-
   update public.pending_vendors
-
      set status = 'approved', reviewed_at = now()
-
    where id = p_id;
 
-
-
   return query select new_vendor_id, false;
-
 end;
-
 $$;
 
 
@@ -519,101 +439,53 @@ CREATE FUNCTION public.claim_workspace_invite(invite_token text) RETURNS TABLE(w
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inv record;
-
   caller_email text;
-
 begin
-
   if auth.uid() is null then
-
     raise exception 'Not authenticated';
-
   end if;
-
-
 
   caller_email := lower(coalesce(auth.jwt()->>'email', ''));
 
-
-
   select *
-
   into inv
-
   from public.workspace_invites
-
   where token = invite_token
-
   for update;
 
-
-
   if inv.id is null then
-
     raise exception 'Invite not found';
-
   end if;
-
-
 
   if inv.accepted_at is not null then
-
     raise exception 'Invite already used';
-
   end if;
-
-
 
   if inv.expires_at <= now() then
-
     raise exception 'Invite expired';
-
   end if;
-
-
 
   if lower(inv.email) <> caller_email then
-
     raise exception 'This invite is for %, but you are signed in as %', inv.email, caller_email;
-
   end if;
 
-
-
   insert into public.profiles (id, full_name)
-
   values (auth.uid(), caller_email)
-
   on conflict (id) do nothing;
 
-
-
   insert into public.workspace_members (workspace_id, user_id, role)
-
   values (inv.workspace_id, auth.uid(), inv.role)
-
   on conflict (workspace_id, user_id) do update
-
     set role = excluded.role;
 
-
-
   update public.workspace_invites
-
   set accepted_at = now(), accepted_by = auth.uid()
-
   where id = inv.id;
 
-
-
   return query select inv.workspace_id, inv.role;
-
 end;
-
 $$;
 
 
@@ -625,17 +497,11 @@ CREATE FUNCTION public.clear_task_notifications() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   delete from public.notifications
-
   where link like '%task=' || old.id::text || '%';
-
   return old;
-
 end;
-
 $$;
 
 
@@ -647,23 +513,14 @@ CREATE FUNCTION public.client_can_see_task(p_task_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1
-
       from public.pm_tasks t
-
       join public.external_users eu on eu.client_id = t.client_id
-
      where t.id = p_task_id
-
        and eu.auth_user_id = auth.uid()
-
        and eu.role = 'client'
-
   );
-
 $$;
 
 
@@ -675,29 +532,17 @@ CREATE FUNCTION public.client_published_campaigns() RETURNS TABLE(task_id uuid, 
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select t.id,
-
          coalesce(t.task_name, t.title),
-
          t.brand_name,
-
          t.tracking_published_at,
-
          (select count(*) from public.tracking_rows_published p where p.task_id = t.id)
-
     from public.pm_tasks t
-
     join public.external_users eu on eu.client_id = t.client_id
-
    where eu.auth_user_id = auth.uid()
-
      and eu.role = 'client'
-
      and t.tracking_published_at is not null
-
    order by t.tracking_published_at desc;
-
 $$;
 
 
@@ -709,97 +554,51 @@ CREATE FUNCTION public.consume_external_invite(p_token text, p_auth_user_id uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inv public.external_user_invites%rowtype;
-
   eu_id uuid;
-
 begin
-
   select * into inv
-
     from public.external_user_invites
-
    where token = p_token
-
    for update;
 
-
-
   if inv.id is null then
-
     raise exception 'Invite not found';
-
   end if;
-
   if inv.accepted_at is not null then
-
     raise exception 'Invite already used';
-
   end if;
-
   if inv.expires_at <= now() then
-
     raise exception 'Invite expired';
-
   end if;
-
-
 
   insert into public.external_users (auth_user_id, email, role, vendor_id, client_id)
-
   values (p_auth_user_id, lower(inv.email), inv.role, inv.vendor_id, inv.client_id)
-
   on conflict (auth_user_id) do update
-
     set role = excluded.role,
-
         vendor_id = excluded.vendor_id,
-
         client_id = excluded.client_id,
-
         email = excluded.email
-
   returning external_users.id into eu_id;
 
-
-
   update public.external_user_invites
-
      set accepted_at = now(),
-
          accepted_by = p_auth_user_id
-
    where id = inv.id;
 
-
-
   if inv.role = 'vendor' then
-
     update public.vendors set invite_status = 'accepted' where id = inv.vendor_id;
-
   else
-
     update public.clients set invite_status = 'accepted' where id = inv.client_id;
-
   end if;
 
-
-
   out_external_user_id := eu_id;
-
   out_role             := inv.role;
-
   out_vendor_id        := inv.vendor_id;
-
   out_client_id        := inv.client_id;
-
   return next;
-
 end;
-
 $$;
 
 
@@ -811,93 +610,49 @@ CREATE FUNCTION public.create_workspace_invite(ws_id uuid, invite_email text, in
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   created public.workspace_invites%rowtype;
-
   hours integer;
-
 begin
-
   if auth.uid() is null then
-
     raise exception 'Not authenticated';
-
   end if;
-
-
 
   if invite_role not in ('owner','admin','operations','sales','marketing','key_account','member') then
-
     raise exception 'Invalid role: %', invite_role;
-
   end if;
-
-
 
   if invite_role = 'owner' and not public.has_role(ws_id, array['owner']) then
-
     raise exception 'Only owners can invite another owner';
-
   end if;
-
-
 
   if not public.has_role(ws_id, array['owner','admin']) then
-
     raise exception 'Only owners and admins can invite teammates';
-
   end if;
-
-
 
   hours := coalesce(expires_hours, 24);
-
   if hours not in (1, 12, 24) then
-
     raise exception 'Invalid expires_hours: %', hours;
-
   end if;
 
-
-
   insert into public.workspace_invites (workspace_id, email, role, invited_by, expires_at)
-
   values (
-
     ws_id,
-
     lower(trim(invite_email)),
-
     invite_role,
-
     auth.uid(),
-
     now() + make_interval(hours => hours)
-
   )
-
   returning * into created;
 
-
-
   perform public._log_invite_event(
-
     created.id, created.workspace_id, created.email, created.role,
-
     'created', auth.uid(),
-
     jsonb_build_object('expires_hours', hours)
-
   );
 
-
-
   return query select created.id, created.token, created.email, created.role, created.expires_at;
-
 end;
-
 $$;
 
 
@@ -908,33 +663,19 @@ $$;
 CREATE FUNCTION public.crm_deals_stage_change() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   IF NEW.stage IS DISTINCT FROM OLD.stage THEN
-
     NEW.stage_changed_at := now();
-
     IF NEW.stage IN ('won','lost') AND OLD.stage NOT IN ('won','lost') THEN
-
       NEW.closed_at := now();
-
     END IF;
-
     IF NEW.stage NOT IN ('won','lost') AND OLD.stage IN ('won','lost') THEN
-
       NEW.closed_at := NULL;
-
     END IF;
-
   END IF;
-
   NEW.updated_at := now();
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -946,15 +687,10 @@ CREATE FUNCTION public.current_external_user() RETURNS TABLE(id uuid, role text,
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select id, role, vendor_id, client_id
-
     from public.external_users
-
    where auth_user_id = auth.uid()
-
    limit 1;
-
 $$;
 
 
@@ -966,43 +702,24 @@ CREATE FUNCTION public.deleted_tasks(p_workspace_id uuid) RETURNS TABLE(id uuid,
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select t.id,
-
          coalesce(t.task_name, t.title),
-
          t.brand_name,
-
          t.parent_task_id,
-
          t.deleted_at,
-
          t.deleted_by,
-
          p.full_name,
-
          (select count(*) from public.pm_tasks c
-
            where c.parent_task_id = t.id and c.deleted_at is not null),
-
          greatest(0, public.task_recovery_days()
-
                      - extract(day from now() - t.deleted_at)::int)
-
     from public.pm_tasks t
-
     left join public.profiles p on p.id = t.deleted_by
-
    where t.workspace_id = p_workspace_id
-
      and t.deleted_at is not null
-
      and t.parent_task_id is null          -- campaigns; their bookings go with them
-
      and public.has_role(t.workspace_id, array['owner','admin'])
-
    order by t.deleted_at desc;
-
 $$;
 
 
@@ -1014,77 +731,41 @@ CREATE FUNCTION public.enforce_task_field_ownership() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_role text;
-
 begin
-
   -- Subtasks have never been restricted. Vendors, reports and deliverables
-
   -- are worked on by whoever is doing the work.
-
   if new.parent_task_id is not null then
-
     return new;
-
   end if;
-
-
 
   -- Service role, triggers and migrations run without a session user.
-
   if auth.uid() is null then
-
     return new;
-
   end if;
-
-
 
   select wm.role into v_role
-
     from public.workspace_members wm
-
    where wm.workspace_id = new.workspace_id
-
      and wm.user_id = auth.uid();
 
-
-
   -- Not a member of this workspace: RLS already handles that. Nothing to add.
-
   if v_role is null then
-
     return new;
-
   end if;
-
-
 
   -- The whole rule, now. Owner, admin, marketing, sales, key_account and
-
   -- operations may all edit a campaign freely — including each other's
-
   -- fields, which is the point of the change.
-
   if v_role = 'member' then
-
     raise exception
-
       'Members can work on subtasks but cannot edit the campaign itself. Ask a key account or an admin.'
-
       using errcode = '42501';
-
   end if;
 
-
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1096,31 +777,18 @@ CREATE FUNCTION public.handle_new_user() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   insert into public.profiles (id, full_name, avatar_url)
-
   values (
-
     new.id,
-
     coalesce(new.raw_user_meta_data->>'full_name', new.email),
-
     new.raw_user_meta_data->>'avatar_url'
-
   )
-
   on conflict (id) do update
-
     set full_name = excluded.full_name,
-
         avatar_url = excluded.avatar_url;
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1132,9 +800,7 @@ CREATE FUNCTION public.has_any_workspace() RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (select 1 from public.workspaces);
-
 $$;
 
 
@@ -1146,19 +812,12 @@ CREATE FUNCTION public.has_role(ws_id uuid, role_names text[]) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1 from public.workspace_members
-
     where workspace_id = ws_id
-
       and user_id = auth.uid()
-
       and role = any(role_names)
-
   );
-
 $$;
 
 
@@ -1170,19 +829,12 @@ CREATE FUNCTION public.is_admin_of(ws_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1 from public.workspace_members
-
     where workspace_id = ws_id
-
       and user_id = auth.uid()
-
       and role in ('owner','admin')
-
   );
-
 $$;
 
 
@@ -1194,19 +846,12 @@ CREATE FUNCTION public.is_manager_or_higher(ws_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1 from public.workspace_members
-
     where workspace_id = ws_id
-
       and user_id = auth.uid()
-
       and role in ('owner','admin','manager')
-
   );
-
 $$;
 
 
@@ -1218,15 +863,10 @@ CREATE FUNCTION public.is_member_of(ws_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1 from public.workspace_members
-
     where workspace_id = ws_id and user_id = auth.uid()
-
   );
-
 $$;
 
 
@@ -1238,13 +878,9 @@ CREATE FUNCTION public.is_staff() RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1 from public.workspace_members where user_id = auth.uid()
-
   );
-
 $$;
 
 
@@ -1256,67 +892,36 @@ CREATE FUNCTION public.issue_external_invite(p_email text, p_role text, p_vendor
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inserted public.external_user_invites%rowtype;
-
 begin
-
   if p_role not in ('vendor','client') then
-
     raise exception 'Invalid role: %', p_role;
-
   end if;
-
   if p_role = 'vendor' and p_vendor_id is null then
-
     raise exception 'vendor_id is required for vendor invites';
-
   end if;
-
   if p_role = 'client' and p_client_id is null then
-
     raise exception 'client_id is required for client invites';
-
   end if;
-
-
 
   insert into public.external_user_invites (email, role, vendor_id, client_id, invited_by)
-
   values (lower(trim(p_email)), p_role, p_vendor_id, p_client_id, p_actor)
-
   returning * into inserted;
 
-
-
   if p_role = 'vendor' then
-
     update public.vendors set invite_status = 'invite_sent' where id = p_vendor_id;
-
   else
-
     update public.clients set invite_status = 'invite_sent' where id = p_client_id;
-
   end if;
 
-
-
   out_id         := inserted.id;
-
   out_token      := inserted.token;
-
   out_email      := inserted.email;
-
   out_role       := inserted.role;
-
   out_expires_at := inserted.expires_at;
-
   return next;
-
 end;
-
 $$;
 
 
@@ -1328,57 +933,31 @@ CREATE FUNCTION public.log_task_event(p_task_id uuid, p_action text, p_details j
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_ws   uuid;
-
   v_name text;
-
   v_kind text;
-
 begin
-
   select t.workspace_id,
-
          coalesce(t.task_name, t.title),
-
          case when t.parent_task_id is null then 'campaign' else 'booking' end
-
     into v_ws, v_name, v_kind
-
     from public.pm_tasks t
-
    where t.id = p_task_id;
 
-
-
   -- No workspace means no task — nothing to log, and nothing to shout
-
   -- about. A logger must never be the reason an action fails.
-
   if v_ws is null then return; end if;
 
-
-
   insert into public.activity_log
-
     (workspace_id, task_id, user_id, action, details, entity_name, entity_kind)
-
   values
-
     (v_ws, p_task_id, auth.uid(), p_action, coalesce(p_details, '{}'::jsonb), v_name, v_kind);
-
 exception when others then
-
   -- Same rule, stated in code: logging is never allowed to break the thing
-
   -- it is describing.
-
   return;
-
 end;
-
 $$;
 
 
@@ -1389,9 +968,7 @@ $$;
 CREATE FUNCTION public.looks_like_email(p text) RETURNS boolean
     LANGUAGE sql IMMUTABLE
     AS $_$
-
   select p is not null and p ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$';
-
 $_$;
 
 
@@ -1402,27 +979,16 @@ $_$;
 CREATE FUNCTION public.normalise_profile_name() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 begin
-
   if new.full_name is null
-
      or btrim(new.full_name) = ''
-
      or public.looks_like_email(new.full_name) then
-
     new.full_name := public.unnamed_member_label();
-
   else
-
     new.full_name := btrim(new.full_name);
-
   end if;
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1434,97 +1000,51 @@ CREATE FUNCTION public.notify_on_comment_mention() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_task    record;
-
   v_author  text;
-
   v_ids     uuid[];
-
 begin
-
   -- Every uuid inside @[[...]], deduplicated.
-
   select array_agg(distinct m[1]::uuid) into v_ids
-
     from regexp_matches(
-
            coalesce(new.content, ''),
-
            '@\[\[([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\]\]',
-
            'g'
-
          ) as m;
 
-
-
   if v_ids is null or array_length(v_ids, 1) is null then
-
     return new;
-
   end if;
-
-
 
   select t.id, t.workspace_id, coalesce(t.task_name, t.title) as name
-
     into v_task
-
     from public.pm_tasks t
-
    where t.id = new.task_id;
 
-
-
   if v_task.id is null then
-
     return new;
-
   end if;
 
-
-
   select p.full_name into v_author
-
     from public.profiles p where p.id = new.author_id;
 
-
-
   insert into public.notifications (user_id, type, title, body, link)
-
   select wm.user_id,
-
          'task_assigned',
-
          coalesce(v_author, 'Someone') || ' mentioned you',
-
          coalesce(v_task.name, 'a task'),
-
          '/dashboard/workflow?task=' || new.task_id::text
-
     from public.workspace_members wm
-
    where wm.workspace_id = v_task.workspace_id
-
      -- Only real members of the workspace. A stale id in the text is ignored
-
      -- rather than becoming an orphaned notification nobody can open.
-
      and wm.user_id = any(v_ids)
-
      -- Mentioning yourself in your own comment is not news.
-
      and wm.user_id is distinct from new.author_id;
 
-
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1536,87 +1056,46 @@ CREATE FUNCTION public.notify_on_contract_request() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_label   text;
-
   v_subject text;
-
 begin
-
   -- Workspace-less or task-less rows have nobody to notify and nowhere
-
   -- to point at, so skip them rather than writing a broken link.
-
   if new.workspace_id is null or new.pm_task_id is null then
-
     return new;
-
   end if;
 
-
-
   v_label := case
-
     when new.request_kind = 'client' then 'Client contract requested'
-
     when new.request_kind = 'vendor' then 'Vendor contract requested'
-
     else 'Contract requested'
-
   end;
 
-
-
   -- Most useful one-liner we can build from the row itself.
-
   v_subject := coalesce(
-
     nullif(concat_ws(' · ',
-
       nullif(new.brand_name, ''),
-
       nullif(coalesce(new.client_name, new.vendor_name), ''),
-
       case when new.amount is not null then 'SAR ' || trim(to_char(new.amount, 'FM999999999990.00')) end
-
     ), ''),
-
     'Open the campaign for details'
-
   );
 
-
-
   insert into public.notifications (user_id, type, title, body, link)
-
   select wm.user_id,
-
          'task_assigned',
-
          v_label,
-
          v_subject,
-
          '/dashboard/workflow?task=' || new.pm_task_id::text
-
     from public.workspace_members wm
-
    where wm.workspace_id = new.workspace_id
-
      and wm.role in ('owner', 'admin', 'operations')
-
      -- Don't ping the person who just raised it.
-
      and wm.user_id is distinct from new.requested_by;
 
-
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1628,65 +1107,35 @@ CREATE FUNCTION public.notify_on_document_request() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_task record;
-
 begin
-
   select task_name, title, brand_name, budget
-
     into v_task
-
     from public.pm_tasks
-
    where id = new.pm_task_id;
 
-
-
   insert into public.notifications (user_id, type, title, body, link)
-
   select wm.user_id,
-
          'task_assigned',
-
          initcap(new.doc_kind) || ' requested',
-
          coalesce(
-
            nullif(concat_ws(' · ',
-
              nullif(coalesce(v_task.task_name, v_task.title), ''),
-
              nullif(v_task.brand_name, ''),
-
              case when v_task.budget is not null
-
                   then 'SAR ' || trim(to_char(v_task.budget, 'FM999999999990.00')) end
-
            ), ''),
-
            'Open the campaign for details'
-
          ),
-
          '/dashboard/workflow?task=' || new.pm_task_id::text
-
     from public.workspace_members wm
-
    where wm.workspace_id = new.workspace_id
-
      and wm.role in ('owner', 'admin', 'operations')
-
      and wm.user_id is distinct from new.requested_by;
 
-
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1698,35 +1147,20 @@ CREATE FUNCTION public.notify_on_request() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   if new.request_status = 'requested'
-
      and (old.request_status is distinct from new.request_status) then
-
     insert into public.notifications (user_id, type, title, body, link)
-
     select wm.user_id, 'task_assigned',
-
            coalesce(initcap(new.subtask_kind), 'Request') || ' requested',
-
            coalesce(new.task_name, new.title),
-
            '/dashboard/workflow?task=' || new.id::text
-
     from public.workspace_members wm
-
     where wm.workspace_id = new.workspace_id
-
       and wm.role in ('owner', 'admin', 'operations');
-
   end if;
-
   return new;
-
 end;
-
 $$;
 
 
@@ -1738,21 +1172,13 @@ CREATE FUNCTION public.notify_role(ws_id uuid, role_names text[], n_type public.
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   insert into public.notifications (user_id, type, title, body, link)
-
   select wm.user_id, n_type, n_title, n_body, n_link
-
   from public.workspace_members wm
-
   where wm.workspace_id = ws_id
-
     and wm.role = any(role_names);
-
 end;
-
 $$;
 
 
@@ -1764,87 +1190,229 @@ CREATE FUNCTION public.on_pm_task_stage_change() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 begin
-
   -- New task or stage moved to pending_marketing → notify marketing role
-
   if (tg_op = 'INSERT' and new.stage = 'pending_marketing')
-
      or (tg_op = 'UPDATE' and new.stage = 'pending_marketing' and old.stage is distinct from 'pending_marketing') then
-
     perform public.notify_role(
-
       new.workspace_id,
-
       array['marketing','admin','owner']::text[],
-
       'task_assigned'::notification_type,
-
       'New task awaits triage',
-
       coalesce(new.task_name, new.title) || ' for ' || coalesce(new.brand_name, '(no brand)'),
-
       '/dashboard?task=' || new.id::text
-
     );
-
   end if;
-
-
 
   -- Stage moved to in_progress → notify the assigned key account
-
   if tg_op = 'UPDATE' and new.stage = 'in_progress' and old.stage is distinct from 'in_progress' and new.key_account_id is not null then
-
     insert into public.notifications (user_id, type, title, body, link)
-
     values (
-
       new.key_account_id,
-
       'task_assigned',
-
       'You are the key account on a new task',
-
       coalesce(new.task_name, new.title),
-
       '/dashboard?task=' || new.id::text
-
     );
-
   end if;
-
-
 
   -- Stage moved to completed → notify marketing
-
   if tg_op = 'UPDATE' and new.stage = 'completed' and old.stage is distinct from 'completed' then
-
     perform public.notify_role(
-
       new.workspace_id,
-
       array['marketing','admin','owner']::text[],
-
       'task_completed'::notification_type,
-
       'Task completed',
-
       coalesce(new.task_name, new.title) || ' for ' || coalesce(new.brand_name, '(no brand)'),
-
       '/dashboard?task=' || new.id::text
-
     );
-
   end if;
 
-
-
   return new;
-
 end;
+$$;
 
+
+--
+-- Name: pm_client_ledger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pm_client_ledger() RETURNS TABLE(id uuid, client_id uuid, brand_name text, campaign text, total numeric, paid numeric, outstanding numeric, state text, recorded numeric)
+    LANGUAGE sql STABLE
+    AS $$
+  with comp as (
+    select p.id, p.client_id, p.brand_name,
+           coalesce(nullif(btrim(p.task_name),''), p.title, '') as campaign,
+           public._pm_client_state(p.client_payment_status) as state,
+           coalesce(p.client_payment_amount,0) as recorded,
+           round(coalesce((select sum(s.price) from public.pm_tasks s
+             where s.parent_task_id = p.id and s.status is distinct from 'cancelled'),0),2) as total
+    from public.pm_tasks p
+    where p.parent_task_id is null and (p.status='done' or p.stage='completed'))
+  select id, client_id, brand_name, campaign, total,
+    case when state='paid' then total else round(least(greatest(recorded,0),total),2) end,
+    round(greatest(0, total - case when state='paid' then total else round(least(greatest(recorded,0),total),2) end),2),
+    state, recorded
+  from comp where total > 0;
+$$;
+
+
+--
+-- Name: pm_dashboard_summary(date, date, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pm_dashboard_summary(p_from date DEFAULT NULL::date, p_to date DEFAULT NULL::date, p_client uuid DEFAULT NULL::uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  with par as (
+    select * from public.pm_tasks p
+    where p.parent_task_id is null
+      and (p_from is null or p.created_at::date >= p_from)
+      and (p_to   is null or p.created_at::date <= p_to)
+      and (p_client is null or p.client_id = p_client)
+  ),
+  sub as (select s.* from public.pm_tasks s join par on par.id = s.parent_task_id),
+  k as (
+    select round(coalesce(sum(s.price),0)) billed,
+           round(coalesce(sum(s.net_amount),0)) vendors_cost,
+           round(coalesce(sum(s.price),0)-coalesce(sum(s.net_amount),0)) margin,
+           (select count(*) from par) campaigns,
+           (select count(distinct client_id) from par where client_id is not null) clients,
+           count(distinct s.vendor_id) filter (where s.vendor_id is not null) vendors_engaged,
+           count(*) filter (where s.vendor_id is not null) bookings
+    from sub s
+  ),
+  mb as (
+    select to_char(par.created_at,'YYYY-MM') key,
+           round(coalesce(sum(sub.price),0)) price, round(coalesce(sum(sub.net_amount),0)) net
+    from par left join sub on sub.parent_task_id=par.id
+    where par.created_at is not null group by 1
+  ),
+  mbounds as (select min(key) mn, max(key) mx from mb),
+  m as (
+    select to_char(gs,'YYYY-MM') key, coalesce(b.price,0) price, coalesce(b.net,0) net
+    from (
+      select generate_series(
+        greatest(to_date((select mn from mbounds),'YYYY-MM'),
+                 (to_date((select mx from mbounds),'YYYY-MM') - interval '11 months')),
+        to_date((select mx from mbounds),'YYYY-MM'), interval '1 month') gs
+      where (select mn from mbounds) is not null
+    ) g
+    left join mb b on b.key = to_char(gs,'YYYY-MM')
+  ),
+  vstate as (
+    select round(coalesce(net_amount,0),2) v,
+      case when coalesce(vendor_payment_amount,0) <= 0 then 'unpaid'
+           when coalesce(vendor_payment_amount,0) + 0.5 >= coalesce(net_amount,0) then 'paid'
+           else 'partial' end st
+    from sub where vendor_id is not null
+  ),
+  donut as (select st, round(sum(v)) value from vstate group by st),
+  openrows as (
+    select coalesce(assignee_id::text,'__none') a from (
+      select assignee_id, status, stage from par
+      union all select assignee_id, status, stage from sub
+    ) t
+    where status is distinct from 'done' and status is distinct from 'cancelled'
+      and stage is distinct from 'completed'
+  ),
+  a_cnt as (select a key, count(*) value from openrows group by a),
+  a_rank as (select key, value, row_number() over (order by value desc) rn from a_cnt where value>0),
+  bars1 as (
+    select jsonb_agg(jsonb_build_object('key',key,'value',value) order by value desc) filter (where rn<=6) as head,
+           (select jsonb_build_object('key','__other','value',sum(value),'n',count(*)) from a_rank where rn>6) as other
+    from a_rank
+  ),
+  c_sum as (
+    select par.client_id::text key, round(coalesce(sum(sub.price),0)) value
+    from par left join sub on sub.parent_task_id=par.id
+    where par.client_id is not null group by 1
+  ),
+  c_rank as (select key, value, row_number() over (order by value desc) rn from c_sum where value>0),
+  bars2 as (
+    select jsonb_agg(jsonb_build_object('key',key,'value',value) order by value desc) filter (where rn<=6) as head,
+           (select jsonb_build_object('key','__other','value',sum(value),'n',count(*)) from c_rank where rn>6) as other
+    from c_rank
+  ),
+  att as (
+    select p.id, coalesce(nullif(btrim(p.task_name),''),p.title,'') campaign, p.client_id::text client_id,
+           p.created_at, p.contract_status, p.client_payment_status,
+           round(coalesce((select sum(s.price) from sub s where s.parent_task_id=p.id),0),2) price
+    from par p
+  ),
+  att2 as (
+    select * from att
+    where price>0 and (
+      public._pm_client_state(client_payment_status) <> 'paid'
+      OR lower(btrim(coalesce(contract_status,''))) not in
+         ('signed','signed_attached','done','countersigned','executed','po','no_contract','')
+    )
+    order by price desc limit 8
+  ),
+  priced as (
+    select distinct parent_task_id pid from sub
+    where (coalesce(price,0)<>0 or coalesce(net_amount,0)<>0) and parent_task_id is not null
+  ),
+  contribs as (
+    select coalesce(s.price,0) price, coalesce(s.net_amount,0) net,
+           lower(btrim(coalesce(s.status::text,''))) status,
+           coalesce(nullif(lower(btrim(coalesce(s.approval_stage,''))),''),
+                    lower(btrim(coalesce(p.approval_stage,'')))) approval,
+           coalesce(nullif(lower(btrim(coalesce(s.client_payment_status,''))),''),
+                    lower(btrim(coalesce(p.client_payment_status,'')))) clientpay,
+           false parentonly
+    from sub s left join par p on p.id = s.parent_task_id
+    where coalesce(s.price,0)<>0 or coalesce(s.net_amount,0)<>0
+    union all
+    select coalesce(p.budget,0), 0, lower(btrim(coalesce(p.status::text,''))),
+           lower(btrim(coalesce(p.approval_stage,''))), lower(btrim(coalesce(p.client_payment_status,''))), true
+    from par p
+    where p.id not in (select pid from priced) and coalesce(p.budget,0)<>0
+  ),
+  asana as (
+    select round(coalesce(sum(price),0)) sumprice,
+           round(coalesce(sum(price) filter (where status='done'),0)) salesdone,
+           round(coalesce(sum(price) filter (where status='pending'),0)) salespending,
+           round(coalesce(sum(price-net) filter (where not parentonly and approval='approved' and status in ('done','pending')),0)) estaqgross,
+           round(coalesce(sum(price) filter (where not parentonly and approval='approved' and status='done' and clientpay='unpaid'),0)) approveddoneunpaid,
+           round(coalesce(sum(price) filter (where not parentonly and approval='approved' and status='pending' and clientpay='unpaid'),0)) approvedpendingunpaid
+    from contribs
+  )
+  select jsonb_build_object(
+    'kpis',(select to_jsonb(k) from k),
+    'months',(select coalesce(jsonb_agg(jsonb_build_object('key',key,'price',price,'net',net,'gross',price-net) order by key),'[]') from m),
+    'donut',(select coalesce(jsonb_object_agg(st,value),'{}') from donut),
+    'bars1',(select to_jsonb(bars1) from bars1),
+    'bars2',(select to_jsonb(bars2) from bars2),
+    'attention',(select coalesce(jsonb_agg(jsonb_build_object(
+       'id',id,'campaign',campaign,'client_id',client_id,'created_at',created_at,
+       'contract_status',contract_status,'client_payment_status',client_payment_status,'price',price
+     ) order by price desc),'[]') from att2),
+    'asana',(select to_jsonb(asana) from asana)
+  );
+$$;
+
+
+--
+-- Name: pm_vendor_ledger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pm_vendor_ledger() RETURNS TABLE(id uuid, vendor_id bigint, campaign text, total numeric, paid numeric, outstanding numeric, state text, recorded numeric)
+    LANGUAGE sql STABLE
+    AS $$
+  with book as (
+    select s.id, s.vendor_id, coalesce(nullif(btrim(p.task_name),''), p.title, '') as campaign,
+           round(coalesce(s.net_amount,0),2) as total, coalesce(s.vendor_payment_amount,0) as recorded
+    from public.pm_tasks s join public.pm_tasks p on p.id = s.parent_task_id
+    where s.status is distinct from 'cancelled' and (p.status='done' or p.stage='completed')),
+  st as (select *, case when recorded<=0 then 'unpaid'
+                        when recorded+0.5>=total then 'paid' else 'partial' end as state
+         from book where total>0)
+  select id, vendor_id, campaign, total,
+    case when state='paid' then total else round(least(greatest(recorded,0),total),2) end,
+    round(greatest(0, total - case when state='paid' then total else round(least(greatest(recorded,0),total),2) end),2),
+    state, recorded
+  from st;
 $$;
 
 
@@ -1856,109 +1424,57 @@ CREATE FUNCTION public.publish_tracking_sheet(p_task_id uuid) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_workspace uuid;
-
   v_count     integer;
-
 begin
-
   select workspace_id into v_workspace from public.pm_tasks where id = p_task_id;
-
   if v_workspace is null then
-
     raise exception 'No such task: %', p_task_id using errcode = '42704';
-
   end if;
-
-
 
   if auth.uid() is not null
-
      and not public.has_role(v_workspace, array['owner','admin','marketing','key_account','operations']) then
-
     raise exception 'You do not have permission to publish this sheet.' using errcode = '42501';
-
   end if;
-
-
 
   delete from public.tracking_rows_published where task_id = p_task_id;
 
-
-
   -- Shared:     who, where, what, when, status, link, and now which ad.
-
   -- NOT shared: price_excl, price_incl, notes, contact_number,
-
   --             license_plate_url — money, internal notes and PII.
-
   --
-
   -- If you add a column here, ask whether the client should see it. Landing
-
   -- in this table is not the same as being readable — 071's column grants
-
   -- decide that — but the two lists should be reasoned about together.
-
   insert into public.tracking_rows_published (
-
     id, task_id, position,
-
     influencer_name, profile_link,
-
     platform, type_of_ad, content, product,
-
     shooting_date, posting_date, ad_status, ad_link,
-
     ad_line_id, ad_line_seq, subtask_id,
-
     created_at, updated_at,
-
     published_at, published_by, source_row_id
-
   )
-
   select r.id, r.task_id, r.position,
-
          r.influencer_name, r.profile_link,
-
          r.platform, r.type_of_ad, r.content, r.product,
-
          r.shooting_date, r.posting_date, r.ad_status, r.ad_link,
-
          r.ad_line_id, r.ad_line_seq, r.subtask_id,
-
          r.created_at, r.updated_at,
-
          now(), auth.uid(), r.id
-
     from public.tracking_rows r
-
    where r.task_id = p_task_id;
-
-
 
   get diagnostics v_count = row_count;
 
-
-
   update public.pm_tasks
-
      set tracking_published_at = now(),
-
          tracking_published_by = auth.uid()
-
    where id = p_task_id;
 
-
-
   return v_count;
-
 end;
-
 $$;
 
 
@@ -1970,85 +1486,45 @@ CREATE FUNCTION public.purge_deleted_tasks() RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   r       record;
-
   v_count integer := 0;
-
 begin
-
   -- Row by row, on purpose. A single DELETE would be one statement and no
-
   -- record of WHAT it removed — and a purge is the one event whose subject
-
   -- is guaranteed not to exist afterwards, so the log has to be written
-
   -- while the row is still there to describe.
-
   for r in
-
     select id from public.pm_tasks
-
      where deleted_at is not null
-
        and deleted_at < now() - make_interval(days => public.task_recovery_days())
-
        and parent_task_id is null        -- children go with the cascade
-
   loop
-
     perform public.log_task_event(r.id, 'purged', jsonb_build_object(
-
       'after_days', public.task_recovery_days()
-
     ));
-
     delete from public.pm_tasks where id = r.id;
-
     v_count := v_count + 1;
-
   end loop;
-
-
 
   -- Bookings deleted on their own, whose parent is still live.
-
   for r in
-
     select id from public.pm_tasks
-
      where deleted_at is not null
-
        and deleted_at < now() - make_interval(days => public.task_recovery_days())
-
   loop
-
     perform public.log_task_event(r.id, 'purged', jsonb_build_object(
-
       'after_days', public.task_recovery_days()
-
     ));
-
     delete from public.pm_tasks where id = r.id;
-
     v_count := v_count + 1;
-
   end loop;
 
-
-
   if v_count > 0 then
-
     raise notice 'purge_deleted_tasks: removed % task(s) past the recovery window', v_count;
-
   end if;
-
   return v_count;
-
 end;
-
 $$;
 
 
@@ -2060,107 +1536,56 @@ CREATE FUNCTION public.record_invite_resend(invite_id uuid) RETURNS TABLE(resend
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inv public.workspace_invites%rowtype;
-
   remaining integer;
-
 begin
-
   if auth.uid() is null then
-
     raise exception 'Not authenticated';
-
   end if;
-
-
 
   select * into inv
-
   from public.workspace_invites
-
   where id = invite_id
-
   for update;
 
-
-
   if inv.id is null then
-
     raise exception 'Invite not found';
-
   end if;
-
-
 
   if not public.has_role(inv.workspace_id, array['owner','admin']) then
-
     raise exception 'Only owners and admins can resend invites';
-
   end if;
-
-
 
   if inv.accepted_at is not null then
-
     raise exception 'Invite already accepted, cannot resend';
-
   end if;
-
-
 
   if inv.expires_at <= now() then
-
     raise exception 'Invite expired, cannot resend';
-
   end if;
-
-
 
   if inv.last_resent_at is not null then
-
     remaining := 60 - extract(epoch from (now() - inv.last_resent_at))::integer;
-
     if remaining > 0 then
-
       raise exception 'Please wait % seconds before resending', remaining;
-
     end if;
-
   end if;
 
-
-
   update public.workspace_invites
-
   set resend_count = coalesce(resend_count, 0) + 1,
-
       last_resent_at = now()
-
   where id = invite_id
-
   returning * into inv;
 
-
-
   perform public._log_invite_event(
-
     inv.id, inv.workspace_id, inv.email, inv.role,
-
     'resent', auth.uid(),
-
     jsonb_build_object('resend_count', inv.resend_count)
-
   );
 
-
-
   return query select inv.resend_count, inv.last_resent_at, 0;
-
 end;
-
 $$;
 
 
@@ -2172,57 +1597,31 @@ CREATE FUNCTION public.record_invite_resend_failure(invite_id uuid, reason text)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inv public.workspace_invites%rowtype;
-
 begin
-
   if auth.uid() is null then
-
     raise exception 'Not authenticated';
-
   end if;
-
-
 
   select * into inv
-
   from public.workspace_invites
-
   where id = invite_id;
 
-
-
   if inv.id is null then
-
     raise exception 'Invite not found';
-
   end if;
-
-
 
   if not public.has_role(inv.workspace_id, array['owner','admin']) then
-
     raise exception 'Only owners and admins can log resend failures';
-
   end if;
 
-
-
   perform public._log_invite_event(
-
     inv.id, inv.workspace_id, inv.email, inv.role,
-
     'resend_failed', auth.uid(),
-
     jsonb_build_object('reason', coalesce(reason, ''))
-
   );
-
 end;
-
 $$;
 
 
@@ -2234,75 +1633,40 @@ CREATE FUNCTION public.reissue_external_invite(p_external_user_id uuid, p_actor 
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   eu       public.external_users%rowtype;
-
   inserted public.external_user_invites%rowtype;
-
 begin
-
   select * into eu from public.external_users where id = p_external_user_id;
-
   if eu.id is null then
-
     raise exception 'External user % not found', p_external_user_id;
-
   end if;
-
-
 
   update public.external_user_invites
-
      set expires_at = now()
-
    where lower(email) = lower(eu.email)
-
      and accepted_at is null
-
      and expires_at > now();
 
-
-
   insert into public.external_user_invites
-
     (email, role, vendor_id, client_id, invited_by, reset_count)
-
   values
-
     (eu.email, eu.role, eu.vendor_id, eu.client_id, p_actor, 1)
-
   returning * into inserted;
 
-
-
   if eu.role = 'vendor' then
-
     update public.vendors set invite_status = 'invite_sent' where id = eu.vendor_id;
-
   else
-
     update public.clients set invite_status = 'invite_sent' where id = eu.client_id;
-
   end if;
 
-
-
   out_id         := inserted.id;
-
   out_token      := inserted.token;
-
   out_email      := inserted.email;
-
   out_role       := inserted.role;
-
   out_expires_at := inserted.expires_at;
-
   return next;
-
 end;
-
 $$;
 
 
@@ -2314,13 +1678,9 @@ CREATE FUNCTION public.reject_pending_client(p_id bigint) RETURNS void
     LANGUAGE sql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   update public.pending_clients
-
      set status = 'rejected', reviewed_at = now()
-
    where id = p_id;
-
 $$;
 
 
@@ -2332,14 +1692,50 @@ CREATE FUNCTION public.reject_pending_vendor(p_id bigint) RETURNS void
     LANGUAGE sql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   update public.pending_vendors
-
      set status = 'rejected', reviewed_at = now()
-
    where id = p_id;
-
 $$;
+
+
+--
+-- Name: reject_signed_contract(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_signed_contract(p_id uuid, p_reason text) RETURNS public.contract_signatures
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  row public.contract_signatures;
+begin
+  if not public.is_staff() then
+    raise exception 'Only staff can review signed contracts';
+  end if;
+
+  if p_reason is null or btrim(p_reason) = '' then
+    raise exception 'A rejection needs a reason';
+  end if;
+
+  select * into row from public.contract_signatures where id = p_id;
+  if row.id is null then
+    raise exception 'Signed contract % not found', p_id;
+  end if;
+
+  if row.status = 'accepted' then
+    raise exception 'Signed contract % was already accepted', p_id;
+  end if;
+
+  update public.contract_signatures
+     set status           = 'rejected',
+         rejection_reason = btrim(p_reason),
+         reviewed_by      = auth.uid(),
+         reviewed_at      = now()
+   where id = p_id
+   returning * into row;
+
+  return row;
+end $$;
 
 
 --
@@ -2350,71 +1746,38 @@ CREATE FUNCTION public.restore_task(p_task_id uuid) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_workspace uuid;
-
   v_deleted   timestamptz;
-
   v_count     integer;
-
 begin
-
   select workspace_id, deleted_at into v_workspace, v_deleted
-
     from public.pm_tasks where id = p_task_id;
-
   if v_workspace is null then
-
     raise exception 'No such task: %', p_task_id using errcode = '42704';
-
   end if;
-
   if v_deleted is null then return 0; end if;
-
   if auth.uid() is not null
-
      and not public.has_role(v_workspace, array['owner','admin']) then
-
     raise exception 'Only an owner or an admin can restore a task.' using errcode = '42501';
-
   end if;
-
-
 
   update public.pm_tasks
-
      set deleted_at = null, deleted_by = null
-
    where (
-
      id = p_task_id
-
      or (parent_task_id = p_task_id and deleted_at between v_deleted - interval '1 second'
-
                                                        and v_deleted + interval '1 second')
-
    );
-
-
 
   get diagnostics v_count = row_count;
 
-
-
   perform public.log_task_event(p_task_id, 'restored', jsonb_build_object(
-
     'rows', v_count,
-
     'deleted_at', v_deleted
-
   ));
-
   return v_count;
-
 end;
-
 $$;
 
 
@@ -2426,31 +1789,18 @@ CREATE FUNCTION public.resync_vendor_sequence() RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   seq_name text;
-
   max_id   bigint;
-
 begin
-
   select pg_get_serial_sequence('public.vendors', 'id') into seq_name;
-
   if seq_name is null then return; end if;
-
   select coalesce(max(id), 0) into max_id from public.vendors;
-
   if max_id = 0 then
-
     execute format('select setval(%L, 1, false)', seq_name);
-
   else
-
     execute format('select setval(%L, %s, true)', seq_name, max_id);
-
   end if;
-
 end $$;
 
 
@@ -2495,71 +1845,38 @@ CREATE FUNCTION public.soft_delete_task(p_task_id uuid) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_workspace uuid;
-
   v_count     integer;
-
 begin
-
   select workspace_id into v_workspace from public.pm_tasks where id = p_task_id;
-
   if v_workspace is null then
-
     raise exception 'No such task: %', p_task_id using errcode = '42704';
-
   end if;
-
-
 
   if auth.uid() is not null
-
      and not public.has_role(v_workspace, array['owner','admin']) then
-
     raise exception 'Only an owner or an admin can delete a task.' using errcode = '42501';
-
   end if;
 
-
-
   -- Logged BEFORE the stamp, while the task is still readable. Afterwards
-
   -- the SELECT policy hides it, and log_task_event is security definer for
-
   -- exactly this reason — but doing it in the readable order costs nothing
-
   -- and does not depend on that.
-
   perform public.log_task_event(p_task_id, 'deleted', jsonb_build_object(
-
     'bookings', (select count(*) from public.pm_tasks c
-
                   where c.parent_task_id = p_task_id and c.deleted_at is null),
-
     'recovery_days', public.task_recovery_days()
-
   ));
 
-
-
   update public.pm_tasks
-
      set deleted_at = now(), deleted_by = auth.uid()
-
    where (id = p_task_id or parent_task_id = p_task_id)
-
      and deleted_at is null;
 
-
-
   get diagnostics v_count = row_count;
-
   return v_count;
-
 end;
-
 $$;
 
 
@@ -2577,103 +1894,55 @@ COMMENT ON FUNCTION public.soft_delete_task(p_task_id uuid) IS 'Hide a task and 
 CREATE FUNCTION public.sync_booking_money_from_lines() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 declare
-
   targets uuid[];
-
   target  uuid;
-
-  total  numeric(14,2);
-
-  netsum numeric(14,2);
-
-  priced boolean;
-
-  hasnet boolean;
-
+  total   numeric(14,2);
+  netsum  numeric(14,2);
+  priced  boolean;
+  hasnet  boolean;
 begin
-
   -- Both sides on an update, in case a line was moved between bookings.
-
   -- `foreach ... in array` takes an expression, not a subquery, so the array
-
   -- is built first and iterated after.
-
   select array_agg(distinct x)
-
     into targets
-
     from unnest(array[
-
       case when tg_op in ('UPDATE','DELETE') then old.subtask_id end,
-
       case when tg_op in ('UPDATE','INSERT') then new.subtask_id end
-
     ]) as x
-
    where x is not null;
 
-
-
   if targets is null then
-
     return null;
-
   end if;
 
-
-
   foreach target in array targets
-
   loop
-
     select
-
       coalesce(sum(greatest(coalesce(l.quantity, 1), 1) * coalesce(l.unit_price, 0)), 0),
-
-      coalesce(sum(coalesce(l.net_amount, 0)), 0),
-
+      -- ×quantity, the same as the price. This is the fix.
+      coalesce(sum(greatest(coalesce(l.quantity, 1), 1) * coalesce(l.net_amount, 0)), 0),
       coalesce(bool_or(coalesce(l.unit_price, 0) > 0), false),
-
       coalesce(bool_or(l.net_amount is not null), false)
-
       into total, netsum, priced, hasnet
-
       from public.vendor_ad_lines l
-
      where l.subtask_id = target;
 
-
-
     -- Unpriced lines leave the booking's own numbers alone. Zero is an
-
     -- unpriced line, not free work, and overwriting a typed 45,000 with a
-
     -- zero because nobody has costed the ads yet would be worse than useless.
-
     if priced then
-
       update public.pm_tasks
-
          set price = total,
-
              net_amount = case when hasnet then netsum else net_amount end
-
        where id = target
-
          and (price is distinct from total
-
               or (hasnet and net_amount is distinct from netsum));
-
     end if;
-
   end loop;
 
-
-
   return null;   -- AFTER trigger
-
 end $$;
 
 
@@ -2681,7 +1950,7 @@ end $$;
 -- Name: FUNCTION sync_booking_money_from_lines(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.sync_booking_money_from_lines() IS 'Keeps pm_tasks.price and net_amount equal to the booking''s priced ad lines. Replaces the app-side syncBookingPriceFromAds(), which only ran when the ad card happened to call it.';
+COMMENT ON FUNCTION public.sync_booking_money_from_lines() IS 'Keeps pm_tasks.price and net_amount equal to the booking''s priced ad lines. Both figures are per-ad and both are multiplied by quantity — 076 fixed the net, which was summed flat and so understated every multi-quantity vendor cost, silently inflating aq_gross.';
 
 
 --
@@ -2701,9 +1970,7 @@ CREATE FUNCTION public.task_workspace_id(t_id uuid) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select workspace_id from public.pm_tasks where id = t_id;
-
 $$;
 
 
@@ -2714,13 +1981,9 @@ $$;
 CREATE FUNCTION public.touch_vendor_ad_lines() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 begin
-
   new.updated_at = now();
-
   return new;
-
 end $$;
 
 
@@ -2741,35 +2004,20 @@ CREATE FUNCTION public.unpublish_tracking_sheet(p_task_id uuid) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   v_workspace uuid;
-
 begin
-
   select workspace_id into v_workspace from public.pm_tasks where id = p_task_id;
-
   if auth.uid() is not null
-
      and not public.has_role(v_workspace, array['owner','admin','marketing','key_account','operations']) then
-
     raise exception 'You do not have permission to unpublish this sheet.' using errcode = '42501';
-
   end if;
 
-
-
   delete from public.tracking_rows_published where task_id = p_task_id;
-
   update public.pm_tasks
-
      set tracking_published_at = null, tracking_published_by = null
-
    where id = p_task_id;
-
 end;
-
 $$;
 
 
@@ -2780,15 +2028,10 @@ $$;
 CREATE FUNCTION public.update_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 begin
-
   new.updated_at = now();
-
   return new;
-
 end;
-
 $$;
 
 
@@ -2800,69 +2043,37 @@ CREATE FUNCTION public.validate_external_invite(p_token text) RETURNS TABLE(out_
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inv public.external_user_invites%rowtype;
-
 begin
-
   select * into inv from public.external_user_invites where token = p_token limit 1;
-
   if inv.id is null then
-
     out_valid := false; out_reason := 'Invite not found';
-
     return next;
-
     return;
-
   end if;
-
   if inv.accepted_at is not null then
-
     out_valid := false; out_reason := 'Invite already used';
-
     out_email := inv.email; out_role := inv.role;
-
     out_vendor_id := inv.vendor_id; out_client_id := inv.client_id;
-
     out_expires_at := inv.expires_at;
-
     return next;
-
     return;
-
   end if;
-
   if inv.expires_at <= now() then
-
     out_valid := false; out_reason := 'Invite expired';
-
     out_email := inv.email; out_role := inv.role;
-
     out_vendor_id := inv.vendor_id; out_client_id := inv.client_id;
-
     out_expires_at := inv.expires_at;
-
     return next;
-
     return;
-
   end if;
-
   out_valid := true; out_reason := 'OK';
-
   out_email := inv.email; out_role := inv.role;
-
   out_vendor_id := inv.vendor_id; out_client_id := inv.client_id;
-
   out_expires_at := inv.expires_at;
-
   return next;
-
 end;
-
 $$;
 
 
@@ -2874,61 +2085,33 @@ CREATE FUNCTION public.validate_workspace_invite(invite_token text) RETURNS TABL
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
 declare
-
   inv record;
-
 begin
-
   select wi.*, w.name as ws_name
-
   into inv
-
   from public.workspace_invites wi
-
   join public.workspaces w on w.id = wi.workspace_id
-
   where wi.token = invite_token
-
   limit 1;
 
-
-
   if inv.id is null then
-
     return query select false, 'Invite not found', null::text, null::text, null::text, null::timestamptz;
-
     return;
-
   end if;
-
-
 
   if inv.accepted_at is not null then
-
     return query select false, 'Invite already used', inv.email, inv.role, inv.ws_name, inv.expires_at;
-
     return;
-
   end if;
-
-
 
   if inv.expires_at <= now() then
-
     return query select false, 'Invite expired', inv.email, inv.role, inv.ws_name, inv.expires_at;
-
     return;
-
   end if;
 
-
-
   return query select true, 'OK', inv.email, inv.role, inv.ws_name, inv.expires_at;
-
 end;
-
 $$;
 
 
@@ -2940,21 +2123,13 @@ CREATE FUNCTION public.vendor_is_trackable(p_vendor_id bigint) RETURNS boolean
     LANGUAGE sql STABLE
     SET search_path TO 'public'
     AS $$
-
   select exists (
-
     select 1 from public.vendors v
-
      where v.id = p_vendor_id
-
        and lower(trim(coalesce(v.vendor_category, ''))) in (
-
          'influencer', 'ugc', 'ugc creator', 'user generated content'
-
        )
-
   );
-
 $$;
 
 
@@ -2966,33 +2141,78 @@ CREATE FUNCTION public.workspace_member_names(p_workspace uuid) RETURNS TABLE(id
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-
   select p.id, p.full_name
-
     from public.workspace_members wm
-
     join public.profiles p on p.id = wm.user_id
-
    where wm.workspace_id = p_workspace
-
      and exists (
-
        select 1 from public.workspace_members me
-
         where me.workspace_id = p_workspace
-
           and me.user_id = auth.uid()
-
      )
-
    order by p.full_name;
-
 $$;
 
 
-SET default_tablespace = '';
+--
+-- Name: _vendor_merge_backup_2026_09_09; Type: TABLE; Schema: public; Owner: -
+--
 
-SET default_table_access_method = heap;
+CREATE TABLE public._vendor_merge_backup_2026_09_09 (
+    id bigint,
+    name text,
+    license_number text,
+    created_at text,
+    pending_vendor_id bigint,
+    email text,
+    phone text,
+    vendor_category text,
+    platforms text,
+    invite_status text,
+    category_id uuid,
+    id_number text,
+    signatory_name text,
+    contact_name text,
+    vat_number text,
+    details text,
+    location_link text,
+    short_address text,
+    age integer,
+    gender text,
+    rental_type text,
+    event_opening text,
+    event_ceremony text,
+    location_type text,
+    import_key text,
+    merged_into bigint,
+    merged_at timestamp with time zone
+);
+
+
+--
+-- Name: _vendor_merge_log_2026_09_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._vendor_merge_log_2026_09_09 (
+    ref_table text,
+    ref_pk text,
+    old_vendor_id bigint,
+    new_vendor_id bigint,
+    moved_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: _vendor_merge_subtask_log_2026_09_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._vendor_merge_subtask_log_2026_09_09 (
+    subtask_id bigint,
+    old_vendor text,
+    new_vendor text,
+    moved_at timestamp with time zone DEFAULT now()
+);
+
 
 --
 -- Name: activity_log; Type: TABLE; Schema: public; Owner: -
@@ -3142,6 +2362,29 @@ CREATE TABLE public.client_categories (
 
 
 --
+-- Name: client_credits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.client_credits (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    workspace_id uuid NOT NULL,
+    client_id uuid NOT NULL,
+    amount numeric(14,2) NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    source_task_id uuid,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE client_credits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.client_credits IS 'Append-only ledger of client credit events. Positive = grant, negative = use. Balance is the sum per client. A row exists only because a member recorded it (created_by/created_at); corrections are compensating entries, never edits.';
+
+
+--
 -- Name: client_dedupe_map; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3150,6 +2393,23 @@ CREATE TABLE public.client_dedupe_map (
     keep_id uuid NOT NULL,
     workspace_id uuid,
     company_name text,
+    drop_created timestamp with time zone,
+    keep_created timestamp with time zone,
+    merged_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: client_dedupe_map_v2; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.client_dedupe_map_v2 (
+    drop_id uuid NOT NULL,
+    keep_id uuid NOT NULL,
+    workspace_id uuid,
+    norm_name text,
+    drop_name text,
+    keep_name text,
     drop_created timestamp with time zone,
     keep_created timestamp with time zone,
     merged_at timestamp with time zone DEFAULT now() NOT NULL
@@ -3186,7 +2446,14 @@ CREATE TABLE public.clients (
     invite_status text DEFAULT 'none'::text,
     zoho_customer_id text,
     client_category_id uuid,
-    CONSTRAINT clients_invite_status_check CHECK ((invite_status = ANY (ARRAY['none'::text, 'pending_invite'::text, 'invite_sent'::text, 'accepted'::text, 'revoked'::text])))
+    import_key text,
+    payment_terms text,
+    payment_split_pct integer,
+    payment_net_days integer,
+    CONSTRAINT clients_invite_status_check CHECK ((invite_status = ANY (ARRAY['none'::text, 'pending_invite'::text, 'invite_sent'::text, 'accepted'::text, 'revoked'::text]))),
+    CONSTRAINT clients_payment_net_days_chk CHECK (((payment_net_days IS NULL) OR ((payment_net_days >= 1) AND (payment_net_days <= 365)))),
+    CONSTRAINT clients_payment_split_chk CHECK (((payment_split_pct IS NULL) OR ((payment_split_pct >= 1) AND (payment_split_pct <= 99)))),
+    CONSTRAINT clients_payment_terms_chk CHECK (((payment_terms IS NULL) OR (payment_terms = ANY (ARRAY['split'::text, 'on_delivery'::text, 'in_advance'::text, 'net_days'::text]))))
 );
 
 
@@ -3195,6 +2462,34 @@ CREATE TABLE public.clients (
 --
 
 COMMENT ON COLUMN public.clients.zoho_customer_id IS 'Zoho Books contact_id this client maps to. Set via the CRM detail page so the Invoices tab can fetch invoices for the right customer.';
+
+
+--
+-- Name: COLUMN clients.import_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.clients.import_key IS '''asana:'' + folded company name, set only on rows the import CREATED. Matched rows keep null.';
+
+
+--
+-- Name: COLUMN clients.payment_terms; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.clients.payment_terms IS 'split | on_delivery | in_advance | net_days. The client''s standing terms, inherited by every campaign unless the campaign''s own payment_terms overrides them.';
+
+
+--
+-- Name: COLUMN clients.payment_split_pct; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.clients.payment_split_pct IS 'For payment_terms = split: the percentage the client pays up front. 50 means 50/50.';
+
+
+--
+-- Name: COLUMN clients.payment_net_days; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.clients.payment_net_days IS 'For payment_terms = net_days: how many days after delivery the client''s payment falls due.';
 
 
 --
@@ -3510,6 +2805,42 @@ CREATE TABLE public.external_users (
 
 
 --
+-- Name: finance_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.finance_documents (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    workspace_id uuid NOT NULL,
+    pm_task_id uuid NOT NULL,
+    kind text NOT NULL,
+    zoho_document_id text,
+    document_number text,
+    pdf_url text,
+    amount numeric(14,2),
+    currency text DEFAULT 'SAR'::text NOT NULL,
+    breakdown boolean,
+    status text DEFAULT 'draft'::text NOT NULL,
+    accepted_at timestamp with time zone,
+    accepted_by uuid,
+    rejection_reason text,
+    reviewed_at timestamp with time zone,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT finance_documents_kind_chk CHECK ((kind = ANY (ARRAY['quotation'::text, 'invoice'::text]))),
+    CONSTRAINT finance_documents_reason_chk CHECK (((status = 'rejected'::text) = ((rejection_reason IS NOT NULL) AND (btrim(rejection_reason) <> ''::text)))),
+    CONSTRAINT finance_documents_status_chk CHECK ((status = ANY (ARRAY['draft'::text, 'generated'::text, 'sent'::text, 'accepted'::text, 'rejected'::text, 'void'::text])))
+);
+
+
+--
+-- Name: TABLE finance_documents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.finance_documents IS 'Quotations/invoices generated for a campaign. The document lives in Zoho; this row links it (number, pdf, status) and records client acceptance for quotations.';
+
+
+--
 -- Name: generated_contracts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3820,6 +3151,8 @@ CREATE TABLE public.pm_tasks (
     vendor_cost_override numeric(14,2),
     deleted_at timestamp with time zone,
     deleted_by uuid,
+    asana_gid text,
+    tags text[] DEFAULT '{}'::text[] NOT NULL,
     CONSTRAINT pm_tasks_closer_flag_alone CHECK (((NOT sales_closer_influencer) OR ((sales_closer_id IS NULL) AND (sales_closer_vendor_id IS NULL)))),
     CONSTRAINT pm_tasks_contract_length_chk CHECK (((contract_length IS NULL) OR (contract_length > 0))),
     CONSTRAINT pm_tasks_contract_length_pair_chk CHECK (((contract_length IS NULL) = (contract_length_unit IS NULL))),
@@ -3830,6 +3163,13 @@ CREATE TABLE public.pm_tasks (
     CONSTRAINT pm_tasks_payment_terms_chk CHECK (((payment_terms IS NULL) OR (payment_terms = ANY (ARRAY['split'::text, 'on_delivery'::text, 'in_advance'::text, 'net_days'::text])))),
     CONSTRAINT pm_tasks_vendor_cost_override_chk CHECK (((vendor_cost_override IS NULL) OR (vendor_cost_override >= (0)::numeric)))
 );
+
+
+--
+-- Name: COLUMN pm_tasks.net_amount; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pm_tasks.net_amount IS 'What the VENDOR takes for the whole booking. Kept in step with the ad lines by sync_booking_money_from_lines() when they are priced.';
 
 
 --
@@ -3917,6 +3257,20 @@ COMMENT ON COLUMN public.pm_tasks.deleted_by IS 'Who deleted it. Kept so the bin
 
 
 --
+-- Name: COLUMN pm_tasks.asana_gid; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pm_tasks.asana_gid IS 'Asana task gid this row was imported from. Null for rows created in the app.';
+
+
+--
+-- Name: COLUMN pm_tasks.tags; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pm_tasks.tags IS 'Asana tag names on this task (e.g. #quotation, #invoice, #transaction), as imported. Used by the Finance menu to show only tasks carrying a tag. Compared case-insensitively and with a leading # ignored in app code.';
+
+
+--
 -- Name: vendor_ad_lines; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3944,6 +3298,8 @@ CREATE TABLE public.vendor_ad_lines (
     net_payment_date date,
     net_payment_status text,
     contract_request_id uuid,
+    asana_gid text,
+    bank_account_id bigint,
     CONSTRAINT vendor_ad_lines_net_amount_chk CHECK (((net_amount IS NULL) OR (net_amount >= (0)::numeric))),
     CONSTRAINT vendor_ad_lines_net_payment_status_chk CHECK (((net_payment_status IS NULL) OR (net_payment_status = ANY (ARRAY['unpaid'::text, 'paid'::text, 'partial'::text, 'no_payment'::text, 'refund'::text, 'credit'::text, 'adjustment'::text])))),
     CONSTRAINT vendor_ad_lines_quantity_check CHECK ((quantity > 0)),
@@ -4026,7 +3382,7 @@ COMMENT ON COLUMN public.vendor_ad_lines.quotation_no IS 'Quotation this single 
 -- Name: COLUMN vendor_ad_lines.net_amount; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.vendor_ad_lines.net_amount IS 'What AQ nets on this ad. Null = not worked out yet, which is not the same as zero.';
+COMMENT ON COLUMN public.vendor_ad_lines.net_amount IS 'What the VENDOR takes for ONE ad on this line — multiplied by quantity, exactly as unit_price is. NOT what AQ nets: aq_gross is (price - net_amount), so this is the cost side. Null = not worked out yet, which is not zero, and a vendor contract cannot be written from null.';
 
 
 --
@@ -4037,6 +3393,20 @@ COMMENT ON COLUMN public.vendor_ad_lines.contract_request_id IS 'The contract co
 
 
 --
+-- Name: COLUMN vendor_ad_lines.asana_gid; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.vendor_ad_lines.asana_gid IS 'Asana task gid + '':1'' - the booking''s single line from the import.';
+
+
+--
+-- Name: COLUMN vendor_ad_lines.bank_account_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.vendor_ad_lines.bank_account_id IS 'Which of the vendor''s bank accounts this ad is paid to. Null = the vendor''s default. Used when a booking is contracted per line; a combined contract uses the default.';
+
+
+--
 -- Name: pm_task_campaign_rollup; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -4044,7 +3414,7 @@ CREATE VIEW public.pm_task_campaign_rollup WITH (security_invoker='on') AS
  WITH line_money AS (
          SELECT l.subtask_id,
             sum(((GREATEST(COALESCE(l.quantity, 1), 1))::numeric * COALESCE(l.unit_price, (0)::numeric))) AS ads_total,
-            sum(COALESCE(l.net_amount, (0)::numeric)) AS ads_net,
+            sum(((GREATEST(COALESCE(l.quantity, 1), 1))::numeric * COALESCE(l.net_amount, (0)::numeric))) AS ads_net,
             bool_or((COALESCE(l.unit_price, (0)::numeric) > (0)::numeric)) AS priced,
             bool_or((l.net_amount IS NOT NULL)) AS has_net
            FROM public.vendor_ad_lines l
@@ -4525,8 +3895,16 @@ CREATE TABLE public.vendors (
     event_opening text DEFAULT ''::text,
     event_ceremony text DEFAULT ''::text,
     location_type text DEFAULT ''::text,
+    import_key text,
     CONSTRAINT vendors_invite_status_check CHECK ((invite_status = ANY (ARRAY['none'::text, 'pending_invite'::text, 'invite_sent'::text, 'accepted'::text, 'revoked'::text])))
 );
+
+
+--
+-- Name: COLUMN vendors.import_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.vendors.import_key IS '''asana:'' + folded vendor name, set only on rows the import CREATED. Matched rows keep null.';
 
 
 --
@@ -4565,7 +3943,7 @@ CREATE TABLE public.workspace_invites (
     accepted_by uuid,
     resend_count integer DEFAULT 0 NOT NULL,
     last_resent_at timestamp with time zone,
-    CONSTRAINT workspace_invites_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'operations'::text, 'sales'::text, 'marketing'::text, 'key_account'::text, 'member'::text])))
+    CONSTRAINT workspace_invites_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'operations'::text, 'sales'::text, 'marketing'::text, 'key_account'::text, 'finance'::text, 'member'::text])))
 );
 
 
@@ -4579,7 +3957,7 @@ CREATE TABLE public.workspace_members (
     user_id uuid NOT NULL,
     role text DEFAULT 'member'::text NOT NULL,
     joined_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT workspace_members_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'operations'::text, 'sales'::text, 'marketing'::text, 'key_account'::text, 'member'::text])))
+    CONSTRAINT workspace_members_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'operations'::text, 'sales'::text, 'marketing'::text, 'key_account'::text, 'finance'::text, 'member'::text])))
 );
 
 
@@ -4719,11 +4097,27 @@ ALTER TABLE ONLY public.client_categories
 
 
 --
+-- Name: client_credits client_credits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.client_credits
+    ADD CONSTRAINT client_credits_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: client_dedupe_map client_dedupe_map_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.client_dedupe_map
     ADD CONSTRAINT client_dedupe_map_pkey PRIMARY KEY (drop_id);
+
+
+--
+-- Name: client_dedupe_map_v2 client_dedupe_map_v2_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.client_dedupe_map_v2
+    ADD CONSTRAINT client_dedupe_map_v2_pkey PRIMARY KEY (drop_id);
 
 
 --
@@ -4780,6 +4174,14 @@ ALTER TABLE ONLY public.contract_invites
 
 ALTER TABLE ONLY public.contract_requests
     ADD CONSTRAINT contract_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: contract_signatures contract_signatures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contract_signatures
+    ADD CONSTRAINT contract_signatures_pkey PRIMARY KEY (id);
 
 
 --
@@ -4844,6 +4246,14 @@ ALTER TABLE ONLY public.external_users
 
 ALTER TABLE ONLY public.external_users
     ADD CONSTRAINT external_users_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: finance_documents finance_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_documents
+    ADD CONSTRAINT finance_documents_pkey PRIMARY KEY (id);
 
 
 --
@@ -5253,6 +4663,13 @@ CREATE INDEX audit_logs_created_at_idx ON public.audit_logs USING btree (created
 
 
 --
+-- Name: clients_workspace_import_key_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX clients_workspace_import_key_uniq ON public.clients USING btree (workspace_id, import_key) WHERE (import_key IS NOT NULL);
+
+
+--
 -- Name: clients_workspace_zoho_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5271,6 +4688,41 @@ CREATE INDEX contract_invites_email_idx ON public.contract_invites USING btree (
 --
 
 CREATE INDEX contract_invites_token_idx ON public.contract_invites USING btree (token);
+
+
+--
+-- Name: contract_signatures_contract_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contract_signatures_contract_idx ON public.contract_signatures USING btree (contract_id, created_at DESC);
+
+
+--
+-- Name: contract_signatures_one_live_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX contract_signatures_one_live_uniq ON public.contract_signatures USING btree (contract_id) WHERE (status = ANY (ARRAY['pending'::text, 'accepted'::text]));
+
+
+--
+-- Name: contract_signatures_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contract_signatures_status_idx ON public.contract_signatures USING btree (status, created_at DESC);
+
+
+--
+-- Name: contract_signatures_uploaded_by_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contract_signatures_uploaded_by_idx ON public.contract_signatures USING btree (uploaded_by);
+
+
+--
+-- Name: contract_signatures_workspace_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contract_signatures_workspace_status_idx ON public.contract_signatures USING btree (workspace_id, status, created_at DESC);
 
 
 --
@@ -5344,6 +4796,27 @@ CREATE INDEX document_requests_task_idx ON public.document_requests USING btree 
 
 
 --
+-- Name: finance_documents_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX finance_documents_queue_idx ON public.finance_documents USING btree (workspace_id, kind, status, created_at DESC);
+
+
+--
+-- Name: finance_documents_task_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX finance_documents_task_idx ON public.finance_documents USING btree (pm_task_id, kind, created_at DESC);
+
+
+--
+-- Name: finance_documents_zoho_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX finance_documents_zoho_uniq ON public.finance_documents USING btree (zoho_document_id) WHERE (zoho_document_id IS NOT NULL);
+
+
+--
 -- Name: generated_contracts_generated_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5390,6 +4863,20 @@ CREATE INDEX idx_bank_accounts_vendor ON public.bank_accounts USING btree (vendo
 --
 
 CREATE INDEX idx_client_categories_ws ON public.client_categories USING btree (workspace_id);
+
+
+--
+-- Name: idx_client_credits_client; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_credits_client ON public.client_credits USING btree (client_id);
+
+
+--
+-- Name: idx_client_credits_workspace; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_client_credits_workspace ON public.client_credits USING btree (workspace_id);
 
 
 --
@@ -5827,10 +5314,24 @@ CREATE INDEX pm_tasks_quotation_numbers_idx ON public.pm_tasks USING gin (quotat
 
 
 --
+-- Name: pm_tasks_tags_gin; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX pm_tasks_tags_gin ON public.pm_tasks USING gin (tags);
+
+
+--
 -- Name: pm_tasks_vendor_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX pm_tasks_vendor_id_idx ON public.pm_tasks USING btree (vendor_id) WHERE (vendor_id IS NOT NULL);
+
+
+--
+-- Name: pm_tasks_workspace_asana_gid_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX pm_tasks_workspace_asana_gid_uniq ON public.pm_tasks USING btree (workspace_id, asana_gid) WHERE (asana_gid IS NOT NULL);
 
 
 --
@@ -5862,10 +5363,24 @@ CREATE UNIQUE INDEX ux_vendor_files_storage_path ON public.vendor_files USING bt
 
 
 --
+-- Name: vendor_ad_lines_asana_gid_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX vendor_ad_lines_asana_gid_uniq ON public.vendor_ad_lines USING btree (asana_gid) WHERE (asana_gid IS NOT NULL);
+
+
+--
 -- Name: vendor_ad_lines_contract_request_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX vendor_ad_lines_contract_request_idx ON public.vendor_ad_lines USING btree (contract_request_id) WHERE (contract_request_id IS NOT NULL);
+
+
+--
+-- Name: vendors_import_key_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX vendors_import_key_uniq ON public.vendors USING btree (import_key) WHERE (import_key IS NOT NULL);
 
 
 --
@@ -6083,6 +5598,14 @@ ALTER TABLE ONLY public.client_brands
 
 ALTER TABLE ONLY public.client_categories
     ADD CONSTRAINT client_categories_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: client_credits client_credits_client_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.client_credits
+    ADD CONSTRAINT client_credits_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE CASCADE;
 
 
 --
@@ -6331,6 +5854,14 @@ ALTER TABLE ONLY public.external_users
 
 ALTER TABLE ONLY public.external_users
     ADD CONSTRAINT external_users_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES public.vendors(id) ON DELETE SET NULL;
+
+
+--
+-- Name: finance_documents finance_documents_pm_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_documents
+    ADD CONSTRAINT finance_documents_pm_task_id_fkey FOREIGN KEY (pm_task_id) REFERENCES public.pm_tasks(id) ON DELETE CASCADE;
 
 
 --
@@ -6782,6 +6313,14 @@ ALTER TABLE ONLY public.tracking_rows
 
 
 --
+-- Name: vendor_ad_lines vendor_ad_lines_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendor_ad_lines
+    ADD CONSTRAINT vendor_ad_lines_bank_account_id_fkey FOREIGN KEY (bank_account_id) REFERENCES public.bank_accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: vendor_ad_lines vendor_ad_lines_contract_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6878,6 +6417,24 @@ ALTER TABLE ONLY public.workspaces
 
 
 --
+-- Name: _vendor_merge_backup_2026_09_09; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public._vendor_merge_backup_2026_09_09 ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: _vendor_merge_log_2026_09_09; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public._vendor_merge_log_2026_09_09 ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: _vendor_merge_subtask_log_2026_09_09; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public._vendor_merge_subtask_log_2026_09_09 ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: activity_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -6966,10 +6523,36 @@ CREATE POLICY client_categories_member_read ON public.client_categories FOR SELE
 
 
 --
+-- Name: client_credits; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.client_credits ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: client_credits client_credits insert by member; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "client_credits insert by member" ON public.client_credits FOR INSERT WITH CHECK (public.is_member_of(workspace_id));
+
+
+--
+-- Name: client_credits client_credits read by member; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "client_credits read by member" ON public.client_credits FOR SELECT USING (public.is_member_of(workspace_id));
+
+
+--
 -- Name: client_dedupe_map; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.client_dedupe_map ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: client_dedupe_map_v2; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.client_dedupe_map_v2 ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: clients; Type: ROW SECURITY; Schema: public; Owner: -
@@ -6995,7 +6578,7 @@ CREATE POLICY "clients insert by member" ON public.clients FOR INSERT WITH CHECK
 -- Name: clients clients read all; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "clients read all" ON public.clients FOR SELECT USING (true);
+CREATE POLICY "clients read all" ON public.clients FOR SELECT TO authenticated USING (true);
 
 
 --
@@ -7104,6 +6687,26 @@ CREATE POLICY "contract_requests select" ON public.contract_requests FOR SELECT 
 --
 
 CREATE POLICY "contract_requests update" ON public.contract_requests FOR UPDATE USING (public.has_role(workspace_id, ARRAY['owner'::text, 'admin'::text, 'marketing'::text, 'key_account'::text]));
+
+
+--
+-- Name: contract_signatures; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.contract_signatures ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: contract_signatures contract_signatures insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "contract_signatures insert" ON public.contract_signatures FOR INSERT WITH CHECK (((uploaded_by = auth.uid()) AND (status = 'pending'::text) AND (rejection_reason IS NULL) AND (reviewed_by IS NULL)));
+
+
+--
+-- Name: contract_signatures contract_signatures select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "contract_signatures select" ON public.contract_signatures FOR SELECT USING ((public.is_member_of(workspace_id) OR (uploaded_by = auth.uid())));
 
 
 --
@@ -7283,6 +6886,26 @@ CREATE POLICY "external_users self read" ON public.external_users FOR SELECT USI
 
 
 --
+-- Name: finance_documents; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.finance_documents ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: finance_documents finance_documents select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "finance_documents select" ON public.finance_documents FOR SELECT USING (public.has_role(workspace_id, ARRAY['owner'::text, 'admin'::text, 'sales'::text, 'key_account'::text, 'finance'::text]));
+
+
+--
+-- Name: finance_documents finance_documents write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "finance_documents write" ON public.finance_documents USING (public.has_role(workspace_id, ARRAY['owner'::text, 'admin'::text, 'finance'::text])) WITH CHECK (public.has_role(workspace_id, ARRAY['owner'::text, 'admin'::text, 'finance'::text]));
+
+
+--
 -- Name: generated_contracts; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -7417,7 +7040,7 @@ CREATE POLICY "pm_tasks insert by role" ON public.pm_tasks FOR INSERT WITH CHECK
 -- Name: pm_tasks pm_tasks select role aware; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "pm_tasks select role aware" ON public.pm_tasks FOR SELECT USING (((deleted_at IS NULL) AND (public.has_role(workspace_id, ARRAY['owner'::text, 'admin'::text, 'marketing'::text, 'sales'::text, 'key_account'::text]) OR (assignee_id = auth.uid()) OR (creator_id = auth.uid()) OR (key_account_id = auth.uid()) OR (id IN ( SELECT task_members.task_id
+CREATE POLICY "pm_tasks select role aware" ON public.pm_tasks FOR SELECT USING (((deleted_at IS NULL) AND (public.has_role(workspace_id, ARRAY['owner'::text, 'admin'::text, 'marketing'::text, 'sales'::text, 'key_account'::text, 'finance'::text]) OR (assignee_id = auth.uid()) OR (creator_id = auth.uid()) OR (key_account_id = auth.uid()) OR (id IN ( SELECT task_members.task_id
    FROM public.task_members
   WHERE (task_members.user_id = auth.uid()))))));
 
@@ -7446,7 +7069,7 @@ CREATE POLICY "profiles insert own" ON public.profiles FOR INSERT WITH CHECK ((a
 -- Name: profiles profiles select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "profiles select" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "profiles select" ON public.profiles FOR SELECT TO authenticated USING (true);
 
 
 --
@@ -8071,6 +7694,23 @@ GRANT ALL ON FUNCTION public._log_invite_event(p_invite_id uuid, p_workspace_id 
 
 
 --
+-- Name: TABLE contract_signatures; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.contract_signatures TO anon;
+GRANT SELECT,INSERT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.contract_signatures TO authenticated;
+GRANT ALL ON TABLE public.contract_signatures TO service_role;
+
+
+--
+-- Name: FUNCTION accept_signed_contract(p_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.accept_signed_contract(p_id uuid) TO authenticated;
+GRANT ALL ON FUNCTION public.accept_signed_contract(p_id uuid) TO service_role;
+
+
+--
 -- Name: FUNCTION activity_feed(p_workspace_id uuid, p_limit integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -8348,6 +7988,27 @@ GRANT ALL ON FUNCTION public.on_pm_task_stage_change() TO service_role;
 
 
 --
+-- Name: FUNCTION pm_client_ledger(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pm_client_ledger() TO authenticated;
+
+
+--
+-- Name: FUNCTION pm_dashboard_summary(p_from date, p_to date, p_client uuid); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pm_dashboard_summary(p_from date, p_to date, p_client uuid) TO authenticated;
+
+
+--
+-- Name: FUNCTION pm_vendor_ledger(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pm_vendor_ledger() TO authenticated;
+
+
+--
 -- Name: FUNCTION publish_tracking_sheet(p_task_id uuid); Type: ACL; Schema: public; Owner: -
 --
 
@@ -8407,6 +8068,14 @@ GRANT ALL ON FUNCTION public.reject_pending_client(p_id bigint) TO service_role;
 GRANT ALL ON FUNCTION public.reject_pending_vendor(p_id bigint) TO anon;
 GRANT ALL ON FUNCTION public.reject_pending_vendor(p_id bigint) TO authenticated;
 GRANT ALL ON FUNCTION public.reject_pending_vendor(p_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION reject_signed_contract(p_id uuid, p_reason text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.reject_signed_contract(p_id uuid, p_reason text) TO authenticated;
+GRANT ALL ON FUNCTION public.reject_signed_contract(p_id uuid, p_reason text) TO service_role;
 
 
 --
@@ -8539,6 +8208,33 @@ GRANT ALL ON FUNCTION public.workspace_member_names(p_workspace uuid) TO service
 
 
 --
+-- Name: TABLE _vendor_merge_backup_2026_09_09; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public._vendor_merge_backup_2026_09_09 TO anon;
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public._vendor_merge_backup_2026_09_09 TO authenticated;
+GRANT ALL ON TABLE public._vendor_merge_backup_2026_09_09 TO service_role;
+
+
+--
+-- Name: TABLE _vendor_merge_log_2026_09_09; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public._vendor_merge_log_2026_09_09 TO anon;
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public._vendor_merge_log_2026_09_09 TO authenticated;
+GRANT ALL ON TABLE public._vendor_merge_log_2026_09_09 TO service_role;
+
+
+--
+-- Name: TABLE _vendor_merge_subtask_log_2026_09_09; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public._vendor_merge_subtask_log_2026_09_09 TO anon;
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public._vendor_merge_subtask_log_2026_09_09 TO authenticated;
+GRANT ALL ON TABLE public._vendor_merge_subtask_log_2026_09_09 TO service_role;
+
+
+--
 -- Name: TABLE activity_log; Type: ACL; Schema: public; Owner: -
 --
 
@@ -8606,10 +8302,28 @@ GRANT ALL ON TABLE public.client_categories TO service_role;
 
 
 --
+-- Name: TABLE client_credits; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.client_credits TO anon;
+GRANT SELECT,INSERT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.client_credits TO authenticated;
+GRANT ALL ON TABLE public.client_credits TO service_role;
+
+
+--
 -- Name: TABLE client_dedupe_map; Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON TABLE public.client_dedupe_map TO service_role;
+
+
+--
+-- Name: TABLE client_dedupe_map_v2; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.client_dedupe_map_v2 TO anon;
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.client_dedupe_map_v2 TO authenticated;
+GRANT ALL ON TABLE public.client_dedupe_map_v2 TO service_role;
 
 
 --
@@ -8715,6 +8429,15 @@ GRANT ALL ON TABLE public.external_user_invites TO service_role;
 GRANT ALL ON TABLE public.external_users TO anon;
 GRANT ALL ON TABLE public.external_users TO authenticated;
 GRANT ALL ON TABLE public.external_users TO service_role;
+
+
+--
+-- Name: TABLE finance_documents; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.finance_documents TO anon;
+GRANT SELECT,INSERT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE public.finance_documents TO authenticated;
+GRANT ALL ON TABLE public.finance_documents TO service_role;
 
 
 --
@@ -9258,4 +8981,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 -- PostgreSQL database dump complete
 --
 
+\unrestrict xjLfndadJhsxi31xb09bX6mHwHlEgalJkLuYJ0TD5x8HefjM4xtsp8excCYRBLj
 
