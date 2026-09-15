@@ -82,6 +82,7 @@ const LIBS = [
   'lib/client-credits.ts',
   'lib/finance.ts',
   'lib/finance-notify.ts',
+  'lib/finance-notify.ts',
   'lib/crm-sync.ts',
 ];
 
