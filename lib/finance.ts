@@ -336,3 +336,92 @@ export function payStateOf(billed: unknown, paid: unknown): 'paid' | 'partial' |
   if (p >= b && b > 0) return 'paid';
   return 'partial';
 }
+
+/**
+ * The recorded client_payment_status in three buckets. Free text and the
+ * legacy spellings map down: anything containing "paid" but not "partial" is
+ * paid, "partial"/"partly" is partial, everything else (pending, unpaid, blank)
+ * is unpaid. Blank/unknown returns null so the caller can fall back to the
+ * amounts (payStateOf).
+ */
+export function normalizePayState(status: unknown): 'paid' | 'partial' | 'unpaid' | null {
+  const s = txt(status).toLowerCase();
+  if (!s) return null;
+  if (s.includes('partial') || s.includes('partly')) return 'partial';
+  if (s.includes('unpaid') || s.includes('pending') || s === 'none') return 'unpaid';
+  if (s.includes('paid')) return 'paid';
+  return null;
+}
+
+/**
+ * The advance the client contract's payment terms lead us to expect, before
+ * anyone records what actually came in. "in advance" expects the whole bill up
+ * front; a "split" expects the up-front share (payment_split_pct); everything
+ * else expects nothing. This is the EXPECTED figure - what SHOULD arrive - to
+ * sit beside the recorded advance so finance can see a shortfall.
+ */
+export function expectedAdvance(billed: unknown, terms: unknown, splitPct: unknown): number {
+  const b = num(billed);
+  const t = txt(terms).toLowerCase();
+  if (b <= 0) return 0;
+  if (t === 'in_advance') return Math.round(b * 100) / 100;
+  if (t === 'split') {
+    const pct = Math.max(0, Math.min(100, num(splitPct)));
+    return Math.round(b * (pct / 100) * 100) / 100;
+  }
+  return 0;
+}
+
+/** One campaign's money on one side (client OR vendor), as the Finance screen reads it. */
+export interface CampaignMoney {
+  taskId: string;
+  title?: string | null;
+  brand?: string | null;
+  billed: number;                 // client: sum of prices; vendor: sum of nets
+  paid: number;                   // the recorded settlement on this side
+  status?: string | null;         // recorded pay status (client side); may be blank
+  advance?: number | null;        // recorded advance on this side (092)
+  advanceDate?: string | null;
+  paymentTerms?: string | null;   // client contract terms (drives expectedAdvance)
+  paymentSplitPct?: number | null;
+}
+
+/** A Finance payment row: the section-placement fields plus what the table shows. */
+export interface PaymentRow extends PaymentRowLike {
+  taskId: string;
+  title: string;
+  brand: string;
+  billed: number;
+  paid: number;
+  remaining: number;
+  advance: number;
+  advanceDate: string | null;
+  expectedAdvance: number;
+  state: 'paid' | 'partial' | 'unpaid';
+}
+
+/**
+ * Build the Finance payment rows for one side. State is the recorded status
+ * when there is one (it is somebody's judgement and wins, like the ledger),
+ * else worked out from the amounts. Remaining is billed - paid, floored.
+ */
+export function buildPaymentRows(rows: CampaignMoney[]): PaymentRow[] {
+  return (rows ?? []).map((c): PaymentRow => {
+    const billed = num(c.billed);
+    const paid = num(c.paid);
+    const advance = num(c.advance);
+    const state = normalizePayState(c.status) ?? payStateOf(billed, paid);
+    return {
+      taskId: txt(c.taskId),
+      title: txt(c.title) || txt(c.brand) || 'Untitled campaign',
+      brand: txt(c.brand),
+      billed,
+      paid,
+      remaining: paymentRemaining(billed, paid),
+      advance,
+      advanceDate: txt(c.advanceDate) || null,
+      expectedAdvance: expectedAdvance(billed, c.paymentTerms, c.paymentSplitPct),
+      state,
+    };
+  }).filter((r) => r.taskId);
+}
