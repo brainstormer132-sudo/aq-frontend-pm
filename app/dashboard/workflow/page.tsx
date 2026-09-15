@@ -370,6 +370,11 @@ export default function WorkflowPage() {
                has no address you can send anyone. */
             onOpen={(id) => router.push(`/dashboard/campaign/${id}`)}
             hrefFor={(id) => `/dashboard/campaign/${id}`}
+            /* New Task is reached from here now, not the nav. Only the roles
+               that can create a task get the button. */
+            onNewTask={role && ['owner', 'admin', 'sales', 'marketing'].includes(role)
+              ? () => { setTaskPrefill(null); setView('new-task'); }
+              : undefined}
           />
         )}
 

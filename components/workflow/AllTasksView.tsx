@@ -37,7 +37,7 @@ import { CalendarPanel } from './TaskCalendarView';
  * is in lib/all-tasks.ts, pure and tested.
  */
 export function AllTasksView({
-  tasks, loading, profiles, currentUserId, workspaceId, onOpen, hrefFor,
+  tasks, loading, profiles, currentUserId, workspaceId, onOpen, hrefFor, onNewTask,
 }: {
   tasks: TaskRow[];
   loading: boolean;
@@ -49,6 +49,9 @@ export function AllTasksView({
      row can be middle-clicked into a new tab and its address copied — a
      campaign is a place now, not a drawer state. */
   hrefFor?: (id: string) => string;
+  /* Given only to roles that can create a task (owner/admin/sales/marketing).
+     New Task is no longer its own nav screen; this is how it is reached. */
+  onNewTask?: () => void;
 }) {
   const { rows: rollup, loading: rollupLoading } = usePmTaskCampaignRollup(workspaceId);
 
@@ -103,6 +106,14 @@ export function AllTasksView({
         <span style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>
           {waiting || !today ? 'Loading…' : summaryLine(summary)}
         </span>
+        {onNewTask && (
+          <button
+            type="button"
+            className="aq-btn aq-btn-primary"
+            onClick={onNewTask}
+            style={{ marginLeft: 'auto' }}
+          >+ New task</button>
+        )}
       </header>
 
       <div className="aq-card">

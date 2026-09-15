@@ -16,20 +16,26 @@ interface NavItem {
   label: string;
   icon: IconName;
   visibleTo: WorkspaceRole[];
+  /** Section heading this item sits under. Items stay in array order and a
+   *  heading prints the first time its group appears among the visible items. */
+  group: string;
 }
 
+// New Task is no longer a nav entry - it is reached from a "New task" button on
+// the All Tasks page, so the nav has one fewer top-level screen. Sales reached
+// task creation only through the old New Task item and do not otherwise see All
+// Tasks, so All Tasks is visible to sales too (already their default landing).
 const NAV: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard',  icon: 'home',     visibleTo: [] },
-  { id: 'new-task',  label: 'New Task',   icon: 'plus',     visibleTo: ['owner','admin','sales','marketing'] },
+  { id: 'dashboard', label: 'Dashboard',  icon: 'home',     visibleTo: [], group: 'Overview' },
   // Personal Inbox — searchable list of notifications + mentions for the
   // current user. Replaces the old topbar bell. Visible to everyone; the
   // marketing-triage queue (different concept) is reached via the dashboard
   // "Pending triage" stat card.
-  { id: 'inbox',     label: 'Inbox',      icon: 'inbox',    visibleTo: [] },
+  { id: 'inbox',     label: 'Inbox',      icon: 'inbox',    visibleTo: [], group: 'Overview' },
   // Operations is included: quotation/invoice/contract requests (migration 038)
   // notify Ops, and All Tasks is how they browse to the campaign that owns the
   // subtask they were pinged about.
-  { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account','operations'] },
+  { id: 'all-tasks', label: 'All Tasks',  icon: 'list',     visibleTo: ['owner','admin','marketing','key_account','operations','sales'], group: 'Work' },
   // My Tasks retired Aug 2026: it was All Tasks with one filter applied, and
   // two lists of the same rows meant two places to look. All Tasks now has an
   // "Only mine" option in the member filter, and the CRM follow-ups it used to
@@ -43,21 +49,21 @@ const NAV: NavItem[] = [
   // CRM lives ABOVE the raw Clients/Vendors data screens — it's the
   // primary surface for relationship management; the others stay around
   // for admin/data entry. Visible to anyone who works with clients/vendors.
-  { id: 'crm',             label: 'CRM',             icon: 'users',     visibleTo: ['owner','admin','marketing','sales','key_account'] },
-  { id: 'clients',         label: 'Clients',         icon: 'building',  visibleTo: ['owner','admin','marketing','sales'] },
-  { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'] },
+  { id: 'crm',             label: 'CRM',             icon: 'users',     visibleTo: ['owner','admin','marketing','sales','key_account'], group: 'Contacts' },
+  { id: 'clients',         label: 'Clients',         icon: 'building',  visibleTo: ['owner','admin','marketing','sales'], group: 'Contacts' },
+  { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'], group: 'Contacts' },
   // Tracking Sheets — every campaign flagged with a tracking sheet (chosen at
   // triage via the "Tracking Sheet" subtask). Opens the ad/vendor grid.
-  { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account','operations'] },
+  { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account','operations'], group: 'Delivery' },
   // Data — one search box over every client and vendor, and the same panels
   // narrowed to whoever is picked. It shows net_amount and aq_gross, which
   // are AQ's margin, so it is NOT visible to everyone: marketing and
   // operations have no reason to see what the agency makes on a job.
-  { id: 'data',            label: 'Data',            icon: 'chart',     visibleTo: ['owner','admin','sales','key_account'] },
+  { id: 'data',            label: 'Data',            icon: 'chart',     visibleTo: ['owner','admin','sales','key_account'], group: 'Money' },
   // Finance -> quotations (generate/re-quote via Zoho). Owner/admin/finance.
-  { id: 'finance',         label: 'Finance',         icon: 'chart',     visibleTo: ['owner','admin','finance'] },
-  { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [] },
-  { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'] },
+  { id: 'finance',         label: 'Finance',         icon: 'chart',     visibleTo: ['owner','admin','finance'], group: 'Money' },
+  { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [], group: 'Admin' },
+  { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'], group: 'Admin' },
 ];
 
 /** Two letters for the collapsed footer. Falls back to a dot for a blank name. */
@@ -85,6 +91,16 @@ export function WorkflowSidebar({
   onSignOut: () => void;
 }) {
   const items = NAV.filter((n) => n.visibleTo.length === 0 || (role && n.visibleTo.includes(role)));
+
+  // Turn the flat visible list into headers + items: a section heading prints
+  // the first time its group appears, so a group with nothing visible to this
+  // role prints no heading.
+  const navRows: Array<{ kind: 'header'; label: string } | { kind: 'item'; item: NavItem }> = [];
+  let lastGroup: string | null = null;
+  for (const n of items) {
+    if (n.group !== lastGroup) { navRows.push({ kind: 'header', label: n.group }); lastGroup = n.group; }
+    navRows.push({ kind: 'item', item: n });
+  }
 
   // Starts expanded and corrects itself after mount rather than reading
   // localStorage during render — the server has no localStorage, and a
@@ -173,7 +189,23 @@ export function WorkflowSidebar({
       </button>
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
-        {items.map((n) => {
+        {navRows.map((r, i) => {
+          if (r.kind === 'header') {
+            // Collapsed: no room for a word, so the heading becomes a divider.
+            return collapsed ? (
+              <div key={`h-${i}`} style={{
+                height: 1, background: 'var(--aq-sidebar-border)',
+                margin: '10px 8px 6px',
+              }} />
+            ) : (
+              <div key={`h-${i}`} style={{
+                padding: '12px 12px 4px', fontSize: 10, fontWeight: 700,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: 'var(--aq-sidebar-text)', opacity: 0.5,
+              }}>{r.label}</div>
+            );
+          }
+          const n = r.item;
           const active = view === n.id;
           return (
             <button
