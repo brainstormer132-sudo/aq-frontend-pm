@@ -14,7 +14,7 @@ import {
 } from '@/lib/attention';
 import { SkeletonRows, SkeletonLine } from '@/components/Skeleton';
 import { useBandExtras } from './ScreenBand';
-import { dashboardHero, attentionChips, welcomeTitle, type BandExtras } from '@/lib/band';
+import { dashboardHero, attentionChips, welcomeTitle, isMine, type BandExtras } from '@/lib/band';
 import { FollowUps } from './FollowUps';
 
 /**
@@ -104,6 +104,23 @@ export function WorkflowDashboard({
       .slice(0, 6),
     [allTasks, userId],
   );
+
+  // The four tiles, scoped to your work - the dashboard is about you, not the
+  // whole workspace. Same isMine as the hero and the list above, so all three
+  // agree; a subtask assigned to you counts even when its campaign is someone
+  // else's.
+  const myStats = useMemo(() => {
+    const byId = new Map(rows.map((r: any) => [r.id, r]));
+    const mine = (r: any) => isMine(r, userId, byId);
+    const parents = rows.filter((r: any) => !r.parent_task_id && mine(r));
+    return {
+      total: parents.length,
+      completed: parents.filter((r: any) => r.stage === 'completed').length,
+      inProgress: parents.filter((r: any) => r.stage === 'in_progress').length,
+      overdue: today ? rows.filter((r: any) => mine(r) && r.due_date && r.due_date < today && r.status !== 'done').length : 0,
+      dueToday: today ? rows.filter((r: any) => mine(r) && r.due_date === today && r.status !== 'done').length : 0,
+    };
+  }, [rows, userId, today]);
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const busiest = useMemo(
@@ -293,15 +310,15 @@ export function WorkflowDashboard({
           and it only appears when something is actually waiting. */}
       <section className="aq-card" style={{ padding: '16px 20px' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 28 }}>
-          <Figure label="In progress" value={stats.inProgress} loading={loading} />
-          <Figure label="Completed" value={stats.completed} sub={`of ${stats.total}`} loading={loading} />
+          <Figure label="In progress" value={myStats.inProgress} loading={loading} />
+          <Figure label="Completed" value={myStats.completed} sub={`of ${myStats.total}`} loading={loading} />
           <Figure
             label="Overdue"
-            value={stats.overdue + crm.overdue}
+            value={myStats.overdue + crm.overdue}
             loading={loading}
-            tone={stats.overdue + crm.overdue ? 'bad' : 'plain'}
+            tone={myStats.overdue + crm.overdue ? 'bad' : 'plain'}
           />
-          <Figure label="Due today" value={stats.dueToday + crm.today} loading={loading} />
+          <Figure label="Due today" value={myStats.dueToday + crm.today} loading={loading} />
           <div style={{ flex: 1 }} />
           {stats.pendingMarketing > 0 && (
             <button
