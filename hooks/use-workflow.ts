@@ -1529,6 +1529,10 @@ export async function createSalesTask(input: {
   sales_closer_influencer?: boolean | null;
   budget?: number | null;
   details?: string | null;
+  /** Set when the campaign is started from a won CRM deal (090). */
+  deal_id?: string | null;
+  /** The deal's expected close date, carried over as the campaign due date. */
+  due_date?: string | null;
   creator_id: string;
 }) {
   const { data, error } = await supabase
@@ -1546,6 +1550,8 @@ export async function createSalesTask(input: {
       sales_closer_influencer: input.sales_closer_influencer ?? false,
       budget: input.budget ?? null,
       description: input.details ?? null,
+      deal_id: input.deal_id ?? null,
+      due_date: input.due_date ?? null,
       creator_id: input.creator_id,
       stage: 'pending_marketing',
       status: 'pending',
@@ -1561,6 +1567,25 @@ export async function createSalesTask(input: {
   void logToClientTimeline(created.workspace_id, created.client_id, onCampaignCreated(created));
 
   return created;
+}
+
+/**
+ * Has a campaign already been started from this deal?
+ *
+ * A deal is dragged to Won by hand, and nothing stops it being dragged out
+ * and back again, so without this a single sale could spawn two campaigns for
+ * one client. `pm_tasks.deal_id` (090) is the stamp; this reads it back before
+ * we offer to start another. Reads count only, so it stays cheap.
+ */
+export async function campaignExistsForDeal(dealId: string): Promise<boolean> {
+  const id = (dealId ?? '').trim();
+  if (!id) return false;
+  const { count, error } = await supabase
+    .from('pm_tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('deal_id', id);
+  if (error) throw error;
+  return (count ?? 0) > 0;
 }
 
 /** Marketing: triage. Set priority + service types + key_account, advance stage,

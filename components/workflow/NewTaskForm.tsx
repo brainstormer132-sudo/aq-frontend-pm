@@ -69,6 +69,9 @@ export function NewTaskForm({
     clientId: prefill?.client_id ?? '',
     budget: prefill?.budget != null ? String(prefill.budget) : '',
     details: prefill?.details ?? '',
+    // The deal owner closed the sale, so they are the sales closer. The picker
+    // keys team members as `p:<id>`; the person can still change it.
+    salesCloser: prefill?.sales_closer_id ? `p:${prefill.sales_closer_id}` : '',
   });
   const set = <K extends keyof Draft>(k: K) => (v: Draft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
@@ -169,6 +172,10 @@ export function NewTaskForm({
         ...closerFields(draft.salesCloser),
         budget: budgetValue(draft.budget),
         details: draft.details.trim() || null,
+        // Provenance from the won deal, carried straight through: the link that
+        // stops a second campaign, and the deal's close date as the due date.
+        deal_id: prefill?.deal_id ?? null,
+        due_date: prefill?.due_date ?? null,
         creator_id: currentUserId,
       });
 

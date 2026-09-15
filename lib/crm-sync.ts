@@ -190,23 +190,40 @@ export interface CampaignPrefill {
   client_id: string | null;
   budget: number | null;
   details: string;
+  /**
+   * The deal this campaign was won from. Carried through the form and stamped
+   * on the created campaign (pm_tasks.deal_id) so the same deal cannot be
+   * turned into a second campaign, and so the campaign points back at its sale.
+   */
+  deal_id: string | null;
+  /** The deal's owner becomes the campaign's sales closer (who closed it). */
+  sales_closer_id: string | null;
+  /** The deal's expected close date becomes the campaign's due date. */
+  due_date: string | null;
 }
 
 export function prefillFromDeal(deal: {
+  id?: string | null;
   name: string;
   value: number | null;
   target_type: string | null;
   target_id: string | null;
+  owner_id?: string | null;
+  expected_close_date?: string | null;
   notes?: string | null;
 }): CampaignPrefill {
   const isClient = norm(deal.target_type) === 'client' && txt(deal.target_id);
   const notes = txt(deal.notes);
+  const due = txt(deal.expected_close_date).slice(0, 10);
   return {
     task_name: txt(deal.name),
     client_id: isClient ? txt(deal.target_id) : null,
     budget: deal.value != null && Number.isFinite(Number(deal.value)) && Number(deal.value) > 0
       ? Number(deal.value)
       : null,
+    deal_id: txt(deal.id) || null,
+    sales_closer_id: txt(deal.owner_id) || null,
+    due_date: due || null,
     details: notes ? `From won deal “${txt(deal.name)}”.\n\n${notes}` : `From won deal “${txt(deal.name)}”.`,
   };
 }

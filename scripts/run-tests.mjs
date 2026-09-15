@@ -81,6 +81,7 @@ const LIBS = [
   'lib/concurrency.ts',
   'lib/client-credits.ts',
   'lib/finance.ts',
+  'lib/crm-sync.ts',
 ];
 
 const GREEN = '\x1b[32m';

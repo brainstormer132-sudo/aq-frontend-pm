@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import {
   useCrmDeals, moveCrmDealStage, deleteCrmDeal, logDealOutcome,
-  useClients, useLegacyVendors,
+  useClients, useLegacyVendors, campaignExistsForDeal,
   DEAL_STAGES, type CrmDeal, type DealStage,
 } from '@/hooks/use-workflow';
 import { DealEditor } from './DealEditor';
@@ -100,7 +100,13 @@ export function DealsKanban({
       // It is offered, not taken: deals move by mouse drag, and a mis-drag
       // that silently created a real campaign for a real client would be a
       // worse mistake than one extra click.
-      if (stage === 'won' && onStartCampaign && deal.target_type === 'client') {
+      // One sale, one campaign: if a campaign was already started from this
+      // deal (pm_tasks.deal_id, 090), say so and do not offer another. A deal
+      // can be dragged out of Won and back, so nothing else stops a double.
+      const alreadyCampaign = stage === 'won' && deal.target_type === 'client'
+        && await campaignExistsForDeal(deal.id).catch(() => false);
+      if (alreadyCampaign) alert('A campaign was already started from this deal.');
+      if (stage === 'won' && onStartCampaign && deal.target_type === 'client' && !alreadyCampaign) {
         const go = window.confirm(
           `Deal won: ${deal.name}.\n\nStart a campaign from it? The New Task form opens with the client, name and value already filled in — nothing is created until you submit it.`,
         );
