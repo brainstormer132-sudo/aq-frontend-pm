@@ -80,6 +80,14 @@ export function ClientsView({
   });
 
   const canCreate = Boolean(role && ['owner','admin','marketing','sales'].includes(role));
+  // Who may edit an existing client (its standing payment terms): owner, admin,
+  // marketing, sales, operations. This is a direct, RLS-backed write, so the
+  // gate here is the whole story. (Creating a client still runs through the
+  // backend, which gates to admin/owner - widen that to add operations there.)
+  const canEdit = Boolean(role && ['owner','admin','marketing','sales','operations'].includes(role));
+  // Portals are owner-only: making one, resetting a password, and the email
+  // the client signs in with.
+  const canPortal = role === 'owner';
   const canImport = Boolean(role && ['owner','admin'].includes(role));
 
   // Zoho bulk import state — backend now runs the job in the background
@@ -397,7 +405,9 @@ export function ClientsView({
           renderDetail={(r) => (
             <ClientDetail
               row={r}
-              isAdmin={role === 'owner' || role === 'admin'}
+              canEdit={canEdit}
+              canPortal={canPortal}
+              canDelete={role === 'owner' || role === 'admin'}
               onPortal={() => setPortalFor(r)}
               onDelete={() => setConfirmDeleteId(r.id)}
               onSaveTerms={async (id, fields) => { await updateClientTerms(id, fields); refetch(); }}
@@ -633,10 +643,12 @@ const modalCard: React.CSSProperties = {
  * be missing in the contract too.
  */
 function ClientDetail({
-  row, isAdmin, onPortal, onDelete, onSaveTerms,
+  row, canEdit, canPortal, canDelete, onPortal, onDelete, onSaveTerms,
 }: {
   row: RegistryRow;
-  isAdmin: boolean;
+  canEdit: boolean;
+  canPortal: boolean;
+  canDelete: boolean;
   onPortal: () => void;
   onDelete: () => void;
   /** Save this client's standing payment terms. */
@@ -670,10 +682,10 @@ function ClientDetail({
           terms={c.payment_terms ?? null}
           splitPct={c.payment_split_pct ?? null}
           netDays={c.payment_net_days ?? null}
-          canEdit={isAdmin}
+          canEdit={canEdit}
           onCommit={(fields) => onSaveTerms(row.id, fields)}
         />
-        {isAdmin && (
+        {canEdit && (
           <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>
             every campaign inherits this unless it sets its own
           </span>
@@ -682,14 +694,16 @@ function ClientDetail({
 
       <BrandManagerInline clientId={row.id} />
 
-      {isAdmin && (
+      {canDelete && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button
-            type="button"
-            className="aq-btn aq-btn-secondary"
-            onClick={onPortal}
-            style={{ fontSize: 12, padding: '5px 11px' }}
-          >{row.portal === 'active' ? 'Reset password' : 'Make portal'}</button>
+          {canPortal && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              onClick={onPortal}
+              style={{ fontSize: 12, padding: '5px 11px' }}
+            >{row.portal === 'active' ? 'Reset password' : 'Make portal'}</button>
+          )}
           <button
             type="button"
             className="aq-btn aq-btn-ghost"
