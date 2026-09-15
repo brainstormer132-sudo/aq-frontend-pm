@@ -92,5 +92,45 @@ const ok = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`F
   eq('sections over built rows', paymentSectionCounts(rows), { all: 2, partial: 1, advanced: 1 });
 }
 
+// Overpayment (and a stale recorded status) must read as paid, not partial.
+{
+  // Overpaid with NO recorded status: amounts alone -> paid.
+  const over = buildPaymentRows([
+    { taskId: 't1', billed: 100000, paid: 120000 },
+  ]);
+  eq('overpaid, no status -> paid', over[0].state, 'paid');
+  eq('overpaid remaining floors at zero', over[0].remaining, 0);
+
+  // Overpaid but the recorded status is a stale "partial" from before the
+  // final payment: the money wins, so it is paid, not partial.
+  const stale = buildPaymentRows([
+    { taskId: 't2', billed: 100000, paid: 120000, status: 'partial' },
+  ]);
+  eq('overpaid + stale partial -> paid', stale[0].state, 'paid');
+
+  // Exactly paid in full with a stale "partly paid" status -> paid.
+  const exact = buildPaymentRows([
+    { taskId: 't3', billed: 100000, paid: 100000, status: 'Partly paid' },
+  ]);
+  eq('paid in full + stale partial -> paid', exact[0].state, 'paid');
+
+  // A genuine partial (balance remains) still reads partial from the amounts.
+  const partial = buildPaymentRows([
+    { taskId: 't4', billed: 100000, paid: 40000 },
+  ]);
+  eq('genuine partial stays partial', partial[0].state, 'partial');
+
+  // Recorded "paid" on a bill with a balance still wins (unchanged behaviour):
+  // a human marked it paid, and the amounts do not contradict a settled bill.
+  const marked = buildPaymentRows([
+    { taskId: 't5', billed: 100000, paid: 40000, status: 'paid' },
+  ]);
+  eq('recorded paid on a balance still wins', marked[0].state, 'paid');
+
+  // Overpaid campaigns land in the paid-not-partial bucket, so the Partial
+  // section no longer collects them.
+  eq('overpaid not in partial', paymentSectionRows(over, 'partial').length, 0);
+}
+
 console.log(`pay-sections: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -410,7 +410,14 @@ export function buildPaymentRows(rows: CampaignMoney[]): PaymentRow[] {
     const billed = num(c.billed);
     const paid = num(c.paid);
     const advance = num(c.advance);
-    const state = normalizePayState(c.status) ?? payStateOf(billed, paid);
+    // The recorded status is a human judgement and normally wins. The one thing
+    // it must NOT do is call a settled bill "partial" or "unpaid": when the
+    // amounts show the bill fully covered (an overpayment counts), the money is
+    // the harder fact and the row is paid. A "partial" left over from before the
+    // final payment landed was the overpayment-shows-as-partial bug.
+    const byAmount = payStateOf(billed, paid);
+    const state: 'paid' | 'partial' | 'unpaid' =
+      byAmount === 'paid' ? 'paid' : (normalizePayState(c.status) ?? byAmount);
     return {
       taskId: txt(c.taskId),
       title: txt(c.title) || txt(c.brand) || 'Untitled campaign',
