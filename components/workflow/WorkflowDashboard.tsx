@@ -215,7 +215,7 @@ export function WorkflowDashboard({
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
               {myTasks.map((t: any, i: number) => (
                 <li key={t.id}>
-                  <button type="button" onClick={() => onOpenTask(t.id)} style={rowButton(i === 0)}>
+                  <button type="button" className="aq-task-row" onClick={() => onOpenTask(t.id)} style={rowButton(i === 0)}>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 13.5, fontWeight: 600, display: 'block', ...ellipsis }}>
                         {t.task_name || t.title}
@@ -382,7 +382,7 @@ function AttentionGroupRow({
   const s = SEVERITY_STYLE[group.lead.severity];
   return (
     <>
-      <button type="button" onClick={onToggle} style={rowButton(first)} data-severity={group.lead.severity}
+      <button type="button" className="aq-task-row" onClick={onToggle} style={rowButton(first)} data-severity={group.lead.severity}
         aria-expanded={expanded}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 7, width: 88, flexShrink: 0 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.dot, flexShrink: 0 }} />
@@ -415,7 +415,7 @@ function AttentionRow({
 }: { item: AttentionItem; first: boolean; onOpen: () => void }) {
   const s = SEVERITY_STYLE[item.severity];
   return (
-    <button type="button" onClick={onOpen} style={rowButton(first)} data-severity={item.severity}>
+    <button type="button" className="aq-task-row" onClick={onOpen} style={rowButton(first)} data-severity={item.severity}>
       {/* A dot AND the word. Colour alone would put the whole ranking out of
           reach of anyone who cannot separate the red from the amber. */}
       <span style={{ display: 'flex', alignItems: 'center', gap: 7, width: 88, flexShrink: 0 }}>

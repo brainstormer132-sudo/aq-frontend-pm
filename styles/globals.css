@@ -13,6 +13,7 @@
   --aq-bg-elevated:  #ffffff;
   --aq-bg-sunken:    #ebebe9;
   --aq-bg-hover:     #e7e5e4;
+  --aq-row-hover:    #eef7f1;            /* faint green hover on task rows */
 
   /* Borders */
   --aq-border:        #d6d3d1;           /* stone-300 */
@@ -109,6 +110,7 @@ html.dark {
   --aq-bg-elevated:  #1c1f21;
   --aq-bg-sunken:    #0e1011;
   --aq-bg-hover:     #262a2d;
+  --aq-row-hover:    #17251d;
 
   --aq-border:        #383d41;
   --aq-border-light:  #2a2e31;
@@ -260,6 +262,11 @@ button.aq-band-chip:active { transform: scale(0.97); }
   transition: box-shadow var(--aq-transition), border-color var(--aq-transition);
 }
 .aq-card:hover { box-shadow: var(--aq-shadow); }
+
+/* Task rows (Dashboard lists) get a faint hue on hover so a whole row reads
+   as one click target. */
+.aq-task-row { transition: background 120ms ease; border-radius: 8px; }
+.aq-task-row:hover { background: var(--aq-row-hover); }
 
 .aq-input, .aq-select, .aq-textarea {
   width: 100%;

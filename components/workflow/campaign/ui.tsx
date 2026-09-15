@@ -98,20 +98,20 @@ export function toneOf(value: unknown, fallback: ToneName = 'grey'): ToneName {
  * logos side by side is a toolbar, not a field. The hue is enough to find
  * Snapchat in a row of six without reading any of them.
  */
-const PLATFORM_TONE: Record<string, { bg: string; fg: string }> = {
-  instagram: { bg: '#fce7f3', fg: '#9d174d' },
-  snapchat:  { bg: 'var(--aq-amber-bg-soft)', fg: '#854d0e' },
-  tiktok:    { bg: '#e0f2f1', fg: '#134e4a' },
-  youtube:   { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red-strong)' },
-  x:         { bg: '#e7e5e4', fg: '#1c1917' },
-  twitter:   { bg: 'var(--aq-blue-bg-soft)', fg: '#075985' },
-  facebook:  { bg: 'var(--aq-blue-bg)', fg: '#1e3a8a' },
-  linkedin:  { bg: 'var(--aq-blue-bg-soft)', fg: '#0c4a6e' },
-  whatsapp:  { bg: 'var(--aq-green-bg)', fg: '#14532d' },
-  telegram:  { bg: 'var(--aq-blue-bg-soft)', fg: '#075985' },
+const PLATFORM_TONE: Record<string, { bg: string; fg: string; bd?: string }> = {
+  instagram: { bg: 'linear-gradient(135deg, #f58529, #dd2a7b, #8134af)', fg: '#ffffff' },
+  snapchat:  { bg: '#fffc00', fg: '#1a1a00', bd: '#e4d900' },
+  tiktok:    { bg: '#010101', fg: '#ffffff', bd: '#3a3a3a' },
+  youtube:   { bg: '#ff0000', fg: '#ffffff' },
+  x:         { bg: '#000000', fg: '#ffffff', bd: '#3a3a3a' },
+  twitter:   { bg: '#1da1f2', fg: '#ffffff' },
+  facebook:  { bg: '#1877f2', fg: '#ffffff' },
+  linkedin:  { bg: '#0a66c2', fg: '#ffffff' },
+  whatsapp:  { bg: '#25d366', fg: '#ffffff' },
+  telegram:  { bg: '#229ed9', fg: '#ffffff' },
 };
 
-export function platformTone(name: unknown): { bg: string; fg: string } {
+export function platformTone(name: unknown): { bg: string; fg: string; bd?: string } {
   const k = (typeof name === 'string' ? name : '').trim().toLowerCase();
   return PLATFORM_TONE[k] ?? { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-secondary)' };
 }
@@ -121,7 +121,7 @@ export function Chip({ label, tone = 'grey', colours, title }: {
   label: React.ReactNode;
   tone?: ToneName;
   /** Overrides the tone — for platforms, which have their own colours. */
-  colours?: { bg: string; fg: string };
+  colours?: { bg: string; fg: string; bd?: string };
   title?: string;
 }) {
   const c = colours ?? TONE[tone];
@@ -130,6 +130,7 @@ export function Chip({ label, tone = 'grey', colours, title }: {
       display: 'inline-flex', alignItems: 'center', gap: 5,
       fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
       background: c.bg, color: c.fg, whiteSpace: 'nowrap', lineHeight: 1.5,
+      border: (c as { bd?: string }).bd ? `1px solid ${(c as { bd?: string }).bd}` : '1px solid transparent',
     }}>{label}</span>
   );
 }
