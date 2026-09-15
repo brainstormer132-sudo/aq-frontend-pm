@@ -4848,13 +4848,52 @@ export async function getVendorFileDownloadUrl(
 }
 
 
+/**
+ * A licence-holder organization (089). Talent under an org licence link to it
+ * via vendors.org_id; on a vendor contract the org is the party and the talent
+ * is the performer named beneath it.
+ */
+export interface VendorOrg {
+  id: string;
+  name: string;
+  license_number: string | null;
+  id_number: string | null;
+  vat_number: string | null;
+}
+
+/**
+ * Create a licence-holder org and return it. Busts the vendor cache so the
+ * next read (and the editor's org list) picks it up.
+ */
+export async function createVendorOrg(input: {
+  name: string;
+  license_number?: string | null;
+  vat_number?: string | null;
+  id_number?: string | null;
+}): Promise<VendorOrg> {
+  const { data, error } = await supabase
+    .from('vendor_orgs')
+    .insert({
+      name: input.name,
+      license_number: input.license_number ?? null,
+      id_number: input.id_number ?? '',
+      vat_number: input.vat_number ?? '',
+    })
+    .select('id, name, license_number, id_number, vat_number')
+    .single();
+  if (error) throw error;
+  invalidateRefCache('legacy-vendors');
+  return data as VendorOrg;
+}
+
 export function useLegacyVendors() {
   const [vendors, setVendors] = useState<LegacyVendor[]>([]);
   const [banks, setBanks] = useState<LegacyBankAccount[]>([]);
+  const [orgs, setOrgs] = useState<VendorOrg[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async (force = false) => {
-    const both = await cachedFetch<{ vendors: LegacyVendor[]; banks: LegacyBankAccount[] }>(
+    const both = await cachedFetch<{ vendors: LegacyVendor[]; banks: LegacyBankAccount[]; orgs: VendorOrg[] }>(
       'legacy-vendors',
       async () => {
         // Vendors and bank accounts are both paged: the vendor book was at
@@ -4891,17 +4930,22 @@ export function useLegacyVendors() {
           return { ...row, vendor_category, org };
         });
 
-        return { vendors, banks: (b || []) as LegacyBankAccount[] };
+        return {
+          vendors,
+          banks: (b || []) as LegacyBankAccount[],
+          orgs: (orgs || []) as VendorOrg[],
+        };
       },
       force,
     );
     setVendors(both.vendors);
     setBanks(both.banks);
+    setOrgs(both.orgs);
     setLoading(false);
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { vendors, banks, loading, refetch: () => fetch(true) };
+  return { vendors, banks, orgs, loading, refetch: () => fetch(true) };
 }
 
 // ============================================================
@@ -6099,6 +6143,8 @@ export async function createApprovedClientRegistration(input: {
  */
 export interface VendorRegistrationInput {
   full_name: string;
+  /** 089: the licence-holder org this talent performs under (null = none). */
+  org_id?: string | null;
   category_id?: string | null;
   // Identifiers — one or the other depending on category
   id_number?: string;
@@ -6161,6 +6207,7 @@ export async function createApprovedVendorRegistration(input: VendorRegistration
   // Actual vendor row — picks up every new 029 column.
   const vendorPayload: Record<string, any> = {
     name: input.full_name,
+    org_id: input.org_id ?? null,
     license_number: input.license_number ?? null,
     id_number: input.id_number ?? '',
     category_id: input.category_id ?? null,
@@ -6223,6 +6270,7 @@ export async function updateVendorRegistration(
   const vendorPatch: Record<string, any> = {};
   const map: Array<[keyof VendorRegistrationInput, string]> = [
     ['full_name',       'name'],
+    ['org_id',          'org_id'],
     ['category_id',     'category_id'],
     ['id_number',       'id_number'],
     ['license_number',  'license_number'],

@@ -37,6 +37,7 @@ import {
   getVendorFileDownloadUrl,
   groupVendorFilesBySlot,
   updateVendorBank,
+  createVendorOrg,
   updateVendorRegistration,
   uploadVendorFile,
   useVendorFiles,
@@ -46,6 +47,7 @@ import {
   type LegacyVendorCategory,
   type VendorBankInput,
   type VendorFileRow,
+  type VendorOrg,
   type VendorRegistrationInput,
 } from '@/hooks/use-workflow';
 
@@ -55,6 +57,7 @@ import {
 
 type VendorDraft = {
   full_name: string;
+  org_id: string;         // '' = none (talent is the party)
   category_id: string;
   id_number: string;
   license_number: string;
@@ -106,6 +109,7 @@ type ActiveTab =
 
 const EMPTY_DRAFT: VendorDraft = {
   full_name: '',
+  org_id: '',
   category_id: '',
   id_number: '',
   license_number: '',
@@ -129,6 +133,7 @@ const EMPTY_DRAFT: VendorDraft = {
 function vendorToDraft(v: LegacyVendor): VendorDraft {
   return {
     full_name:      v.name ?? '',
+    org_id:         v.org_id ?? '',
     category_id:    v.category_id ?? '',
     id_number:      v.id_number ?? '',
     license_number: v.license_number ?? '',
@@ -154,6 +159,7 @@ function draftToPayload(d: VendorDraft): VendorRegistrationInput {
   const ageNum = d.age.trim() ? parseInt(d.age, 10) : null;
   return {
     full_name:      d.full_name.trim(),
+    org_id:         d.org_id || null,
     category_id:    d.category_id || null,
     id_number:      d.id_number.trim(),
     license_number: d.license_number.trim(),
@@ -220,7 +226,7 @@ function identifierLabel(category: LegacyVendorCategory | null): string {
 // ────────────────────────────────────────────────────────────────────
 
 export function VendorEditorModal({
-  open, vendor, banks, categories, canEdit, onClose, onSaved,
+  open, vendor, banks, categories, orgs, canEdit, onClose, onSaved, onOrgsChanged,
 }: {
   open: boolean;
   /** null = create flow */
@@ -228,9 +234,13 @@ export function VendorEditorModal({
   /** All current bank_accounts rows for the vendor (or []). */
   banks: LegacyBankAccount[];
   categories: LegacyVendorCategory[];
+  /** Licence-holder orgs (089) to pick from, or create one inline. */
+  orgs: VendorOrg[];
   canEdit: boolean;
   onClose: () => void;
   onSaved: () => void;
+  /** Re-fetch the org list after one is created inline. */
+  onOrgsChanged: () => void | Promise<void>;
 }) {
   // Form draft
   const [draft, setDraft] = useState<VendorDraft>(EMPTY_DRAFT);
@@ -238,6 +248,11 @@ export function VendorEditorModal({
   const [activeTab, setActiveTab] = useState<ActiveTab>({ type: 'identifier' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  // Inline "new organisation" sub-form (089 licence holder).
+  const [orgMode, setOrgMode] = useState(false);
+  const [orgBusy, setOrgBusy] = useState(false);
+  const [newOrg, setNewOrg] = useState({ name: '', license_number: '', vat_number: '' });
 
   // Re-seed every time the modal opens or the vendor target changes.
   // This makes sure stale state from a previous edit doesn't leak.
@@ -247,7 +262,31 @@ export function VendorEditorModal({
     setBankDrafts(banks.map(bankToDraft));
     setActiveTab({ type: 'identifier' });
     setError('');
+    setOrgMode(false);
+    setNewOrg({ name: '', license_number: '', vat_number: '' });
   }, [open, vendor, banks]);
+
+  // Create a licence-holder org inline, then attach it to this vendor.
+  const createOrg = async () => {
+    const name = newOrg.name.trim();
+    if (!name) { setError('Organisation name is required'); return; }
+    setOrgBusy(true);
+    setError('');
+    try {
+      const created = await createVendorOrg({
+        name,
+        license_number: newOrg.license_number.trim() || null,
+        vat_number: newOrg.vat_number.trim() || null,
+      });
+      await onOrgsChanged();
+      setDraft((d) => ({ ...d, org_id: created.id }));
+      setOrgMode(false);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setOrgBusy(false);
+    }
+  };
 
   const categoryById = useMemo(() => {
     const m = new Map<string, LegacyVendorCategory>();
@@ -391,6 +430,55 @@ export function VendorEditorModal({
               </Field>
               <Field label="VAT number (optional)">
                 <input className="aq-input" value={draft.vat_number} onChange={setField('vat_number')} />
+              </Field>
+              <Field label="Organisation (licence holder)" full>
+                {!orgMode ? (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <select
+                      className="aq-input"
+                      value={draft.org_id}
+                      onChange={setField('org_id')}
+                      disabled={!canEdit}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="">None - the talent is the party</option>
+                      {orgs.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}{o.license_number ? ` (${o.license_number})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="aq-btn aq-btn-ghost aq-btn-sm"
+                        onClick={() => { setOrgMode(true); setNewOrg({ name: '', license_number: '', vat_number: '' }); }}
+                        style={{ whiteSpace: 'nowrap' }}
+                      >
+                        + New org
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 6, border: '1px solid var(--aq-border-light)', borderRadius: 8, padding: 10 }}>
+                    <input className="aq-input" placeholder="Organisation / licence name" value={newOrg.name}
+                      onChange={(e) => setNewOrg((o) => ({ ...o, name: e.target.value }))} autoFocus />
+                    <input className="aq-input" placeholder="Licence / CR number" value={newOrg.license_number}
+                      onChange={(e) => setNewOrg((o) => ({ ...o, license_number: e.target.value }))} />
+                    <input className="aq-input" placeholder="VAT number (optional)" value={newOrg.vat_number}
+                      onChange={(e) => setNewOrg((o) => ({ ...o, vat_number: e.target.value }))} />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" className="aq-btn aq-btn-primary aq-btn-sm"
+                        onClick={createOrg} disabled={orgBusy || !newOrg.name.trim()}>
+                        {orgBusy ? 'Creating...' : 'Create + attach'}
+                      </button>
+                      <button type="button" className="aq-btn aq-btn-ghost aq-btn-sm"
+                        onClick={() => setOrgMode(false)} disabled={orgBusy}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </Field>
               <CategorySpecificFields draft={draft} setField={setField} category={selectedCategory} />
             </FieldGrid>

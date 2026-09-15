@@ -29,7 +29,7 @@ import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalM
 import { VendorEditorModal } from '@/components/workflow/VendorEditorModal';
 
 export function VendorsView({ role, userName }: { role: WorkspaceRole | null; userName: string }) {
-  const { vendors, banks, loading, refetch: refetchVendors } = useLegacyVendors();
+  const { vendors, banks, orgs, loading, refetch: refetchVendors } = useLegacyVendors();
   const { items: pending, refetch: refetchPending } = usePendingVendors();
   const { categories } = useVendorCategoriesLegacy();
   const [tab, setTab] = useState<'vendors' | 'pending'>('vendors');
@@ -324,9 +324,11 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
         vendor={editVendor}
         banks={editVendor ? (banksByVendor.get(editVendor.id) ?? []) : []}
         categories={categories}
+        orgs={orgs}
         canEdit={canEdit}
         onClose={closeEditor}
         onSaved={onSaved}
+        onOrgsChanged={refetchVendors}
       />
 
       <InviteLinkModal invite={activeInvite} onClose={() => setActiveInvite(null)} />
