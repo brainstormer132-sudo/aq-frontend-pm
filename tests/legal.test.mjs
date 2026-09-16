@@ -5,6 +5,7 @@ import {
   hasRTLChars, blockAllText, detectDir,
   parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
   DEPTS, deptLabel, validateListValue, sortListValues,
+  FIELD_TYPES, fieldTypeLabel, validateFieldDef, describeField,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -140,6 +141,25 @@ eq('value ok -> null', validateListValue('snapchat'), null);
   const before = JSON.stringify(rows);
   sortListValues(rows);
   ok('sortListValues does not mutate', JSON.stringify(rows) === before);
+}
+
+// typed fields
+eq('five field types', FIELD_TYPES.map((f) => f.key), ['text', 'number', 'date', 'list', 'auto']);
+eq('fieldTypeLabel known', fieldTypeLabel('list'), 'List');
+eq('fieldTypeLabel unknown is itself', fieldTypeLabel('zzz'), 'zzz');
+eq('list without list_id rejected', validateFieldDef({ field_type: 'list', list_id: null }), 'Pick a list for a list field.');
+eq('list with list_id ok', validateFieldDef({ field_type: 'list', list_id: 'abc' }), null);
+eq('number min>max rejected', validateFieldDef({ field_type: 'number', num_min: 10, num_max: 5 }), 'The minimum cannot exceed the maximum.');
+eq('number min<=max ok', validateFieldDef({ field_type: 'number', num_min: 0, num_max: 10 }), null);
+eq('number open range ok', validateFieldDef({ field_type: 'number', num_min: null, num_max: null }), null);
+eq('text always ok', validateFieldDef({ field_type: 'text' }), null);
+{
+  const lists = [{ id: 'l1', name: 'Platforms' }];
+  eq('describe list with name', describeField({ field_type: 'list', list_id: 'l1' }, lists), 'List: Platforms');
+  eq('describe list missing', describeField({ field_type: 'list', list_id: 'x' }, lists), 'List (none set)');
+  eq('describe number range', describeField({ field_type: 'number', num_min: 0, num_max: 10 }, lists), 'Number 0-10');
+  eq('describe number open', describeField({ field_type: 'number', num_min: null, num_max: null }, lists), 'Number');
+  eq('describe required text', describeField({ field_type: 'text', required: true }, lists), 'Text \u00b7 required');
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

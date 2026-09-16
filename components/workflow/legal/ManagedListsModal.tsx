@@ -13,9 +13,8 @@ import {
  * of these. Owned by a department (metadata for the later permissions slice).
  */
 export function ManagedListsModal({
-  workspaceId, onClose,
-}: { workspaceId?: string; onClose: () => void }) {
-  const m = useManagedLists(workspaceId ?? null);
+  m, onClose,
+}: { m: ReturnType<typeof useManagedLists>; onClose: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = m.lists.find((l) => l.id === selectedId) ?? null;
 

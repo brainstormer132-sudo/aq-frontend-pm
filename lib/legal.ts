@@ -199,10 +199,67 @@ export function detectDir(blocks: Pick<TemplateBlock, 'content'>[]): Dir {
 
 const PLACEHOLDER_G = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
+/**
+ * A field's input type (migration 099). "Legal chooses, it does not write":
+ * list draws from a managed list, number is a bounded entry, date a date, auto
+ * is system-filled, and text is the only free entry - names, ID numbers, IBANs.
+ */
+export type FieldType = 'text' | 'number' | 'date' | 'list' | 'auto';
+
+export const FIELD_TYPES: { key: FieldType; label: string; hint: string }[] = [
+  { key: 'text', label: 'Text', hint: 'Free text - names, ID numbers, IBANs.' },
+  { key: 'number', label: 'Number', hint: 'A number within a min and max.' },
+  { key: 'date', label: 'Date', hint: 'A date.' },
+  { key: 'list', label: 'List', hint: 'Choose from a managed list.' },
+  { key: 'auto', label: 'Auto', hint: 'Filled automatically by the system.' },
+];
+
+export function fieldTypeLabel(t: string): string {
+  return FIELD_TYPES.find((f) => f.key === t)?.label ?? t;
+}
+
 export interface Placeholder {
   id: string;
   key: string;
   label: string;
+  field_type: FieldType;
+  required: boolean;
+  default_value: string;
+  num_min: number | null;
+  num_max: number | null;
+  list_id: string | null;
+  owner_dept: Dept;
+}
+
+/** The columns a field write sends - the shape of the new/edit field form. */
+export type FieldDef = Omit<Placeholder, 'id'>;
+
+/** Validate a field definition. Returns an error sentence, or null if ok. */
+export function validateFieldDef(f: Pick<FieldDef, 'field_type' | 'num_min' | 'num_max' | 'list_id'>): string | null {
+  if (f.field_type === 'list' && !f.list_id) return 'Pick a list for a list field.';
+  if (f.field_type === 'number' && f.num_min != null && f.num_max != null && f.num_min > f.num_max) {
+    return 'The minimum cannot exceed the maximum.';
+  }
+  return null;
+}
+
+/** A short human description of a field's type and bounds, for the field row. */
+export function describeField(
+  f: Pick<Placeholder, 'field_type' | 'num_min' | 'num_max' | 'list_id' | 'required'>,
+  lists: { id: string; name: string }[],
+): string {
+  const parts: string[] = [];
+  if (f.field_type === 'list') {
+    const l = lists.find((x) => x.id === f.list_id);
+    parts.push(l ? `List: ${l.name}` : 'List (none set)');
+  } else if (f.field_type === 'number') {
+    const lo = f.num_min, hi = f.num_max;
+    parts.push(lo != null || hi != null ? `Number ${lo ?? ''}-${hi ?? ''}` : 'Number');
+  } else {
+    parts.push(fieldTypeLabel(f.field_type));
+  }
+  if (f.required) parts.push('required');
+  return parts.join(' \u00b7 ');
 }
 
 /** Every placeholder key found in a string, in order, with repeats. */
