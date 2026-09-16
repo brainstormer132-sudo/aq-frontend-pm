@@ -52,7 +52,7 @@ eq('singular campaign', dashboardHero([{ id: 'c1', stage: 'in_progress' }], []),
   { value: '100%', label: '1 of 1 live campaign with nothing wrong', pct: 100 });
 eq('no live work: no hero', dashboardHero([], []), null);
 
-// mine: assignee / key account / creator, and subtasks inherit from the campaign
+// mine: assignee / key account (NOT creator), and subtasks inherit from the campaign
 const mineRows = [
   { id: 'c1', stage: 'in_progress', assignee_id: 'me' },
   { id: 'c2', stage: 'in_progress', key_account_id: 'me' },
@@ -64,14 +64,14 @@ const mineRows = [
 const mineById = new Map(mineRows.map((r) => [r.id, r]));
 eq('assignee is mine', isMine(mineRows[0], 'me'), true);
 eq('key account is mine', isMine(mineRows[1], 'me'), true);
-eq('creator is mine', isMine(mineRows[2], 'me'), true);
+eq('creator alone is NOT mine', isMine(mineRows[2], 'me'), false);
 eq('someone else is not', isMine(mineRows[3], 'me'), false);
 eq('subtask of another campaign, assigned to me, is mine', isMine(mineRows[4], 'me', mineById), true);
 eq('subtask of my campaign is mine', isMine(mineRows[5], 'me', mineById), true);
 eq('subtask of my campaign without the map is not resolvable', isMine(mineRows[5], 'me'), false);
-eq('scoped: only my three campaigns are live', cleanCampaigns(mineRows, [{ taskId: 'c4' }], 'me'), { live: 3, clean: 3, pct: 100 });
-eq('scoped: a problem on my subtask hits my campaign', cleanCampaigns(mineRows, [{ taskId: 's1' }], 'me'), { live: 3, clean: 2, pct: 67 });
-eq('scoped hero says your', dashboardHero(mineRows, [], 'me'), { value: '100%', label: '3 of your 3 live campaigns with nothing wrong', pct: 100 });
+eq('scoped: only my two campaigns are live', cleanCampaigns(mineRows, [{ taskId: 'c4' }], 'me'), { live: 2, clean: 2, pct: 100 });
+eq('scoped: a problem on my subtask hits my campaign', cleanCampaigns(mineRows, [{ taskId: 's1' }], 'me'), { live: 2, clean: 1, pct: 50 });
+eq('scoped hero says your', dashboardHero(mineRows, [], 'me'), { value: '100%', label: '2 of your 2 live campaigns with nothing wrong', pct: 100 });
 eq('unscoped hero counts all four', dashboardHero(mineRows, [], null).label, '4 of 4 live campaigns with nothing wrong');
 
 // welcomeTitle

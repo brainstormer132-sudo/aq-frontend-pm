@@ -99,7 +99,7 @@ export function WorkflowDashboard({
 
   const myTasks = useMemo(
     () => allTasks
-      .filter((t: any) => t.assignee_id === userId || t.key_account_id === userId || t.creator_id === userId)
+      .filter((t: any) => t.assignee_id === userId || t.key_account_id === userId)
       .filter((t: any) => t.status !== 'done' && t.stage !== 'completed')
       .slice(0, 6),
     [allTasks, userId],

@@ -184,7 +184,9 @@ export function attentionItems(
 
   const mine = (t: TaskRow): boolean => {
     if (!opts.userId) return true;
-    if (t.assignee_id === opts.userId || t.key_account_id === opts.userId || t.creator_id === opts.userId) {
+    // On it = assigned to you or your key account. Not creator: an owner
+    // creates everything, so creator ownership made "your work" = all work.
+    if (t.assignee_id === opts.userId || t.key_account_id === opts.userId) {
       return true;
     }
     // A subtask belongs to whoever owns the campaign above it.
@@ -192,7 +194,6 @@ export function attentionItems(
     return !!parent && (
       parent.assignee_id === opts.userId
       || parent.key_account_id === opts.userId
-      || parent.creator_id === opts.userId
     );
   };
 

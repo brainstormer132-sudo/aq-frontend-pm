@@ -66,7 +66,10 @@ export interface LiveRow {
  * so the hero and the list under it agree about whose work this is.
  */
 export function isMine(r: LiveRow, userId: string, byId?: Map<string, LiveRow>): boolean {
-  if (r.assignee_id === userId || r.key_account_id === userId || r.creator_id === userId) return true;
+  // "Mine" is being ON the campaign - assigned to you or your key account.
+  // NOT creator: the owner creates every campaign, so counting creator made
+  // the whole workspace "yours" and the dashboard useless as a personal view.
+  if (r.assignee_id === userId || r.key_account_id === userId) return true;
   if (r.parent_task_id && byId) {
     const parent = byId.get(r.parent_task_id);
     if (parent) return isMine(parent, userId);
