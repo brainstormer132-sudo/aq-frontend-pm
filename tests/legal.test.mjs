@@ -3,6 +3,7 @@ import {
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, defaultBlockContent,
   blockText, blockKV, moveItem, withPositions, nextPosition, canPublish,
   hasRTLChars, blockAllText, detectDir,
+  parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -105,6 +106,25 @@ eq('blockAllText joins kv', blockAllText({ content: { label: 'Term', value: '12m
   eq('tie -> ltr', detectDir([tb('\u0627\u0644\u0639\u0642\u062f'), tb('note')]), 'ltr');
   eq('blanks ignored', detectDir([tb(''), tb('\u0627\u0644\u0639\u0642\u062f')]), 'rtl');
 }
+
+// placeholders
+eq('parse none', parsePlaceholderKeys('plain text'), []);
+eq('parse with spaces', parsePlaceholderKeys('Amount: {{ Amount_full }}'), ['Amount_full']);
+eq('parse tight braces', parsePlaceholderKeys('{{id}} and {{ name_2 }}'), ['id', 'name_2']);
+eq('parse repeats in order', parsePlaceholderKeys('{{ a }} {{ b }} {{ a }}'), ['a', 'b', 'a']);
+{
+  const B = (text) => ({ content: { text } });
+  const kv = (label, value) => ({ content: { label, value } });
+  eq('used keys distinct + sorted', usedPlaceholderKeys([B('{{ b }}'), B('{{ a }} {{ b }}'), kv('x', '{{ iban }}')]), ['a', 'b', 'iban']);
+}
+eq('unknown finds typos', unknownPlaceholders(['brand_name', 'Amount_ful'], ['brand_name', 'Amount_full']), ['Amount_ful']);
+eq('unknown none when all registered', unknownPlaceholders(['a', 'b'], ['a', 'b', 'c']), []);
+eq('key blank rejected', validatePlaceholderKey('  '), 'A field needs a key.');
+eq('key with space rejected', validatePlaceholderKey('brand name'), 'Use letters, numbers and underscores only (no spaces).');
+eq('key valid -> null', validatePlaceholderKey('Amount_full'), null);
+eq('fill replaces known', fillPlaceholders('Owed {{ Amount_full }} to {{ name_2 }}', { Amount_full: '12,500', name_2: 'Rawad' }), 'Owed 12,500 to Rawad');
+eq('fill keeps missing literal', fillPlaceholders('IBAN {{ iban }}', {}), 'IBAN {{ iban }}');
+eq('fill empty string value', fillPlaceholders('x {{ a }} y', { a: '' }), 'x  y');
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -188,3 +188,58 @@ export function detectDir(blocks: Pick<TemplateBlock, 'content'>[]): Dir {
   }
   return rtl > ltr ? 'rtl' : 'ltr';
 }
+
+// ---- placeholders (merge fields) ---------------------------------------
+//
+// A template's wording carries {{ merge fields }} - {{ brand_name }},
+// {{ Amount_full }}, {{ iban }} - filled per contract when it is generated.
+// The set of valid fields is a workspace-scoped registry (legal.placeholder).
+// A key is letters, numbers and underscores, tolerating spaces inside the
+// braces (the existing DOCX writes "{{ id }}").
+
+const PLACEHOLDER_G = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+
+export interface Placeholder {
+  id: string;
+  key: string;
+  label: string;
+}
+
+/** Every placeholder key found in a string, in order, with repeats. */
+export function parsePlaceholderKeys(text: string): string[] {
+  const out: string[] = [];
+  const re = new RegExp(PLACEHOLDER_G.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) out.push(m[1]);
+  return out;
+}
+
+/** The distinct placeholder keys used across a set of blocks, sorted. */
+export function usedPlaceholderKeys(blocks: Pick<TemplateBlock, 'content'>[]): string[] {
+  const set = new Set<string>();
+  for (const b of blocks) for (const k of parsePlaceholderKeys(blockAllText(b))) set.add(k);
+  return [...set].sort();
+}
+
+/** Keys used in the wording that are not in the registry (typos / new fields). */
+export function unknownPlaceholders(used: string[], registered: string[]): string[] {
+  const reg = new Set(registered);
+  return used.filter((k) => !reg.has(k));
+}
+
+/** Validate a registry key. Returns an error sentence, or null if ok. */
+export function validatePlaceholderKey(key: string): string | null {
+  const k = key.trim();
+  if (!k) return 'A field needs a key.';
+  if (!/^[A-Za-z0-9_]+$/.test(k)) return 'Use letters, numbers and underscores only (no spaces).';
+  return null;
+}
+
+/**
+ * Fill placeholders from a values map. A key with no value is left as its
+ * literal {{ key }} so a missing field is visible, not silently blank. Pure.
+ */
+export function fillPlaceholders(text: string, values: Record<string, string>): string {
+  return text.replace(new RegExp(PLACEHOLDER_G.source, 'g'),
+    (m, k) => (Object.prototype.hasOwnProperty.call(values, k) ? values[k] : m));
+}

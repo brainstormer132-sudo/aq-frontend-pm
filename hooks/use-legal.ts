@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
 import type {
-  DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock,
+  DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
 } from '@/lib/legal';
 import { defaultBlockContent, moveItem, withPositions, nextPosition } from '@/lib/legal';
 
@@ -206,4 +206,52 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
     name, docKind, version, blocks, loading, error, busy, editable,
     reload: load, addBlock, saveBlock, deleteBlock, moveBlock, publish, startNewDraft,
   };
+}
+
+/**
+ * The workspace's placeholder registry (legal.placeholder) - the merge fields a
+ * template's wording may reference. Shared across all templates in the
+ * workspace, so it is keyed on the workspace, not a template.
+ */
+export function useLegalPlaceholders(workspaceId: string | null) {
+  const [placeholders, setPlaceholders] = useState<Placeholder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setPlaceholders([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const { data, error: e } = await legal().from('placeholder')
+      .select('id, key, label').eq('workspace_id', workspaceId).order('key');
+    if (e) { setError(e.message ?? String(e)); setPlaceholders([]); setLoading(false); return; }
+    setPlaceholders(((data ?? []) as any[]).map((r) => ({ id: r.id, key: r.key, label: r.label })));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const create = useCallback(async (key: string, label: string) => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const { error: e } = await legal().from('placeholder')
+      .insert({ workspace_id: workspaceId, key: key.trim(), label: label.trim() });
+    if (e) throw e;
+    await load();
+  }, [workspaceId, load]);
+
+  const update = useCallback(async (id: string, patch: { key?: string; label?: string }) => {
+    const clean: Record<string, string> = {};
+    if (patch.key !== undefined) clean.key = patch.key.trim();
+    if (patch.label !== undefined) clean.label = patch.label.trim();
+    const { error: e } = await legal().from('placeholder').update(clean).eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  const remove = useCallback(async (id: string) => {
+    const { error: e } = await legal().from('placeholder').delete().eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  return { placeholders, loading, error, reload: load, create, update, remove };
 }

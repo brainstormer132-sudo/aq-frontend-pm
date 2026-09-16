@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useDocEditor } from '@/hooks/use-legal';
+import { useEffect, useRef, useState } from 'react';
+import { useDocEditor, useLegalPlaceholders } from '@/hooks/use-legal';
 import {
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, blockText, blockKV, canPublish,
-  kindLabel, statusLabel, statusBadge, detectDir,
+  kindLabel, statusLabel, statusBadge, detectDir, usedPlaceholderKeys, unknownPlaceholders,
   type EditorBlockType, type TemplateBlock, type Dir,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
+import { FieldsPanel } from '@/components/workflow/legal/FieldsPanel';
 
 /**
  * The block editor for one template's newest version. A draft is editable
@@ -27,6 +28,15 @@ export function LegalEditor({
   const detected = detectDir(blocks);
   const [dirOverride, setDirOverride] = useState<Dir | null>(null);
   const dir: Dir = dirOverride ?? detected;
+
+  // Merge-field registry and validation. `unknown` are {{ fields }} the wording
+  // uses that are not registered - a typo or a field yet to be defined; Publish
+  // is blocked until they resolve so a contract never ships a broken merge tag.
+  const reg = useLegalPlaceholders(workspaceId ?? null);
+  const usedKeys = usedPlaceholderKeys(blocks);
+  const unknown = unknownPlaceholders(usedKeys, reg.placeholders.map((p) => p.key));
+  // Set on focus by the block being edited; the Fields panel inserts here.
+  const insertApi = useRef<((s: string) => void) | null>(null);
 
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -58,8 +68,10 @@ export function LegalEditor({
           ))}
         </div>
         {version && editable && (
-          <button className="aq-btn aq-btn-primary" disabled={busy || !canPublish(blocks)}
-            onClick={ed.publish} title={canPublish(blocks) ? 'Freeze this version' : 'Add a block first'}>
+          <button className="aq-btn aq-btn-primary" disabled={busy || !canPublish(blocks) || unknown.length > 0}
+            onClick={ed.publish}
+            title={unknown.length > 0 ? `Define these fields first: ${unknown.join(', ')}`
+              : canPublish(blocks) ? 'Freeze this version' : 'Add a block first'}>
             Publish v{version.version}
           </button>
         )}
@@ -79,6 +91,8 @@ export function LegalEditor({
         </div>
       )}
 
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 440px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       {loading ? (
         <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Loading the template\u2026'} /></div>
       ) : !version ? (
@@ -96,7 +110,8 @@ export function LegalEditor({
             <BlockRow key={b.id} block={b} index={i} total={blocks.length} editable={!!editable} busy={busy}
               onSave={(content) => ed.saveBlock(b.id, content)}
               onMove={(mv) => ed.moveBlock(b.id, mv)}
-              onDelete={() => ed.deleteBlock(b.id)} />
+              onDelete={() => ed.deleteBlock(b.id)}
+              registerInsert={(fn) => { insertApi.current = fn; }} />
           ))}
         </ul>
       )}
@@ -114,17 +129,26 @@ export function LegalEditor({
           </div>
         </div>
       )}
+        </div>
+        {version && (
+          <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+            <FieldsPanel reg={reg} usedKeys={usedKeys} editable={!!editable}
+              onInsert={(k) => insertApi.current?.(`{{ ${k} }}`)} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 function BlockRow({
-  block, index, total, editable, busy, onSave, onMove, onDelete,
+  block, index, total, editable, busy, onSave, onMove, onDelete, registerInsert,
 }: {
   block: TemplateBlock; index: number; total: number; editable: boolean; busy: boolean;
   onSave: (content: Record<string, unknown>) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
+  registerInsert: (fn: (s: string) => void) => void;
 }) {
   const known = isEditableBlockType(block.block_type);
   return (
@@ -138,9 +162,9 @@ function BlockRow({
             This block type is not editable here yet.
           </div>
         ) : block.block_type === 'kv' ? (
-          <KVEditor block={block} editable={editable} onSave={onSave} />
+          <KVEditor block={block} editable={editable} onSave={onSave} registerInsert={registerInsert} />
         ) : (
-          <TextEditor block={block} editable={editable} onSave={onSave} />
+          <TextEditor block={block} editable={editable} onSave={onSave} registerInsert={registerInsert} />
         )}
       </div>
 
@@ -163,11 +187,27 @@ const PLACEHOLDER: Record<string, string> = {
 };
 
 function TextEditor({
-  block, editable, onSave,
-}: { block: TemplateBlock; editable: boolean; onSave: (c: Record<string, unknown>) => void }) {
+  block, editable, onSave, registerInsert,
+}: {
+  block: TemplateBlock; editable: boolean;
+  onSave: (c: Record<string, unknown>) => void;
+  registerInsert: (fn: (s: string) => void) => void;
+}) {
+  const ref = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [text, setText] = useState(blockText(block));
   useEffect(() => { setText(blockText(block)); }, [block]);
   const commit = () => { if (text !== blockText(block)) onSave({ ...block.content, text }); };
+
+  // Insert a snippet at the caret (reading the live DOM value, not stale state).
+  const insert = (s: string) => {
+    const el = ref.current; if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const next = el.value.slice(0, start) + s + el.value.slice(end);
+    setText(next);
+    onSave({ ...block.content, text: next });
+    requestAnimationFrame(() => { const e2 = ref.current; if (e2) { const p = start + s.length; e2.focus(); e2.setSelectionRange(p, p); } });
+  };
 
   if (!editable) {
     return <div dir="auto" style={{ fontSize: 14, whiteSpace: 'pre-wrap', color: 'var(--aq-text)' }}>
@@ -176,10 +216,12 @@ function TextEditor({
   }
   const big = block.block_type === 'p';
   return big ? (
-    <textarea dir="auto" className="aq-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
+    <textarea ref={ref as any} dir="auto" className="aq-textarea" value={text} onFocus={() => registerInsert(insert)}
+      onChange={(e) => setText(e.target.value)} onBlur={commit}
       placeholder={PLACEHOLDER[block.block_type]} rows={3} style={{ width: '100%', resize: 'vertical' }} />
   ) : (
-    <input dir="auto" className="aq-input" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
+    <input ref={ref as any} dir="auto" className="aq-input" value={text} onFocus={() => registerInsert(insert)}
+      onChange={(e) => setText(e.target.value)} onBlur={commit}
       placeholder={PLACEHOLDER[block.block_type] ?? 'Text'} style={{ width: '100%',
         fontWeight: block.block_type === 'title' ? 700 : block.block_type === 'h' ? 600 : 400,
         fontSize: block.block_type === 'title' ? 16 : 14 }} />
@@ -187,15 +229,35 @@ function TextEditor({
 }
 
 function KVEditor({
-  block, editable, onSave,
-}: { block: TemplateBlock; editable: boolean; onSave: (c: Record<string, unknown>) => void }) {
+  block, editable, onSave, registerInsert,
+}: {
+  block: TemplateBlock; editable: boolean;
+  onSave: (c: Record<string, unknown>) => void;
+  registerInsert: (fn: (s: string) => void) => void;
+}) {
   const kv = blockKV(block);
+  const labelRef = useRef<HTMLInputElement | null>(null);
+  const valueRef = useRef<HTMLInputElement | null>(null);
   const [label, setLabel] = useState(kv.label);
   const [value, setValue] = useState(kv.value);
   useEffect(() => { const k = blockKV(block); setLabel(k.label); setValue(k.value); }, [block]);
   const commit = () => {
     const k = blockKV(block);
     if (label !== k.label || value !== k.value) onSave({ ...block.content, label, value });
+  };
+
+  // Insert at the caret of the focused field, saving both fields from the live
+  // DOM so an unsaved edit in the other field is not lost.
+  const mkInsert = (ref: { current: HTMLInputElement | null }, field: 'label' | 'value') => (s: string) => {
+    const el = ref.current; if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const inserted = el.value.slice(0, start) + s + el.value.slice(end);
+    const lab = field === 'label' ? inserted : (labelRef.current?.value ?? label);
+    const val = field === 'value' ? inserted : (valueRef.current?.value ?? value);
+    setLabel(lab); setValue(val);
+    onSave({ ...block.content, label: lab, value: val });
+    requestAnimationFrame(() => { const e2 = ref.current; if (e2) { const p = start + s.length; e2.focus(); e2.setSelectionRange(p, p); } });
   };
 
   if (!editable) {
@@ -206,9 +268,11 @@ function KVEditor({
   }
   return (
     <div style={{ display: 'flex', gap: 8 }}>
-      <input dir="auto" className="aq-input" value={label} onChange={(e) => setLabel(e.target.value)} onBlur={commit}
+      <input ref={labelRef} dir="auto" className="aq-input" value={label} onFocus={() => registerInsert(mkInsert(labelRef, 'label'))}
+        onChange={(e) => setLabel(e.target.value)} onBlur={commit}
         placeholder="Label (e.g. Term)" style={{ flex: '0 0 40%' }} />
-      <input dir="auto" className="aq-input" value={value} onChange={(e) => setValue(e.target.value)} onBlur={commit}
+      <input ref={valueRef} dir="auto" className="aq-input" value={value} onFocus={() => registerInsert(mkInsert(valueRef, 'value'))}
+        onChange={(e) => setValue(e.target.value)} onBlur={commit}
         placeholder="Value (e.g. 12 months)" style={{ flex: 1 }} />
     </div>
   );
