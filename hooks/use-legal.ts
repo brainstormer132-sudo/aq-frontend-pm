@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
 import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
+  Dept, ManagedList, ManagedListValue,
 } from '@/lib/legal';
 import { defaultBlockContent, moveItem, withPositions, nextPosition } from '@/lib/legal';
 
@@ -254,4 +255,92 @@ export function useLegalPlaceholders(workspaceId: string | null) {
   }, [load]);
 
   return { placeholders, loading, error, reload: load, create, update, remove };
+}
+
+/**
+ * The workspace's managed lists (legal.managed_list) and their values. Two slim
+ * reads - the lists, then all their values - grouped client-side by list. A
+ * list-type field points at one of these; this hook is the list editor's data.
+ */
+export function useManagedLists(workspaceId: string | null) {
+  const [lists, setLists] = useState<ManagedList[]>([]);
+  const [valuesByList, setValuesByList] = useState<Record<string, ManagedListValue[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setLists([]); setValuesByList({}); setLoading(false); return; }
+    setLoading(true); setError('');
+    const c = legal();
+    const { data: ls, error: e1 } = await c.from('managed_list')
+      .select('id, key, name, owner_dept').eq('workspace_id', workspaceId).order('name');
+    if (e1) { setError(e1.message ?? String(e1)); setLists([]); setLoading(false); return; }
+    setLists(((ls ?? []) as any[]).map((r) => ({ id: r.id, key: r.key, name: r.name, owner_dept: r.owner_dept })));
+    const { data: vs } = await c.from('managed_list_value')
+      .select('id, list_id, value, label, position, active').eq('workspace_id', workspaceId).order('position');
+    const grouped: Record<string, ManagedListValue[]> = {};
+    for (const v of (vs ?? []) as any[]) (grouped[v.list_id] ??= []).push({
+      id: v.id, list_id: v.list_id, value: v.value, label: v.label, position: v.position, active: v.active,
+    });
+    setValuesByList(grouped);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const createList = useCallback(async (key: string, name: string, owner_dept: Dept): Promise<string> => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const { data, error: e } = await legal().from('managed_list')
+      .insert({ workspace_id: workspaceId, key: key.trim(), name: name.trim(), owner_dept })
+      .select('id').single();
+    if (e) throw e;
+    await load();
+    return (data as any).id as string;
+  }, [workspaceId, load]);
+
+  const updateList = useCallback(async (id: string, patch: { name?: string; owner_dept?: Dept }) => {
+    const clean: Record<string, string> = {};
+    if (patch.name !== undefined) clean.name = patch.name.trim();
+    if (patch.owner_dept !== undefined) clean.owner_dept = patch.owner_dept;
+    const { error: e } = await legal().from('managed_list').update(clean).eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  const removeList = useCallback(async (id: string) => {
+    const { error: e } = await legal().from('managed_list').delete().eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  const addValue = useCallback(async (listId: string, value: string, label: string) => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const existing = valuesByList[listId] ?? [];
+    const nextPos = existing.reduce((m, v) => Math.max(m, v.position + 1), 0);
+    const { error: e } = await legal().from('managed_list_value')
+      .insert({ list_id: listId, workspace_id: workspaceId, value: value.trim(), label: label.trim(), position: nextPos });
+    if (e) throw e;
+    await load();
+  }, [workspaceId, valuesByList, load]);
+
+  const updateValue = useCallback(async (id: string, patch: { value?: string; label?: string; active?: boolean }) => {
+    const clean: Record<string, unknown> = {};
+    if (patch.value !== undefined) clean.value = patch.value.trim();
+    if (patch.label !== undefined) clean.label = patch.label.trim();
+    if (patch.active !== undefined) clean.active = patch.active;
+    const { error: e } = await legal().from('managed_list_value').update(clean).eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  const removeValue = useCallback(async (id: string) => {
+    const { error: e } = await legal().from('managed_list_value').delete().eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  return {
+    lists, valuesByList, loading, error, reload: load,
+    createList, updateList, removeList, addValue, updateValue, removeValue,
+  };
 }

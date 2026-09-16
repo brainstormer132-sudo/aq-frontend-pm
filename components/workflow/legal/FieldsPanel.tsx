@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useLegalPlaceholders } from '@/hooks/use-legal';
 import { validatePlaceholderKey, type Placeholder } from '@/lib/legal';
+import { ManagedListsModal } from '@/components/workflow/legal/ManagedListsModal';
 
 /**
  * The workspace's merge-field registry, shown beside the block editor. Fields
@@ -12,12 +13,13 @@ import { validatePlaceholderKey, type Placeholder } from '@/lib/legal';
  * surfaced here so a typo can be caught (or the field added) before publish.
  */
 export function FieldsPanel({
-  reg, usedKeys, editable, onInsert,
+  reg, usedKeys, editable, onInsert, workspaceId,
 }: {
   reg: ReturnType<typeof useLegalPlaceholders>;
   usedKeys: string[];
   editable: boolean;
   onInsert: (key: string) => void;
+  workspaceId?: string;
 }) {
   const registeredKeys = reg.placeholders.map((p) => p.key);
   const unknown = usedKeys.filter((k) => !registeredKeys.includes(k));
@@ -26,6 +28,7 @@ export function FieldsPanel({
   const [label, setLabel] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [listsOpen, setListsOpen] = useState(false);
 
   const add = async (k: string, l: string) => {
     const v = validatePlaceholderKey(k);
@@ -39,8 +42,13 @@ export function FieldsPanel({
 
   return (
     <aside className="aq-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-        color: 'var(--aq-text-muted)' }}>Fields</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ flex: 1, fontSize: 13, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+          color: 'var(--aq-text-muted)' }}>Fields</div>
+        <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }}
+          onClick={() => setListsOpen(true)} title="Manage the dropdown lists fields can draw from">Manage lists</button>
+      </div>
+      {listsOpen && <ManagedListsModal workspaceId={workspaceId} onClose={() => setListsOpen(false)} />}
 
       {unknown.length > 0 && (
         <div className="aq-badge aq-badge-warning" style={{ display: 'block', padding: 10, fontSize: 12 }}>

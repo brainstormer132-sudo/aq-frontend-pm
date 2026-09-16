@@ -132,7 +132,7 @@ export function LegalEditor({
         </div>
         {version && (
           <div style={{ flex: '1 1 260px', minWidth: 0 }}>
-            <FieldsPanel reg={reg} usedKeys={usedKeys} editable={!!editable}
+            <FieldsPanel reg={reg} usedKeys={usedKeys} editable={!!editable} workspaceId={workspaceId}
               onInsert={(k) => insertApi.current?.(`{{ ${k} }}`)} />
           </div>
         )}

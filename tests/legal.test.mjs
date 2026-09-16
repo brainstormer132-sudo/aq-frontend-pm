@@ -4,6 +4,7 @@ import {
   blockText, blockKV, moveItem, withPositions, nextPosition, canPublish,
   hasRTLChars, blockAllText, detectDir,
   parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
+  DEPTS, deptLabel, validateListValue, sortListValues,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -125,6 +126,21 @@ eq('key valid -> null', validatePlaceholderKey('Amount_full'), null);
 eq('fill replaces known', fillPlaceholders('Owed {{ Amount_full }} to {{ name_2 }}', { Amount_full: '12,500', name_2: 'Rawad' }), 'Owed 12,500 to Rawad');
 eq('fill keeps missing literal', fillPlaceholders('IBAN {{ iban }}', {}), 'IBAN {{ iban }}');
 eq('fill empty string value', fillPlaceholders('x {{ a }} y', { a: '' }), 'x  y');
+
+// managed lists
+eq('four depts, legal first', DEPTS.map((d) => d.key), ['legal', 'finance', 'operations', 'admin']);
+eq('deptLabel known', deptLabel('operations'), 'Operations');
+eq('deptLabel unknown is itself', deptLabel('zzz'), 'zzz');
+eq('empty value rejected', validateListValue('  '), 'A value cannot be empty.');
+eq('value ok -> null', validateListValue('snapchat'), null);
+{
+  const v = (position, value) => ({ position, value });
+  const rows = [v(2, 'b'), v(0, 'z'), v(0, 'a'), v(1, 'm')];
+  eq('sorted by position then value', sortListValues(rows).map((x) => x.value), ['a', 'z', 'm', 'b']);
+  const before = JSON.stringify(rows);
+  sortListValues(rows);
+  ok('sortListValues does not mutate', JSON.stringify(rows) === before);
+}
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

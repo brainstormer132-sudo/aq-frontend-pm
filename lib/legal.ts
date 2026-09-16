@@ -243,3 +243,48 @@ export function fillPlaceholders(text: string, values: Record<string, string>): 
   return text.replace(new RegExp(PLACEHOLDER_G.source, 'g'),
     (m, k) => (Object.prototype.hasOwnProperty.call(values, k) ? values[k] : m));
 }
+
+// ---- managed lists (the dropdown enumerations) -------------------------
+//
+// "Legal chooses, it does not write": a list-type field draws from a managed
+// list, and each list is owned by a department (migration 099). This slice is
+// the lists themselves; wiring a field to a list comes next.
+
+export type Dept = 'legal' | 'finance' | 'operations' | 'admin';
+
+export const DEPTS: { key: Dept; label: string }[] = [
+  { key: 'legal', label: 'Legal' },
+  { key: 'finance', label: 'Finance' },
+  { key: 'operations', label: 'Operations' },
+  { key: 'admin', label: 'Admin' },
+];
+
+export function deptLabel(d: string): string {
+  return DEPTS.find((x) => x.key === d)?.label ?? d;
+}
+
+export interface ManagedList {
+  id: string;
+  key: string;
+  name: string;
+  owner_dept: Dept;
+}
+
+export interface ManagedListValue {
+  id: string;
+  list_id: string;
+  value: string;
+  label: string;
+  position: number;
+  active: boolean;
+}
+
+/** Validate a list-value entry. Returns an error sentence, or null if ok. */
+export function validateListValue(value: string): string | null {
+  return value.trim() ? null : 'A value cannot be empty.';
+}
+
+/** A list's values in display order: by position, then by value. Pure. */
+export function sortListValues<T extends { position: number; value: string }>(values: T[]): T[] {
+  return values.slice().sort((a, b) => (a.position - b.position) || a.value.localeCompare(b.value));
+}
