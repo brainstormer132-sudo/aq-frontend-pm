@@ -131,7 +131,6 @@ export function Chip({ label, tone = 'grey', colours, title }: {
       fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
       background: c.bg, color: c.fg, whiteSpace: 'nowrap', lineHeight: 1.5,
       border: (c as { bd?: string }).bd ? `1px solid ${(c as { bd?: string }).bd}` : '1px solid transparent',
-      border: (c as { bd?: string }).bd ? `1px solid ${(c as { bd?: string }).bd}` : '1px solid transparent',
     }}>{label}</span>
   );
 }
