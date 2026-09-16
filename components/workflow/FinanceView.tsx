@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
-import { usePmTaskCampaignRollup, useWorkspaceProfiles, selectAllRows, cachedFetch } from '@/hooks/use-workflow';
+import { usePmTaskCampaignRollup, useWorkspaceProfiles, selectAllRows, selectAllRowsParallel, cachedFetch } from '@/hooks/use-workflow';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import {
@@ -90,13 +90,16 @@ export function FinanceView({
     try {
       const data = await cachedFetch(`financeDocs:${workspaceId}`, async () => {
         const supabase = createSupabase();
-        const { data: rows, error: e } = await supabase
+        return await selectAllRowsParallel<FinanceDocLite>(
+          'financeDocuments',
+          () => supabase
           .from('finance_documents')
           .select('id, pm_task_id, kind, document_number, status, amount, created_at')
           .eq('workspace_id', workspaceId)
-          .order('created_at', { ascending: false });
-        if (e) throw e;
-        return (rows ?? []) as FinanceDocLite[];
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false }),
+          (m) => { throw new Error(m); },
+        );
       }, force);
       setDocs(data);
     } catch (e: any) { setDocs([]); setError(e?.message ?? String(e)); }

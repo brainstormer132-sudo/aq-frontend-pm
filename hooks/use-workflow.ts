@@ -1193,7 +1193,7 @@ export function usePmTaskCampaignRollup(workspaceId: string | null) {
     // vendors column is a thing people act on.
     const load = (bust: boolean) =>
       cachedFetch(`campaignRollup:${workspaceId}`, () =>
-        selectAllRows<PmTaskCampaignRollup>('usePmTaskCampaignRollup', () =>
+        selectAllRowsParallel<PmTaskCampaignRollup>('usePmTaskCampaignRollup', () =>
           supabase
             .from('pm_task_campaign_rollup')
             .select('*')

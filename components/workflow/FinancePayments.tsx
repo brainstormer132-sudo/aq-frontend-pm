@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceRole } from '@/hooks/use-workflow';
-import { usePmTaskCampaignRollup, selectAllRows } from '@/hooks/use-workflow';
+import { usePmTaskCampaignRollup, selectAllRowsParallel, cachedFetch } from '@/hooks/use-workflow';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import {
@@ -105,7 +105,7 @@ export function FinancePayments({
       });
       if (e) { setSaveError(e.message ?? String(e)); return; }
       setAdvanceFor(null);
-      await loadMoney();
+      await loadMoney(true);
     } catch (err: any) {
       setSaveError(err?.message ?? String(err));
     } finally {
@@ -113,10 +113,10 @@ export function FinancePayments({
     }
   };
 
-  const loadMoney = useCallback(async () => {
+  const loadMoney = useCallback(async (force = false) => {
     if (!workspaceId) { setMoneyById({}); return; }
     const supabase = createSupabase();
-    const rows = await selectAllRows<MoneyRow>(
+    const rows = await cachedFetch(`financeMoney:${workspaceId}`, () => selectAllRowsParallel<MoneyRow>(
       'financePaymentsMoney',
       () => supabase.from('pm_tasks')
         .select('id, task_name, title, brand_name, client_payment_status, client_payment_amount, client_advance_amount, client_advance_date, vendor_payment_amount, vendor_advance_amount, vendor_advance_date, payment_terms, payment_split_pct')
@@ -124,7 +124,7 @@ export function FinancePayments({
         .is('parent_task_id', null)
         .order('id', { ascending: true }),
       (m) => setError(m),
-    );
+    ), force);
     const map: Record<string, MoneyRow> = {};
     for (const r of rows) map[r.id] = r;
     setMoneyById(map);
