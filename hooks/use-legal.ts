@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
-import type { DocKind, LegalTemplateLite, VersionStatus } from '@/lib/legal';
+import type {
+  DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock,
+} from '@/lib/legal';
+import { defaultBlockContent, moveItem, withPositions, nextPosition } from '@/lib/legal';
 
 // The legal tables live in the `legal` schema (migration 098), so every read
 // and write goes through .schema('legal'). The schema must be added to
@@ -69,4 +72,138 @@ export function useLegalTemplates(workspaceId: string | null) {
   }, [workspaceId, fetchAll]);
 
   return { templates, loading, error, refetch: fetchAll, createTemplate };
+}
+
+export interface DocVersionLite {
+  id: string;
+  version: number;
+  status: VersionStatus;
+}
+
+/**
+ * The block editor for one template: its newest version and that version's
+ * blocks. Only a `draft` version is editable - the freeze trigger (migration
+ * 098) rejects any write to a published/archived version's blocks, so the UI
+ * disables editing off `editable` and offers `startNewDraft` instead.
+ */
+export function useDocEditor(workspaceId: string | null, templateId: string | null) {
+  const [name, setName] = useState('');
+  const [docKind, setDocKind] = useState<DocKind | null>(null);
+  const [version, setVersion] = useState<DocVersionLite | null>(null);
+  const [blocks, setBlocks] = useState<TemplateBlock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const editable = version?.status === 'draft';
+
+  const load = useCallback(async () => {
+    if (!workspaceId || !templateId) { setLoading(false); return; }
+    setLoading(true); setError('');
+    const c = legal();
+    const { data: tpl, error: e0 } = await c.from('doc_template')
+      .select('name, doc_kind').eq('id', templateId).single();
+    if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
+    setName((tpl as any).name); setDocKind((tpl as any).doc_kind);
+    const { data: vers, error: e1 } = await c.from('doc_template_version')
+      .select('id, version, status').eq('template_id', templateId);
+    if (e1) { setError(e1.message ?? String(e1)); setLoading(false); return; }
+    const newest = ((vers ?? []) as any[]).sort((a, b) => b.version - a.version)[0] ?? null;
+    setVersion(newest);
+    if (!newest) { setBlocks([]); setLoading(false); return; }
+    const { data: blks, error: e2 } = await c.from('doc_template_block')
+      .select('id, version_id, workspace_id, position, block_type, content, optional, condition, clause_id')
+      .eq('version_id', newest.id).order('position');
+    if (e2) { setError(e2.message ?? String(e2)); setLoading(false); return; }
+    setBlocks(((blks ?? []) as any[]) as TemplateBlock[]);
+    setLoading(false);
+  }, [workspaceId, templateId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const guard = () => {
+    if (!workspaceId || !version) throw new Error('No draft loaded.');
+    if (version.status !== 'draft') throw new Error('This version is published and cannot be edited.');
+  };
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true); setError('');
+    try { await fn(); } catch (e: any) { setError(e?.message ?? String(e)); } finally { setBusy(false); }
+  };
+
+  /** Append a new block of the given type at the end. */
+  const addBlock = (type: EditorBlockType) => run(async () => {
+    guard();
+    const { error: e } = await legal().from('doc_template_block').insert({
+      version_id: version!.id, workspace_id: workspaceId,
+      position: nextPosition(blocks), block_type: type, content: defaultBlockContent(type),
+    });
+    if (e) throw e;
+    await load();
+  });
+
+  /** Save a block's content (called on blur, so one write per edit, not per key). */
+  const saveBlock = (id: string, content: Record<string, unknown>) => run(async () => {
+    guard();
+    setBlocks((bs) => bs.map((b) => (b.id === id ? { ...b, content } : b)));
+    const { error: e } = await legal().from('doc_template_block').update({ content }).eq('id', id);
+    if (e) throw e;
+  });
+
+  const deleteBlock = (id: string) => run(async () => {
+    guard();
+    const { error: e } = await legal().from('doc_template_block').delete().eq('id', id);
+    if (e) throw e;
+    await load();
+  });
+
+  /** Move a block up/down and persist the whole list's positions in one upsert. */
+  const moveBlock = (id: string, dir: -1 | 1) => run(async () => {
+    guard();
+    const idx = blocks.findIndex((b) => b.id === id);
+    const reordered = withPositions(moveItem(blocks, idx, dir));
+    if (reordered === blocks) return; // no-op at an edge
+    setBlocks(reordered);
+    const rows = reordered.map((b) => ({
+      id: b.id, version_id: b.version_id, workspace_id: b.workspace_id,
+      position: b.position, block_type: b.block_type, content: b.content,
+    }));
+    const { error: e } = await legal().from('doc_template_block').upsert(rows, { onConflict: 'id' });
+    if (e) { await load(); throw e; }
+  });
+
+  /** Publish the draft: freeze it and stamp published_at (the CHECK requires it). */
+  const publish = () => run(async () => {
+    guard();
+    const { error: e } = await legal().from('doc_template_version')
+      .update({ status: 'published', published_at: new Date().toISOString() })
+      .eq('id', version!.id);
+    if (e) throw e;
+    await load();
+  });
+
+  /** Copy the current (published) version into a fresh draft v+1 and switch to it. */
+  const startNewDraft = () => run(async () => {
+    if (!workspaceId || !version || !templateId) throw new Error('No version loaded.');
+    const c = legal();
+    const { data: nv, error: e1 } = await c.from('doc_template_version')
+      .insert({ template_id: templateId, workspace_id: workspaceId, version: version.version + 1, status: 'draft' })
+      .select('id').single();
+    if (e1) throw e1;
+    const newId = (nv as any).id as string;
+    if (blocks.length) {
+      const copies = blocks.map((b) => ({
+        version_id: newId, workspace_id: workspaceId,
+        position: b.position, block_type: b.block_type, content: b.content,
+        optional: b.optional ?? false, condition: b.condition ?? null, clause_id: b.clause_id ?? null,
+      }));
+      const { error: e2 } = await c.from('doc_template_block').insert(copies);
+      if (e2) throw e2;
+    }
+    await load();
+  });
+
+  return {
+    name, docKind, version, blocks, loading, error, busy, editable,
+    reload: load, addBlock, saveBlock, deleteBlock, moveBlock, publish, startNewDraft,
+  };
 }

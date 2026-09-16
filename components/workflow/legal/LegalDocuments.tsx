@@ -7,6 +7,7 @@ import {
   type DocKind,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
+import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
 
 /**
  * Documents: the editable templates, grouped by kind, with a create action.
@@ -22,18 +23,24 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
   const [kind, setKind] = useState<DocKind>('vendor_contract');
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const submit = async () => {
     const v = validateNewTemplate(name, kind);
     if (v) { setFormErr(v); return; }
     setBusy(true); setFormErr('');
     try {
-      await createTemplate(name, kind);
+      const id = await createTemplate(name, kind);
       setName(''); setKind('vendor_contract'); setOpen(false);
+      setOpenId(id); // drop straight into the editor on the fresh draft
     } catch (e: any) {
       setFormErr(e?.message ?? 'Could not create the template.');
     } finally { setBusy(false); }
   };
+
+  if (openId) {
+    return <LegalEditor workspaceId={workspaceId} templateId={openId} onBack={() => setOpenId(null)} />;
+  }
 
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -61,10 +68,12 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
               color: 'var(--aq-text-muted)', marginBottom: 10 }}>{g.label}</h3>
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
               {g.items.map((t, i) => (
-                <li key={t.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
-                }}>
+                <li key={t.id} role="button" tabIndex={0} onClick={() => setOpenId(t.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(t.id); } }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', cursor: 'pointer',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+                  }}>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{t.name}</span>
                     {t.description ? (
@@ -75,6 +84,7 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
                     <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>v{t.latest_version}</span>
                   ) : null}
                   <span className={`aq-badge ${statusBadge(t.latest_status)}`}>{statusLabel(t.latest_status)}</span>
+                  <span style={{ fontSize: 14, color: 'var(--aq-text-muted)' }}>&rsaquo;</span>
                 </li>
               ))}
             </ul>
