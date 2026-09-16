@@ -32,10 +32,10 @@ declare
     'pending_clients'
   ];
 begin
-  select string_agg(tablename, ', ')
+  select string_agg(schemaname || '.' || tablename, ', ')
     into bad
     from pg_tables
-   where schemaname = 'public'
+   where schemaname in ('public', 'legal')
      and not rowsecurity
      and not (tablename = any(allowed));
 

@@ -31,7 +31,7 @@ begin
                     e'\n  ' order by table_name, grantee, privilege_type)
     into bad
     from information_schema.table_privileges
-   where table_schema = 'public'
+   where table_schema in ('public', 'legal')
      and grantee in ('anon', 'authenticated')
      and privilege_type in ('TRUNCATE', 'TRIGGER', 'REFERENCES');
 
@@ -54,7 +54,7 @@ begin
   select string_agg(distinct a::text, ', ')
     into leftover
     from pg_default_acl d, unnest(d.defaclacl) a
-   where d.defaclnamespace = 'public'::regnamespace
+   where d.defaclnamespace in ('public'::regnamespace, 'legal'::regnamespace)
      and d.defaclobjtype = 'r'
      and (a::text like 'anon=%' or a::text like 'authenticated=%')
      -- D = TRUNCATE, t = TRIGGER, x = REFERENCES
