@@ -2,6 +2,7 @@ import {
   DOC_KINDS, kindLabel, statusLabel, statusBadge, groupTemplatesByKind, validateNewTemplate,
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, defaultBlockContent,
   blockText, blockKV, moveItem, withPositions, nextPosition, canPublish,
+  hasRTLChars, blockAllText, detectDir,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -88,6 +89,22 @@ eq('nextPosition -> max+1', nextPosition([{ position: 0 }, { position: 3 }, { po
 // canPublish
 ok('cannot publish empty', !canPublish([]));
 ok('can publish with a block', canPublish([{}]));
+
+// direction
+ok('arabic is rtl', hasRTLChars('\u0645\u0631\u062d\u0628\u0627'));
+ok('latin is not rtl', !hasRTLChars('hello world'));
+ok('mixed with arabic is rtl', hasRTLChars('hello \u0645\u0631\u062d\u0628\u0627'));
+ok('digits/punctuation not rtl', !hasRTLChars('12,500.00 - (SAR)'));
+eq('blockAllText joins text', blockAllText({ content: { text: 'hi' } }), 'hi');
+eq('blockAllText joins kv', blockAllText({ content: { label: 'Term', value: '12m' } }), 'Term 12m');
+{
+  const tb = (t) => ({ content: { text: t } });
+  eq('empty -> ltr', detectDir([]), 'ltr');
+  eq('all latin -> ltr', detectDir([tb('Agreement'), tb('Between the parties')]), 'ltr');
+  eq('majority arabic -> rtl', detectDir([tb('\u0627\u0644\u0639\u0642\u062f'), tb('\u0627\u0644\u0637\u0631\u0641'), tb('note')]), 'rtl');
+  eq('tie -> ltr', detectDir([tb('\u0627\u0644\u0639\u0642\u062f'), tb('note')]), 'ltr');
+  eq('blanks ignored', detectDir([tb(''), tb('\u0627\u0644\u0639\u0642\u062f')]), 'rtl');
+}
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

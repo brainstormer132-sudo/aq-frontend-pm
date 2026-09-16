@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { useDocEditor } from '@/hooks/use-legal';
 import {
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, blockText, blockKV, canPublish,
-  kindLabel, statusLabel, statusBadge,
-  type EditorBlockType, type TemplateBlock,
+  kindLabel, statusLabel, statusBadge, detectDir,
+  type EditorBlockType, type TemplateBlock, type Dir,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 
@@ -20,6 +20,13 @@ export function LegalEditor({
 }: { workspaceId?: string; templateId: string; onBack: () => void }) {
   const ed = useDocEditor(workspaceId ?? null, templateId);
   const { version, blocks, loading, error, busy, editable } = ed;
+
+  // Writing direction: detected from the content (an Arabic contract reads
+  // right-to-left), overridable by the toggle. Individual fields still use
+  // dir="auto" so a Latin name or number inside Arabic text sits correctly.
+  const detected = detectDir(blocks);
+  const [dirOverride, setDirOverride] = useState<Dir | null>(null);
+  const dir: Dir = dirOverride ?? detected;
 
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -37,6 +44,19 @@ export function LegalEditor({
             </>
           ) : null}
         </span>
+        <div style={{ display: 'flex', border: '1px solid var(--aq-border)', borderRadius: 8, overflow: 'hidden' }}
+          title="Reading direction">
+          {(['ltr', 'rtl'] as Dir[]).map((d) => (
+            <button key={d} onClick={() => setDirOverride(d)}
+              style={{
+                padding: '4px 10px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
+                background: dir === d ? 'var(--aq-ink-btn)' : 'transparent',
+                color: dir === d ? 'var(--aq-ink-btn-text)' : 'var(--aq-text-muted)',
+              }}>
+              {d === 'rtl' ? 'RTL' : 'LTR'}
+            </button>
+          ))}
+        </div>
         {version && editable && (
           <button className="aq-btn aq-btn-primary" disabled={busy || !canPublish(blocks)}
             onClick={ed.publish} title={canPublish(blocks) ? 'Freeze this version' : 'Add a block first'}>
@@ -71,11 +91,11 @@ export function LegalEditor({
           <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 4 }}>Add the first block below.</p>
         </div>
       ) : (
-        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <ul dir={dir} style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {blocks.map((b, i) => (
             <BlockRow key={b.id} block={b} index={i} total={blocks.length} editable={!!editable} busy={busy}
               onSave={(content) => ed.saveBlock(b.id, content)}
-              onMove={(dir) => ed.moveBlock(b.id, dir)}
+              onMove={(mv) => ed.moveBlock(b.id, mv)}
               onDelete={() => ed.deleteBlock(b.id)} />
           ))}
         </ul>
@@ -150,16 +170,16 @@ function TextEditor({
   const commit = () => { if (text !== blockText(block)) onSave({ ...block.content, text }); };
 
   if (!editable) {
-    return <div style={{ fontSize: 14, whiteSpace: 'pre-wrap', color: 'var(--aq-text)' }}>
+    return <div dir="auto" style={{ fontSize: 14, whiteSpace: 'pre-wrap', color: 'var(--aq-text)' }}>
       {text || <span style={{ color: 'var(--aq-text-muted)' }}>(empty)</span>}
     </div>;
   }
   const big = block.block_type === 'p';
   return big ? (
-    <textarea className="aq-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
+    <textarea dir="auto" className="aq-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
       placeholder={PLACEHOLDER[block.block_type]} rows={3} style={{ width: '100%', resize: 'vertical' }} />
   ) : (
-    <input className="aq-input" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
+    <input dir="auto" className="aq-input" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
       placeholder={PLACEHOLDER[block.block_type] ?? 'Text'} style={{ width: '100%',
         fontWeight: block.block_type === 'title' ? 700 : block.block_type === 'h' ? 600 : 400,
         fontSize: block.block_type === 'title' ? 16 : 14 }} />
@@ -179,16 +199,16 @@ function KVEditor({
   };
 
   if (!editable) {
-    return <div style={{ fontSize: 14 }}>
+    return <div dir="auto" style={{ fontSize: 14 }}>
       <span style={{ fontWeight: 600 }}>{label || '(label)'}:</span>{' '}
       <span>{value || <span style={{ color: 'var(--aq-text-muted)' }}>(value)</span>}</span>
     </div>;
   }
   return (
     <div style={{ display: 'flex', gap: 8 }}>
-      <input className="aq-input" value={label} onChange={(e) => setLabel(e.target.value)} onBlur={commit}
+      <input dir="auto" className="aq-input" value={label} onChange={(e) => setLabel(e.target.value)} onBlur={commit}
         placeholder="Label (e.g. Term)" style={{ flex: '0 0 40%' }} />
-      <input className="aq-input" value={value} onChange={(e) => setValue(e.target.value)} onBlur={commit}
+      <input dir="auto" className="aq-input" value={value} onChange={(e) => setValue(e.target.value)} onBlur={commit}
         placeholder="Value (e.g. 12 months)" style={{ flex: 1 }} />
     </div>
   );

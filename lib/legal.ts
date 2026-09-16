@@ -152,3 +152,39 @@ export function nextPosition(blocks: Pick<TemplateBlock, 'position'>[]): number 
 export function canPublish(blocks: unknown[]): boolean {
   return blocks.length > 0;
 }
+
+// ---- direction (bidi / RTL) --------------------------------------------
+
+export type Dir = 'rtl' | 'ltr';
+
+// Arabic (incl. supplement, extended-A) and its presentation forms, plus
+// Hebrew. Enough to tell an Arabic contract from an English one; individual
+// fields still use dir="auto" so a Latin name inside Arabic text sits right.
+const RTL_RE = /[\u0591-\u07ff\u08a0-\u08ff\ufb1d-\ufdfd\ufe70-\ufefc]/;
+
+/** True if the string contains any right-to-left (Arabic/Hebrew) character. */
+export function hasRTLChars(s: string): boolean {
+  return RTL_RE.test(s);
+}
+
+/** All the human text a block carries (the text field, or a kv's label+value). */
+export function blockAllText(b: Pick<TemplateBlock, 'content'>): string {
+  const kv = blockKV(b);
+  return `${blockText(b)} ${kv.label} ${kv.value}`.trim();
+}
+
+/**
+ * The document's overall writing direction, decided by its content: 'rtl' when
+ * more of its non-empty blocks read right-to-left than left-to-right, else
+ * 'ltr'. Empty or tied -> 'ltr'. The editor uses this as the default and lets
+ * the user override it. Pure.
+ */
+export function detectDir(blocks: Pick<TemplateBlock, 'content'>[]): Dir {
+  let rtl = 0, ltr = 0;
+  for (const b of blocks) {
+    const s = blockAllText(b);
+    if (!s) continue;
+    if (hasRTLChars(s)) rtl++; else ltr++;
+  }
+  return rtl > ltr ? 'rtl' : 'ltr';
+}
