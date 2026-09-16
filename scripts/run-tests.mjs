@@ -85,6 +85,7 @@ const LIBS = [
   'lib/crm-sync.ts',
   'lib/theme.ts',
   'lib/band.ts',
+  'lib/legal.ts',
 ];
 
 const GREEN = '\x1b[32m';
