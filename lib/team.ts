@@ -60,7 +60,7 @@ export function dayMs(value: unknown): number {
 // ── Roles ───────────────────────────────────────────────────────────
 
 export const ROLES = [
-  'owner', 'admin', 'operations', 'sales', 'marketing', 'key_account', 'finance', 'member',
+  'owner', 'admin', 'operations', 'sales', 'marketing', 'key_account', 'finance', 'legal', 'member',
 ] as const;
 export type Role = typeof ROLES[number];
 
@@ -72,6 +72,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   marketing: 'Marketing',
   key_account: 'Key account',
   finance: 'Finance',
+  legal: 'Legal',
   member: 'Member',
 };
 
@@ -88,6 +89,7 @@ export const ROLE_BLURB: Record<Role, string> = {
   marketing: 'Marketing Inbox, New Task, CRM, Clients, Vendors, Tracking Sheets and every task.',
   key_account: 'All Tasks, CRM, Tracking Sheets and Data. Approves and rejects contract requests.',
   finance: 'Dashboard, Inbox and Team for now. The finance menu - quotations, invoices and the money ledgers - is rolling out.',
+  legal: 'The Legal section - matters, editable document templates, the clause library, the register and signatures. Owner, admin and legal only.',
   member: 'Dashboard, Inbox and Team. Can be assigned work and mentioned on it.',
 };
 

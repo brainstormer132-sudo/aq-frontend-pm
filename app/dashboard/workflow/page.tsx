@@ -29,6 +29,7 @@ import { VendorsView } from '@/components/workflow/VendorsView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
 import { DataView } from '@/components/workflow/DataView';
 import { FinanceView } from '@/components/workflow/FinanceView';
+import { LegalView } from '@/components/workflow/legal/LegalView';
 import { AllTasksView } from '@/components/workflow/AllTasksView';
 import { prefillFromDeal, type CampaignPrefill } from '@/lib/crm-sync';
 
@@ -172,6 +173,13 @@ export default function WorkflowPage() {
 
   const wsId = workspace?.id ?? null;
   const { role } = useMyRole(wsId);
+  // Legal is owner/admin/legal only. The sidebar hides the group; this is the
+  // gate - if the view is ever set to a legal screen without the role, bounce
+  // to the dashboard instead of rendering it.
+  const canLegal = !!role && ['owner', 'admin', 'legal'].includes(role);
+  useEffect(() => {
+    if (role && !canLegal && view.startsWith('legal-')) setView('dashboard');
+  }, [role, canLegal, view]);
   const { profiles, refetch: refetchProfiles } = useWorkspaceProfiles(wsId);
   const { serviceTypes, steps, refetch: refetchServiceTypes } = useServiceTypes(wsId);
   const { tasks: allTasks, loading: tasksLoading, refetch: refetchAll } = useWorkflowTasks(wsId, 'all');
@@ -398,6 +406,11 @@ export default function WorkflowPage() {
           <FinanceView workspaceId={workspace.id} role={role} onOpenTask={(id) => { void openTask(id); }} />
         )}
 
+        {view === 'legal-matters'    && canLegal && <LegalView section="matters"    workspaceId={workspace.id} role={role} />}
+        {view === 'legal-documents'  && canLegal && <LegalView section="documents"  workspaceId={workspace.id} role={role} />}
+        {view === 'legal-register'   && canLegal && <LegalView section="register"   workspaceId={workspace.id} role={role} />}
+        {view === 'legal-signatures' && canLegal && <LegalView section="signatures" workspaceId={workspace.id} role={role} />}
+
         {/* Campaigns and the rollup are already loaded for the Dashboard
             and All Tasks, so the Clients register can say how much work each
             client has had without a new query. */}
@@ -572,6 +585,10 @@ function viewTitle(v: View) {
     : v === 'data'     ? 'Data'
     : v === 'finance'  ? 'Finance'
     : v === 'team'     ? 'Team'
+    : v === 'legal-matters'    ? 'Matters'
+    : v === 'legal-documents'  ? 'Documents'
+    : v === 'legal-register'   ? 'Register'
+    : v === 'legal-signatures' ? 'Signatures'
     : 'Settings';
 }
 function viewSubtitle(v: View) {
@@ -588,6 +605,10 @@ function viewSubtitle(v: View) {
     : v === 'data'      ? 'Everything, until you search for someone.'
     : v === 'finance'   ? 'Generate and re-issue client quotations, created in Zoho.'
     : v === 'team'      ? 'Your profile, and everyone in this workspace.'
+    : v === 'legal-matters'    ? 'Matters with their parties, timeline and deadlines.'
+    : v === 'legal-documents'  ? 'Editable templates and the shared clause library.'
+    : v === 'legal-register'   ? 'Every generated document, with its template version.'
+    : v === 'legal-signatures' ? 'Out for signature, signed, and expiring.'
     : 'The lists campaigns pick from, and the numbers the app runs on.';
 }
 

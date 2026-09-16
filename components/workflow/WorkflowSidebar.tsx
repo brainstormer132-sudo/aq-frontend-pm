@@ -10,7 +10,8 @@ const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'crm'
           | 'clients' | 'vendors' | 'tracking' | 'contracts' | 'data' | 'finance'
-          | 'team' | 'settings';
+          | 'team' | 'settings'
+          | 'legal-matters' | 'legal-documents' | 'legal-register' | 'legal-signatures';
 
 interface NavItem {
   id: View;
@@ -65,6 +66,11 @@ const NAV: NavItem[] = [
   { id: 'finance',         label: 'Finance',         icon: 'chart',     visibleTo: ['owner','admin','finance'], group: 'Money' },
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [], group: 'Admin' },
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'], group: 'Admin' },
+
+  { id: 'legal-matters',    label: 'Matters',    icon: 'grid',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
+  { id: 'legal-documents',  label: 'Documents',  icon: 'file',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
+  { id: 'legal-register',   label: 'Register',   icon: 'list',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
+  { id: 'legal-signatures', label: 'Signatures', icon: 'check', visibleTo: ['owner','admin','legal'], group: 'Legal' },
 ];
 
 /** Two letters for the collapsed footer. Falls back to a dot for a blank name. */
