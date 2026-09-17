@@ -111,6 +111,7 @@ export function LegalEditor({
               onSave={(content) => ed.saveBlock(b.id, content)}
               onMove={(mv) => ed.moveBlock(b.id, mv)}
               onDelete={() => ed.deleteBlock(b.id)}
+              onToggleOptional={(v) => ed.setBlockOptional(b.id, v)}
               registerInsert={(fn) => { insertApi.current = fn; }} />
           ))}
         </ul>
@@ -142,19 +143,23 @@ export function LegalEditor({
 }
 
 function BlockRow({
-  block, index, total, editable, busy, onSave, onMove, onDelete, registerInsert,
+  block, index, total, editable, busy, onSave, onMove, onDelete, onToggleOptional, registerInsert,
 }: {
   block: TemplateBlock; index: number; total: number; editable: boolean; busy: boolean;
   onSave: (content: Record<string, unknown>) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
+  onToggleOptional: (optional: boolean) => void;
   registerInsert: (fn: (s: string) => void) => void;
 }) {
   const known = isEditableBlockType(block.block_type);
   return (
     <li className="aq-card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-        color: 'var(--aq-text-muted)', minWidth: 74, paddingTop: 8 }}>{blockTypeLabel(block.block_type)}</span>
+      <span style={{ minWidth: 74, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+          color: 'var(--aq-text-muted)' }}>{blockTypeLabel(block.block_type)}</span>
+        {block.optional && <span className="aq-badge aq-badge-warning" style={{ fontSize: 9 }}>Optional</span>}
+      </span>
 
       <div style={{ flex: 1, minWidth: 0 }}>
         {!known ? (
@@ -174,6 +179,9 @@ function BlockRow({
             title="Move up" onClick={() => onMove(-1)} style={{ padding: '2px 8px' }}>&uarr;</button>
           <button className="aq-btn aq-btn-ghost" disabled={busy || index === total - 1}
             title="Move down" onClick={() => onMove(1)} style={{ padding: '2px 8px' }}>&darr;</button>
+          <button className={`aq-btn ${block.optional ? 'aq-btn-secondary' : 'aq-btn-ghost'}`} disabled={busy}
+            title={block.optional ? 'Optional clause - click to make it required' : 'Make this clause optional (can be switched off per contract)'}
+            onClick={() => onToggleOptional(!block.optional)} style={{ padding: '2px 8px', fontSize: 11 }}>Opt</button>
           <button className="aq-btn aq-btn-danger" disabled={busy}
             title="Delete block" onClick={onDelete} style={{ padding: '2px 8px' }}>&times;</button>
         </div>

@@ -10,6 +10,7 @@ import type {
 import {
   defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
   contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
+  OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks,
 } from '@/lib/legal';
 
 /** SHA-256 of a string as lowercase hex, via the Web Crypto API (browser + Node 18+). */
@@ -167,6 +168,14 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
     await load();
   });
 
+  /** Mark a block optional (can be toggled off per contract) or required. */
+  const setBlockOptional = (id: string, optional: boolean) => run(async () => {
+    guard();
+    setBlocks((bs) => bs.map((b) => (b.id === id ? { ...b, optional } : b)));
+    const { error: e } = await legal().from('doc_template_block').update({ optional }).eq('id', id);
+    if (e) throw e;
+  });
+
   /** Move a block up/down and persist the whole list's positions in one upsert. */
   const moveBlock = (id: string, dir: -1 | 1) => run(async () => {
     guard();
@@ -215,7 +224,7 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
 
   return {
     name, docKind, version, blocks, loading, error, busy, editable,
-    reload: load, addBlock, saveBlock, deleteBlock, moveBlock, publish, startNewDraft,
+    reload: load, addBlock, saveBlock, deleteBlock, moveBlock, setBlockOptional, publish, startNewDraft,
   };
 }
 
@@ -517,9 +526,11 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     try { await fn(); } catch (e: any) { setError(e?.message ?? String(e)); throw e; } finally { setBusy(false); }
   };
 
-  /** Upsert one row per field key with its current value. */
+  /** Upsert one row per field key with its current value. The optional-clause
+   *  choice (OPT_OFF_KEY) rides along whenever the operator has touched it. */
   const persist = async (keys: string[]) => {
-    const rows = keys.map((k) => ({
+    const allKeys = values[OPT_OFF_KEY] !== undefined ? [...keys, OPT_OFF_KEY] : keys;
+    const rows = allKeys.map((k) => ({
       contract_id: contractId, workspace_id: workspaceId, key: k, value: values[k] ?? '',
     }));
     if (!rows.length) return;
@@ -535,7 +546,8 @@ export function useContractEditor(workspaceId: string | null, contractId: string
   const issue = (keys: string[]) => run(async () => {
     guard();
     await persist(keys);
-    const canonical = contractCanonical((contract as Contract).version_id, blocks, values);
+    const shown = visibleBlocks(blocks, parseOffIds(values[OPT_OFF_KEY]));
+    const canonical = contractCanonical((contract as Contract).version_id, shown, values);
     const hash = await sha256Hex(canonical);
     const { error: eF } = await legal().from('contract_field').upsert([
       { contract_id: contractId, workspace_id: workspaceId, key: FINGERPRINT_KEY, value: hash },
@@ -557,9 +569,17 @@ export function useContractEditor(workspaceId: string | null, contractId: string
 
   const fingerprint = values[FINGERPRINT_KEY] || null;
   const issuedAt = values[ISSUED_AT_KEY] || null;
+  const offIds = parseOffIds(values[OPT_OFF_KEY]);
+
+  /** Include (off=false) or exclude (off=true) an optional clause. */
+  const toggleBlockOff = (id: string, off: boolean) => {
+    const cur = new Set(offIds);
+    if (off) cur.add(id); else cur.delete(id);
+    setValue(OPT_OFF_KEY, serializeOffIds([...cur]));
+  };
 
   return {
-    contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt,
-    reload: load, setValue, saveAll, issue, rename,
+    contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds,
+    reload: load, setValue, saveAll, issue, rename, toggleBlockOff,
   };
 }

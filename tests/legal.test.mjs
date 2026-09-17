@@ -10,6 +10,7 @@ import {
   fillFieldsForBlocks, validateFieldValue, contractReady, seedContractValues,
   escapeHtml, contractPrintHTML,
   contractCanonical, formatFingerprint, FINGERPRINT_KEY, ISSUED_AT_KEY,
+  OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -285,6 +286,34 @@ eq('formatFingerprint empty-safe', formatFingerprint(undefined), '');
   });
   ok('print footer shows fingerprint', html.includes('Fingerprint (SHA-256): ABCD 1234'));
   ok('no fingerprint line when absent', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr' }).includes('Fingerprint (SHA-256)'));
+}
+
+// ---- optional clauses ----
+eq('opt-off reserved key', OPT_OFF_KEY, '__aq_opt_off');
+ok('optional block detected', isOptionalBlock({ optional: true }));
+ok('non-optional block', !isOptionalBlock({ optional: false }));
+ok('missing optional is not optional', !isOptionalBlock({}));
+eq('parse empty -> []', parseOffIds(''), []);
+eq('parse null -> []', parseOffIds(null), []);
+eq('parse trims + drops blanks', parseOffIds(' a , b ,, c '), ['a', 'b', 'c']);
+eq('serialize dedupes', serializeOffIds(['a', 'b', 'a', '', 'c']), 'a,b,c');
+eq('parse/serialize roundtrip', parseOffIds(serializeOffIds(['x', 'y'])), ['x', 'y']);
+{
+  const bl = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  eq('no offIds -> all (same ref)', visibleBlocks(bl, []), bl);
+  ok('no offIds keeps same ref', visibleBlocks(bl, []) === bl);
+  eq('excludes off ids', visibleBlocks(bl, ['b']).map((x) => x.id), ['a', 'c']);
+  eq('excludes several, keeps order', visibleBlocks(bl, ['c', 'a']).map((x) => x.id), ['b']);
+  const before = JSON.stringify(bl);
+  visibleBlocks(bl, ['b']);
+  ok('visibleBlocks does not mutate', JSON.stringify(bl) === before);
+}
+{
+  // an excluded clause drops out of the fingerprint canonical
+  const blocks = [{ id: '1', block_type: 'p', content: { text: 'keep' } }, { id: '2', block_type: 'p', content: { text: 'drop' } }];
+  const full = contractCanonical('v', blocks, {});
+  const trimmed = contractCanonical('v', visibleBlocks(blocks, ['2']), {});
+  ok('canonical over visible omits excluded', trimmed.includes('keep') && !trimmed.includes('drop') && full.includes('drop'));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

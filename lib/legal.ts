@@ -513,6 +513,42 @@ export function formatFingerprint(hex: string): string {
   return h.replace(/(.{4})/g, '$1 ').trim();
 }
 
+// ---- optional clauses (per-contract include / exclude) ------------------
+//
+// A template block may be marked `optional` (the doc_template_block.optional
+// column). When a contract is made, an optional clause is included by default
+// and the operator can switch it off; the ids of the switched-off blocks are
+// stored in a reserved contract_field so the choice is frozen at issue. An
+// excluded clause drops from the generated document, the print, the fields to
+// fill, and the fingerprint.
+
+export const OPT_OFF_KEY = '__aq_opt_off';
+
+/** True when a block can be toggled off per contract. */
+export function isOptionalBlock(b: Pick<TemplateBlock, 'optional'>): boolean {
+  return b.optional === true;
+}
+
+/** The block ids switched OFF, parsed from the reserved field's CSV value. */
+export function parseOffIds(csv: string | null | undefined): string[] {
+  return String(csv ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/** Serialise a set of switched-off block ids back to the reserved field value. */
+export function serializeOffIds(ids: string[]): string {
+  return [...new Set(ids.filter(Boolean))].join(',');
+}
+
+/**
+ * The blocks that appear in the generated document: all except the optional
+ * ones this contract has switched off. Pure - preserves order, does not mutate.
+ */
+export function visibleBlocks<T extends { id?: string }>(blocks: T[], offIds: string[]): T[] {
+  if (!offIds.length) return blocks;
+  const off = new Set(offIds);
+  return blocks.filter((b) => !(b.id != null && off.has(b.id)));
+}
+
 // ---- printable contract (a self-contained document to Print / Save as PDF) --
 //
 // An issued (or draft) contract is rendered to a stand-alone HTML document -

@@ -6,7 +6,7 @@ import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
   contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
-  contractCanonical, formatFingerprint,
+  contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   type Placeholder, type TemplateBlock,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -25,12 +25,18 @@ export function ContractFill({
   const ed = useContractEditor(workspaceId ?? null, contractId);
   const reg = useLegalPlaceholders(workspaceId ?? null);
   const lists = useManagedLists(workspaceId ?? null);
-  const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt } = ed;
+  const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds } = ed;
 
-  // The fields this version actually uses, in first-appearance order.
+  // The blocks that make up this contract: all except optional clauses switched
+  // off. Everything downstream - fields, preview, print, fingerprint - works
+  // from the visible set, so an excluded clause and its fields simply vanish.
+  const visible = useMemo(() => visibleBlocks(blocks, offIds), [blocks, offIds]);
+  const optionalBlocks = useMemo(() => blocks.filter(isOptionalBlock), [blocks]);
+
+  // The fields the visible wording uses, in first-appearance order.
   const fields = useMemo(
-    () => fillFieldsForBlocks(blocks, reg.placeholders),
-    [blocks, reg.placeholders],
+    () => fillFieldsForBlocks(visible, reg.placeholders),
+    [visible, reg.placeholders],
   );
 
   // Allowed active values per list-field key, for validation and readiness.
@@ -59,11 +65,11 @@ export function ContractFill({
     let live = true;
     if (!contract || !fingerprint) { setVerify(null); return; }
     setVerify('checking');
-    sha256Hex(contractCanonical(contract.version_id, blocks, values))
+    sha256Hex(contractCanonical(contract.version_id, visible, values))
       .then((h) => { if (live) setVerify(h === fingerprint ? 'ok' : 'diff'); })
       .catch(() => { if (live) setVerify(null); });
     return () => { live = false; };
-  }, [contract, fingerprint, blocks, values]);
+  }, [contract, fingerprint, visible, values]);
 
   const saveDraft = async () => {
     setBanner('');
@@ -83,7 +89,7 @@ export function ContractFill({
     if (!contract) return;
     const html = contractPrintHTML({
       title: contract.title || 'Contract',
-      blocks, values, dir,
+      blocks: visible, values, dir,
       meta: {
         org: 'AQ Creativity',
         status: contractStatusLabel(contract.status),
@@ -176,6 +182,31 @@ export function ContractFill({
                 ))}
               </div>
             )}
+
+            {optionalBlocks.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                  color: 'var(--aq-text-muted)', marginTop: 6 }}>Optional clauses</div>
+                <div className="aq-card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {optionalBlocks.map((b) => {
+                    const included = !offIds.includes(b.id);
+                    const snippet = blockAllText(b).slice(0, 90) || '(empty clause)';
+                    return (
+                      <label key={b.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
+                        opacity: included ? 1 : 0.55, cursor: editable ? 'pointer' : 'default' }}>
+                        <input type="checkbox" checked={included} disabled={!editable}
+                          onChange={() => ed.toggleBlockOff(b.id, included)} style={{ marginTop: 3 }} />
+                        <span dir="auto" style={{ fontSize: 12.5, minWidth: 0 }}>{snippet}</span>
+                        {!editable && (
+                          <span className={`aq-badge ${included ? 'aq-badge-success' : 'aq-badge-muted'}`}
+                            style={{ marginInlineStart: 'auto' }}>{included ? 'Included' : 'Excluded'}</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Live preview */}
@@ -183,7 +214,7 @@ export function ContractFill({
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
               color: 'var(--aq-text-muted)', marginBottom: 12 }}>Preview</div>
             <div className="aq-card" style={{ padding: 22 }} dir={dir}>
-              <PreviewBody blocks={blocks} values={values} />
+              <PreviewBody blocks={visible} values={values} />
             </div>
           </div>
         </div>
