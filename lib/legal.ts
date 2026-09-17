@@ -345,3 +345,129 @@ export function validateListValue(value: string): string | null {
 export function sortListValues<T extends { position: number; value: string }>(values: T[]): T[] {
   return values.slice().sort((a, b) => (a.position - b.position) || a.value.localeCompare(b.value));
 }
+
+// ---- contracts (a filled-in document, stamped to a template version) ----
+//
+// A contract is created FROM a published template version and carries the
+// filled field values (legal.contract + legal.contract_field, migration 100).
+// The New-Contract screen shows only the fields the version's wording uses,
+// each typed per the registry - "Legal chooses, it does not write". A draft
+// is editable; once issued/signed the values freeze in the database.
+
+export type ContractStatus = 'draft' | 'issued' | 'signed' | 'void';
+
+export const CONTRACT_STATUSES: { key: ContractStatus; label: string }[] = [
+  { key: 'draft', label: 'Draft' },
+  { key: 'issued', label: 'Issued' },
+  { key: 'signed', label: 'Signed' },
+  { key: 'void', label: 'Void' },
+];
+
+/** The words on a contract's status pill. Unknown/blank reads as Draft. */
+export function contractStatusLabel(s: string | null | undefined): string {
+  return CONTRACT_STATUSES.find((x) => x.key === s)?.label ?? 'Draft';
+}
+
+/** The badge colour class for a contract status. */
+export function contractStatusBadge(s: string | null | undefined): string {
+  return s === 'signed' ? 'aq-badge-success'
+    : s === 'issued' ? 'aq-badge-info'
+    : s === 'void' ? 'aq-badge-muted'
+    : 'aq-badge-warning';
+}
+
+/** A contract's field values are editable only while it is a draft. */
+export function contractEditable(status: string | null | undefined): boolean {
+  return status == null || status === 'draft';
+}
+
+export interface Contract {
+  id: string;
+  workspace_id: string;
+  template_id: string;
+  version_id: string;
+  title: string;
+  status: ContractStatus;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ContractFieldValue {
+  id?: string;
+  contract_id?: string;
+  key: string;
+  value: string;
+}
+
+/**
+ * The registry fields a version's wording actually uses, in first-appearance
+ * order, resolved to their definitions. Keys with no registry entry are
+ * dropped - Publish blocks unknown keys, so a published version has none, and
+ * dropping is safe if the registry later loses one. Pure.
+ */
+export function fillFieldsForBlocks(
+  blocks: Pick<TemplateBlock, 'content'>[],
+  placeholders: Placeholder[],
+): Placeholder[] {
+  const byKey = new Map(placeholders.map((p) => [p.key, p]));
+  const seen = new Set<string>();
+  const out: Placeholder[] = [];
+  for (const b of blocks) {
+    for (const k of parsePlaceholderKeys(blockAllText(b))) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const p = byKey.get(k);
+      if (p) out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Validate one entered field value against its type and bounds. An empty value
+ * is allowed unless the field is required (a draft can be saved part-filled;
+ * issuing is what enforces required). For a list field, pass its allowed active
+ * values to check membership. Returns an error sentence, or null if ok. Pure.
+ */
+export function validateFieldValue(
+  f: Pick<Placeholder, 'field_type' | 'required' | 'num_min' | 'num_max'>,
+  value: string,
+  list?: { values: string[] },
+): string | null {
+  const v = (value ?? '').trim();
+  if (!v) return f.required ? 'This field is required.' : null;
+  if (f.field_type === 'number') {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 'Enter a number.';
+    if (f.num_min != null && n < f.num_min) return `Must be at least ${f.num_min}.`;
+    if (f.num_max != null && n > f.num_max) return `Must be at most ${f.num_max}.`;
+  }
+  if (f.field_type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return 'Pick a date.';
+  if (f.field_type === 'list' && list && !list.values.includes(v)) return 'Choose a value from the list.';
+  return null;
+}
+
+/**
+ * True when every field passes validation - required ones filled, numbers in
+ * range, list values in their list - so the contract can be issued. `listsByKey`
+ * maps a field key to its allowed active values. Pure.
+ */
+export function contractReady(
+  fields: Placeholder[],
+  values: Record<string, string>,
+  listsByKey?: Record<string, string[]>,
+): boolean {
+  return fields.every((f) => validateFieldValue(
+    f, values[f.key] ?? '', listsByKey?.[f.key] ? { values: listsByKey[f.key] } : undefined,
+  ) === null);
+}
+
+/**
+ * The initial values map for a fresh contract: each field's default_value,
+ * where one is set. Pure.
+ */
+export function seedContractValues(fields: Placeholder[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of fields) if (f.default_value) out[f.key] = f.default_value;
+  return out;
+}

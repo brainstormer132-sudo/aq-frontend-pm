@@ -5,9 +5,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
 import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
-  Dept, ManagedList, ManagedListValue, FieldDef,
+  Dept, ManagedList, ManagedListValue, FieldDef, Contract, ContractStatus,
 } from '@/lib/legal';
-import { defaultBlockContent, moveItem, withPositions, nextPosition } from '@/lib/legal';
+import { defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable } from '@/lib/legal';
 
 // The legal tables live in the `legal` schema (migration 098), so every read
 // and write goes through .schema('legal'). The schema must be added to
@@ -351,5 +351,193 @@ export function useManagedLists(workspaceId: string | null) {
   return {
     lists, valuesByList, loading, error, reload: load,
     createList, updateList, removeList, addValue, updateValue, removeValue,
+  };
+}
+
+// ---- contracts (filled documents, stamped to a published version) --------
+
+export interface PublishedVersion {
+  version_id: string;
+  template_id: string;
+  template_name: string;
+  doc_kind: DocKind;
+  version: number;
+}
+
+/**
+ * The published template versions a new contract can be started from - the
+ * latest published version of each template. A template with only a draft
+ * version is not offered (you cannot issue a contract off an unfrozen draft).
+ */
+export function usePublishedVersions(workspaceId: string | null) {
+  const [versions, setVersions] = useState<PublishedVersion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setVersions([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const c = legal();
+    const { data: vers, error: e1 } = await c.from('doc_template_version')
+      .select('id, template_id, version, status').eq('workspace_id', workspaceId).eq('status', 'published');
+    if (e1) { setError(e1.message ?? String(e1)); setVersions([]); setLoading(false); return; }
+    const { data: tpls } = await c.from('doc_template')
+      .select('id, name, doc_kind').eq('workspace_id', workspaceId);
+    const byId = new Map(((tpls ?? []) as any[]).map((t) => [t.id, t]));
+    // keep the highest published version per template
+    const best = new Map<string, any>();
+    for (const v of (vers ?? []) as any[]) {
+      const cur = best.get(v.template_id);
+      if (!cur || v.version > cur.version) best.set(v.template_id, v);
+    }
+    setVersions([...best.values()].map((v) => ({
+      version_id: v.id, template_id: v.template_id, version: v.version,
+      template_name: byId.get(v.template_id)?.name ?? 'Template',
+      doc_kind: (byId.get(v.template_id)?.doc_kind ?? 'other') as DocKind,
+    })).sort((a, b) => a.template_name.localeCompare(b.template_name)));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+  return { versions, loading, error, reload: load };
+}
+
+export type ContractRow = Contract & { template_name: string; doc_kind: DocKind };
+
+/**
+ * The workspace's contracts, newest first, each folded with its template's name
+ * and kind for the list. Create stamps the contract to the chosen version;
+ * remove is allowed only on a draft (a live non-draft freezes, and the freeze
+ * trigger lets a draft delete cascade its fields).
+ */
+export function useContracts(workspaceId: string | null) {
+  const [contracts, setContracts] = useState<ContractRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setContracts([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const c = legal();
+    const { data: cs, error: e1 } = await c.from('contract')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at')
+      .eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+    if (e1) { setError(e1.message ?? String(e1)); setContracts([]); setLoading(false); return; }
+    const { data: tpls } = await c.from('doc_template')
+      .select('id, name, doc_kind').eq('workspace_id', workspaceId);
+    const byId = new Map(((tpls ?? []) as any[]).map((t) => [t.id, t]));
+    setContracts(((cs ?? []) as any[]).map((r) => ({
+      ...(r as Contract),
+      template_name: byId.get(r.template_id)?.name ?? 'Template',
+      doc_kind: (byId.get(r.template_id)?.doc_kind ?? 'other') as DocKind,
+    })));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const create = useCallback(async (versionId: string, templateId: string, title: string): Promise<string> => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const { data, error: e } = await legal().from('contract')
+      .insert({ workspace_id: workspaceId, template_id: templateId, version_id: versionId, title: title.trim(), status: 'draft' })
+      .select('id').single();
+    if (e) throw e;
+    await load();
+    return (data as any).id as string;
+  }, [workspaceId, load]);
+
+  const remove = useCallback(async (id: string) => {
+    const { error: e } = await legal().from('contract').delete().eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  return { contracts, loading, error, reload: load, create, remove };
+}
+
+/**
+ * One contract for the fill screen: its row, the blocks of the version it was
+ * stamped to (read-only - the wording is fixed at that version), and its field
+ * values keyed by field key. Values are editable only while the contract is a
+ * draft; saveAll upserts them, and issue saves then flips the status, at which
+ * point the database freezes the fields.
+ */
+export function useContractEditor(workspaceId: string | null, contractId: string | null) {
+  const [contract, setContract] = useState<Contract | null>(null);
+  const [blocks, setBlocks] = useState<TemplateBlock[]>([]);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const editable = contractEditable(contract?.status);
+
+  const load = useCallback(async () => {
+    if (!workspaceId || !contractId) { setLoading(false); return; }
+    setLoading(true); setError('');
+    const c = legal();
+    const { data: ct, error: e0 } = await c.from('contract')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at')
+      .eq('id', contractId).single();
+    if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
+    setContract(ct as Contract);
+    const { data: blks, error: e1 } = await c.from('doc_template_block')
+      .select('id, version_id, workspace_id, position, block_type, content, optional, condition, clause_id')
+      .eq('version_id', (ct as any).version_id).order('position');
+    if (e1) { setError(e1.message ?? String(e1)); setLoading(false); return; }
+    setBlocks(((blks ?? []) as any[]) as TemplateBlock[]);
+    const { data: fvs } = await c.from('contract_field')
+      .select('key, value').eq('contract_id', contractId);
+    const map: Record<string, string> = {};
+    for (const f of (fvs ?? []) as any[]) map[f.key] = f.value ?? '';
+    setValues(map);
+    setLoading(false);
+  }, [workspaceId, contractId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const setValue = (key: string, value: string) => setValues((v) => ({ ...v, [key]: value }));
+
+  const guard = () => {
+    if (!workspaceId || !contract) throw new Error('No contract loaded.');
+    if (!contractEditable(contract.status)) throw new Error('This contract is issued and its fields are frozen.');
+  };
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true); setError('');
+    try { await fn(); } catch (e: any) { setError(e?.message ?? String(e)); throw e; } finally { setBusy(false); }
+  };
+
+  /** Upsert one row per field key with its current value. */
+  const persist = async (keys: string[]) => {
+    const rows = keys.map((k) => ({
+      contract_id: contractId, workspace_id: workspaceId, key: k, value: values[k] ?? '',
+    }));
+    if (!rows.length) return;
+    const { error: e } = await legal().from('contract_field').upsert(rows, { onConflict: 'contract_id,key' });
+    if (e) throw e;
+  };
+
+  const saveAll = (keys: string[]) => run(async () => { guard(); await persist(keys); });
+
+  /** Save the values, then move the contract to `issued` (fields freeze). */
+  const issue = (keys: string[]) => run(async () => {
+    guard();
+    await persist(keys);
+    const { error: e } = await legal().from('contract')
+      .update({ status: 'issued' as ContractStatus }).eq('id', contractId);
+    if (e) throw e;
+    await load();
+  });
+
+  const rename = (title: string) => run(async () => {
+    guard();
+    const { error: e } = await legal().from('contract').update({ title: title.trim() }).eq('id', contractId);
+    if (e) throw e;
+    setContract((c) => (c ? { ...c, title: title.trim() } : c));
+  });
+
+  return {
+    contract, blocks, values, loading, error, busy, editable,
+    reload: load, setValue, saveAll, issue, rename,
   };
 }

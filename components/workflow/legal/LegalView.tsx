@@ -2,6 +2,7 @@
 
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 import { LegalDocuments } from '@/components/workflow/legal/LegalDocuments';
+import { LegalRegister } from '@/components/workflow/legal/LegalRegister';
 
 /**
  * The Legal section shell.
@@ -41,6 +42,7 @@ export function LegalView({ section, workspaceId }: {
   role?: WorkspaceRole | null;
 }) {
   if (section === 'documents') return <LegalDocuments workspaceId={workspaceId} />;
+  if (section === 'register') return <LegalRegister workspaceId={workspaceId} />;
   const c = COPY[section];
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

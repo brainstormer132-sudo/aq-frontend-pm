@@ -6,6 +6,8 @@ import {
   parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
   DEPTS, deptLabel, validateListValue, sortListValues,
   FIELD_TYPES, fieldTypeLabel, validateFieldDef, describeField,
+  CONTRACT_STATUSES, contractStatusLabel, contractStatusBadge, contractEditable,
+  fillFieldsForBlocks, validateFieldValue, contractReady, seedContractValues,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -160,6 +162,62 @@ eq('text always ok', validateFieldDef({ field_type: 'text' }), null);
   eq('describe number range', describeField({ field_type: 'number', num_min: 0, num_max: 10 }, lists), 'Number 0-10');
   eq('describe number open', describeField({ field_type: 'number', num_min: null, num_max: null }, lists), 'Number');
   eq('describe required text', describeField({ field_type: 'text', required: true }, lists), 'Text \u00b7 required');
+}
+
+// ---- contracts ----
+eq('four contract statuses', CONTRACT_STATUSES.map((s) => s.key), ['draft', 'issued', 'signed', 'void']);
+eq('status label issued', contractStatusLabel('issued'), 'Issued');
+eq('status label blank -> Draft', contractStatusLabel(null), 'Draft');
+eq('status label unknown -> Draft', contractStatusLabel('zzz'), 'Draft');
+eq('signed badge success', contractStatusBadge('signed'), 'aq-badge-success');
+eq('issued badge info', contractStatusBadge('issued'), 'aq-badge-info');
+eq('void badge muted', contractStatusBadge('void'), 'aq-badge-muted');
+eq('draft badge warning', contractStatusBadge('draft'), 'aq-badge-warning');
+ok('draft is editable', contractEditable('draft'));
+ok('null is editable', contractEditable(null));
+ok('issued not editable', !contractEditable('issued'));
+ok('signed not editable', !contractEditable('signed'));
+
+// fillFieldsForBlocks - used keys resolved in first-appearance order
+{
+  const B = (text) => ({ content: { text } });
+  const kv = (label, value) => ({ content: { label, value } });
+  const P = (key, extra = {}) => ({ id: key, key, label: key, field_type: 'text', required: false, default_value: '', num_min: null, num_max: null, list_id: null, owner_dept: 'legal', ...extra });
+  const reg = [P('iban'), P('brand_name'), P('amount', { field_type: 'number' })];
+  const blocks = [B('Party {{ brand_name }}'), kv('Amount', '{{ amount }}'), B('{{ brand_name }} again'), B('IBAN {{ iban }}')];
+  eq('fill fields in first-appearance order', fillFieldsForBlocks(blocks, reg).map((f) => f.key), ['brand_name', 'amount', 'iban']);
+  eq('unknown keys dropped', fillFieldsForBlocks([B('{{ ghost }} {{ iban }}')], reg).map((f) => f.key), ['iban']);
+  eq('no placeholders -> empty', fillFieldsForBlocks([B('plain')], reg), []);
+}
+
+// validateFieldValue
+{
+  const f = (extra) => ({ field_type: 'text', required: false, num_min: null, num_max: null, ...extra });
+  eq('optional empty ok', validateFieldValue(f({}), ''), null);
+  eq('required empty rejected', validateFieldValue(f({ required: true }), '  '), 'This field is required.');
+  eq('required filled ok', validateFieldValue(f({ required: true }), 'Rawad'), null);
+  eq('number non-numeric', validateFieldValue(f({ field_type: 'number' }), 'abc'), 'Enter a number.');
+  eq('number below min', validateFieldValue(f({ field_type: 'number', num_min: 10 }), '5'), 'Must be at least 10.');
+  eq('number above max', validateFieldValue(f({ field_type: 'number', num_max: 100 }), '150'), 'Must be at most 100.');
+  eq('number in range ok', validateFieldValue(f({ field_type: 'number', num_min: 0, num_max: 100 }), '50'), null);
+  eq('date bad format', validateFieldValue(f({ field_type: 'date' }), '01/02/2026'), 'Pick a date.');
+  eq('date ok', validateFieldValue(f({ field_type: 'date' }), '2026-02-01'), null);
+  eq('list not a member', validateFieldValue(f({ field_type: 'list' }), 'tiktok', { values: ['snapchat', 'instagram'] }), 'Choose a value from the list.');
+  eq('list member ok', validateFieldValue(f({ field_type: 'list' }), 'snapchat', { values: ['snapchat', 'instagram'] }), null);
+  eq('list without allowed values skips membership', validateFieldValue(f({ field_type: 'list' }), 'anything'), null);
+}
+
+// contractReady + seedContractValues
+{
+  const P = (key, extra = {}) => ({ id: key, key, label: key, field_type: 'text', required: false, default_value: '', num_min: null, num_max: null, list_id: null, owner_dept: 'legal', ...extra });
+  const fields = [P('name', { required: true }), P('amount', { field_type: 'number', num_min: 0, num_max: 100 }), P('platform', { field_type: 'list', required: true, list_id: 'l1' })];
+  const lists = { platform: ['snapchat', 'instagram'] };
+  ok('not ready when required missing', !contractReady(fields, { amount: '50' }, lists));
+  ok('not ready when number out of range', !contractReady(fields, { name: 'X', amount: '200', platform: 'snapchat' }, lists));
+  ok('not ready when list value invalid', !contractReady(fields, { name: 'X', platform: 'tiktok' }, lists));
+  ok('ready when all valid', contractReady(fields, { name: 'X', amount: '50', platform: 'snapchat' }, lists));
+  ok('ready with optional number left blank', contractReady(fields, { name: 'X', platform: 'instagram' }, lists));
+  eq('seed pulls defaults only', seedContractValues([P('a', { default_value: 'x' }), P('b'), P('c', { default_value: 'y' })]), { a: 'x', c: 'y' });
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
