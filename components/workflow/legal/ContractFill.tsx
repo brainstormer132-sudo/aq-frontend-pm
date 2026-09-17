@@ -8,7 +8,8 @@ import {
   contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
-  type Placeholder, type TemplateBlock,
+  tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow,
+  type Placeholder, type TemplateBlock, type TableRow,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 
@@ -33,6 +34,7 @@ export function ContractFill({
   // from the visible set, so an excluded clause and its fields simply vanish.
   const visible = useMemo(() => visibleBlocks(blocks, offIds), [blocks, offIds]);
   const optionalBlocks = useMemo(() => blocks.filter(isOptionalBlock), [blocks]);
+  const tableBlocks = useMemo(() => visible.filter((b) => b.block_type === 'table'), [visible]);
 
   // The fields the visible wording uses, in first-appearance order.
   const fields = useMemo(
@@ -185,6 +187,12 @@ export function ContractFill({
           This contract could not be loaded.
         </div>
       ) : (
+        <>
+        {tableBlocks.map((b) => (
+          <TableFill key={b.id} block={b} placeholders={reg.placeholders} lists={lists}
+            rows={parseTableRows(values[tableKey(b.id)])} editable={!!editable}
+            onChange={(rows) => ed.setValue(tableKey(b.id), serializeTableRows(rows))} />
+        ))}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {/* Fill form */}
           <div style={{ flex: '1 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -240,6 +248,7 @@ export function ContractFill({
             </div>
           </div>
         </div>
+        </>
       )}
     </div>
   );
@@ -320,6 +329,25 @@ function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Reco
             </div>
           );
         }
+        if (b.block_type === 'table') {
+          const cols = tableColumns(b);
+          if (!cols.length) return null;
+          const rows = parseTableRows(values[tableKey(b.id)]);
+          return (
+            <table key={b.id} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, margin: '6px 0' }}>
+              <thead>
+                <tr>{cols.map((c) => <th key={c.key} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', textAlign: 'start', background: 'var(--aq-surface-2, rgba(0,0,0,0.04))' }}>{c.label}</th>)}</tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan={cols.length} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', color: 'var(--aq-text-muted)', textAlign: 'center' }}>(no rows)</td></tr>
+                ) : rows.map((r, ri) => (
+                  <tr key={ri}>{cols.map((c) => <td key={c.key} dir="auto" style={{ border: '1px solid var(--aq-border)', padding: '3px 6px' }}>{r[c.key] ?? ''}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          );
+        }
         const text = fillPlaceholders(blockText(b), values);
         if (b.block_type === 'title') return <div key={b.id} dir="auto" style={{ fontSize: 18, fontWeight: 700 }}>{text}</div>;
         if (b.block_type === 'h') return <div key={b.id} dir="auto" style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{text}</div>;
@@ -328,4 +356,98 @@ function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Reco
       })}
     </div>
   );
+}
+
+/**
+ * The contract side of a table block: the operator adds rows and fills each
+ * typed cell (a list column is a dropdown, a number is bounded, a date is a
+ * date). Rows are stored as JSON in a reserved field, frozen at issue.
+ */
+function TableFill({
+  block, placeholders, lists, rows, editable, onChange,
+}: {
+  block: TemplateBlock;
+  placeholders: Placeholder[];
+  lists: ReturnType<typeof useManagedLists>;
+  rows: TableRow[];
+  editable: boolean;
+  onChange: (rows: TableRow[]) => void;
+}) {
+  const cols = tableColumnFields(tableColumns(block), placeholders);
+  const setCell = (ri: number, key: string, val: string) => onChange(rows.map((r, i) => (i === ri ? { ...r, [key]: val } : r)));
+  const addRow = () => onChange([...rows, emptyTableRow(cols)]);
+  const removeRow = (ri: number) => onChange(rows.filter((_, i) => i !== ri));
+
+  if (cols.length === 0) {
+    return (
+      <div className="aq-card" style={{ padding: 14, fontSize: 13, color: 'var(--aq-text-muted)' }}>
+        This table has no columns yet (or none are registered fields).
+      </div>
+    );
+  }
+  return (
+    <div className="aq-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>Table</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              {cols.map((c) => <th key={c.key} style={{ border: '1px solid var(--aq-border-light)', padding: '4px 6px', textAlign: 'start', whiteSpace: 'nowrap' }}>{c.label}</th>)}
+              {editable && <th style={{ border: '1px solid var(--aq-border-light)', padding: '4px 6px', width: 36 }} />}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={cols.length + (editable ? 1 : 0)} style={{ border: '1px solid var(--aq-border-light)', padding: '8px 6px', color: 'var(--aq-text-muted)', textAlign: 'center' }}>No rows yet.</td></tr>
+            ) : rows.map((r, ri) => (
+              <tr key={ri}>
+                {cols.map((c) => (
+                  <td key={c.key} style={{ border: '1px solid var(--aq-border-light)', padding: '2px 4px', minWidth: 90 }}>
+                    <CellInput field={c.field} value={r[c.key] ?? ''} editable={editable} lists={lists} onChange={(v) => setCell(ri, c.key, v)} />
+                  </td>
+                ))}
+                {editable && (
+                  <td style={{ border: '1px solid var(--aq-border-light)', padding: '2px 4px', textAlign: 'center' }}>
+                    <button className="aq-btn aq-btn-ghost" onClick={() => removeRow(ri)} title="Remove row" style={{ padding: '2px 6px' }}>&times;</button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editable && <button className="aq-btn aq-btn-secondary" onClick={addRow} style={{ alignSelf: 'flex-start' }}>+ Add row</button>}
+    </div>
+  );
+}
+
+function CellInput({
+  field, value, editable, lists, onChange,
+}: {
+  field: Placeholder; value: string; editable: boolean;
+  lists: ReturnType<typeof useManagedLists>;
+  onChange: (v: string) => void;
+}) {
+  if (!editable) {
+    return <span dir="auto" style={{ fontSize: 13 }}>{value || <span style={{ color: 'var(--aq-text-muted)' }}>-</span>}</span>;
+  }
+  if (field.field_type === 'list') {
+    const opts = sortListValues(((field.list_id ? lists.valuesByList[field.list_id] : undefined) ?? []).filter((v) => v.active));
+    return (
+      <select className="aq-select" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', minWidth: 90 }}>
+        <option value="">{'--'}</option>
+        {opts.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
+      </select>
+    );
+  }
+  if (field.field_type === 'number') {
+    return <input type="number" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} min={field.num_min ?? undefined} max={field.num_max ?? undefined} style={{ width: '100%', minWidth: 80 }} />;
+  }
+  if (field.field_type === 'date') {
+    return <input type="date" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', minWidth: 130 }} />;
+  }
+  if (field.field_type === 'auto') {
+    return <input dir="auto" className="aq-input" value={value} readOnly placeholder="auto" style={{ width: '100%', opacity: 0.7 }} />;
+  }
+  return <input dir="auto" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', minWidth: 90 }} />;
 }

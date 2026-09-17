@@ -71,7 +71,7 @@ export function validateNewTemplate(name: string, kind: string): string | null {
  * a block whose type is outside this list still renders (read-only) but is not
  * offered in the Add palette.
  */
-export type EditorBlockType = 'title' | 'h' | 'p' | 'li' | 'kv';
+export type EditorBlockType = 'title' | 'h' | 'p' | 'li' | 'kv' | 'table';
 
 export const EDITOR_BLOCK_TYPES: { key: EditorBlockType; label: string; hint: string }[] = [
   { key: 'title', label: 'Title', hint: 'The document heading, once at the top.' },
@@ -79,6 +79,7 @@ export const EDITOR_BLOCK_TYPES: { key: EditorBlockType; label: string; hint: st
   { key: 'p', label: 'Paragraph', hint: 'A block of body text.' },
   { key: 'li', label: 'Bullet', hint: 'One bullet in a list.' },
   { key: 'kv', label: 'Field', hint: 'A label and its value, e.g. Term: 12 months.' },
+  { key: 'table', label: 'Table', hint: 'A grid of typed columns; rows are added per contract (e.g. the outputs table).' },
 ];
 
 export function blockTypeLabel(t: string): string {
@@ -104,7 +105,9 @@ export interface TemplateBlock {
 
 /** The default content object for a freshly added block of a given type. */
 export function defaultBlockContent(t: EditorBlockType): Record<string, unknown> {
-  return t === 'kv' ? { label: '', value: '' } : { text: '' };
+  if (t === 'kv') return { label: '', value: '' };
+  if (t === 'table') return { columns: [] };
+  return { text: '' };
 }
 
 /** The single text field of a text block (title/h/p/li). Empty for others. */
@@ -493,7 +496,7 @@ export const ISSUED_AT_KEY = '__aq_issued_at';
  */
 export function contractCanonical(
   versionId: string,
-  blocks: Pick<TemplateBlock, 'block_type' | 'content'>[],
+  blocks: (Pick<TemplateBlock, 'block_type' | 'content'> & { id?: string })[],
   values: Record<string, string>,
 ): string {
   const lines = [`v:${versionId}`];
@@ -501,6 +504,9 @@ export function contractCanonical(
     if (b.block_type === 'kv') {
       const kv = blockKV(b);
       lines.push(`kv|${fillPlaceholders(kv.label, values)}=${fillPlaceholders(kv.value, values)}`);
+    } else if (b.block_type === 'table') {
+      const cols = tableColumns(b).map((c) => c.key).join(',');
+      lines.push(`table|${cols}|${values[tableKey(b.id ?? '')] ?? ''}`);
     } else {
       lines.push(`${b.block_type}|${fillPlaceholders(blockText(b), values)}`);
     }
@@ -614,6 +620,75 @@ export function dateAlertLabel(state: DateAlert): string {
   return state === 'expired' ? 'Expired' : state === 'soon' ? 'Expiring soon' : 'OK';
 }
 
+// ---- outputs table (a grid of typed columns, rows filled per contract) --
+//
+// A `table` block carries a set of columns; each column is a registry field
+// (referenced by key, with a label snapshot for display), so a cell reuses that
+// field's type - a list column is a dropdown, a number column is bounded. The
+// template defines the columns; the contract adds rows. Row data is stored as
+// JSON in a reserved contract_field keyed by the block id, so it freezes with
+// everything else at issue and enters the fingerprint.
+
+export const TABLE_KEY_PREFIX = '__aq_table_';
+export interface TableColumn { key: string; label: string; }
+export type TableRow = Record<string, string>;
+
+/** The reserved contract_field key that holds a table block's row data. */
+export function tableKey(blockId: string): string {
+  return `${TABLE_KEY_PREFIX}${blockId}`;
+}
+
+/** A table block's columns, from its content. Malformed entries are dropped. Pure. */
+export function tableColumns(b: Pick<TemplateBlock, 'content'>): TableColumn[] {
+  const raw = (b.content as any)?.columns;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.key === 'string' && c.key)
+    .map((c) => ({ key: c.key as string, label: typeof c.label === 'string' ? c.label : c.key }));
+}
+
+/** Resolve a table's columns to their registry fields (for typed cell inputs),
+ *  dropping any whose key is not registered. Pure. */
+export function tableColumnFields(cols: TableColumn[], placeholders: Placeholder[]): (TableColumn & { field: Placeholder })[] {
+  const byKey = new Map(placeholders.map((p) => [p.key, p]));
+  const out: (TableColumn & { field: Placeholder })[] = [];
+  for (const c of cols) {
+    const f = byKey.get(c.key);
+    if (f) out.push({ ...c, field: f });
+  }
+  return out;
+}
+
+/** Parse a table block's stored rows (JSON). Returns [] on anything malformed;
+ *  each row is coerced to a flat string map. Pure. */
+export function parseTableRows(json: string | null | undefined): TableRow[] {
+  if (!json) return [];
+  let v: unknown;
+  try { v = JSON.parse(json); } catch { return []; }
+  if (!Array.isArray(v)) return [];
+  return v.map((r) => {
+    const out: TableRow = {};
+    if (r && typeof r === 'object') {
+      for (const [k, val] of Object.entries(r as Record<string, unknown>)) {
+        out[k] = val == null ? '' : String(val);
+      }
+    }
+    return out;
+  });
+}
+
+/** Serialise table rows back to the reserved field value. Pure. */
+export function serializeTableRows(rows: TableRow[]): string {
+  return JSON.stringify(rows ?? []);
+}
+
+/** A fresh empty row for the given columns (every cell ''). Pure. */
+export function emptyTableRow(cols: TableColumn[]): TableRow {
+  const out: TableRow = {};
+  for (const c of cols) out[c.key] = '';
+  return out;
+}
+
 // ---- printable contract (a self-contained document to Print / Save as PDF) --
 //
 // An issued (or draft) contract is rendered to a stand-alone HTML document -
@@ -649,7 +724,7 @@ export interface PrintMeta {
  */
 export function contractPrintHTML(args: {
   title: string;
-  blocks: Pick<TemplateBlock, 'block_type' | 'content'>[];
+  blocks: (Pick<TemplateBlock, 'block_type' | 'content'> & { id?: string })[];
   values: Record<string, string>;
   dir: Dir;
   meta?: PrintMeta;
@@ -661,6 +736,16 @@ export function contractPrintHTML(args: {
       const kv = blockKV(b);
       return `<div class="kv"><span class="kv-l">${escapeHtml(fillPlaceholders(kv.label, values))}:</span> `
         + `<span class="kv-v">${escapeHtml(fillPlaceholders(kv.value, values))}</span></div>`;
+    }
+    if (b.block_type === 'table') {
+      const cols = tableColumns(b);
+      if (!cols.length) return '';
+      const rows = parseTableRows(values[tableKey(b.id ?? '')]);
+      const head = cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join('');
+      const bodyRows = rows.length
+        ? rows.map((r) => `<tr>${cols.map((c) => `<td>${escapeHtml(r[c.key] ?? '')}</td>`).join('')}</tr>`).join('')
+        : `<tr><td colspan="${cols.length}" class="doc-table-empty">(no rows)</td></tr>`;
+      return `<table class="doc-table"><thead><tr>${head}</tr></thead><tbody>${bodyRows}</tbody></table>`;
     }
     const text = escapeHtml(fillPlaceholders(blockText(b), values));
     switch (b.block_type) {
@@ -703,6 +788,10 @@ export function contractPrintHTML(args: {
   .doc-li { margin: 4px 0; padding-inline-start: 8px; }
   .kv { margin: 6px 0; }
   .kv-l { font-weight: 700; }
+  .doc-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10.5pt; }
+  .doc-table th, .doc-table td { border: 1px solid #999; padding: 4px 6px; text-align: start; vertical-align: top; }
+  .doc-table th { background: #f0f0f0; font-weight: 700; }
+  .doc-table-empty { color: #888; text-align: center; }
   .foot { margin-top: 28px; border-top: 1px solid #bbb; padding-top: 8px; font-size: 9pt; color: #666; }
   .foot-row { display: flex; justify-content: space-between; gap: 12px; }
   .foot-fp { margin-top: 6px; font-family: 'Courier New', monospace; font-size: 8pt; color: #444; word-break: break-all; direction: ltr; text-align: left; }

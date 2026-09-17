@@ -10,7 +10,7 @@ import type {
 import {
   defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
   contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
-  OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks,
+  OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks, TABLE_KEY_PREFIX,
 } from '@/lib/legal';
 
 /** SHA-256 of a string as lowercase hex, via the Web Crypto API (browser + Node 18+). */
@@ -527,10 +527,14 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     try { await fn(); } catch (e: any) { setError(e?.message ?? String(e)); throw e; } finally { setBusy(false); }
   };
 
-  /** Upsert one row per field key with its current value. The optional-clause
-   *  choice (OPT_OFF_KEY) rides along whenever the operator has touched it. */
+  /** Upsert one row per field key with its current value. The reserved keys -
+   *  the optional-clause choice and each table's rows - ride along whenever the
+   *  operator has touched them. */
   const persist = async (keys: string[]) => {
-    const allKeys = values[OPT_OFF_KEY] !== undefined ? [...keys, OPT_OFF_KEY] : keys;
+    const reserved = Object.keys(values).filter(
+      (k) => k === OPT_OFF_KEY || k.startsWith(TABLE_KEY_PREFIX),
+    );
+    const allKeys = [...new Set([...keys, ...reserved])];
     const rows = allKeys.map((k) => ({
       contract_id: contractId, workspace_id: workspaceId, key: k, value: values[k] ?? '',
     }));

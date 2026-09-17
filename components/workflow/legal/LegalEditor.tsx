@@ -5,7 +5,8 @@ import { useDocEditor, useLegalPlaceholders } from '@/hooks/use-legal';
 import {
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, blockText, blockKV, canPublish,
   kindLabel, statusLabel, statusBadge, detectDir, usedPlaceholderKeys, unknownPlaceholders,
-  type EditorBlockType, type TemplateBlock, type Dir,
+  tableColumns,
+  type EditorBlockType, type TemplateBlock, type Dir, type Placeholder, type TableColumn,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { FieldsPanel } from '@/components/workflow/legal/FieldsPanel';
@@ -108,6 +109,7 @@ export function LegalEditor({
         <ul dir={dir} style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {blocks.map((b, i) => (
             <BlockRow key={b.id} block={b} index={i} total={blocks.length} editable={!!editable} busy={busy}
+              regFields={reg.placeholders}
               onSave={(content) => ed.saveBlock(b.id, content)}
               onMove={(mv) => ed.moveBlock(b.id, mv)}
               onDelete={() => ed.deleteBlock(b.id)}
@@ -143,9 +145,10 @@ export function LegalEditor({
 }
 
 function BlockRow({
-  block, index, total, editable, busy, onSave, onMove, onDelete, onToggleOptional, registerInsert,
+  block, index, total, editable, busy, regFields, onSave, onMove, onDelete, onToggleOptional, registerInsert,
 }: {
   block: TemplateBlock; index: number; total: number; editable: boolean; busy: boolean;
+  regFields: Placeholder[];
   onSave: (content: Record<string, unknown>) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
@@ -168,6 +171,8 @@ function BlockRow({
           </div>
         ) : block.block_type === 'kv' ? (
           <KVEditor block={block} editable={editable} onSave={onSave} registerInsert={registerInsert} />
+        ) : block.block_type === 'table' ? (
+          <TableColumnsEditor block={block} editable={editable} regFields={regFields} onSave={onSave} />
         ) : (
           <TextEditor block={block} editable={editable} onSave={onSave} registerInsert={registerInsert} />
         )}
@@ -187,6 +192,73 @@ function BlockRow({
         </div>
       )}
     </li>
+  );
+}
+
+/** The template side of a table block: pick which registry fields are its
+ *  columns, and their order. Rows are filled per contract, not here. */
+function TableColumnsEditor({
+  block, editable, regFields, onSave,
+}: {
+  block: TemplateBlock; editable: boolean; regFields: Placeholder[];
+  onSave: (content: Record<string, unknown>) => void;
+}) {
+  const cols = tableColumns(block);
+  const [addKey, setAddKey] = useState('');
+  const used = new Set(cols.map((c) => c.key));
+  const available = regFields.filter((f) => !used.has(f.key));
+
+  const setCols = (next: TableColumn[]) => onSave({ ...block.content, columns: next });
+  const addCol = () => {
+    const f = regFields.find((x) => x.key === addKey);
+    if (!f) return;
+    setCols([...cols, { key: f.key, label: f.label || f.key }]);
+    setAddKey('');
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    const to = i + dir; if (to < 0 || to >= cols.length) return;
+    const next = cols.slice(); const [x] = next.splice(i, 1); next.splice(to, 0, x); setCols(next);
+  };
+
+  if (!editable) {
+    return (
+      <div style={{ fontSize: 13 }}>
+        <span style={{ color: 'var(--aq-text-muted)' }}>Table columns: </span>
+        {cols.length ? cols.map((c) => c.label).join(', ') : <span style={{ color: 'var(--aq-text-muted)' }}>(none)</span>}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>Columns (each is a typed field; rows are added per contract):</div>
+      {cols.length === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>No columns yet - add fields below.</div>
+      ) : (
+        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {cols.map((c, i) => (
+            <li key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{c.label}</span>
+                <span style={{ fontSize: 11, color: 'var(--aq-text-muted)', fontFamily: 'monospace', marginInlineStart: 6 }}>{c.key}</span>
+              </span>
+              <button className="aq-btn aq-btn-ghost" disabled={i === 0} onClick={() => move(i, -1)} style={{ padding: '2px 6px' }}>&uarr;</button>
+              <button className="aq-btn aq-btn-ghost" disabled={i === cols.length - 1} onClick={() => move(i, 1)} style={{ padding: '2px 6px' }}>&darr;</button>
+              <button className="aq-btn aq-btn-danger" onClick={() => setCols(cols.filter((x) => x.key !== c.key))} style={{ padding: '2px 6px' }}>&times;</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <select className="aq-select" value={addKey} onChange={(e) => setAddKey(e.target.value)} style={{ flex: 1 }}>
+          <option value="">{available.length ? 'Add a column' : 'All fields are already columns'}</option>
+          {available.map((f) => <option key={f.key} value={f.key}>{(f.label || f.key)} ({f.field_type})</option>)}
+        </select>
+        <button className="aq-btn aq-btn-secondary" disabled={!addKey} onClick={addCol}>Add</button>
+      </div>
+      {regFields.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>Define fields in the Fields panel first, then add them as columns.</div>
+      )}
+    </div>
   );
 }
 

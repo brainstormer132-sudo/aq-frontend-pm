@@ -12,6 +12,7 @@ import {
   contractCanonical, formatFingerprint, FINGERPRINT_KEY, ISSUED_AT_KEY,
   OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
   dateAlertState, contractDateAlerts, hasBlockingAlert, dateAlertLabel,
+  TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -59,13 +60,15 @@ eq('unknown kind rejected', validateNewTemplate('X', 'bogus'), 'Pick a document 
 eq('valid -> null', validateNewTemplate('Standard NDA', 'nda'), null);
 
 // ---- blocks ----
-eq('five editor block types', EDITOR_BLOCK_TYPES.map((b) => b.key), ['title', 'h', 'p', 'li', 'kv']);
+eq('six editor block types', EDITOR_BLOCK_TYPES.map((b) => b.key), ['title', 'h', 'p', 'li', 'kv', 'table']);
 eq('block type label', blockTypeLabel('kv'), 'Field');
-eq('unknown block type label is itself', blockTypeLabel('table'), 'table');
+eq('table block type label', blockTypeLabel('table'), 'Table');
+eq('unknown block type label is itself', blockTypeLabel('sig'), 'sig');
 ok('kv is editable', isEditableBlockType('kv'));
 ok('clause is not editable', !isEditableBlockType('clause'));
 eq('default text content', defaultBlockContent('p'), { text: '' });
 eq('default kv content', defaultBlockContent('kv'), { label: '', value: '' });
+eq('default table content', defaultBlockContent('table'), { columns: [] });
 
 eq('blockText reads text', blockText({ content: { text: 'hi' } }), 'hi');
 eq('blockText missing -> empty', blockText({ content: {} }), '');
@@ -347,6 +350,54 @@ eq('window crossing month -> soon', dateAlertState('2026-10-02', 30, '2026-09-17
 }
 eq('alert label expired', dateAlertLabel('expired'), 'Expired');
 eq('alert label soon', dateAlertLabel('soon'), 'Expiring soon');
+
+// ---- outputs table ----
+eq('table key prefixes the block id', tableKey('blk-9'), '__aq_table_blk-9');
+eq('table key prefix constant', TABLE_KEY_PREFIX, '__aq_table_');
+{
+  eq('columns from content', tableColumns({ content: { columns: [{ key: 'platform', label: 'Platform' }, { key: 'price', label: 'Price' }] } }).map((c) => c.key), ['platform', 'price']);
+  eq('label falls back to key', tableColumns({ content: { columns: [{ key: 'x' }] } }), [{ key: 'x', label: 'x' }]);
+  eq('drops malformed columns', tableColumns({ content: { columns: [{ key: 'ok', label: 'OK' }, { label: 'no key' }, null, 5] } }).map((c) => c.key), ['ok']);
+  eq('no columns -> []', tableColumns({ content: {} }), []);
+}
+{
+  const P = (key, extra = {}) => ({ id: key, key, label: key, field_type: 'text', required: false, default_value: '', num_min: null, num_max: null, list_id: null, owner_dept: 'legal', alert_days: null, ...extra });
+  const reg = [P('platform', { field_type: 'list', list_id: 'l1' }), P('price', { field_type: 'number' })];
+  const cols = [{ key: 'platform', label: 'Platform' }, { key: 'ghost', label: 'Ghost' }, { key: 'price', label: 'Price' }];
+  const resolved = tableColumnFields(cols, reg);
+  eq('resolves known columns, drops unknown', resolved.map((c) => c.key), ['platform', 'price']);
+  eq('carries the field type', resolved.map((c) => c.field.field_type), ['list', 'number']);
+}
+eq('parse empty -> []', parseTableRows(''), []);
+eq('parse null -> []', parseTableRows(null), []);
+eq('parse bad json -> []', parseTableRows('{not json'), []);
+eq('parse non-array -> []', parseTableRows('{"a":1}'), []);
+eq('parse coerces values to strings', parseTableRows('[{"a":1,"b":null,"c":"x"}]'), [{ a: '1', b: '', c: 'x' }]);
+{
+  const rows = [{ platform: 'snapchat', price: '5000' }, { platform: 'instagram', price: '3000' }];
+  eq('serialize/parse roundtrip', parseTableRows(serializeTableRows(rows)), rows);
+}
+eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }]), { a: '', b: '' });
+{
+  // a table block's rows enter the fingerprint canonical
+  const tbl = { id: 't1', block_type: 'table', content: { columns: [{ key: 'platform', label: 'Platform' }] } };
+  const p = { block_type: 'p', content: { text: 'hi' } };
+  const rowsJson = serializeTableRows([{ platform: 'snapchat' }]);
+  const c1 = contractCanonical('v', [p, tbl], { [tableKey('t1')]: rowsJson });
+  ok('canonical includes the table rows', c1.includes('table|platform|') && c1.includes('snapchat'));
+  ok('canonical changes when a row changes', contractCanonical('v', [p, tbl], { [tableKey('t1')]: serializeTableRows([{ platform: 'tiktok' }]) }) !== c1);
+}
+{
+  // the print renders a table with headers and filled rows
+  const tbl = { id: 't1', block_type: 'table', content: { columns: [{ key: 'platform', label: 'Platform' }, { key: 'price', label: 'Price' }] } };
+  const html = contractPrintHTML({
+    title: 'c', blocks: [tbl], dir: 'ltr',
+    values: { [tableKey('t1')]: serializeTableRows([{ platform: 'snapchat', price: '5000' }]) },
+  });
+  ok('print has the table headers', html.includes('<th>Platform</th>') && html.includes('<th>Price</th>'));
+  ok('print has the filled row', html.includes('<td>snapchat</td>') && html.includes('<td>5000</td>'));
+  ok('empty table prints a no-rows note', contractPrintHTML({ title: 'c', blocks: [tbl], dir: 'ltr', values: {} }).includes('(no rows)'));
+}
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
