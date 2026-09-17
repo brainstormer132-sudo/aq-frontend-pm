@@ -7,6 +7,7 @@ import {
   blockText, blockKV, detectDir, sortListValues,
   contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
+  contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   type Placeholder, type TemplateBlock,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -51,6 +52,12 @@ export function ContractFill({
   }, [fields, lists.valuesByList]);
 
   const ready = contractReady(fields, values, listsByKey);
+
+  // Date alerts: a tracked date that is expired blocks Issue; expiring-soon warns.
+  const today = new Date().toISOString().slice(0, 10);
+  const dateAlerts = useMemo(() => contractDateAlerts(fields, values, today), [fields, values, today]);
+  const blocked = hasBlockingAlert(dateAlerts);
+
   const [banner, setBanner] = useState('');
 
   const dir = detectDir(blocks);
@@ -124,8 +131,9 @@ export function ContractFill({
         {contract && editable && (
           <>
             <button className="aq-btn aq-btn-ghost" disabled={busyAll} onClick={saveDraft}>Save draft</button>
-            <button className="aq-btn aq-btn-primary" disabled={busyAll || !ready} onClick={issue}
-              title={ready ? 'Freeze the values and issue the contract' : 'Fill every required field first'}>
+            <button className="aq-btn aq-btn-primary" disabled={busyAll || !ready || blocked} onClick={issue}
+              title={blocked ? 'A tracked date is expired - fix it before issuing'
+                : ready ? 'Freeze the values and issue the contract' : 'Fill every required field first'}>
               Issue contract
             </button>
           </>
@@ -134,6 +142,20 @@ export function ContractFill({
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
       {banner && <div className="aq-badge aq-badge-success" style={{ display: 'block', padding: 10 }}>{banner}</div>}
+
+      {dateAlerts.length > 0 && (
+        <div className="aq-card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {dateAlerts.map((a) => (
+            <div key={a.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <span className={`aq-badge ${a.state === 'expired' ? 'aq-badge-error' : 'aq-badge-warning'}`}>{dateAlertLabel(a.state)}</span>
+              <span style={{ fontWeight: 600 }}>{a.label}</span>
+              <span style={{ color: 'var(--aq-text-muted)' }}>
+                {a.state === 'expired' ? '- this date has passed; issuing is blocked until it is fixed.' : '- this date is coming up soon.'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {!editable && contract && (
         <div className="aq-card" style={{ padding: 12, fontSize: 13, color: 'var(--aq-text-secondary)' }}>
           This contract is {contractStatusLabel(contract.status).toLowerCase()} and its field values are frozen.

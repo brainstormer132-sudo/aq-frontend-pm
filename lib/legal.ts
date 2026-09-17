@@ -229,6 +229,10 @@ export interface Placeholder {
   num_max: number | null;
   list_id: string | null;
   owner_dept: Dept;
+  /** Date alert window (migration 101): null = not tracked; 0 = expiry (must be
+   *  today or later); N > 0 = warn when within N days. A past tracked date
+   *  blocks issuing. Only meaningful on a `date` field. */
+  alert_days: number | null;
 }
 
 /** The columns a field write sends - the shape of the new/edit field form. */
@@ -547,6 +551,67 @@ export function visibleBlocks<T extends { id?: string }>(blocks: T[], offIds: st
   if (!offIds.length) return blocks;
   const off = new Set(offIds);
   return blocks.filter((b) => !(b.id != null && off.has(b.id)));
+}
+
+// ---- date alerts (a tracked date warns, and an expired one blocks) ------
+//
+// A date field can carry an alert window (placeholder.alert_days, migration
+// 101). On the New-Contract screen a tracked date that is in the past is
+// "expired" (red) and disables Issue; one within the window is "expiring soon"
+// (amber, advisory). Dates are compared as YYYY-MM-DD strings (lexical order is
+// chronological). Pure - the caller passes today as a string, no argless Date.
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export type DateAlert = 'expired' | 'soon' | 'ok';
+
+/** `iso` (YYYY-MM-DD) shifted by `n` days, as YYYY-MM-DD. Pure (Date with args). */
+function addDaysISO(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/**
+ * A tracked date's alert state against today. `null` when the field is not
+ * tracked (alertDays null) or nothing valid is entered. Past -> 'expired';
+ * within `alertDays` (when > 0) -> 'soon'; otherwise 'ok'. Pure.
+ */
+export function dateAlertState(dateStr: string, alertDays: number | null, todayStr: string): DateAlert | null {
+  if (alertDays == null) return null;
+  const d = (dateStr ?? '').trim();
+  if (!ISO_DATE.test(d) || !ISO_DATE.test(todayStr)) return null;
+  if (d < todayStr) return 'expired';
+  if (alertDays > 0 && d <= addDaysISO(todayStr, alertDays)) return 'soon';
+  return 'ok';
+}
+
+export interface ContractDateAlert { key: string; label: string; state: DateAlert; }
+
+/**
+ * The actionable date alerts across a contract's fields - the tracked date
+ * fields whose entered value is expired or expiring soon. Pure.
+ */
+export function contractDateAlerts(
+  fields: Pick<Placeholder, 'key' | 'label' | 'field_type' | 'alert_days'>[],
+  values: Record<string, string>,
+  todayStr: string,
+): ContractDateAlert[] {
+  const out: ContractDateAlert[] = [];
+  for (const f of fields) {
+    if (f.field_type !== 'date' || f.alert_days == null) continue;
+    const st = dateAlertState(values[f.key] ?? '', f.alert_days, todayStr);
+    if (st === 'expired' || st === 'soon') out.push({ key: f.key, label: f.label || f.key, state: st });
+  }
+  return out;
+}
+
+/** True when any alert is a hard block (an expired date). Pure. */
+export function hasBlockingAlert(alerts: { state: DateAlert }[]): boolean {
+  return alerts.some((a) => a.state === 'expired');
+}
+
+/** The words shown on a date alert. */
+export function dateAlertLabel(state: DateAlert): string {
+  return state === 'expired' ? 'Expired' : state === 'soon' ? 'Expiring soon' : 'OK';
 }
 
 // ---- printable contract (a self-contained document to Print / Save as PDF) --

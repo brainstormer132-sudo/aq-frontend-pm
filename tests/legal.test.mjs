@@ -11,6 +11,7 @@ import {
   escapeHtml, contractPrintHTML,
   contractCanonical, formatFingerprint, FINGERPRINT_KEY, ISSUED_AT_KEY,
   OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
+  dateAlertState, contractDateAlerts, hasBlockingAlert, dateAlertLabel,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -315,6 +316,37 @@ eq('parse/serialize roundtrip', parseOffIds(serializeOffIds(['x', 'y'])), ['x', 
   const trimmed = contractCanonical('v', visibleBlocks(blocks, ['2']), {});
   ok('canonical over visible omits excluded', trimmed.includes('keep') && !trimmed.includes('drop') && full.includes('drop'));
 }
+
+// ---- date alerts ----
+eq('not tracked -> null', dateAlertState('2026-01-01', null, '2026-09-17'), null);
+eq('empty value -> null', dateAlertState('', 0, '2026-09-17'), null);
+eq('bad date -> null', dateAlertState('01/02/2026', 0, '2026-09-17'), null);
+eq('past date -> expired (expiry)', dateAlertState('2026-09-16', 0, '2026-09-17'), 'expired');
+eq('today -> ok (expiry, days 0)', dateAlertState('2026-09-17', 0, '2026-09-17'), 'ok');
+eq('future -> ok (expiry, days 0)', dateAlertState('2026-12-01', 0, '2026-09-17'), 'ok');
+eq('within window -> soon', dateAlertState('2026-09-20', 7, '2026-09-17'), 'soon');
+eq('edge of window -> soon', dateAlertState('2026-09-24', 7, '2026-09-17'), 'soon');
+eq('just past window -> ok', dateAlertState('2026-09-25', 7, '2026-09-17'), 'ok');
+eq('past date with window -> expired', dateAlertState('2026-09-10', 7, '2026-09-17'), 'expired');
+eq('window crossing month -> soon', dateAlertState('2026-10-02', 30, '2026-09-17'), 'soon');
+{
+  const F = (key, extra = {}) => ({ key, label: key.toUpperCase(), field_type: 'date', alert_days: null, ...extra });
+  const fields = [
+    F('permit', { alert_days: 0 }),
+    F('deadline', { alert_days: 7 }),
+    F('start'),              // date, not tracked
+    { key: 'name', label: 'Name', field_type: 'text', alert_days: 0 }, // not a date
+  ];
+  const values = { permit: '2026-09-10', deadline: '2026-09-19', start: '2020-01-01', name: 'x' };
+  const alerts = contractDateAlerts(fields, values, '2026-09-17');
+  eq('only tracked date fields, actionable states', alerts.map((a) => [a.key, a.state]), [['permit', 'expired'], ['deadline', 'soon']]);
+  ok('expired blocks', hasBlockingAlert(alerts));
+  ok('soon-only does not block', !hasBlockingAlert([{ state: 'soon' }]));
+  ok('empty does not block', !hasBlockingAlert([]));
+  eq('no alerts when all fine', contractDateAlerts([F('p', { alert_days: 0 })], { p: '2026-12-01' }, '2026-09-17'), []);
+}
+eq('alert label expired', dateAlertLabel('expired'), 'Expired');
+eq('alert label soon', dateAlertLabel('soon'), 'Expiring soon');
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

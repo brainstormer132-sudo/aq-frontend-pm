@@ -12,7 +12,7 @@ import { ManagedListsModal } from '@/components/workflow/legal/ManagedListsModal
 function blankField(key = ''): FieldDef {
   return {
     key, label: '', field_type: 'text', required: false, default_value: '',
-    num_min: null, num_max: null, list_id: null, owner_dept: 'legal',
+    num_min: null, num_max: null, list_id: null, owner_dept: 'legal', alert_days: null,
   };
 }
 
@@ -157,6 +157,9 @@ function FieldForm({
   const [listId, setListId] = useState<string>(initial.list_id ?? '');
   const [minS, setMinS] = useState(initial.num_min == null ? '' : String(initial.num_min));
   const [maxS, setMaxS] = useState(initial.num_max == null ? '' : String(initial.num_max));
+  // Date alert: '' = off, '0' = expiry (must be future), 'N' = warn within N days.
+  const [alertS, setAlertS] = useState(initial.alert_days == null ? '' : String(initial.alert_days));
+  const [alertOn, setAlertOn] = useState(initial.alert_days != null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -172,14 +175,20 @@ function FieldForm({
       setErr('Min and max must be numbers.'); return;
     }
     const list_id = fieldType === 'list' ? (listId || null) : null;
+    let alert_days: number | null = null;
+    if (fieldType === 'date' && alertOn) {
+      const n = alertS.trim() === '' ? 0 : Number(alertS);
+      if (!Number.isInteger(n) || n < 0) { setErr('Alert days must be a whole number, 0 or more.'); return; }
+      alert_days = n;
+    }
     const field: FieldDef = {
       key: key.trim(), label: label.trim(), field_type: fieldType, required,
-      default_value: defaultValue, num_min, num_max, list_id, owner_dept: initial.owner_dept,
+      default_value: defaultValue, num_min, num_max, list_id, owner_dept: initial.owner_dept, alert_days,
     };
     const dv = validateFieldDef(field);
     if (dv) { setErr(dv); return; }
     setBusy(true); setErr('');
-    try { await onSubmit(field); if (!onCancel) { setKey(''); setLabel(''); setFieldType('text'); setRequired(false); setDefaultValue(''); setListId(''); setMinS(''); setMaxS(''); } }
+    try { await onSubmit(field); if (!onCancel) { setKey(''); setLabel(''); setFieldType('text'); setRequired(false); setDefaultValue(''); setListId(''); setMinS(''); setMaxS(''); setAlertOn(false); setAlertS(''); } }
     catch (e: any) { setErr(e?.message ?? 'Could not save the field.'); }
     finally { setBusy(false); }
   };
@@ -207,6 +216,22 @@ function FieldForm({
       )}
       {(fieldType === 'text' || fieldType === 'number' || fieldType === 'date') && (
         <input dir="auto" className="aq-input" value={defaultValue} onChange={(e) => setDefaultValue(e.target.value)} placeholder="default (optional)" />
+      )}
+      {fieldType === 'date' && (
+        <div style={{ border: '1px solid var(--aq-border-light)', borderRadius: 8, padding: 8 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--aq-text-secondary)' }}>
+            <input type="checkbox" checked={alertOn} onChange={(e) => setAlertOn(e.target.checked)} /> Track as a deadline / expiry
+          </label>
+          {alertOn && (
+            <div style={{ marginTop: 6 }}>
+              <input className="aq-input" value={alertS} onChange={(e) => setAlertS(e.target.value)}
+                placeholder="warn within N days (0 = must be future)" inputMode="numeric" />
+              <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+                A past date blocks issuing; 0 means it must be today or later.
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--aq-text-secondary)' }}>

@@ -242,13 +242,13 @@ export function useLegalPlaceholders(workspaceId: string | null) {
     if (!workspaceId) { setPlaceholders([]); setLoading(false); return; }
     setLoading(true); setError('');
     const { data, error: e } = await legal().from('placeholder')
-      .select('id, key, label, field_type, required, default_value, num_min, num_max, list_id, owner_dept')
+      .select('id, key, label, field_type, required, default_value, num_min, num_max, list_id, owner_dept, alert_days')
       .eq('workspace_id', workspaceId).order('key');
     if (e) { setError(e.message ?? String(e)); setPlaceholders([]); setLoading(false); return; }
     setPlaceholders(((data ?? []) as any[]).map((r) => ({
       id: r.id, key: r.key, label: r.label, field_type: r.field_type, required: !!r.required,
       default_value: r.default_value ?? '', num_min: r.num_min, num_max: r.num_max,
-      list_id: r.list_id, owner_dept: r.owner_dept,
+      list_id: r.list_id, owner_dept: r.owner_dept, alert_days: r.alert_days ?? null,
     })));
     setLoading(false);
   }, [workspaceId]);
@@ -261,6 +261,7 @@ export function useLegalPlaceholders(workspaceId: string | null) {
       workspace_id: workspaceId, key: field.key.trim(), label: field.label.trim(),
       field_type: field.field_type, required: field.required, default_value: field.default_value,
       num_min: field.num_min, num_max: field.num_max, list_id: field.list_id, owner_dept: field.owner_dept,
+      alert_days: field.alert_days,
     });
     if (e) throw e;
     await load();
@@ -268,7 +269,7 @@ export function useLegalPlaceholders(workspaceId: string | null) {
 
   const update = useCallback(async (id: string, patch: Partial<FieldDef>) => {
     const clean: Record<string, unknown> = {};
-    for (const k of ['key', 'label', 'field_type', 'required', 'default_value', 'num_min', 'num_max', 'list_id', 'owner_dept'] as const) {
+    for (const k of ['key', 'label', 'field_type', 'required', 'default_value', 'num_min', 'num_max', 'list_id', 'owner_dept', 'alert_days'] as const) {
       if (patch[k] !== undefined) clean[k] = typeof patch[k] === 'string' ? (patch[k] as string).trim() : patch[k];
     }
     const { error: e } = await legal().from('placeholder').update(clean).eq('id', id);
