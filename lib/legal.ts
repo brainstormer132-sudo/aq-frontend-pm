@@ -471,3 +471,110 @@ export function seedContractValues(fields: Placeholder[]): Record<string, string
   for (const f of fields) if (f.default_value) out[f.key] = f.default_value;
   return out;
 }
+
+// ---- printable contract (a self-contained document to Print / Save as PDF) --
+//
+// An issued (or draft) contract is rendered to a stand-alone HTML document -
+// letterhead, the version's blocks with their placeholders filled, a footer -
+// and opened in a new window for the browser's Print / Save-as-PDF. No server,
+// no PDF library: the browser is the renderer. Pure here (the caller supplies
+// any date string), so it is testable.
+
+/** HTML-escape a string for safe insertion as element text or an attribute. */
+export function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export interface PrintMeta {
+  org?: string;
+  status?: string;
+  reference?: string;
+  generatedOn?: string;
+}
+
+/**
+ * A self-contained, print-ready HTML document for a filled contract. The blocks
+ * are rendered in order with their placeholders filled from `values`; unfilled
+ * placeholders stay visible as their literal {{ key }} so a gap is obvious.
+ * Direction (`dir`) drives lang + text alignment for Arabic. All interpolated
+ * content is HTML-escaped. Pure - pass any date as `meta.generatedOn`.
+ */
+export function contractPrintHTML(args: {
+  title: string;
+  blocks: Pick<TemplateBlock, 'block_type' | 'content'>[];
+  values: Record<string, string>;
+  dir: Dir;
+  meta?: PrintMeta;
+}): string {
+  const { title, blocks, values, dir, meta = {} } = args;
+
+  const body = blocks.map((b) => {
+    if (b.block_type === 'kv') {
+      const kv = blockKV(b);
+      return `<div class="kv"><span class="kv-l">${escapeHtml(fillPlaceholders(kv.label, values))}:</span> `
+        + `<span class="kv-v">${escapeHtml(fillPlaceholders(kv.value, values))}</span></div>`;
+    }
+    const text = escapeHtml(fillPlaceholders(blockText(b), values));
+    switch (b.block_type) {
+      case 'title': return `<h1 class="doc-title">${text}</h1>`;
+      case 'h': return `<h2 class="doc-h">${text}</h2>`;
+      case 'li': return `<div class="doc-li">&bull; ${text}</div>`;
+      case 'p': return `<p class="doc-p">${text}</p>`;
+      default: return text ? `<p class="doc-p">${text}</p>` : '';
+    }
+  }).filter(Boolean).join('\n  ');
+
+  const org = escapeHtml(meta.org ?? 'AQ Creativity');
+  const safeTitle = escapeHtml(title || 'Contract');
+  const metaLines = [
+    safeTitle,
+    meta.status ? `Status: ${escapeHtml(meta.status)}` : '',
+    meta.generatedOn ? `Generated: ${escapeHtml(meta.generatedOn)}` : '',
+  ].filter(Boolean).join('<br>');
+  const ref = meta.reference ? escapeHtml(meta.reference) : '';
+  const lang = dir === 'rtl' ? 'ar' : 'en';
+  const metaAlign = dir === 'rtl' ? 'left' : 'right';
+
+  return `<!doctype html>
+<html lang="${lang}" dir="${dir}">
+<head>
+<meta charset="utf-8">
+<title>${safeTitle}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif; color: #1a1a1a; line-height: 1.75; font-size: 12pt; }
+  .sheet { max-width: 800px; margin: 0 auto; padding: 32px; }
+  .lh { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 2px solid #222; padding-bottom: 10px; margin-bottom: 22px; }
+  .lh-org { font-size: 18pt; font-weight: 800; letter-spacing: .5px; }
+  .lh-meta { font-size: 9pt; color: #555; text-align: ${metaAlign}; line-height: 1.5; }
+  .doc-title { font-size: 18pt; font-weight: 800; text-align: center; margin: 8px 0 20px; }
+  .doc-h { font-size: 13pt; font-weight: 700; margin: 18px 0 6px; }
+  .doc-p { margin: 8px 0; text-align: justify; }
+  .doc-li { margin: 4px 0; padding-inline-start: 8px; }
+  .kv { margin: 6px 0; }
+  .kv-l { font-weight: 700; }
+  .foot { margin-top: 28px; border-top: 1px solid #bbb; padding-top: 8px; font-size: 9pt; color: #666; display: flex; justify-content: space-between; gap: 12px; }
+  @media print {
+    .sheet { max-width: none; padding: 0; }
+    @page { size: A4; margin: 18mm; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="lh">
+    <div class="lh-org">${org}</div>
+    <div class="lh-meta">${metaLines}</div>
+  </div>
+  ${body}
+  <div class="foot"><span>${ref}</span><span>${org}</span></div>
+</div>
+</body>
+</html>`;
+}

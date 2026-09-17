@@ -8,6 +8,7 @@ import {
   FIELD_TYPES, fieldTypeLabel, validateFieldDef, describeField,
   CONTRACT_STATUSES, contractStatusLabel, contractStatusBadge, contractEditable,
   fillFieldsForBlocks, validateFieldValue, contractReady, seedContractValues,
+  escapeHtml, contractPrintHTML,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -218,6 +219,45 @@ ok('signed not editable', !contractEditable('signed'));
   ok('ready when all valid', contractReady(fields, { name: 'X', amount: '50', platform: 'snapchat' }, lists));
   ok('ready with optional number left blank', contractReady(fields, { name: 'X', platform: 'instagram' }, lists));
   eq('seed pulls defaults only', seedContractValues([P('a', { default_value: 'x' }), P('b'), P('c', { default_value: 'y' })]), { a: 'x', c: 'y' });
+}
+
+// ---- printable contract ----
+eq('escapeHtml angle + amp', escapeHtml('a < b & c > d'), 'a &lt; b &amp; c &gt; d');
+eq('escapeHtml quotes', escapeHtml(`"x" 'y'`), '&quot;x&quot; &#39;y&#39;');
+eq('escapeHtml null-safe', escapeHtml(undefined), '');
+{
+  const B = (block_type, text) => ({ block_type, content: { text } });
+  const kv = (label, value) => ({ block_type: 'kv', content: { label, value } });
+  const blocks = [
+    B('title', 'Vendor Agreement'),
+    B('h', 'Parties'),
+    B('p', 'This agreement is with {{ brand_name }}.'),
+    kv('Amount', '{{ amount }} SAR'),
+    B('li', 'Term {{ term }}'),
+  ];
+  const html = contractPrintHTML({
+    title: 'Rawad deal', blocks, values: { brand_name: 'Rawad Media', amount: '12,500', term: '12m' },
+    dir: 'ltr', meta: { org: 'AQ Creativity', status: 'Issued', reference: 'Ref: abc12345', generatedOn: '2026-09-17' },
+  });
+  ok('is a full html doc', html.startsWith('<!doctype html>') && html.includes('</html>'));
+  ok('title in <title>', html.includes('<title>Rawad deal</title>'));
+  ok('ltr lang en', html.includes('lang="en"') && html.includes('dir="ltr"'));
+  ok('fills paragraph placeholder', html.includes('This agreement is with Rawad Media.'));
+  ok('fills kv value', html.includes('12,500 SAR'));
+  ok('fills bullet placeholder', html.includes('&bull; Term 12m'));
+  ok('title block is centered h1', html.includes('<h1 class="doc-title">Vendor Agreement</h1>'));
+  ok('letterhead org shown', html.includes('AQ Creativity'));
+  ok('status in meta', html.includes('Status: Issued'));
+  ok('reference in footer', html.includes('Ref: abc12345'));
+}
+{
+  const html = contractPrintHTML({
+    title: 'x', blocks: [{ block_type: 'p', content: { text: 'hi {{ n }}' } }],
+    values: { n: '<script>alert(1)</script>' }, dir: 'rtl',
+  });
+  ok('rtl lang ar', html.includes('lang="ar"') && html.includes('dir="rtl"'));
+  ok('escapes injected value', html.includes('&lt;script&gt;') && !html.includes('<script>alert'));
+  ok('unfilled placeholder stays literal', contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: '{{ gap }}' } }], values: {}, dir: 'ltr' }).includes('{{ gap }}'));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

@@ -5,7 +5,7 @@ import { useContractEditor, useLegalPlaceholders, useManagedLists } from '@/hook
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
-  contractStatusLabel, contractStatusBadge, fieldTypeLabel,
+  contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
   type Placeholder, type TemplateBlock,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -60,6 +60,30 @@ export function ContractFill({
     catch { /* ed.error shows it */ }
   };
 
+  // Render the filled contract to a stand-alone document and hand it to the
+  // browser's Print / Save-as-PDF. The new window is same-origin about:blank,
+  // so no server or PDF library is involved.
+  const printDoc = () => {
+    if (!contract) return;
+    const html = contractPrintHTML({
+      title: contract.title || 'Contract',
+      blocks, values, dir,
+      meta: {
+        org: 'AQ Creativity',
+        status: contractStatusLabel(contract.status),
+        reference: `Ref: ${contract.id.slice(0, 8)}`,
+        generatedOn: new Date().toLocaleDateString(),
+      },
+    });
+    const w = window.open('', '_blank');
+    if (!w) { setBanner('Allow pop-ups for this site to print.'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch { /* the user can print from the window */ } }, 350);
+  };
+
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -70,6 +94,10 @@ export function ContractFill({
             <span className={`aq-badge ${contractStatusBadge(contract.status)}`}>{contractStatusLabel(contract.status)}</span>
           ) : null}
         </span>
+        {contract && (
+          <button className="aq-btn aq-btn-ghost" disabled={loading} onClick={printDoc}
+            title="Open a print-ready copy to print or save as PDF">Print / Save as PDF</button>
+        )}
         {contract && editable && (
           <>
             <button className="aq-btn aq-btn-ghost" disabled={busyAll} onClick={saveDraft}>Save draft</button>
