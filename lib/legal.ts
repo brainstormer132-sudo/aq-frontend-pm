@@ -472,6 +472,47 @@ export function seedContractValues(fields: Placeholder[]): Record<string, string
   return out;
 }
 
+// The reserved contract_field keys that hold a contract's integrity stamp. They
+// are written at issue time (while the contract is still a draft, so the freeze
+// trigger permits them) and are not template fields, so they never appear as a
+// fillable input. The double-underscore prefix keeps them out of any template's
+// {{ placeholder }} namespace.
+export const FINGERPRINT_KEY = '__aq_fingerprint';
+export const ISSUED_AT_KEY = '__aq_issued_at';
+
+/**
+ * The canonical string a contract's fingerprint is taken over: the stamped
+ * version id, then every block in order with its placeholders filled from
+ * `values`. Deterministic and stable - the same version + values always yield
+ * the same string, so re-hashing it later verifies the issued content is
+ * unchanged. Reserved keys (they are not blocks) do not enter it. Pure.
+ */
+export function contractCanonical(
+  versionId: string,
+  blocks: Pick<TemplateBlock, 'block_type' | 'content'>[],
+  values: Record<string, string>,
+): string {
+  const lines = [`v:${versionId}`];
+  for (const b of blocks) {
+    if (b.block_type === 'kv') {
+      const kv = blockKV(b);
+      lines.push(`kv|${fillPlaceholders(kv.label, values)}=${fillPlaceholders(kv.value, values)}`);
+    } else {
+      lines.push(`${b.block_type}|${fillPlaceholders(blockText(b), values)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * A SHA-256 hex digest shown human-readably: uppercase, grouped in fours. The
+ * whole digest is kept (nothing truncated). Pure.
+ */
+export function formatFingerprint(hex: string): string {
+  const h = String(hex ?? '').toUpperCase().replace(/[^0-9A-F]/g, '');
+  return h.replace(/(.{4})/g, '$1 ').trim();
+}
+
 // ---- printable contract (a self-contained document to Print / Save as PDF) --
 //
 // An issued (or draft) contract is rendered to a stand-alone HTML document -
@@ -495,6 +536,7 @@ export interface PrintMeta {
   status?: string;
   reference?: string;
   generatedOn?: string;
+  fingerprint?: string;
 }
 
 /**
@@ -537,6 +579,7 @@ export function contractPrintHTML(args: {
     meta.generatedOn ? `Generated: ${escapeHtml(meta.generatedOn)}` : '',
   ].filter(Boolean).join('<br>');
   const ref = meta.reference ? escapeHtml(meta.reference) : '';
+  const fp = meta.fingerprint ? escapeHtml(meta.fingerprint) : '';
   const lang = dir === 'rtl' ? 'ar' : 'en';
   const metaAlign = dir === 'rtl' ? 'left' : 'right';
 
@@ -559,7 +602,9 @@ export function contractPrintHTML(args: {
   .doc-li { margin: 4px 0; padding-inline-start: 8px; }
   .kv { margin: 6px 0; }
   .kv-l { font-weight: 700; }
-  .foot { margin-top: 28px; border-top: 1px solid #bbb; padding-top: 8px; font-size: 9pt; color: #666; display: flex; justify-content: space-between; gap: 12px; }
+  .foot { margin-top: 28px; border-top: 1px solid #bbb; padding-top: 8px; font-size: 9pt; color: #666; }
+  .foot-row { display: flex; justify-content: space-between; gap: 12px; }
+  .foot-fp { margin-top: 6px; font-family: 'Courier New', monospace; font-size: 8pt; color: #444; word-break: break-all; direction: ltr; text-align: left; }
   @media print {
     .sheet { max-width: none; padding: 0; }
     @page { size: A4; margin: 18mm; }
@@ -573,7 +618,10 @@ export function contractPrintHTML(args: {
     <div class="lh-meta">${metaLines}</div>
   </div>
   ${body}
-  <div class="foot"><span>${ref}</span><span>${org}</span></div>
+  <div class="foot">
+    <div class="foot-row"><span>${ref}</span><span>${org}</span></div>
+    ${fp ? `<div class="foot-fp">Fingerprint (SHA-256): ${fp}</div>` : ''}
+  </div>
 </div>
 </body>
 </html>`;

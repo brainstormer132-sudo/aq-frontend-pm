@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useContractEditor, useLegalPlaceholders, useManagedLists } from '@/hooks/use-legal';
+import { useEffect, useMemo, useState } from 'react';
+import { useContractEditor, useLegalPlaceholders, useManagedLists, sha256Hex } from '@/hooks/use-legal';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
   contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
+  contractCanonical, formatFingerprint,
   type Placeholder, type TemplateBlock,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -24,7 +25,7 @@ export function ContractFill({
   const ed = useContractEditor(workspaceId ?? null, contractId);
   const reg = useLegalPlaceholders(workspaceId ?? null);
   const lists = useManagedLists(workspaceId ?? null);
-  const { contract, blocks, values, loading, error, busy, editable } = ed;
+  const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt } = ed;
 
   // The fields this version actually uses, in first-appearance order.
   const fields = useMemo(
@@ -48,6 +49,21 @@ export function ContractFill({
 
   const dir = detectDir(blocks);
   const busyAll = busy || reg.loading || lists.loading;
+
+  // Re-verify the stored fingerprint against the current content whenever an
+  // issued contract is loaded: recompute the hash and compare. A frozen
+  // contract should always verify; a mismatch means the stored content and its
+  // stamp disagree.
+  const [verify, setVerify] = useState<'checking' | 'ok' | 'diff' | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!contract || !fingerprint) { setVerify(null); return; }
+    setVerify('checking');
+    sha256Hex(contractCanonical(contract.version_id, blocks, values))
+      .then((h) => { if (live) setVerify(h === fingerprint ? 'ok' : 'diff'); })
+      .catch(() => { if (live) setVerify(null); });
+    return () => { live = false; };
+  }, [contract, fingerprint, blocks, values]);
 
   const saveDraft = async () => {
     setBanner('');
@@ -73,6 +89,7 @@ export function ContractFill({
         status: contractStatusLabel(contract.status),
         reference: `Ref: ${contract.id.slice(0, 8)}`,
         generatedOn: new Date().toLocaleDateString(),
+        fingerprint: fingerprint ? formatFingerprint(fingerprint) : undefined,
       },
     });
     const w = window.open('', '_blank');
@@ -114,6 +131,22 @@ export function ContractFill({
       {!editable && contract && (
         <div className="aq-card" style={{ padding: 12, fontSize: 13, color: 'var(--aq-text-secondary)' }}>
           This contract is {contractStatusLabel(contract.status).toLowerCase()} and its field values are frozen.
+        </div>
+      )}
+
+      {contract && fingerprint && (
+        <div className="aq-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+              color: 'var(--aq-text-muted)' }}>Content fingerprint (SHA-256)</span>
+            {verify === 'ok' && <span className="aq-badge aq-badge-success">Verified</span>}
+            {verify === 'diff' && <span className="aq-badge aq-badge-error">Content differs</span>}
+            {verify === 'checking' && <span className="aq-badge aq-badge-muted">{'Checking\u2026'}</span>}
+            {issuedAt && <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>Issued {new Date(issuedAt).toLocaleString()}</span>}
+          </div>
+          <code style={{ fontSize: 11, wordBreak: 'break-all', color: 'var(--aq-text-secondary)', direction: 'ltr' }}>
+            {formatFingerprint(fingerprint)}
+          </code>
         </div>
       )}
 

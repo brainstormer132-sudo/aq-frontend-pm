@@ -9,6 +9,7 @@ import {
   CONTRACT_STATUSES, contractStatusLabel, contractStatusBadge, contractEditable,
   fillFieldsForBlocks, validateFieldValue, contractReady, seedContractValues,
   escapeHtml, contractPrintHTML,
+  contractCanonical, formatFingerprint, FINGERPRINT_KEY, ISSUED_AT_KEY,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -258,6 +259,32 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   ok('rtl lang ar', html.includes('lang="ar"') && html.includes('dir="rtl"'));
   ok('escapes injected value', html.includes('&lt;script&gt;') && !html.includes('<script>alert'));
   ok('unfilled placeholder stays literal', contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: '{{ gap }}' } }], values: {}, dir: 'ltr' }).includes('{{ gap }}'));
+}
+
+// ---- contract fingerprint ----
+eq('reserved keys are double-underscored', [FINGERPRINT_KEY, ISSUED_AT_KEY], ['__aq_fingerprint', '__aq_issued_at']);
+{
+  const B = (block_type, text) => ({ block_type, content: { text } });
+  const kv = (label, value) => ({ block_type: 'kv', content: { label, value } });
+  const blocks = [B('p', 'Owed {{ amount }} to {{ name }}'), kv('Term', '{{ term }}')];
+  const c1 = contractCanonical('ver-1', blocks, { amount: '100', name: 'Rawad', term: '12m' });
+  ok('canonical starts with version', c1.startsWith('v:ver-1\n'));
+  ok('canonical fills placeholders', c1.includes('Owed 100 to Rawad') && c1.includes('kv|Term=12m'));
+  eq('canonical is deterministic', contractCanonical('ver-1', blocks, { amount: '100', name: 'Rawad', term: '12m' }), c1);
+  ok('canonical differs when a value changes', contractCanonical('ver-1', blocks, { amount: '999', name: 'Rawad', term: '12m' }) !== c1);
+  ok('canonical differs when version changes', contractCanonical('ver-2', blocks, { amount: '100', name: 'Rawad', term: '12m' }) !== c1);
+  ok('reserved keys do not enter canonical', contractCanonical('ver-1', blocks, { amount: '100', name: 'Rawad', term: '12m', [FINGERPRINT_KEY]: 'x', [ISSUED_AT_KEY]: 'y' }) === c1);
+}
+eq('formatFingerprint groups in fours, upper', formatFingerprint('deadbeef0123'), 'DEAD BEEF 0123');
+eq('formatFingerprint strips non-hex', formatFingerprint('ab:cd ef'), 'ABCD EF');
+eq('formatFingerprint empty-safe', formatFingerprint(undefined), '');
+{
+  const html = contractPrintHTML({
+    title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr',
+    meta: { fingerprint: 'ABCD 1234' },
+  });
+  ok('print footer shows fingerprint', html.includes('Fingerprint (SHA-256): ABCD 1234'));
+  ok('no fingerprint line when absent', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr' }).includes('Fingerprint (SHA-256)'));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

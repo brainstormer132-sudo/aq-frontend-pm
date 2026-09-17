@@ -7,7 +7,17 @@ import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
   Dept, ManagedList, ManagedListValue, FieldDef, Contract, ContractStatus,
 } from '@/lib/legal';
-import { defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable } from '@/lib/legal';
+import {
+  defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
+  contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
+} from '@/lib/legal';
+
+/** SHA-256 of a string as lowercase hex, via the Web Crypto API (browser + Node 18+). */
+export async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 // The legal tables live in the `legal` schema (migration 098), so every read
 // and write goes through .schema('legal'). The schema must be added to
@@ -519,10 +529,19 @@ export function useContractEditor(workspaceId: string | null, contractId: string
 
   const saveAll = (keys: string[]) => run(async () => { guard(); await persist(keys); });
 
-  /** Save the values, then move the contract to `issued` (fields freeze). */
+  /** Save the values, stamp an integrity fingerprint, then move the contract to
+   *  `issued` (fields freeze). The fingerprint + issue time are written while
+   *  still a draft, so the freeze trigger permits them. */
   const issue = (keys: string[]) => run(async () => {
     guard();
     await persist(keys);
+    const canonical = contractCanonical((contract as Contract).version_id, blocks, values);
+    const hash = await sha256Hex(canonical);
+    const { error: eF } = await legal().from('contract_field').upsert([
+      { contract_id: contractId, workspace_id: workspaceId, key: FINGERPRINT_KEY, value: hash },
+      { contract_id: contractId, workspace_id: workspaceId, key: ISSUED_AT_KEY, value: new Date().toISOString() },
+    ], { onConflict: 'contract_id,key' });
+    if (eF) throw eF;
     const { error: e } = await legal().from('contract')
       .update({ status: 'issued' as ContractStatus }).eq('id', contractId);
     if (e) throw e;
@@ -536,8 +555,11 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setContract((c) => (c ? { ...c, title: title.trim() } : c));
   });
 
+  const fingerprint = values[FINGERPRINT_KEY] || null;
+  const issuedAt = values[ISSUED_AT_KEY] || null;
+
   return {
-    contract, blocks, values, loading, error, busy, editable,
+    contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt,
     reload: load, setValue, saveAll, issue, rename,
   };
 }
