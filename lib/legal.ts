@@ -689,6 +689,30 @@ export function emptyTableRow(cols: TableColumn[]): TableRow {
   return out;
 }
 
+/**
+ * True when any cell in the rows fails its column field's type or bounds - a
+ * number outside its min/max, a date in the wrong shape, a list value not in
+ * the list. Empty cells are allowed (a table cell is optional). `listsByKey`
+ * maps a column key to its allowed active list values. Pure.
+ */
+export function tableHasInvalidCell(
+  cols: { key: string; field: Pick<Placeholder, 'field_type' | 'num_min' | 'num_max'> }[],
+  rows: TableRow[],
+  listsByKey: Record<string, string[]>,
+): boolean {
+  for (const r of rows) {
+    for (const c of cols) {
+      const err = validateFieldValue(
+        { field_type: c.field.field_type, required: false, num_min: c.field.num_min, num_max: c.field.num_max },
+        r[c.key] ?? '',
+        listsByKey[c.key] ? { values: listsByKey[c.key] } : undefined,
+      );
+      if (err) return true;
+    }
+  }
+  return false;
+}
+
 // ---- printable contract (a self-contained document to Print / Save as PDF) --
 //
 // An issued (or draft) contract is rendered to a stand-alone HTML document -

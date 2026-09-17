@@ -13,6 +13,7 @@ import {
   OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
   dateAlertState, contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
+  tableHasInvalidCell,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -397,6 +398,23 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   ok('print has the table headers', html.includes('<th>Platform</th>') && html.includes('<th>Price</th>'));
   ok('print has the filled row', html.includes('<td>snapchat</td>') && html.includes('<td>5000</td>'));
   ok('empty table prints a no-rows note', contractPrintHTML({ title: 'c', blocks: [tbl], dir: 'ltr', values: {} }).includes('(no rows)'));
+}
+{
+  const col = (key, field) => ({ key, field });
+  const cols = [
+    col('price', { field_type: 'number', num_min: 0, num_max: 10000 }),
+    col('platform', { field_type: 'list', num_min: null, num_max: null }),
+    col('draft', { field_type: 'date', num_min: null, num_max: null }),
+  ];
+  const listsByKey = { platform: ['snapchat', 'instagram'] };
+  ok('all valid -> no invalid cell', !tableHasInvalidCell(cols, [{ price: '500', platform: 'snapchat', draft: '2026-10-01' }], listsByKey));
+  ok('empty cells are allowed', !tableHasInvalidCell(cols, [{ price: '', platform: '', draft: '' }], listsByKey));
+  ok('number over max -> invalid', tableHasInvalidCell(cols, [{ price: '99999', platform: 'snapchat' }], listsByKey));
+  ok('number non-numeric -> invalid', tableHasInvalidCell(cols, [{ price: 'abc' }], listsByKey));
+  ok('list off-list -> invalid', tableHasInvalidCell(cols, [{ platform: 'tiktok' }], listsByKey));
+  ok('bad date -> invalid', tableHasInvalidCell(cols, [{ draft: '10/01/2026' }], listsByKey));
+  ok('one bad row among good -> invalid', tableHasInvalidCell(cols, [{ price: '5' }, { price: '-1' }], listsByKey));
+  ok('no rows -> not invalid', !tableHasInvalidCell(cols, [], listsByKey));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

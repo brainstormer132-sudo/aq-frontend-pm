@@ -8,7 +8,7 @@ import {
   contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
-  tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow,
+  tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
   type Placeholder, type TemplateBlock, type TableRow,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -54,6 +54,22 @@ export function ContractFill({
   }, [fields, lists.valuesByList]);
 
   const ready = contractReady(fields, values, listsByKey);
+
+  // Any table cell that fails its column's type/bounds blocks Issue.
+  const tablesInvalid = useMemo(() => {
+    for (const b of tableBlocks) {
+      const cols = tableColumnFields(tableColumns(b), reg.placeholders);
+      const rows = parseTableRows(values[tableKey(b.id)]);
+      const lk: Record<string, string[]> = {};
+      for (const c of cols) {
+        if (c.field.field_type === 'list' && c.field.list_id) {
+          lk[c.key] = (lists.valuesByList[c.field.list_id] ?? []).filter((v) => v.active).map((v) => v.value);
+        }
+      }
+      if (tableHasInvalidCell(cols, rows, lk)) return true;
+    }
+    return false;
+  }, [tableBlocks, reg.placeholders, values, lists.valuesByList]);
 
   // Date alerts: a tracked date that is expired blocks Issue; expiring-soon warns.
   const today = new Date().toISOString().slice(0, 10);
@@ -133,8 +149,9 @@ export function ContractFill({
         {contract && editable && (
           <>
             <button className="aq-btn aq-btn-ghost" disabled={busyAll} onClick={saveDraft}>Save draft</button>
-            <button className="aq-btn aq-btn-primary" disabled={busyAll || !ready || blocked} onClick={issue}
+            <button className="aq-btn aq-btn-primary" disabled={busyAll || !ready || blocked || tablesInvalid} onClick={issue}
               title={blocked ? 'A tracked date is expired - fix it before issuing'
+                : tablesInvalid ? 'A table cell is out of range or off-list - fix it before issuing'
                 : ready ? 'Freeze the values and issue the contract' : 'Fill every required field first'}>
               Issue contract
             </button>
@@ -431,23 +448,31 @@ function CellInput({
   if (!editable) {
     return <span dir="auto" style={{ fontSize: 13 }}>{value || <span style={{ color: 'var(--aq-text-muted)' }}>-</span>}</span>;
   }
+  const allowed = field.field_type === 'list' && field.list_id
+    ? (lists.valuesByList[field.list_id] ?? []).filter((v) => v.active).map((v) => v.value) : undefined;
+  const err = validateFieldValue(
+    { field_type: field.field_type, required: false, num_min: field.num_min, num_max: field.num_max },
+    value, allowed ? { values: allowed } : undefined,
+  );
+  const bad = err ? { boxShadow: 'inset 0 0 0 1.5px var(--aq-danger, #c0392b)', borderRadius: 6 } : {};
+
   if (field.field_type === 'list') {
     const opts = sortListValues(((field.list_id ? lists.valuesByList[field.list_id] : undefined) ?? []).filter((v) => v.active));
     return (
-      <select className="aq-select" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', minWidth: 90 }}>
+      <select className="aq-select" value={value} onChange={(e) => onChange(e.target.value)} title={err ?? undefined} style={{ width: '100%', minWidth: 90, ...bad }}>
         <option value="">{'--'}</option>
         {opts.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
       </select>
     );
   }
   if (field.field_type === 'number') {
-    return <input type="number" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} min={field.num_min ?? undefined} max={field.num_max ?? undefined} style={{ width: '100%', minWidth: 80 }} />;
+    return <input type="number" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} min={field.num_min ?? undefined} max={field.num_max ?? undefined} title={err ?? undefined} style={{ width: '100%', minWidth: 80, ...bad }} />;
   }
   if (field.field_type === 'date') {
-    return <input type="date" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', minWidth: 130 }} />;
+    return <input type="date" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} title={err ?? undefined} style={{ width: '100%', minWidth: 130, ...bad }} />;
   }
   if (field.field_type === 'auto') {
     return <input dir="auto" className="aq-input" value={value} readOnly placeholder="auto" style={{ width: '100%', opacity: 0.7 }} />;
   }
-  return <input dir="auto" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%', minWidth: 90 }} />;
+  return <input dir="auto" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)} title={err ?? undefined} style={{ width: '100%', minWidth: 90, ...bad }} />;
 }
