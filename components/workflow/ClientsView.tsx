@@ -72,6 +72,7 @@ export function ClientsView({
     cr_number: '',
     vat_number: '',
     signatory_name: '',
+    signatory_title: '',
     email: '',
     phone: '',
     street: '',
@@ -79,6 +80,7 @@ export function ClientsView({
     postcode: '',
     country: 'Saudi Arabia',
   });
+  const [editId, setEditId] = useState<string | null>(null);
 
   const canCreate = Boolean(role && ['owner','admin','marketing','sales'].includes(role));
   // Who may edit an existing client (its standing payment terms): owner, admin,
@@ -238,6 +240,25 @@ export function ClientsView({
     }
   };
 
+  const openEdit = (c: any) => {
+    setForm({
+      company_name: c.company_name ?? c.name ?? '',
+      cr_number: c.cr_number ?? '',
+      vat_number: c.vat_number ?? '',
+      signatory_name: c.signatory_name ?? '',
+      signatory_title: c.signatory_title ?? '',
+      email: (c.company_email || c.contact_email || c.email) ?? '',
+      phone: (c.contact_phone || c.phone) ?? '',
+      street: c.street ?? '',
+      city: c.city ?? '',
+      postcode: c.postcode ?? '',
+      country: c.country ?? 'Saudi Arabia',
+    });
+    setError('');
+    setEditId(String(c.id));
+    setOpen(true);
+  };
+
   const submit = async () => {
     if (!form.company_name.trim()) {
       setError('Company name is required.');
@@ -246,27 +267,48 @@ export function ClientsView({
     setBusy(true);
     setError('');
     try {
-      // Route through the contract backend so field mapping (phone→contact_phone,
-      // email→contact_email, etc.) and audit logging happen server-side. The
-      // backend's vendors.py:manual_create_client is gated to admin/owner roles.
-      await manualCreate.client({
-        company_name: form.company_name.trim(),
-        cr_number: form.cr_number.trim(),
-        vat_number: form.vat_number.trim(),
-        signatory_name: form.signatory_name.trim(),
-        email: form.email.trim(),
-        company_email: form.email.trim(),
-        phone: form.phone.trim(),
-        street: form.street.trim(),
-        city: form.city.trim(),
-        postcode: form.postcode.trim(),
-        country: form.country.trim(),
-      });
+      const clean = (v: string) => (v.trim() ? v.trim() : null);
+      if (editId) {
+        // Editing an existing client: direct Supabase write (RLS-gated), the
+        // same path payment terms use — works for the wider canEdit roles.
+        await updateClientDetails(editId, {
+          company_name: form.company_name.trim(),
+          cr_number: clean(form.cr_number),
+          vat_number: clean(form.vat_number),
+          signatory_name: clean(form.signatory_name),
+          signatory_title: clean(form.signatory_title),
+          company_email: clean(form.email),
+          contact_email: clean(form.email),
+          contact_phone: clean(form.phone),
+          street: clean(form.street),
+          city: clean(form.city),
+          postcode: clean(form.postcode),
+          country: clean(form.country),
+        });
+      } else {
+        // Creating: through the backend so field mapping + audit logging run
+        // server-side (admin/owner gated).
+        await manualCreate.client({
+          company_name: form.company_name.trim(),
+          cr_number: form.cr_number.trim(),
+          vat_number: form.vat_number.trim(),
+          signatory_name: form.signatory_name.trim(),
+          signatory_title: form.signatory_title.trim(),
+          email: form.email.trim(),
+          company_email: form.email.trim(),
+          phone: form.phone.trim(),
+          street: form.street.trim(),
+          city: form.city.trim(),
+          postcode: form.postcode.trim(),
+          country: form.country.trim(),
+        });
+      }
       setForm({
         company_name: '',
         cr_number: '',
         vat_number: '',
         signatory_name: '',
+        signatory_title: '',
         email: '',
         phone: '',
         street: '',
@@ -274,6 +316,7 @@ export function ClientsView({
         postcode: '',
         country: 'Saudi Arabia',
       });
+      setEditId(null);
       setOpen(false);
       await refetch();
     } catch (e: any) {
@@ -412,7 +455,7 @@ export function ClientsView({
               onPortal={() => setPortalFor(r)}
               onDelete={() => setConfirmDeleteId(r.id)}
               onSaveTerms={async (id, fields) => { await updateClientTerms(id, fields); refetch(); }}
-              onSaveDetails={async (id, fields) => { await updateClientDetails(id, fields); refetch(); }}
+              onEdit={() => openEdit(r.raw)}
             />
           )}
         />
@@ -516,7 +559,7 @@ export function ClientsView({
       )}
 
       {open && (
-        <Modal title="Add Client" onClose={() => setOpen(false)}>
+        <Modal title={editId ? 'Edit client' : 'Add Client'} onClose={() => { setOpen(false); setEditId(null); }}>
           <div style={formGrid}>
             <Field label="Client / company name" required>
               <input className="aq-input" value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} autoFocus />
@@ -529,6 +572,9 @@ export function ClientsView({
             </Field>
             <Field label="Signatory name">
               <input className="aq-input" value={form.signatory_name} onChange={(e) => setForm({ ...form, signatory_name: e.target.value })} />
+            </Field>
+            <Field label="Signatory title">
+              <input className="aq-input" value={form.signatory_title} onChange={(e) => setForm({ ...form, signatory_title: e.target.value })} />
             </Field>
             <Field label="Email">
               <input className="aq-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
@@ -549,7 +595,7 @@ export function ClientsView({
               <input className="aq-input" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
             </Field>
           </div>
-          <Actions busy={busy} disabled={!form.company_name.trim()} submitLabel="Add Client" onCancel={() => setOpen(false)} onSubmit={submit} />
+          <Actions busy={busy} disabled={!form.company_name.trim()} submitLabel={editId ? 'Save' : 'Add Client'} onCancel={() => { setOpen(false); setEditId(null); }} onSubmit={submit} />
         </Modal>
       )}
     </div>
@@ -637,22 +683,6 @@ const modalCard: React.CSSProperties = {
 // + admin/owner delete.
 // ───────────────────────────────────────────────────────────────────────────
 
-/** One labelled text input for the client edit grid, styled like Detail. */
-function EditField({ label, value, onChange, type }: {
-  label: string; value?: string; onChange: (v: string) => void; type?: string;
-}) {
-  return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{
-        fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
-        textTransform: 'uppercase', color: 'var(--aq-text-muted)', marginBottom: 3,
-      }}>{label}</div>
-      <input className="aq-input" style={{ width: '100%' }} type={type || 'text'}
-        value={value ?? ''} onChange={(e) => onChange(e.target.value)} />
-    </div>
-  );
-}
-
 /**
  * What was behind the card, now behind the row.
  *
@@ -661,7 +691,7 @@ function EditField({ label, value, onChange, type }: {
  * be missing in the contract too.
  */
 function ClientDetail({
-  row, canEdit, canPortal, canDelete, onPortal, onDelete, onSaveTerms, onSaveDetails,
+  row, canEdit, canPortal, canDelete, onPortal, onDelete, onSaveTerms, onEdit,
 }: {
   row: RegistryRow;
   canEdit: boolean;
@@ -675,91 +705,23 @@ function ClientDetail({
     payment_split_pct: number | null;
     payment_net_days: number | null;
   }) => void;
-  /** Save this client's standing contract details. */
-  onSaveDetails: (id: string, fields: Record<string, string | null>) => Promise<void> | void;
+  /** Open the editor modal for this client. */
+  onEdit: () => void;
 }) {
   const c = row.raw as any;
   const address = [c.street, c.city, c.postcode, c.country].filter(Boolean).join(', ');
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState('');
-  const startEdit = () => {
-    setDraft({
-      cr_number: c.cr_number ?? '', vat_number: c.vat_number ?? '',
-      signatory_name: c.signatory_name ?? '', signatory_title: c.signatory_title ?? '',
-      company_email: (c.company_email || c.contact_email) ?? '', contact_phone: c.contact_phone ?? '',
-      street: c.street ?? '', city: c.city ?? '', postcode: c.postcode ?? '', country: c.country ?? '',
-    });
-    setSaveErr(''); setEditing(true);
-  };
-  const set = (k: string) => (v: string) => setDraft((d) => ({ ...d, [k]: v }));
-  const saveDetails = async () => {
-    setSaving(true); setSaveErr('');
-    const clean = (v: string) => (v && v.trim() ? v.trim() : null);
-    try {
-      await onSaveDetails(row.id, {
-        cr_number: clean(draft.cr_number), vat_number: clean(draft.vat_number),
-        signatory_name: clean(draft.signatory_name), signatory_title: clean(draft.signatory_title),
-        company_email: clean(draft.company_email), contact_phone: clean(draft.contact_phone),
-        street: clean(draft.street), city: clean(draft.city),
-        postcode: clean(draft.postcode), country: clean(draft.country),
-      });
-      setEditing(false);
-    } catch (e: any) {
-      setSaveErr(e?.message ?? String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {editing ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={DETAIL_GRID}>
-            <EditField label="CR number" value={draft.cr_number} onChange={set('cr_number')} />
-            <EditField label="VAT number" value={draft.vat_number} onChange={set('vat_number')} />
-            <EditField label="Signatory" value={draft.signatory_name} onChange={set('signatory_name')} />
-            <EditField label="Signatory title" value={draft.signatory_title} onChange={set('signatory_title')} />
-            <EditField label="Email" value={draft.company_email} onChange={set('company_email')} type="email" />
-            <EditField label="Phone" value={draft.contact_phone} onChange={set('contact_phone')} />
-            <EditField label="Street" value={draft.street} onChange={set('street')} />
-            <EditField label="City" value={draft.city} onChange={set('city')} />
-            <EditField label="Postcode" value={draft.postcode} onChange={set('postcode')} />
-            <EditField label="Country" value={draft.country} onChange={set('country')} />
-          </div>
-          {saveErr && <div style={{ fontSize: 12, color: 'var(--aq-red)' }}>{saveErr}</div>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="aq-btn aq-btn-primary" disabled={saving}
-              onClick={saveDetails} style={{ fontSize: 12, padding: '5px 11px' }}>
-              {saving ? 'Saving…' : 'Save details'}
-            </button>
-            <button type="button" className="aq-btn aq-btn-ghost" disabled={saving}
-              onClick={() => { setEditing(false); setSaveErr(''); }} style={{ fontSize: 12, padding: '5px 11px' }}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={DETAIL_GRID}>
-            <Detail label="CR number" value={c.cr_number} missing />
-            <Detail label="VAT number" value={c.vat_number} missing />
-            <Detail label="Signatory" value={c.signatory_name} missing />
-            <Detail label="Signatory title" value={c.signatory_title} />
-            <Detail label="Contact" value={c.contact_name} />
-            <Detail label="Email" value={c.company_email || c.contact_email} />
-            <Detail label="Phone" value={c.contact_phone} />
-            <Detail label="Address" value={address} missing />
-          </div>
-          {canEdit && (
-            <div>
-              <button type="button" className="aq-btn aq-btn-secondary"
-                onClick={startEdit} style={{ fontSize: 12, padding: '5px 11px' }}>Edit details</button>
-            </div>
-          )}
-        </div>
-      )}
+      <div style={DETAIL_GRID}>
+        <Detail label="CR number" value={c.cr_number} missing />
+        <Detail label="VAT number" value={c.vat_number} missing />
+        <Detail label="Signatory" value={c.signatory_name} missing />
+        <Detail label="Signatory title" value={c.signatory_title} />
+        <Detail label="Contact" value={c.contact_name} />
+        <Detail label="Email" value={c.company_email || c.contact_email} />
+        <Detail label="Phone" value={c.contact_phone} />
+        <Detail label="Address" value={address} missing />
+      </div>
 
       {/* Standing payment terms: set once, and every campaign for this client
           inherits them unless the campaign sets its own. What dates the
@@ -783,8 +745,16 @@ function ClientDetail({
 
       <BrandManagerInline clientId={row.id} />
 
-      {canDelete && (
+      {(canEdit || canDelete) && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          {canEdit && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-secondary"
+              onClick={onEdit}
+              style={{ fontSize: 12, padding: '5px 11px' }}
+            >Edit</button>
+          )}
           {canPortal && (
             <button
               type="button"
@@ -793,12 +763,14 @@ function ClientDetail({
               style={{ fontSize: 12, padding: '5px 11px' }}
             >{row.portal === 'active' ? 'Reset password' : 'Make portal'}</button>
           )}
-          <button
-            type="button"
-            className="aq-btn aq-btn-ghost"
-            onClick={onDelete}
-            style={{ fontSize: 12, padding: '5px 11px', color: 'var(--aq-red)' }}
-          >Delete client…</button>
+          {canDelete && (
+            <button
+              type="button"
+              className="aq-btn aq-btn-ghost"
+              onClick={onDelete}
+              style={{ fontSize: 12, padding: '5px 11px', color: 'var(--aq-red)' }}
+            >Delete client…</button>
+          )}
         </div>
       )}
     </div>

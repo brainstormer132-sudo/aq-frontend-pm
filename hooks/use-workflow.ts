@@ -1372,11 +1372,13 @@ export async function updateClientTerms(id: string, fields: {
  * updateClientTerms. Pass only the fields you want to change.
  */
 export async function updateClientDetails(id: string, fields: {
+  company_name?: string | null;
   cr_number?: string | null;
   vat_number?: string | null;
   signatory_name?: string | null;
   signatory_title?: string | null;
   company_email?: string | null;
+  contact_email?: string | null;
   contact_phone?: string | null;
   street?: string | null;
   city?: string | null;
