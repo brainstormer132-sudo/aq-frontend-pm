@@ -2607,6 +2607,7 @@ function renderClientsView() {
           <label>CR Number <input id="client-edit-cr" value="${encodeAttr(client?.cr_number || "")}" ${client ? "" : "disabled"} /></label>
           <label>VAT Number <input id="client-edit-vat" value="${encodeAttr(client?.vat_number || "")}" ${client ? "" : "disabled"} /></label>
           <label>Signatory Name <input id="client-edit-signatory" value="${encodeAttr(client?.signatory_name || "")}" ${client ? "" : "disabled"} /></label>
+          <label>Signatory Title <input id="client-edit-signatory-title" value="${encodeAttr(client?.signatory_title || "")}" ${client ? "" : "disabled"} /></label>
           <label>Phone <input id="client-edit-phone" value="${encodeAttr(client?.contact_phone || client?.phone || "")}" ${client ? "" : "disabled"} /></label>
           <label>Email <input id="client-edit-email" type="email" value="${encodeAttr(client?.contact_email || client?.email || "")}" ${client ? "" : "disabled"} /></label>
           <label>Company Email <input id="client-edit-company-email" type="email" value="${encodeAttr(client?.company_email || "")}" ${client ? "" : "disabled"} /></label>
@@ -2627,6 +2628,7 @@ function renderClientsView() {
           <label>CR Number <input id="new-client-cr" /></label>
           <label>VAT Number <input id="new-client-vat" /></label>
           <label>Signatory Name <input id="new-client-signatory" /></label>
+          <label>Signatory Title <input id="new-client-signatory-title" /></label>
           <label>Phone <input id="new-client-phone" /></label>
           <label>Email <input id="new-client-email" type="email" /></label>
           <label>Company Email <input id="new-client-company-email" type="email" /></label>
@@ -4502,6 +4504,7 @@ async function createClient(event) {
     cr_number: getFormValue("#new-client-cr"),
     vat_number: getFormValue("#new-client-vat"),
     signatory_name: getFormValue("#new-client-signatory"),
+    signatory_title: getFormValue("#new-client-signatory-title"),
     phone: getFormValue("#new-client-phone"),
     email: getFormValue("#new-client-email"),
     company_email: getFormValue("#new-client-company-email"),
@@ -4531,6 +4534,7 @@ async function updateClient(event) {
     cr_number: getFormValue("#client-edit-cr"),
     vat_number: getFormValue("#client-edit-vat"),
     signatory_name: getFormValue("#client-edit-signatory"),
+    signatory_title: getFormValue("#client-edit-signatory-title"),
     phone: getFormValue("#client-edit-phone"),
     email: getFormValue("#client-edit-email"),
     company_email: getFormValue("#client-edit-company-email"),
