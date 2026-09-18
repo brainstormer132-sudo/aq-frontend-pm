@@ -1366,6 +1366,28 @@ export async function updateClientTerms(id: string, fields: {
   invalidateRefCache('clients');
 }
 
+/**
+ * Save a client's standing contract details (the fields that print on every
+ * contract for this client). Direct, RLS-backed write, same shape as
+ * updateClientTerms. Pass only the fields you want to change.
+ */
+export async function updateClientDetails(id: string, fields: {
+  cr_number?: string | null;
+  vat_number?: string | null;
+  signatory_name?: string | null;
+  signatory_title?: string | null;
+  company_email?: string | null;
+  contact_phone?: string | null;
+  street?: string | null;
+  city?: string | null;
+  postcode?: string | null;
+  country?: string | null;
+}) {
+  const { error } = await supabase.from('clients').update(fields).eq('id', id);
+  if (error) throw error;
+  invalidateRefCache('clients');
+}
+
 /* Client credits (082): an append-only, logged balance */
 
 export interface ClientCredit {

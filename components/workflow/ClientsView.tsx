@@ -6,6 +6,7 @@ import {
   selectAllRows,
   useAllClientBrands,
   updateClientTerms,
+  updateClientDetails,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { TermsField } from './campaign/track';
@@ -411,6 +412,7 @@ export function ClientsView({
               onPortal={() => setPortalFor(r)}
               onDelete={() => setConfirmDeleteId(r.id)}
               onSaveTerms={async (id, fields) => { await updateClientTerms(id, fields); refetch(); }}
+              onSaveDetails={async (id, fields) => { await updateClientDetails(id, fields); refetch(); }}
             />
           )}
         />
@@ -635,6 +637,22 @@ const modalCard: React.CSSProperties = {
 // + admin/owner delete.
 // ───────────────────────────────────────────────────────────────────────────
 
+/** One labelled text input for the client edit grid, styled like Detail. */
+function EditField({ label, value, onChange, type }: {
+  label: string; value?: string; onChange: (v: string) => void; type?: string;
+}) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+        textTransform: 'uppercase', color: 'var(--aq-text-muted)', marginBottom: 3,
+      }}>{label}</div>
+      <input className="aq-input" style={{ width: '100%' }} type={type || 'text'}
+        value={value ?? ''} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
 /**
  * What was behind the card, now behind the row.
  *
@@ -643,7 +661,7 @@ const modalCard: React.CSSProperties = {
  * be missing in the contract too.
  */
 function ClientDetail({
-  row, canEdit, canPortal, canDelete, onPortal, onDelete, onSaveTerms,
+  row, canEdit, canPortal, canDelete, onPortal, onDelete, onSaveTerms, onSaveDetails,
 }: {
   row: RegistryRow;
   canEdit: boolean;
@@ -657,20 +675,91 @@ function ClientDetail({
     payment_split_pct: number | null;
     payment_net_days: number | null;
   }) => void;
+  /** Save this client's standing contract details. */
+  onSaveDetails: (id: string, fields: Record<string, string | null>) => Promise<void> | void;
 }) {
   const c = row.raw as any;
   const address = [c.street, c.city, c.postcode, c.country].filter(Boolean).join(', ');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
+  const startEdit = () => {
+    setDraft({
+      cr_number: c.cr_number ?? '', vat_number: c.vat_number ?? '',
+      signatory_name: c.signatory_name ?? '', signatory_title: c.signatory_title ?? '',
+      company_email: (c.company_email || c.contact_email) ?? '', contact_phone: c.contact_phone ?? '',
+      street: c.street ?? '', city: c.city ?? '', postcode: c.postcode ?? '', country: c.country ?? '',
+    });
+    setSaveErr(''); setEditing(true);
+  };
+  const set = (k: string) => (v: string) => setDraft((d) => ({ ...d, [k]: v }));
+  const saveDetails = async () => {
+    setSaving(true); setSaveErr('');
+    const clean = (v: string) => (v && v.trim() ? v.trim() : null);
+    try {
+      await onSaveDetails(row.id, {
+        cr_number: clean(draft.cr_number), vat_number: clean(draft.vat_number),
+        signatory_name: clean(draft.signatory_name), signatory_title: clean(draft.signatory_title),
+        company_email: clean(draft.company_email), contact_phone: clean(draft.contact_phone),
+        street: clean(draft.street), city: clean(draft.city),
+        postcode: clean(draft.postcode), country: clean(draft.country),
+      });
+      setEditing(false);
+    } catch (e: any) {
+      setSaveErr(e?.message ?? String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={DETAIL_GRID}>
-        <Detail label="CR number" value={c.cr_number} missing />
-        <Detail label="VAT number" value={c.vat_number} missing />
-        <Detail label="Signatory" value={c.signatory_name} missing />
-        <Detail label="Contact" value={c.contact_name} />
-        <Detail label="Email" value={c.company_email || c.contact_email} />
-        <Detail label="Phone" value={c.contact_phone} />
-        <Detail label="Address" value={address} missing />
-      </div>
+      {editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={DETAIL_GRID}>
+            <EditField label="CR number" value={draft.cr_number} onChange={set('cr_number')} />
+            <EditField label="VAT number" value={draft.vat_number} onChange={set('vat_number')} />
+            <EditField label="Signatory" value={draft.signatory_name} onChange={set('signatory_name')} />
+            <EditField label="Signatory title" value={draft.signatory_title} onChange={set('signatory_title')} />
+            <EditField label="Email" value={draft.company_email} onChange={set('company_email')} type="email" />
+            <EditField label="Phone" value={draft.contact_phone} onChange={set('contact_phone')} />
+            <EditField label="Street" value={draft.street} onChange={set('street')} />
+            <EditField label="City" value={draft.city} onChange={set('city')} />
+            <EditField label="Postcode" value={draft.postcode} onChange={set('postcode')} />
+            <EditField label="Country" value={draft.country} onChange={set('country')} />
+          </div>
+          {saveErr && <div style={{ fontSize: 12, color: 'var(--aq-red)' }}>{saveErr}</div>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="aq-btn aq-btn-primary" disabled={saving}
+              onClick={saveDetails} style={{ fontSize: 12, padding: '5px 11px' }}>
+              {saving ? 'Saving…' : 'Save details'}
+            </button>
+            <button type="button" className="aq-btn aq-btn-ghost" disabled={saving}
+              onClick={() => { setEditing(false); setSaveErr(''); }} style={{ fontSize: 12, padding: '5px 11px' }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={DETAIL_GRID}>
+            <Detail label="CR number" value={c.cr_number} missing />
+            <Detail label="VAT number" value={c.vat_number} missing />
+            <Detail label="Signatory" value={c.signatory_name} missing />
+            <Detail label="Signatory title" value={c.signatory_title} />
+            <Detail label="Contact" value={c.contact_name} />
+            <Detail label="Email" value={c.company_email || c.contact_email} />
+            <Detail label="Phone" value={c.contact_phone} />
+            <Detail label="Address" value={address} missing />
+          </div>
+          {canEdit && (
+            <div>
+              <button type="button" className="aq-btn aq-btn-secondary"
+                onClick={startEdit} style={{ fontSize: 12, padding: '5px 11px' }}>Edit details</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Standing payment terms: set once, and every campaign for this client
           inherits them unless the campaign sets its own. What dates the
