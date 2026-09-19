@@ -1,11 +1,18 @@
 'use client';
 
 /**
- * Finance -> Payments. Three sections over the money the ledgers track:
+ * Finance -> Payments. Four sections over the money the ledgers track:
  *
  *   All           every campaign with money in play
  *   Partial paid  part of the bill is in; a balance is still owed
+ *   Overdue       past its due date under the terms, still owed - the chase list
  *   Advanced      money paid in advance, before the campaign completed
+ *
+ * The Due column and the Overdue section come from the same `paymentSchedule`
+ * the money ledger uses, so "net 30" means one thing across the app. Due dates
+ * need the terms (net days / split), the delivery or planned date and the
+ * start; the vendor side carries none of those columns, so its balances show
+ * no due date - Overdue is a client-collection idea.
  *
  * Two sides, like the Data-view ledger: "Client owes" (Collection) and "We owe
  * the vendor" (Liability). Billed comes from the campaign rollup (sum of prices
@@ -24,7 +31,7 @@ import { usePmTaskCampaignRollup, selectAllRowsParallel, cachedFetch } from '@/h
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import {
-  buildPaymentRows, paymentSectionRows, paymentSectionCounts,
+  buildPaymentRows, paymentSectionRows, paymentSectionCounts, sortByDue,
   paginate, PAYMENT_SECTIONS, FINANCE_PAGE_SIZES,
   type CampaignMoney, type PaymentRow, type PaymentSectionKey,
 } from '@/lib/finance';
@@ -45,6 +52,10 @@ interface MoneyRow {
   vendor_advance_date: string | null;
   payment_terms: string | null;
   payment_split_pct: number | null;
+  payment_net_days: number | null;
+  due_date: string | null;
+  completed_at: string | null;
+  package_start_date: string | null;
 }
 
 function money(n: number): string {
@@ -119,7 +130,7 @@ export function FinancePayments({
     const rows = await cachedFetch(`financeMoney:${workspaceId}`, () => selectAllRowsParallel<MoneyRow>(
       'financePaymentsMoney',
       () => supabase.from('pm_tasks')
-        .select('id, task_name, title, brand_name, client_payment_status, client_payment_amount, client_advance_amount, client_advance_date, vendor_payment_amount, vendor_advance_amount, vendor_advance_date, payment_terms, payment_split_pct')
+        .select('id, task_name, title, brand_name, client_payment_status, client_payment_amount, client_advance_amount, client_advance_date, vendor_payment_amount, vendor_advance_amount, vendor_advance_date, payment_terms, payment_split_pct, payment_net_days, due_date, completed_at, package_start_date')
         .eq('workspace_id', workspaceId)
         .is('parent_task_id', null)
         .order('id', { ascending: true }),
@@ -149,6 +160,10 @@ export function FinancePayments({
           advanceDate: m?.client_advance_date ?? null,
           paymentTerms: m?.payment_terms ?? null,
           paymentSplitPct: m?.payment_split_pct ?? null,
+          paymentNetDays: m?.payment_net_days ?? null,
+          dueDate: m?.due_date ?? null,
+          deliveredOn: m?.completed_at ?? null,
+          startDate: m?.package_start_date ?? null,
         };
       }
       return {
@@ -163,11 +178,17 @@ export function FinancePayments({
       };
     });
     // A campaign nobody has priced is not a debt - it is unfinished work.
-    return buildPaymentRows(built.filter((c) => c.billed > 0 || Number(c.advance ?? 0) > 0));
+    // Today (UTC, like the rest of the app) is what judges a balance overdue.
+    const today = new Date().toISOString().slice(0, 10);
+    return buildPaymentRows(built.filter((c) => c.billed > 0 || Number(c.advance ?? 0) > 0), today);
   }, [campaigns, moneyById, side]);
 
   const counts = useMemo(() => paymentSectionCounts(rows), [rows]);
-  const sectioned = useMemo(() => paymentSectionRows(rows, section), [rows, section]);
+  const sectioned = useMemo(() => {
+    const inSection = paymentSectionRows(rows, section);
+    // The chase list reads top-down oldest-debt-first; the others keep their order.
+    return section === 'overdue' ? sortByDue(inSection) : inSection;
+  }, [rows, section]);
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return sectioned;
@@ -236,15 +257,16 @@ export function FinancePayments({
               <th className="num">Billed</th>
               <th className="num">Paid</th>
               <th className="num">Remaining</th>
+              <th>Due</th>
               <th className="num">Advance</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ padding: 8 }}><AqDrawingBlock label={'Loading payments\u2026'} /></td></tr>
+              <tr><td colSpan={7} style={{ padding: 8 }}><AqDrawingBlock label={'Loading payments\u2026'} /></td></tr>
             ) : paged.items.length === 0 ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--aq-text-muted)', padding: 18 }}>
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--aq-text-muted)', padding: 18 }}>
                 {rows.length === 0 ? 'Nothing with money in play yet.'
                   : section === 'partial' ? 'Nothing partially paid on this side.'
                   : section === 'advanced' ? 'No advances recorded on this side.'
@@ -266,6 +288,25 @@ export function FinancePayments({
                   <td className="num">{money(r.billed)}</td>
                   <td className="num">{money(r.paid)}</td>
                   <td className="num" style={{ color: r.remaining > 0 ? 'var(--aq-text)' : 'var(--aq-text-muted)' }}>{money(r.remaining)}</td>
+                  <td>
+                    {r.due ? (
+                      <>
+                        <span style={{
+                          color: r.overdue ? 'var(--aq-red, #dc2626)' : 'var(--aq-text)',
+                          fontWeight: r.overdue ? 700 : 400,
+                        }}>{r.due}</span>
+                        {r.overdue && r.daysLate ? (
+                          <div style={{ fontSize: 11, color: 'var(--aq-red, #dc2626)', fontWeight: 700 }}>
+                            {r.daysLate} day{r.daysLate === 1 ? '' : 's'} late
+                          </div>
+                        ) : r.dueBasis === 'planned' ? (
+                          <div style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>planned</div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span style={{ color: 'var(--aq-text-muted)' }}>-</span>
+                    )}
+                  </td>
                   <td className="num">
                     {r.advance > 0 ? money(r.advance) : <span style={{ color: 'var(--aq-text-muted)' }}>-</span>}
                     {r.expectedAdvance > 0 && r.advance < r.expectedAdvance ? (

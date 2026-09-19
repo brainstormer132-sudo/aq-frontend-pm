@@ -11,6 +11,8 @@
  * said no and finance has to decide what to do next, so it must stay visible.
  */
 
+import { paymentSchedule, type Basis } from './payment-schedule';
+
 function txt(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
 }
@@ -393,7 +395,7 @@ export function paginate<T>(items: T[], page: number, pageSize: number): Paged<T
 // ledger (plus the advance columns) by the caller; here we only decide which
 // section a row belongs to and what balance it still owes.
 
-export type PaymentSectionKey = 'all' | 'partial' | 'advanced';
+export type PaymentSectionKey = 'all' | 'partial' | 'overdue' | 'advanced';
 
 export interface PaymentSection {
   key: PaymentSectionKey;
@@ -401,21 +403,24 @@ export interface PaymentSection {
   blurb: string;
 }
 
-/** The finance payment sections, in order. All first. */
+/** The finance payment sections, in order. All first, the chase list next. */
 export const PAYMENT_SECTIONS: PaymentSection[] = [
   { key: 'all',      label: 'All',          blurb: 'Every campaign with money in play.' },
   { key: 'partial',  label: 'Partial paid', blurb: 'Part of the bill is in; a balance is still owed.' },
+  { key: 'overdue',  label: 'Overdue',      blurb: 'Past its due date under the payment terms, still owed. The chase list.' },
   { key: 'advanced', label: 'Advanced',     blurb: 'Paid in advance, before the campaign completed.' },
 ];
 
 /**
  * The bits of a row a section needs. A money-ledger LedgerRow satisfies
- * `state`; `advance` / `advanceDate` come from the advance columns (092).
+ * `state`; `advance` / `advanceDate` come from the advance columns (092);
+ * `overdue` from the payment schedule (past its due date and still owed).
  */
 export interface PaymentRowLike {
   state: 'paid' | 'partial' | 'unpaid';
   advance?: number | null;
   advanceDate?: string | null;
+  overdue?: boolean;
 }
 
 /** An advance was recorded on this row. */
@@ -427,6 +432,7 @@ export function hasAdvance(row: PaymentRowLike): boolean {
 export function inPaymentSection(row: PaymentRowLike, key: PaymentSectionKey): boolean {
   if (key === 'all') return true;
   if (key === 'partial') return txt(row?.state).toLowerCase() === 'partial';
+  if (key === 'overdue') return Boolean(row?.overdue);
   return hasAdvance(row); // 'advanced'
 }
 
@@ -437,7 +443,7 @@ export function paymentSectionRows<T extends PaymentRowLike>(rows: T[], key: Pay
 
 /** How many rows each section holds, for the section tab badges. */
 export function paymentSectionCounts(rows: PaymentRowLike[]): Record<PaymentSectionKey, number> {
-  const out = { all: 0, partial: 0, advanced: 0 } as Record<PaymentSectionKey, number>;
+  const out = { all: 0, partial: 0, overdue: 0, advanced: 0 } as Record<PaymentSectionKey, number>;
   for (const s of PAYMENT_SECTIONS) out[s.key] = paymentSectionRows(rows ?? [], s.key).length;
   return out;
 }
@@ -511,8 +517,12 @@ export interface CampaignMoney {
   status?: string | null;         // recorded pay status (client side); may be blank
   advance?: number | null;        // recorded advance on this side (092)
   advanceDate?: string | null;
-  paymentTerms?: string | null;   // client contract terms (drives expectedAdvance)
+  paymentTerms?: string | null;   // client contract terms (drives expectedAdvance + due date)
   paymentSplitPct?: number | null;
+  paymentNetDays?: number | null; // "net N" — days after delivery the balance is due
+  dueDate?: string | null;        // the campaign's planned finish
+  deliveredOn?: string | null;    // when it actually finished (the only 'actual' basis)
+  startDate?: string | null;      // when it starts — what "in advance" is ahead of
 }
 
 /** A Finance payment row: the section-placement fields plus what the table shows. */
@@ -527,14 +537,28 @@ export interface PaymentRow extends PaymentRowLike {
   advanceDate: string | null;
   expectedAdvance: number;
   state: 'paid' | 'partial' | 'unpaid';
+  /** The soonest still-owed instalment's due date, from the terms. Null with no terms/date. */
+  due: string | null;
+  /** Whether `due` is a real (delivered) date, a projection, or unknown. */
+  dueBasis: Basis;
+  /** Past its due date and still owed. */
+  overdue: boolean;
+  /** Days late on the worst instalment; null when nothing is late. */
+  daysLate: number | null;
 }
 
 /**
  * Build the Finance payment rows for one side. State is the recorded status
  * when there is one (it is somebody's judgement and wins, like the ledger),
  * else worked out from the amounts. Remaining is billed - paid, floored.
+ *
+ * The due date, and whether the balance is overdue, come from the SAME
+ * `paymentSchedule` the money ledger and the campaign page already use — one
+ * place decides what "net 30" means, so the Collection screen, the ledger and
+ * the payments cron can never disagree. `today` judges overdue; omit it and the
+ * dates still show but nothing reads as late (the ledger's rule).
  */
-export function buildPaymentRows(rows: CampaignMoney[]): PaymentRow[] {
+export function buildPaymentRows(rows: CampaignMoney[], today = ''): PaymentRow[] {
   return (rows ?? []).map((c): PaymentRow => {
     const billed = num(c.billed);
     const paid = num(c.paid);
@@ -547,6 +571,17 @@ export function buildPaymentRows(rows: CampaignMoney[]): PaymentRow[] {
     const byAmount = payStateOf(billed, paid);
     const state: 'paid' | 'partial' | 'unpaid' =
       byAmount === 'paid' ? 'paid' : (normalizePayState(c.status) ?? byAmount);
+    const sched = paymentSchedule({
+      terms: c.paymentTerms ?? null,
+      splitPct: c.paymentSplitPct ?? null,
+      netDays: c.paymentNetDays ?? null,
+      amount: billed,
+      paid,
+      deliveredOn: c.deliveredOn ?? null,
+      dueDate: c.dueDate ?? null,
+      startDate: c.startDate ?? null,
+      today,
+    });
     return {
       taskId: txt(c.taskId),
       title: txt(c.title) || txt(c.brand) || 'Untitled campaign',
@@ -558,6 +593,35 @@ export function buildPaymentRows(rows: CampaignMoney[]): PaymentRow[] {
       advanceDate: txt(c.advanceDate) || null,
       expectedAdvance: expectedAdvance(billed, c.paymentTerms, c.paymentSplitPct),
       state,
+      due: sched.nextDue,
+      dueBasis: sched.nextBasis,
+      overdue: sched.overdue,
+      daysLate: sched.worstDaysLate,
     };
   }).filter((r) => r.taskId);
+}
+
+/**
+ * Order a chase list: most overdue first, then the soonest due, then rows with
+ * no date. Pure and stable — ties keep the caller's order. This is what the
+ * Overdue section sorts by so the oldest debt is at the top.
+ */
+export function sortByDue<T extends { due?: string | null; daysLate?: number | null }>(rows: T[]): T[] {
+  const rank = (r: T): number => {
+    const late = r?.daysLate;
+    if (typeof late === 'number' && late > 0) return -1_000_000 + -late; // most late first
+    return 0;
+  };
+  return (rows ?? [])
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => {
+      const ra = rank(a.r), rb = rank(b.r);
+      if (ra !== rb) return ra - rb;
+      const da = txt(a.r?.due), db = txt(b.r?.due);
+      if (da && db && da !== db) return da < db ? -1 : 1; // soonest date first
+      if (da && !db) return -1;                            // dated before undated
+      if (!da && db) return 1;
+      return a.i - b.i;                                    // stable
+    })
+    .map((x) => x.r);
 }

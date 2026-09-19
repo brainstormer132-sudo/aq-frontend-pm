@@ -1,7 +1,7 @@
 import {
   PAYMENT_SECTIONS, hasAdvance, inPaymentSection, paymentSectionRows,
   paymentSectionCounts, paymentRemaining, payStateOf,
-  normalizePayState, expectedAdvance, buildPaymentRows,
+  normalizePayState, expectedAdvance, buildPaymentRows, sortByDue,
 } from '../.test-build/finance.js';
 
 let pass = 0, fail = 0;
@@ -12,9 +12,10 @@ const eq = (name, got, want) => {
 };
 const ok = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`FAIL ${name}`); } };
 
-// Payment sections: All / Partial paid / Advanced
+// Payment sections: All / Partial paid / Overdue / Advanced
 {
-  eq('three sections, All first', PAYMENT_SECTIONS.map((s) => s.key), ['all', 'partial', 'advanced']);
+  eq('four sections, All first, Overdue before Advanced',
+    PAYMENT_SECTIONS.map((s) => s.key), ['all', 'partial', 'overdue', 'advanced']);
 
   const rows = [
     { state: 'paid',    advance: 0 },
@@ -36,7 +37,11 @@ const ok = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`F
 
   ok('hasAdvance reads the amount', hasAdvance({ advance: 5 }) && !hasAdvance({ advance: 0 }) && !hasAdvance({}));
 
-  eq('section counts', paymentSectionCounts(rows), { all: 5, partial: 2, advanced: 2 });
+  eq('section counts', paymentSectionCounts(rows), { all: 5, partial: 2, overdue: 0, advanced: 2 });
+
+  ok('overdue row is in overdue', inPaymentSection({ state: 'unpaid', overdue: true }, 'overdue'));
+  ok('non-overdue row is NOT in overdue', !inPaymentSection({ state: 'unpaid', overdue: false }, 'overdue'));
+  ok('missing overdue flag is not overdue', !inPaymentSection({ state: 'unpaid' }, 'overdue'));
 }
 
 // Remaining balance + amount-derived state
@@ -89,7 +94,7 @@ const ok = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`F
   eq('expected advance from split', rows[0].expectedAdvance, 40000);
   eq('blank status derives from amounts', rows[1].state, 'unpaid');
   eq('title falls back to brand', buildPaymentRows([{ taskId: 't', brand: 'B', billed: 1, paid: 0 }])[0].title, 'B');
-  eq('sections over built rows', paymentSectionCounts(rows), { all: 2, partial: 1, advanced: 1 });
+  eq('sections over built rows', paymentSectionCounts(rows), { all: 2, partial: 1, overdue: 0, advanced: 1 });
 }
 
 // Overpayment (and a stale recorded status) must read as paid, not partial.
@@ -130,6 +135,59 @@ const ok = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`F
   // Overpaid campaigns land in the paid-not-partial bucket, so the Partial
   // section no longer collects them.
   eq('overpaid not in partial', paymentSectionRows(over, 'partial').length, 0);
+}
+
+// Due date + overdue, from the payment schedule (net terms, delivered in the past)
+{
+  const today = '2026-03-01';
+  const built = buildPaymentRows([
+    // net 30, delivered 2026-01-01, unpaid -> balance was due 2026-01-31, overdue by March.
+    { taskId: 'late', billed: 100000, paid: 0,
+      paymentTerms: 'net_days', paymentNetDays: 30, deliveredOn: '2026-01-01' },
+    // same terms but paid in full -> nothing owed, so not overdue and no next due.
+    { taskId: 'paid', billed: 100000, paid: 100000,
+      paymentTerms: 'net_days', paymentNetDays: 30, deliveredOn: '2026-01-01' },
+    // no terms at all -> no due date, never overdue.
+    { taskId: 'noterms', billed: 100000, paid: 0 },
+  ], today);
+  const by = Object.fromEntries(built.map((r) => [r.taskId, r]));
+
+  eq('a net-30 bill delivered in January is due 2026-01-31', by.late.due, '2026-01-31');
+  ok('and it reads overdue by March', by.late.overdue === true);
+  ok('with a positive days-late count', typeof by.late.daysLate === 'number' && by.late.daysLate > 0);
+  ok('the delivered date makes the basis actual', by.late.dueBasis === 'actual');
+
+  ok('a fully-paid bill is not overdue', by.paid.overdue === false);
+  eq('and has no next due', by.paid.due, null);
+
+  ok('no terms means no due date', by.noterms.due === null && by.noterms.overdue === false);
+
+  eq('only the unpaid net-30 row is in the overdue section',
+    paymentSectionRows(built, 'overdue').map((r) => r.taskId), ['late']);
+
+  // Omitting today: dates may still show, but nothing is judged late.
+  const noToday = buildPaymentRows([
+    { taskId: 'x', billed: 100000, paid: 0, paymentTerms: 'net_days', paymentNetDays: 30, deliveredOn: '2026-01-01' },
+  ]);
+  ok('with no today, nothing reads as overdue', noToday[0].overdue === false);
+}
+
+// sortByDue: most-late first, then soonest date, then undated, stably.
+{
+  const ordered = sortByDue([
+    { taskId: 'a', due: '2026-05-01', daysLate: null },
+    { taskId: 'b', due: '2026-01-01', daysLate: 40 },
+    { taskId: 'c', due: null, daysLate: null },
+    { taskId: 'd', due: '2026-02-01', daysLate: 10 },
+    { taskId: 'e', due: '2026-03-01', daysLate: null },
+  ]).map((r) => r.taskId);
+  eq('most overdue first, then soonest due, undated last', ordered, ['b', 'd', 'e', 'a', 'c']);
+
+  eq('empty is empty', sortByDue([]), []);
+  eq('stable on ties', sortByDue([
+    { taskId: 'p', due: '2026-04-01', daysLate: null },
+    { taskId: 'q', due: '2026-04-01', daysLate: null },
+  ]).map((r) => r.taskId), ['p', 'q']);
 }
 
 console.log(`pay-sections: ${pass} passed, ${fail} failed`);
