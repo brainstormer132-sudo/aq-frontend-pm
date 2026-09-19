@@ -46,11 +46,15 @@
   --aq-sidebar-active:     #1f8f4f;
   --aq-sidebar-border:     #1c333a;
 
-  /* Status */
-  --aq-success: #16a34a;
-  --aq-warning: #ca8a04;
-  --aq-error:   #dc2626;
-  --aq-info:    #0284c7;
+  /* Status — the legacy names, kept as aliases of the one semantic palette
+     below so every older screen speaks the same vocabulary and, unlike the
+     fixed hexes these were, adapts to dark mode. CSS custom properties resolve
+     where they are used, so referencing the canonical tokens (defined further
+     down) here is fine. */
+  --aq-success: var(--aq-green);
+  --aq-warning: var(--aq-amber);
+  --aq-error:   var(--aq-red);
+  --aq-info:    var(--aq-blue);
 
   /* Effects */
   --aq-shadow-sm:    0 1px 2px rgba(28, 25, 23, 0.05);
@@ -89,6 +93,12 @@
   --aq-blue-bg:       #dbeafe;
   --aq-blue-bg-soft:  #e0f2fe;
   --aq-blue:          #1e40af;
+  /* Violet — a deliberate exception: an adjustment, a credit. Was hardcoded
+     (#ede9fe/#5b21b6) at every site and so never adapted to dark mode. */
+  --aq-violet-bg:     #ede9fe;
+  --aq-violet-border: #ddd6fe;
+  --aq-violet:        #7c3aed;
+  --aq-violet-strong: #5b21b6;
   --aq-gray:          #6b7280;
   --aq-gray-bg:       #f3f4f6;
   --aq-ink-soft:      #2c2825;
@@ -156,6 +166,10 @@ html.dark {
   --aq-blue-bg:       #172a4a;
   --aq-blue-bg-soft:  #10263a;
   --aq-blue:          #93c5fd;
+  --aq-violet-bg:     #2a1d4a;
+  --aq-violet-border: #4c3a7a;
+  --aq-violet:        #c4b5fd;
+  --aq-violet-strong: #ddd6fe;
   --aq-gray:          #9ca3af;
   --aq-gray-bg:       #24272a;
   --aq-ink-soft:      #3a3f43;

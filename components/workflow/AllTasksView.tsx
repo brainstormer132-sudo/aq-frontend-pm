@@ -444,7 +444,7 @@ function Td({
 const STAGE_STYLE: Record<string, { bg: string; fg: string }> = {
   pending_marketing: { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
   in_progress:       { bg: '#e0e7ff', fg: '#3730a3' },
-  awaiting_review:   { bg: '#ede9fe', fg: '#5b21b6' },
+  awaiting_review:   { bg: 'var(--aq-violet-bg)', fg: 'var(--aq-violet-strong)' },
   completed:         { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
 };
 

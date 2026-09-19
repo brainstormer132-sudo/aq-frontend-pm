@@ -57,7 +57,7 @@ export const TONE: Record<ToneName, { bg: string; fg: string; edge: string }> = 
   amber:  { bg: 'var(--aq-amber-bg)',                fg: 'var(--aq-amber-strong)',              edge: '#f59e0b' },
   green:  { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)',              edge: 'var(--aq-accent)' },
   red:    { bg: 'var(--aq-red-bg)',                fg: 'var(--aq-red-strong)',              edge: '#ef4444' },
-  violet: { bg: '#ede9fe',                fg: '#5b21b6',              edge: '#8b5cf6' },
+  violet: { bg: 'var(--aq-violet-bg)',    fg: 'var(--aq-violet-strong)', edge: 'var(--aq-violet)' },
 };
 
 /**

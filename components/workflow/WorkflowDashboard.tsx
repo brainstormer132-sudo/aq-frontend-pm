@@ -384,10 +384,13 @@ export function WorkflowDashboard({
 
 /* ─────────────────────────────────────────────────────────────── */
 
+// The severities speak the one vocabulary: urgent is red (a problem), soon is
+// amber (waiting), missing-data is grey (nothing entered). Tokens, not fixed
+// hexes, so they match the rest of the app and adapt to dark mode.
 const SEVERITY_STYLE: Record<Severity, { dot: string; label: string }> = {
-  urgent: { dot: '#dc2626', label: 'Urgent' },
-  soon:   { dot: '#ca8a04', label: 'Soon' },
-  tidy:   { dot: '#a8a29e', label: 'Missing data' },
+  urgent: { dot: 'var(--aq-red)', label: 'Urgent' },
+  soon:   { dot: 'var(--aq-amber)', label: 'Soon' },
+  tidy:   { dot: 'var(--aq-gray)', label: 'Missing data' },
 };
 
 function AttentionGroupRow({
