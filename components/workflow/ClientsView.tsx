@@ -1,12 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   usePendingClients,
   selectAllRows,
   useAllClientBrands,
   updateClientTerms,
   updateClientDetails,
+  useClientFiles,
+  uploadClientFile,
+  deleteClientFile,
+  groupClientFilesBySlot,
+  getClientFileDownloadUrl,
+  type ClientFileRow,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { TermsField } from './campaign/track';
@@ -595,6 +601,9 @@ export function ClientsView({
               <input className="aq-input" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
             </Field>
           </div>
+          {editId
+            ? <ClientDocs clientId={editId} canEdit={canEdit} />
+            : <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 14 }}>Save the client first, then re-open to attach CR / VAT / other documents.</p>}
           <Actions busy={busy} disabled={!form.company_name.trim()} submitLabel={editId ? 'Save' : 'Add Client'} onCancel={() => { setOpen(false); setEditId(null); }} onSubmit={submit} />
         </Modal>
       )}
@@ -908,6 +917,122 @@ function BrandManagerInline({ clientId }: { clientId: string }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+
+/* ── Client proof documents (migration 102): labeled slots, upload/download/delete ── */
+
+const CLIENT_DOC_SLOTS: { slot: string; title: string }[] = [
+  { slot: 'cr', title: 'CR document (Commercial Registration)' },
+  { slot: 'vat', title: 'VAT certificate' },
+  { slot: 'national_address', title: 'National address' },
+  { slot: 'other', title: 'Other documents' },
+];
+
+function ClientDocs({ clientId, canEdit }: { clientId: string; canEdit: boolean }) {
+  return (
+    <div style={{ marginTop: 18, borderTop: '1px solid var(--aq-border)', paddingTop: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>Documents</div>
+      <div style={{ fontSize: 11, color: 'var(--aq-text-muted)', marginBottom: 12 }}>
+        Upload proof for each detail — CR, VAT, and more. Max 25 MB per file.
+      </div>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {CLIENT_DOC_SLOTS.map((s) => (
+          <ClientSlotUploader key={s.slot} clientId={clientId} slot={s.slot} title={s.title} canEdit={canEdit} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ClientSlotUploader({ clientId, slot, title, canEdit }: {
+  clientId: string; slot: string; title: string; canEdit: boolean;
+}) {
+  const { files, refetch } = useClientFiles(clientId);
+  const [uploading, setUploading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [err, setErr] = useState('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const filesInSlot = useMemo(() => groupClientFilesBySlot(files).get(slot) ?? [], [files, slot]);
+
+  const onChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    if (!picked.length) return;
+    e.target.value = '';
+    setUploading(true); setErr('');
+    try {
+      for (const f of picked) await uploadClientFile(clientId, f, slot);
+      await refetch();
+    } catch (ex: any) { setErr(ex?.message ?? String(ex)); }
+    finally { setUploading(false); }
+  };
+
+  const onDownload = async (file: ClientFileRow) => {
+    setBusyId(file.id); setErr('');
+    try {
+      const url = await getClientFileDownloadUrl(file);
+      const a = document.createElement('a');
+      a.href = url; a.download = file.file_name; a.target = '_blank'; a.rel = 'noopener';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch (ex: any) { setErr(ex?.message ?? String(ex)); }
+    finally { setBusyId(null); }
+  };
+
+  const onDelete = async (file: ClientFileRow) => {
+    if (!window.confirm(`Delete "${file.file_name}"? This cannot be undone.`)) return;
+    setBusyId(file.id); setErr('');
+    try { await deleteClientFile(file); await refetch(); }
+    catch (ex: any) { setErr(ex?.message ?? String(ex)); }
+    finally { setBusyId(null); }
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--aq-border)', borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 12.5 }}>
+          {title}
+          {filesInSlot.length > 0 && (
+            <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--aq-text-muted)' }}>
+              {filesInSlot.length} file{filesInSlot.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
+        {canEdit && (
+          <button type="button" className="aq-btn aq-btn-secondary"
+            style={{ fontSize: 12, padding: '4px 10px' }}
+            disabled={uploading} onClick={() => inputRef.current?.click()}>
+            {uploading ? 'Uploading…' : 'Upload'}
+          </button>
+        )}
+        <input ref={inputRef} type="file" multiple style={{ display: 'none' }} onChange={onChosen} />
+      </div>
+      {filesInSlot.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 6, fontStyle: 'italic' }}>
+          No file yet.
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
+          {filesInSlot.map((f) => (
+            <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12 }}>
+              <button type="button" onClick={() => onDownload(f)} disabled={busyId === f.id}
+                style={{ background: 'none', border: 'none', color: 'var(--aq-accent)', cursor: 'pointer', padding: 0, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '75%' }}
+                title={f.file_name}>
+                {f.file_name}
+              </button>
+              {canEdit && (
+                <button type="button" onClick={() => onDelete(f)} disabled={busyId === f.id}
+                  style={{ background: 'none', border: 'none', color: 'var(--aq-red)', cursor: 'pointer', fontSize: 11, padding: 0 }}>
+                  Delete
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {err && <div style={{ fontSize: 11, color: 'var(--aq-red)', marginTop: 6 }}>{err}</div>}
     </div>
   );
 }

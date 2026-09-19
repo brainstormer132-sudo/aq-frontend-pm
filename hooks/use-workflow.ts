@@ -4875,6 +4875,132 @@ export async function getVendorFileDownloadUrl(
 }
 
 
+// ─── Client proof documents (migration 102) ────────────────────────────
+// Same shape as vendor_files. Storage bucket `client-files`, path
+// `{client_id}/{slot|_general}/{rand}-{filename}`. Slots: 'cr', 'vat',
+// 'national_address', 'other'.
+
+export interface ClientFileRow {
+  id: string;
+  client_id: string;
+  storage_path: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  slot: string;
+}
+
+const CLIENT_FILES_BUCKET = 'client-files';
+export const CLIENT_FILE_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+
+/** List a client's files, newest first. Keyed on the client, so guarded. */
+export function useClientFiles(clientId: string | null) {
+  const [files, setFiles] = useState<ClientFileRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetch = useCallback(async () => {
+    if (!clientId) { setFiles([]); setLoading(false); return; }
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('client_files')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('uploaded_at', { ascending: false });
+    if (error) logSbError('useClientFiles', error, { clientId });
+    setFiles((data || []) as ClientFileRow[]);
+    setLoading(false);
+  }, [clientId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { files, loading, refetch: fetch };
+}
+
+/** Upload one file to a client's document slot. Returns the created row. */
+export async function uploadClientFile(
+  clientId: string,
+  file: File,
+  slot: string = '',
+): Promise<ClientFileRow> {
+  if (file.size > CLIENT_FILE_MAX_BYTES) {
+    throw new Error(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max is 25 MB.`);
+  }
+  const rand = crypto.randomUUID().slice(0, 8);
+  const safeName = (file.name || 'file')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 120);
+  const safeSlot = (slot || '_general').replace(/[\\/:*?"<>|]/g, '_');
+  const storagePath = `${clientId}/${safeSlot}/${rand}-${safeName}`;
+
+  const { error: uploadErr } = await supabase
+    .storage
+    .from(CLIENT_FILES_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false,
+    });
+  if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
+
+  const { data: userResp } = await supabase.auth.getUser();
+  const uploadedBy = userResp?.user?.id ?? null;
+
+  const { data, error: insertErr } = await supabase
+    .from('client_files')
+    .insert({
+      client_id: clientId,
+      storage_path: storagePath,
+      file_name: file.name,
+      file_size: file.size,
+      mime_type: file.type || 'application/octet-stream',
+      uploaded_by: uploadedBy,
+      slot,
+    })
+    .select()
+    .single();
+  if (insertErr) throw new Error(`Saved file but couldn't index it: ${insertErr.message}`);
+  return data as ClientFileRow;
+}
+
+/** Group a client's files by slot, each newest-first. */
+export function groupClientFilesBySlot(files: ClientFileRow[]): Map<string, ClientFileRow[]> {
+  const out = new Map<string, ClientFileRow[]>();
+  for (const f of files) {
+    const key = f.slot ?? '';
+    const arr = out.get(key);
+    if (arr) arr.push(f); else out.set(key, [f]);
+  }
+  for (const arr of out.values()) {
+    arr.sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at));
+  }
+  return out;
+}
+
+/** Delete a client file: storage object + metadata row (best-effort storage). */
+export async function deleteClientFile(file: ClientFileRow): Promise<void> {
+  const { error: storageErr } = await supabase
+    .storage.from(CLIENT_FILES_BUCKET).remove([file.storage_path]);
+  if (storageErr) logSbError('deleteClientFile.storage', storageErr, { path: file.storage_path });
+  const { error: rowErr } = await supabase.from('client_files').delete().eq('id', file.id);
+  if (rowErr) throw new Error(`Could not delete file row: ${rowErr.message}`);
+}
+
+/** Short-lived signed URL to download a client file. */
+export async function getClientFileDownloadUrl(
+  file: ClientFileRow,
+  expirySeconds = 600,
+): Promise<string> {
+  const { data, error } = await supabase
+    .storage.from(CLIENT_FILES_BUCKET)
+    .createSignedUrl(file.storage_path, expirySeconds, { download: file.file_name });
+  if (error || !data?.signedUrl) {
+    throw new Error(`Could not create download link: ${error?.message ?? 'unknown error'}`);
+  }
+  return data.signedUrl;
+}
+
+
 /**
  * A licence-holder organization (089). Talent under an org licence link to it
  * via vendors.org_id; on a vendor contract the org is the party and the talent
