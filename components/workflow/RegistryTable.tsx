@@ -198,7 +198,7 @@ export function Confirm({
 
 const PORTAL_STYLE: Record<PortalState, { bg: string; fg: string }> = {
   active:  { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
-  invited: { bg: '#e0e7ff', fg: '#3730a3' },
+  invited: { bg: 'var(--aq-blue-bg)', fg: 'var(--aq-blue)' },
   none:    { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)' },
 };
 

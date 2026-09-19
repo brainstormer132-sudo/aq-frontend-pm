@@ -335,7 +335,7 @@ function StatCard({
 }) {
   const toneColor =
     tone === 'info' ? 'var(--aq-accent)'
-    : tone === 'good' ? '#16a34a'
+    : tone === 'good' ? 'var(--aq-green)'
     : tone === 'warn' ? 'var(--aq-amber)'
     : 'var(--aq-text)';
   return (

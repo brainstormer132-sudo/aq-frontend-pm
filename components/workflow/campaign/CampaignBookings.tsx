@@ -80,7 +80,7 @@ function bookingPlatforms(sub: any): string[] {
 
 /** A colour per status, for the little dot on each group heading. */
 const STATUS_DOT: Record<string, string> = {
-  pending: '#d97706', on_hold: 'var(--aq-gray)', done: '#16a34a', cancelled: 'var(--aq-red)',
+  pending: 'var(--aq-amber)', on_hold: 'var(--aq-gray)', done: 'var(--aq-green)', cancelled: 'var(--aq-red)',
 };
 
 

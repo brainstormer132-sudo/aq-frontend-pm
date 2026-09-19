@@ -475,7 +475,7 @@ function Td({
 
 const STATUS_STYLE: Record<ContractStatus, { bg: string; fg: string }> = {
   pending:   { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
-  approved:  { bg: '#e0e7ff', fg: '#3730a3' },
+  approved:  { bg: 'var(--aq-blue-bg)', fg: 'var(--aq-blue)' },
   generated: { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
   rejected:  { bg: 'var(--aq-red-bg)', fg: 'var(--aq-red)' },
   cancelled: { bg: 'var(--aq-bg-sunken)', fg: 'var(--aq-text-muted)' },
@@ -497,8 +497,8 @@ function KindPill({ kind, label }: { kind: ContractKind; label: string }) {
     <span style={{
       display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
       textTransform: 'uppercase', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap',
-      background: kind === 'vendor' ? '#eef2ff' : 'var(--aq-green-bg-soft)',
-      color: kind === 'vendor' ? '#3730a3' : 'var(--aq-green-strong)',
+      background: kind === 'vendor' ? 'var(--aq-blue-bg)' : 'var(--aq-green-bg-soft)',
+      color: kind === 'vendor' ? 'var(--aq-blue)' : 'var(--aq-green-strong)',
     }}>{label}</span>
   );
 }

@@ -371,7 +371,7 @@ function Row({ row, today, href, onOpen }: {
             aria-hidden
             style={{
               width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: late ? 'var(--aq-red)' : todayish ? '#d97706' : 'transparent',
+              background: late ? 'var(--aq-red)' : todayish ? 'var(--aq-amber)' : 'transparent',
             }}
           />
           {href ? (
@@ -443,7 +443,7 @@ function Td({
 
 const STAGE_STYLE: Record<string, { bg: string; fg: string }> = {
   pending_marketing: { bg: 'var(--aq-amber-bg)', fg: 'var(--aq-amber-strong)' },
-  in_progress:       { bg: '#e0e7ff', fg: '#3730a3' },
+  in_progress:       { bg: 'var(--aq-blue-bg)', fg: 'var(--aq-blue)' },
   awaiting_review:   { bg: 'var(--aq-violet-bg)', fg: 'var(--aq-violet-strong)' },
   completed:         { bg: 'var(--aq-accent-light)', fg: 'var(--aq-green-strong)' },
 };

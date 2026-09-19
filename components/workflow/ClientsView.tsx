@@ -531,8 +531,8 @@ export function ClientsView({
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
                 <ImportStat label="Scanned" value={importResult.scanned} />
-                <ImportStat label="Created" value={importResult.created} accent="#16a34a" />
-                <ImportStat label="Updated" value={importResult.updated} accent="#2563eb" />
+                <ImportStat label="Created" value={importResult.created} accent="var(--aq-green)" />
+                <ImportStat label="Updated" value={importResult.updated} accent="var(--aq-blue)" />
                 <ImportStat label="Skipped" value={importResult.skipped} accent="var(--aq-gray)" />
               </div>
               {importResult.errors.length > 0 && (
