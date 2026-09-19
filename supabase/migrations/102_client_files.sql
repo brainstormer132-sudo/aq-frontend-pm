@@ -47,6 +47,9 @@ create policy "client_files scoped read" on public.client_files
 create policy "client_files staff write" on public.client_files
   using (public.is_staff()) with check (public.is_staff());
 
+-- Base table privileges (RLS still gates rows). Mirrors vendor_files.
+grant select, insert, update, delete on public.client_files to anon, authenticated, service_role;
+
 -- --- 3. Storage bucket `client-files` ----------------------------------
 insert into storage.buckets (id, name, public)
 values ('client-files', 'client-files', false)

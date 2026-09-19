@@ -4767,14 +4767,13 @@ export async function uploadVendorFile(
   // Build a collision-resistant storage path while keeping the original
   // filename visible in the URL (helps with debugging Supabase Studio).
   const rand = crypto.randomUUID().slice(0, 8);
-  const safeName = (file.name || 'file')
-    .replace(/[\\/:*?"<>|]/g, '_')   // strip OS-illegal chars
-    .replace(/\s+/g, '_')
-    .slice(0, 120);
+  // Storage keys must be ASCII-safe (non-ASCII like Arabic is rejected).
+  let safeName = (file.name || 'file').replace(/[^A-Za-z0-9._-]/g, '_').replace(/_+/g, '_').slice(0, 120);
+  if (!/[A-Za-z0-9]/.test(safeName)) safeName = 'file';
   // Slots can contain a colon (bank:7), which is illegal on some
   // storage backends. Normalize to an underscore so the storage layer
   // never barfs and we can still rebuild the slot from the DB column.
-  const safeSlot = (slot || '_general').replace(/[\\/:*?"<>|]/g, '_');
+  const safeSlot = (slot || '_general').replace(/[^A-Za-z0-9._-]/g, '_');
   const storagePath = `${vendorId}/${safeSlot}/${rand}-${safeName}`;
 
   // 1) push the bytes to storage
@@ -4927,11 +4926,12 @@ export async function uploadClientFile(
     throw new Error(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max is 25 MB.`);
   }
   const rand = crypto.randomUUID().slice(0, 8);
-  const safeName = (file.name || 'file')
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 120);
-  const safeSlot = (slot || '_general').replace(/[\\/:*?"<>|]/g, '_');
+  // Storage keys must be ASCII-safe — Arabic (and other non-ASCII) names
+  // are rejected as an "Invalid key". Strip to [A-Za-z0-9._-] for the path;
+  // the real (Arabic) name is kept in the file_name column for display.
+  let safeName = (file.name || 'file').replace(/[^A-Za-z0-9._-]/g, '_').replace(/_+/g, '_').slice(0, 120);
+  if (!/[A-Za-z0-9]/.test(safeName)) safeName = 'file';
+  const safeSlot = (slot || '_general').replace(/[^A-Za-z0-9._-]/g, '_');
   const storagePath = `${clientId}/${safeSlot}/${rand}-${safeName}`;
 
   const { error: uploadErr } = await supabase
