@@ -57,19 +57,28 @@ export interface ExpiryCandidate {
   state: 'expired' | 'soon';
 }
 
-/** An ISO calendar day (`YYYY-MM-DD`) or null if it cannot be read as a date. */
+/**
+ * An ISO calendar day (`YYYY-MM-DD`) or null if it cannot be read as a date.
+ *
+ * Parsed and read back in UTC (the trailing `Z`). Parsing `...T00:00:00` as
+ * local time and then reading it back with `toISOString()` shifts the day for
+ * any machine east of Greenwich — the register runs from Riyadh (UTC+3), where
+ * local midnight is the previous day in UTC — so a CR dated the 10th came back
+ * as the 9th. Everything here stays in UTC, which is also the day the cron and
+ * the rest of the app reckon by (`new Date().toISOString().slice(0,10)`).
+ */
 function isoDay(v?: string | null): string | null {
   const s = String(v ?? '').trim();
   if (!s) return null;
-  const d = new Date(`${s.slice(0, 10)}T00:00:00`);
+  const d = new Date(`${s.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
 }
 
-/** Whole days from `fromDay` to `toDay` (both ISO); positive when `toDay` is later. */
+/** Whole days from `fromDay` to `toDay` (both ISO, reckoned in UTC); positive when `toDay` is later. */
 function dayDiff(fromDay: string, toDay: string): number {
-  const a = new Date(`${fromDay}T00:00:00`).getTime();
-  const b = new Date(`${toDay}T00:00:00`).getTime();
+  const a = new Date(`${fromDay}T00:00:00Z`).getTime();
+  const b = new Date(`${toDay}T00:00:00Z`).getTime();
   return Math.round((b - a) / 86_400_000);
 }
 
