@@ -75,7 +75,11 @@ export function payLabel(key: PayKey, side: Side): string {
 }
 
 export function payTone(key: PayKey): Tone {
-  return key === 'paid' ? 'ok' : key === 'partial' ? 'wait' : 'bad';
+  // Unpaid is grey, not red: a bill on its terms that simply hasn't been paid
+  // yet is a neutral state, the same as the campaign vocabulary's grey. Red is
+  // kept for money going backwards (a refund/chargeback), and an unpaid bill
+  // that is genuinely late is flagged red on its own axis by `overdue`.
+  return key === 'paid' ? 'ok' : key === 'partial' ? 'wait' : 'none';
 }
 
 /* ── A row ──────────────────────────────────────────────────────── */

@@ -9,7 +9,7 @@
 import { clientPaymentState, contractState, moneyByMonth, isComplete } from '../.test-build/dashboard-data.js';
 import {
   clientLedger, vendorLedger, sortLedger, filterLedger, EMPTY_LEDGER_FILTER,
-  LEDGER_COLUMNS, ledgerCsv,
+  LEDGER_COLUMNS, ledgerCsv, payTone,
 } from '../.test-build/money-ledger.js';
 import { totalsOf, groupByAdType, contractDetails, lineNet } from '../.test-build/ad-lines.js';
 import { contractPlan } from '../.test-build/vendor-contracts.js';
@@ -59,6 +59,15 @@ eq('partial is partial',
   clientPaymentState({ client_payment_status: 'partial' }).key, 'partial');
 eq('nothing recorded is outstanding',
   clientPaymentState({ client_payment_status: null }).key, 'unpaid');
+
+// Unpaid wears grey, not red: red is reserved for money going backwards, and a
+// late bill is flagged separately by `overdue`. paid stays green, partial amber.
+eq('unpaid is grey (tone none)', clientPaymentState({ client_payment_status: 'unpaid' }).tone, 'none');
+eq('paid is green (ok)', clientPaymentState({ client_payment_status: 'paid' }).tone, 'ok');
+eq('partial is amber (wait)', clientPaymentState({ client_payment_status: 'partial' }).tone, 'wait');
+eq('payTone: unpaid is none', payTone('unpaid'), 'none');
+eq('payTone: paid is ok', payTone('paid'), 'ok');
+eq('payTone: partial is wait', payTone('partial'), 'wait');
 
 // Same shape, same bug: 'unsigned'.includes('signed').
 eq('unsigned is not signed', contractState({ contract_status: 'unsigned' }).key, 'pending');

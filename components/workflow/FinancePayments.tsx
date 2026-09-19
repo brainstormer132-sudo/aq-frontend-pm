@@ -65,7 +65,9 @@ function money(n: number): string {
 const STATE_BADGE: Record<'paid' | 'partial' | 'unpaid', string> = {
   paid: 'aq-badge-success',
   partial: 'aq-badge-warning',
-  unpaid: 'aq-badge-error',
+  // Grey, not red: unpaid on-terms is neutral. The Overdue section and the Due
+  // column carry the red "chase this" signal for a balance that is actually late.
+  unpaid: 'aq-badge-muted',
 };
 
 export function FinancePayments({

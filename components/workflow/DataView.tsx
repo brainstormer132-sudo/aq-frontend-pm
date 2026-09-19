@@ -56,11 +56,13 @@ const BOARD_TILES: [keyof AsanaTiles, string, string][] = [
 /* ── the only colours on the page ─────────────────────────────── */
 const INK = '#18181b';
 const SERIES: [string, string, string] = ['#18181b', '#71717a', '#b4b4bb'];  // price, net, gross
+// `none` is the grey tone — now also what an unpaid-on-terms balance wears, so
+// it uses the gray tokens (dark-mode aware) rather than the old fixed hexes.
 const TONE_FILL: Record<Tone, string> = {
-  ok: 'var(--aq-green)', wait: 'var(--aq-amber-text)', bad: 'var(--aq-red)', none: '#71717a',
+  ok: 'var(--aq-green)', wait: 'var(--aq-amber-text)', bad: 'var(--aq-red)', none: 'var(--aq-gray)',
 };
 const TONE_BG: Record<Tone, string> = {
-  ok: 'var(--aq-green-bg)', wait: 'var(--aq-amber-bg-soft)', bad: 'var(--aq-red-bg)', none: '#f1f1f3',
+  ok: 'var(--aq-green-bg)', wait: 'var(--aq-amber-bg-soft)', bad: 'var(--aq-red-bg)', none: 'var(--aq-gray-bg)',
 };
 
 type RangeKey = 'all' | 'year' | 'd90' | 'custom';

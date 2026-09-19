@@ -320,8 +320,8 @@ export interface PaymentState { key: 'paid' | 'partial' | 'unpaid'; label: strin
 export function vendorPaymentState(row: DashTask): PaymentState {
   const owed = num(row.net_amount);
   const paid = num(row.vendor_payment_amount);
-  if (owed <= 0 && paid <= 0) return { key: 'unpaid', label: 'Unpaid', tone: 'bad' };
-  if (paid <= 0) return { key: 'unpaid', label: 'Unpaid', tone: 'bad' };
+  if (owed <= 0 && paid <= 0) return { key: 'unpaid', label: 'Unpaid', tone: 'none' };
+  if (paid <= 0) return { key: 'unpaid', label: 'Unpaid', tone: 'none' };
   if (paid + 0.5 >= owed) return { key: 'paid', label: 'Paid', tone: 'ok' };
   return { key: 'partial', label: 'Partial', tone: 'wait' };
 }
@@ -382,7 +382,9 @@ export function clientPaymentState(row: DashTask): PaymentState {
   const s = norm(row.client_payment_status);
   if (PART_PAID.has(s)) return { key: 'partial', label: 'Partial', tone: 'wait' };
   if (PAID_IN_FULL.has(s)) return { key: 'paid', label: 'Paid', tone: 'ok' };
-  return { key: 'unpaid', label: 'Outstanding', tone: 'bad' };
+  // Outstanding is grey, not red — a bill on its terms, neutral until it is
+  // actually late (which the ledger's `overdue` flags separately in red).
+  return { key: 'unpaid', label: 'Outstanding', tone: 'none' };
 }
 
 export interface ContractState { key: 'signed' | 'pending' | 'none'; label: string; tone: Tone }
