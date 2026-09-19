@@ -197,6 +197,13 @@ export function VendorsView({ role, userName }: { role: WorkspaceRole | null; us
               onClick={() => setFilter((f) => ({ ...f, withGaps: !f.withGaps }))}
             />
             <Chip
+              label="Licence expiring"
+              count={summary.expiring}
+              danger
+              on={filter.expiring}
+              onClick={() => setFilter((f) => ({ ...f, expiring: !f.expiring }))}
+            />
+            <Chip
               label="No portal"
               count={summary.noPortal}
               on={filter.noPortal}

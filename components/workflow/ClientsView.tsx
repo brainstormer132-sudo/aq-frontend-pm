@@ -58,7 +58,7 @@ export function ClientsView({
         // this list and its count both sat at exactly 1000.
         const data = await selectAllRows<any>('ClientsView', () => supabase
       .from('clients')
-      .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, vat_number, street, city, postcode, country, invite_status, status, payment_terms, payment_split_pct, payment_net_days')
+      .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, cr_expiry, vat_number, street, city, postcode, country, invite_status, status, payment_terms, payment_split_pct, payment_net_days')
       .eq('status', 'active')
       .order('company_name'), (msg) => setError(msg));
     setAllClients(data ?? []);
@@ -385,6 +385,13 @@ export function ClientsView({
           danger
           on={filter.withGaps}
           onClick={() => setFilter((f) => ({ ...f, withGaps: !f.withGaps }))}
+        />
+        <Chip
+          label="CR expiring"
+          count={summary.expiring}
+          danger
+          on={filter.expiring}
+          onClick={() => setFilter((f) => ({ ...f, expiring: !f.expiring }))}
         />
         <Chip
           label="No portal"

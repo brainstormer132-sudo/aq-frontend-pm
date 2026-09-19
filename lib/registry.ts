@@ -60,6 +60,12 @@ export interface RegistryRow {
    * until Legal reads one.
    */
   gaps: string[];
+  /**
+   * The date this row's papers lapse — a client's CR expiry, a vendor's
+   * licence expiry — as an ISO `YYYY-MM-DD` string, or null when none is on
+   * file. `expiryStatus` turns it into expired / expiring-soon / ok.
+   */
+  expiry: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -90,6 +96,8 @@ export interface ClientInput {
   postcode?: string | null;
   country?: string | null;
   invite_status?: string | null;
+  /** When the client's commercial registration lapses. */
+  cr_expiry?: string | null;
   [k: string]: unknown;
 }
 
@@ -145,6 +153,7 @@ export function buildClients(input: {
       count: agg.n,
       value: money(agg.value),
       gaps: clientGaps(c),
+      expiry: txt(c.cr_expiry) || null,
       raw: c as Record<string, unknown>,
     };
   });
@@ -165,6 +174,8 @@ export interface VendorInput {
   phone?: string | null;
   vat_number?: string | null;
   invite_status?: string | null;
+  /** When the vendor's trade licence lapses. */
+  license_expiry?: string | null;
   [k: string]: unknown;
 }
 
@@ -220,6 +231,7 @@ export function buildVendors(input: {
       count: banks.length,
       value: null,
       gaps: vendorGaps(v, banks),
+      expiry: txt(v.license_expiry) || null,
       raw: v as Record<string, unknown>,
     };
   });
@@ -285,6 +297,36 @@ export function sortRows(rows: RegistryRow[], sort: Sort): RegistryRow[] {
   });
 }
 
+/* ── Expiry ─────────────────────────────────────────────────────── */
+
+/** A CR or licence within this many days counts as expiring soon. */
+export const EXPIRY_SOON_DAYS = 30;
+
+/**
+ * Where a papers-expiry date stands relative to today. The one place the
+ * 30-day rule lives — the card badge, the filter and the count all read it,
+ * so they can never disagree. `now` is injectable for tests; in the app it
+ * defaults to the current date, and only the calendar day matters.
+ */
+export function expiryStatus(
+  dateStr?: string | null, now: Date = new Date(),
+): 'expired' | 'soon' | 'ok' | 'none' {
+  if (!dateStr) return 'none';
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return 'none';
+  const today = new Date(now.getTime()); today.setHours(0, 0, 0, 0);
+  const days = Math.round((d.getTime() - today.getTime()) / 86400000);
+  if (days < 0) return 'expired';
+  if (days <= EXPIRY_SOON_DAYS) return 'soon';
+  return 'ok';
+}
+
+/** True when a row's papers are expired or within the soon window. */
+export function isExpiring(r: RegistryRow, now: Date = new Date()): boolean {
+  const st = expiryStatus(r.expiry, now);
+  return st === 'expired' || st === 'soon';
+}
+
 /* ── Filtering ──────────────────────────────────────────────────── */
 
 export interface Filter {
@@ -297,10 +339,13 @@ export interface Filter {
   category: string | null;
   /** Clients: only ones with no campaigns at all. */
   noWork: boolean;
+  /** Only rows whose CR/licence is expired or within the soon window. */
+  expiring: boolean;
 }
 
 export const EMPTY_FILTER: Filter = {
   query: '', noPortal: false, withGaps: false, category: null, noWork: false,
+  expiring: false,
 };
 
 /**
@@ -325,6 +370,7 @@ export function filterRows(
   rows: RegistryRow[],
   filter: Filter,
   extraText: (r: RegistryRow) => string[] = () => [],
+  now: Date = new Date(),
 ): RegistryRow[] {
   const q = filter.query.trim().toLowerCase();
   return rows.filter((r) => {
@@ -332,13 +378,14 @@ export function filterRows(
     if (filter.withGaps && r.gaps.length === 0) return false;
     if (filter.noWork && r.count > 0) return false;
     if (filter.category && r.who !== filter.category) return false;
+    if (filter.expiring && !isExpiring(r, now)) return false;
     if (!q) return true;
     return haystack(r, extraText(r)).includes(q);
   });
 }
 
 export function isFiltered(f: Filter): boolean {
-  return Boolean(f.query.trim() || f.noPortal || f.withGaps || f.category || f.noWork);
+  return Boolean(f.query.trim() || f.noPortal || f.withGaps || f.category || f.noWork || f.expiring);
 }
 
 /* ── What the header says ───────────────────────────────────────── */
@@ -348,17 +395,21 @@ export interface Summary {
   total: number;
   noPortal: number;
   withGaps: number;
+  expiring: number;
   value: number;
 }
 
-export function summarise(all: RegistryRow[], shown: RegistryRow[]): Summary {
-  let noPortal = 0, withGaps = 0, value = 0;
+export function summarise(
+  all: RegistryRow[], shown: RegistryRow[], now: Date = new Date(),
+): Summary {
+  let noPortal = 0, withGaps = 0, expiring = 0, value = 0;
   for (const r of all) {
     if (r.portal === 'none') noPortal += 1;
     if (r.gaps.length) withGaps += 1;
+    if (isExpiring(r, now)) expiring += 1;
     if (r.value != null) value += r.value;
   }
-  return { shown: shown.length, total: all.length, noPortal, withGaps, value };
+  return { shown: shown.length, total: all.length, noPortal, withGaps, expiring, value };
 }
 
 export function money$(v: number | null): string {
@@ -373,6 +424,7 @@ export function summaryLine(s: Summary, noun: string): string {
     : `${s.shown} of ${s.total} ${noun}s`);
   if (s.value > 0) parts.push(`SAR ${money$(s.value)} billed`);
   if (s.withGaps > 0) parts.push(`${s.withGaps} missing contract details`);
+  if (s.expiring > 0) parts.push(`${s.expiring} expiring soon`);
   if (s.noPortal > 0) parts.push(`${s.noPortal} without a portal`);
   return parts.join(' · ');
 }
@@ -381,6 +433,7 @@ export function emptyMessage(f: Filter, total: number, noun: string): string {
   if (total === 0) return `No ${noun}s yet. Add the first one and their campaigns can start.`;
   if (f.query.trim()) return `Nothing matches “${f.query.trim()}”.`;
   if (f.withGaps) return `Every ${noun} has the details a contract needs. Good.`;
+  if (f.expiring) return `No ${noun}'s papers expire in the next ${EXPIRY_SOON_DAYS} days.`;
   if (f.noPortal) return `Every ${noun} can log in.`;
   if (f.noWork) return 'Everybody here has had work.';
   if (f.category) return `No ${noun}s in ${f.category}.`;

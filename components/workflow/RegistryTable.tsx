@@ -2,9 +2,14 @@
 
 import { useState } from 'react';
 import {
-  money$, gapLine, sortHint, PAGE_SIZES,
+  money$, gapLine, sortHint, PAGE_SIZES, expiryStatus,
   type Column, type PortalState, type RegistryRow, type Sort,
 } from '@/lib/registry';
+
+// The card badge and the register's expiry filter must always agree, so the
+// classifier lives once in lib/registry. Re-exported here because the views
+// import it (and ExpiryDetail) from this module.
+export { expiryStatus };
 
 /**
  * The register, shared by Clients and Vendors.
@@ -384,17 +389,6 @@ export function Detail({
       }}>{empty ? (missing ? 'missing' : '—') : value}</div>
     </div>
   );
-}
-
-export function expiryStatus(dateStr?: string | null): 'expired' | 'soon' | 'ok' | 'none' {
-  if (!dateStr) return 'none';
-  const d = new Date(`${dateStr}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return 'none';
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const days = Math.round((d.getTime() - today.getTime()) / 86400000);
-  if (days < 0) return 'expired';
-  if (days <= 30) return 'soon';
-  return 'ok';
 }
 
 export function ExpiryDetail({ label, value }: { label: string; value?: string | null }) {
