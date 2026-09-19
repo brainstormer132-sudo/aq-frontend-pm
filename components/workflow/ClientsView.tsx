@@ -12,6 +12,7 @@ import {
   deleteClientFile,
   groupClientFilesBySlot,
   getClientFileDownloadUrl,
+  getClientFilePreviewUrl,
   type ClientFileRow,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -966,6 +967,16 @@ function ClientSlotUploader({ clientId, slot, title, canEdit }: {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const filesInSlot = useMemo(() => groupClientFilesBySlot(files).get(slot) ?? [], [files, slot]);
+  const filled = filesInSlot.length > 0;
+
+  const onPreview = async (file: ClientFileRow) => {
+    setBusyId(file.id); setErr('');
+    try {
+      const url = await getClientFilePreviewUrl(file);
+      window.open(url, '_blank', 'noopener');
+    } catch (ex: any) { setErr(ex?.message ?? String(ex)); }
+    finally { setBusyId(null); }
+  };
 
   const onChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []);
@@ -999,15 +1010,13 @@ function ClientSlotUploader({ clientId, slot, title, canEdit }: {
   };
 
   return (
-    <div style={{ border: '1px solid var(--aq-border)', borderRadius: 10, padding: '10px 12px' }}>
+    <div style={{ border: `2px solid ${filled ? 'var(--aq-green)' : 'var(--aq-red)'}`, borderRadius: 10, padding: '10px 12px', background: filled ? 'var(--aq-green-bg-soft)' : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: 12.5 }}>
+        <div style={{ fontWeight: 700, fontSize: 12.5, color: filled ? 'var(--aq-green)' : 'var(--aq-red)' }}>
           {title}
-          {filesInSlot.length > 0 && (
-            <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--aq-text-muted)' }}>
-              {filesInSlot.length} file{filesInSlot.length === 1 ? '' : 's'}
-            </span>
-          )}
+          <span style={{ marginLeft: 8, fontSize: 11, color: filled ? 'var(--aq-green)' : 'var(--aq-red)' }}>
+            {filled ? `${filesInSlot.length} file${filesInSlot.length === 1 ? '' : 's'}` : 'missing'}
+          </span>
         </div>
         {canEdit && (
           <button type="button" className="aq-btn aq-btn-secondary"
@@ -1026,17 +1035,21 @@ function ClientSlotUploader({ clientId, slot, title, canEdit }: {
         <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
           {filesInSlot.map((f) => (
             <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <button type="button" onClick={() => onDownload(f)} disabled={busyId === f.id}
-                style={{ background: 'none', border: 'none', color: 'var(--aq-accent)', cursor: 'pointer', padding: 0, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '75%' }}
-                title={f.file_name}>
+              <button type="button" onClick={() => onPreview(f)} disabled={busyId === f.id}
+                style={{ background: 'none', border: 'none', color: 'var(--aq-accent)', cursor: 'pointer', padding: 0, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '52%' }}
+                title={`Preview ${f.file_name}`}>
                 {f.file_name}
               </button>
-              {canEdit && (
-                <button type="button" onClick={() => onDelete(f)} disabled={busyId === f.id}
-                  style={{ background: 'none', border: 'none', color: 'var(--aq-red)', cursor: 'pointer', fontSize: 11, padding: 0 }}>
-                  Delete
-                </button>
-              )}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>
+                <button type="button" onClick={() => onPreview(f)} disabled={busyId === f.id}
+                  style={{ background: 'none', border: 'none', color: 'var(--aq-accent)', cursor: 'pointer', fontSize: 11, padding: 0 }}>Preview</button>
+                <button type="button" onClick={() => onDownload(f)} disabled={busyId === f.id}
+                  style={{ background: 'none', border: 'none', color: 'var(--aq-text-muted)', cursor: 'pointer', fontSize: 11, padding: 0 }}>Download</button>
+                {canEdit && (
+                  <button type="button" onClick={() => onDelete(f)} disabled={busyId === f.id}
+                    style={{ background: 'none', border: 'none', color: 'var(--aq-red)', cursor: 'pointer', fontSize: 11, padding: 0 }}>Delete</button>
+                )}
+              </div>
             </div>
           ))}
         </div>

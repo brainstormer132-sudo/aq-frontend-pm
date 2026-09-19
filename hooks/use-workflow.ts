@@ -5002,6 +5002,21 @@ export async function getClientFileDownloadUrl(
   return data.signedUrl;
 }
 
+/** Signed URL WITHOUT the download flag, so the browser previews the file
+ *  inline (PDFs, images) in a new tab instead of downloading it. */
+export async function getClientFilePreviewUrl(
+  file: ClientFileRow,
+  expirySeconds = 600,
+): Promise<string> {
+  const { data, error } = await supabase
+    .storage.from(CLIENT_FILES_BUCKET)
+    .createSignedUrl(file.storage_path, expirySeconds);
+  if (error || !data?.signedUrl) {
+    throw new Error(`Could not create preview link: ${error?.message ?? 'unknown error'}`);
+  }
+  return data.signedUrl;
+}
+
 
 /**
  * A licence-holder organization (089). Talent under an org licence link to it
