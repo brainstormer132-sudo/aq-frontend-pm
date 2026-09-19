@@ -310,6 +310,7 @@ export function ClientsView({
           city: form.city.trim(),
           postcode: form.postcode.trim(),
           country: form.country.trim(),
+          cr_expiry: form.cr_expiry.trim() || null,
         });
       }
       setForm({
@@ -604,11 +605,9 @@ export function ClientsView({
             <Field label="Country">
               <input className="aq-input" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
             </Field>
-            {editId && (
-              <Field label="CR expiry">
-                <input className="aq-input" type="date" value={form.cr_expiry} onChange={(e) => setForm({ ...form, cr_expiry: e.target.value })} />
-              </Field>
-            )}
+            <Field label="CR expiry">
+              <input className="aq-input" type="date" value={form.cr_expiry} onChange={(e) => setForm({ ...form, cr_expiry: e.target.value })} />
+            </Field>
           </div>
           {editId
             ? <ClientDocs clientId={editId} canEdit={canEdit} />
