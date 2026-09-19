@@ -6,7 +6,7 @@
  * and sorts the ones that need action to the top.
  */
 import {
-  lineDelivery, vendorPerformance, reliabilityBand,
+  lineDelivery, vendorPerformance, reliabilityBand, vendorMoney,
   RELIABLE_PCT, SHAKY_PCT,
 } from '../.test-build/vendor-performance.js';
 
@@ -103,6 +103,33 @@ eq('just under 90 is ok', reliabilityBand(RELIABLE_PCT - 1), 'ok');
 eq('70 is ok', reliabilityBand(SHAKY_PCT), 'ok');
 eq('under 70 is shaky', reliabilityBand(SHAKY_PCT - 1), 'shaky');
 eq('null is none', reliabilityBand(null), 'none');
+
+// ── vendorMoney: owed / paid / outstanding per vendor ─────────────
+{
+  const m = vendorMoney([
+    { vendorId: 1, owed: 5000, paid: 2000 },
+    { vendorId: 1, owed: 3000, paid: 3000 },   // same vendor, second booking
+    { vendorId: 2, owed: 1000, paid: 0 },
+    { vendorId: 3, owed: 1000, paid: 1200 },   // overpaid -> outstanding floors at 0
+    { vendorId: null, owed: 999, paid: 0 },    // no vendor -> dropped
+  ]);
+  eq('vendor 1 owed is summed', m.get('1').owed, 8000);
+  eq('vendor 1 paid is summed', m.get('1').paid, 5000);
+  eq('vendor 1 outstanding', m.get('1').outstanding, 3000);
+  eq('vendor 2 fully outstanding', m.get('2'), { owed: 1000, paid: 0, outstanding: 1000 });
+  eq('overpaid floors outstanding at zero', m.get('3').outstanding, 0);
+  eq('the null-vendor booking is dropped', m.has(''), false);
+  eq('an empty list is an empty map', vendorMoney([]).size, 0);
+  // halala rounding: two thirds-of-a-riyal bookings do not drift.
+  const r = vendorMoney([
+    { vendorId: 'x', owed: 0.1, paid: 0 },
+    { vendorId: 'x', owed: 0.2, paid: 0 },
+  ]);
+  eq('rounds to the halala', r.get('x').owed, 0.3);
+  // junk amounts read as zero, not NaN.
+  eq('junk owed is zero', vendorMoney([{ vendorId: 'y', owed: 'oops', paid: null }]).get('y'),
+    { owed: 0, paid: 0, outstanding: 0 });
+}
 
 console.log(`vendor-performance: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -170,3 +170,54 @@ export function reliabilityBand(pct: number | null): 'reliable' | 'ok' | 'shaky'
   if (pct >= SHAKY_PCT) return 'ok';
   return 'shaky';
 }
+
+/* ── Money owed to a vendor ───────────────────────────────────────── */
+
+/**
+ * One vendor booking's money, at the booking level — the authoritative figures
+ * `pm_tasks` keeps: `net_amount` (what the vendor is owed for the whole
+ * booking, synced from the ad lines) and `vendor_payment_amount` (what has
+ * actually been paid). Per-line `net_payment_status` is only a coarse label,
+ * so the amounts are read from the booking, not summed off the lines.
+ */
+export interface MoneyBooking {
+  vendorId: number | string | null;
+  owed?: unknown;
+  paid?: unknown;
+}
+
+export interface VendorMoney {
+  owed: number;
+  paid: number;
+  /** Owed minus paid, floored at zero — an overpayment is a typo, not a credit. */
+  outstanding: number;
+}
+
+function money(v: unknown): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function r2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Sum each vendor's bookings into owed / paid / outstanding, keyed by vendor
+ * id. Booking-level and not gated on campaign completion, so this is the whole
+ * relationship — what we have booked with a vendor against what we have paid —
+ * rather than the Finance Liability ledger's completed-only view.
+ */
+export function vendorMoney(bookings: MoneyBooking[]): Map<string, VendorMoney> {
+  const out = new Map<string, VendorMoney>();
+  for (const b of bookings ?? []) {
+    const id = txt(b?.vendorId);
+    if (!id) continue;
+    const cur = out.get(id) ?? { owed: 0, paid: 0, outstanding: 0 };
+    cur.owed = r2(cur.owed + money(b.owed));
+    cur.paid = r2(cur.paid + money(b.paid));
+    cur.outstanding = r2(Math.max(0, cur.owed - cur.paid));
+    out.set(id, cur);
+  }
+  return out;
+}

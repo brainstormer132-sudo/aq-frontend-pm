@@ -2440,59 +2440,85 @@ export interface VendorPerfLine {
  * and paged so nothing is lost past the 1000-row cap. Cached like the other
  * reference reads.
  */
+/** One vendor booking's money, for the vendor-performance rollup. */
+export interface VendorPerfMoney {
+  vendorId: number | null;
+  owed: number;
+  paid: number;
+}
+
 export function useVendorPerformanceLines(workspaceId: string) {
   const [lines, setLines] = useState<VendorPerfLine[]>([]);
+  const [money, setMoney] = useState<VendorPerfMoney[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async (force = false) => {
-    if (!workspaceId) { setLines([]); setLoading(false); return; }
-    const data = await cachedFetch<VendorPerfLine[]>(`vendorPerfLines:${workspaceId}`, async () => {
-      // The vendor bookings: child tasks that name a vendor, not deleted.
-      const bookings = await selectAllRows<{ id: string; vendor_id: number | null }>(
-        'useVendorPerformanceLines bookings',
-        () => supabase
-          .from('pm_tasks')
-          .select('id, vendor_id')
-          .eq('workspace_id', workspaceId)
-          .not('parent_task_id', 'is', null)
-          .not('vendor_id', 'is', null)
-          .is('deleted_at', null)
-          .order('id', { ascending: true }),
-      );
-      const vendorBySubtask = new Map<string, number>();
-      for (const b of bookings) if (b.vendor_id != null) vendorBySubtask.set(b.id, Number(b.vendor_id));
+    if (!workspaceId) { setLines([]); setMoney([]); setLoading(false); return; }
+    const data = await cachedFetch<{ lines: VendorPerfLine[]; money: VendorPerfMoney[] }>(
+      `vendorPerfLines:${workspaceId}`,
+      async () => {
+        // The vendor bookings: child tasks that name a vendor, not deleted.
+        // net_amount is what the vendor is owed for the whole booking (kept in
+        // sync from the ad lines); vendor_payment_amount is what has been paid.
+        const bookings = await selectAllRows<{
+          id: string; vendor_id: number | null; net_amount: number | null; vendor_payment_amount: number | null;
+        }>(
+          'useVendorPerformanceLines bookings',
+          () => supabase
+            .from('pm_tasks')
+            .select('id, vendor_id, net_amount, vendor_payment_amount')
+            .eq('workspace_id', workspaceId)
+            .not('parent_task_id', 'is', null)
+            .not('vendor_id', 'is', null)
+            .is('deleted_at', null)
+            .order('id', { ascending: true }),
+        );
+        const vendorBySubtask = new Map<string, number>();
+        const moneyRows: VendorPerfMoney[] = [];
+        for (const b of bookings) {
+          if (b.vendor_id == null) continue;
+          vendorBySubtask.set(b.id, Number(b.vendor_id));
+          moneyRows.push({
+            vendorId: Number(b.vendor_id),
+            owed: Number(b.net_amount ?? 0),
+            paid: Number(b.vendor_payment_amount ?? 0),
+          });
+        }
 
-      const ids = [...vendorBySubtask.keys()];
-      if (!ids.length) return [];
+        const ids = [...vendorBySubtask.keys()];
+        if (!ids.length) return { lines: [], money: moneyRows };
 
-      const BATCH = 100;
-      const chunks: string[][] = [];
-      for (let i = 0; i < ids.length; i += BATCH) chunks.push(ids.slice(i, i + BATCH));
-      const maps = await mapWithConcurrency(chunks, REQUEST_CONCURRENCY, (c) => fetchAdLinesForSubtasks(c));
+        const BATCH = 100;
+        const chunks: string[][] = [];
+        for (let i = 0; i < ids.length; i += BATCH) chunks.push(ids.slice(i, i + BATCH));
+        const maps = await mapWithConcurrency(chunks, REQUEST_CONCURRENCY, (c) => fetchAdLinesForSubtasks(c));
 
-      const out: VendorPerfLine[] = [];
-      for (const m of maps) {
-        for (const [subtaskId, adLines] of m) {
-          const vid = vendorBySubtask.get(subtaskId) ?? null;
-          for (const l of adLines) {
-            out.push({
-              vendorId: vid,
-              status: l.status ?? null,
-              dueDate: (l as any).due_date ?? null,
-              postedOn: (l as any).posted_on ?? null,
-              hasProof: hasProof(l),
-            });
+        const out: VendorPerfLine[] = [];
+        for (const m of maps) {
+          for (const [subtaskId, adLines] of m) {
+            const vid = vendorBySubtask.get(subtaskId) ?? null;
+            for (const l of adLines) {
+              out.push({
+                vendorId: vid,
+                status: l.status ?? null,
+                dueDate: (l as any).due_date ?? null,
+                postedOn: (l as any).posted_on ?? null,
+                hasProof: hasProof(l),
+              });
+            }
           }
         }
-      }
-      return out;
-    }, force);
-    setLines(data);
+        return { lines: out, money: moneyRows };
+      },
+      force,
+    );
+    setLines(data.lines);
+    setMoney(data.money);
     setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { lines, loading, refetch: () => fetch(true) };
+  return { lines, money, loading, refetch: () => fetch(true) };
 }
 
 /**
