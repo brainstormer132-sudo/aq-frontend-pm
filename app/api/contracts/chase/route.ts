@@ -3,17 +3,19 @@
  *
  * A contract request that sits waiting on a person (pending/approved, not yet
  * generated) used to be visible only if someone opened the register. This
- * route, hit by a daily cron, turns that silence into an inbox notification:
- * any request waiting longer than CHASE_AFTER_DAYS gets one notification to
- * the workspace's owners and admins and to the person who requested it.
+ * route turns that silence into an inbox notification: any request waiting
+ * longer than CHASE_AFTER_DAYS gets one notification to the workspace's owners
+ * and admins and to the person who requested it.
  *
  * There is no "legal" workspace role, so "tell Legal" is served by owners +
  * admins (who oversee the contract work) plus `requested_by` (the person
  * actually blocked waiting). Change RECIPIENT_ROLES below to retarget.
  *
- * Auth: GET with `Authorization: Bearer <CRON_SECRET>` (same shared secret the
- * Asana sync cron uses). Register a daily schedule against this path the same
- * way that one is registered.
+ * Two ways in:
+ *   - GET  with `Authorization: Bearer <CRON_SECRET>` — the daily cron, every
+ *          workspace.
+ *   - POST from a signed-in owner/admin with `{ workspace_id }` — a "Run now"
+ *          from Settings, scoped to that one workspace.
  *
  * De-duplication: at most one chase per request per CHASE_AFTER_DAYS window,
  * decided by looking for an existing notification with this request's link -
@@ -21,6 +23,7 @@
  */
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
+import { createServerSupabase } from '@/lib/supabase-server';
 import { chaseCandidates, CHASE_AFTER_DAYS } from '@/lib/contracts';
 
 export const dynamic = 'force-dynamic';
@@ -30,26 +33,20 @@ const RECIPIENT_ROLES = ['owner', 'admin'];
 
 const DAY_MS = 86_400_000;
 
-export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = request.headers.get('authorization') ?? '';
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-
+async function runChase(opts: { workspaceId?: string }) {
   const today = new Date().toISOString().slice(0, 10);
   const cutoff = new Date(Date.now() - CHASE_AFTER_DAYS * DAY_MS).toISOString();
   const admin = getSupabaseAdmin();
 
   // Only rows that could possibly be stale: a waiting status, old enough.
-  const { data: rows, error } = await admin
+  let q = admin
     .from('contract_requests')
     .select('id, workspace_id, pm_task_id, requested_by, request_kind, vendor_name, client_name, brand_name, status, created_at')
     .in('status', ['pending', 'approved'])
     .lte('created_at', cutoff);
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (opts.workspaceId) q = q.eq('workspace_id', opts.workspaceId);
+  const { data: rows, error } = await q;
+  if (error) return { error: error.message, status: 500 as const };
 
   const all = rows ?? [];
   const byId = new Map(all.map((r) => [r.id as string, r]));
@@ -72,9 +69,7 @@ export async function GET(request: Request) {
       .select('id', { count: 'exact', head: true })
       .eq('link', link)
       .gte('created_at', since);
-    if (dupErr) {
-      return NextResponse.json({ error: dupErr.message, notified, skipped }, { status: 500 });
-    }
+    if (dupErr) return { error: dupErr.message, status: 500 as const, notified, skipped };
     if ((count ?? 0) > 0) { skipped += 1; continue; }
 
     const party = r.vendor_name || r.client_name || r.brand_name || 'a party';
@@ -90,9 +85,7 @@ export async function GET(request: Request) {
       n_body: body,
       n_link: link,
     });
-    if (roleErr) {
-      return NextResponse.json({ error: roleErr.message, notified, skipped }, { status: 500 });
-    }
+    if (roleErr) return { error: roleErr.message, status: 500 as const, notified, skipped };
 
     // The person who asked for it is the one actually blocked; tell them too.
     if (r.requested_by) {
@@ -103,19 +96,58 @@ export async function GET(request: Request) {
         body,
         link,
       });
-      if (reqErr) {
-        return NextResponse.json({ error: reqErr.message, notified, skipped }, { status: 500 });
-      }
+      if (reqErr) return { error: reqErr.message, status: 500 as const, notified, skipped };
     }
 
     notified += 1;
   }
 
-  return NextResponse.json({
-    ok: true,
-    scanned: all.length,
-    candidates: candidates.length,
-    notified,
-    skipped,
-  });
+  return { ok: true as const, scanned: all.length, candidates: candidates.length, notified, skipped };
+}
+
+export async function GET(request: Request) {
+  const secret = process.env.CRON_SECRET;
+  const auth = request.headers.get('authorization') ?? '';
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  const result = await runChase({});
+  if ('error' in result) return NextResponse.json(result, { status: result.status });
+  return NextResponse.json(result);
+}
+
+export async function POST(request: Request) {
+  let body: { workspace_id?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const workspaceId = (body.workspace_id ?? '').trim();
+  if (!workspaceId) {
+    return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
+  }
+
+  // The caller must be a signed-in owner/admin of this workspace.
+  const userClient = await createServerSupabase();
+  const { data: { user: caller }, error: userErr } = await userClient.auth.getUser();
+  if (userErr || !caller) {
+    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  }
+  const { data: membership, error: memErr } = await userClient
+    .from('workspace_members')
+    .select('role')
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', caller.id)
+    .maybeSingle();
+  if (memErr) {
+    return NextResponse.json({ error: `Permission lookup failed: ${memErr.message}` }, { status: 500 });
+  }
+  if (!membership || !RECIPIENT_ROLES.includes(membership.role)) {
+    return NextResponse.json({ error: 'Only owner or admin can run the contract chaser' }, { status: 403 });
+  }
+
+  const result = await runChase({ workspaceId });
+  if ('error' in result) return NextResponse.json(result, { status: result.status });
+  return NextResponse.json(result);
 }

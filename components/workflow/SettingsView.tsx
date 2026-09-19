@@ -124,6 +124,8 @@ export function SettingsView({
         }}>{error}</div>
       )}
 
+      {canEdit && <BackgroundJobs workspaceId={workspaceId} />}
+
       <LookupCard
         kind="source"
         items={sources.items}
@@ -670,4 +672,114 @@ function logVerb(action: string): string {
     sheet_published: 'published the tracking sheet for',
   };
   return m[action] ?? action;
+}
+
+/* ── Background jobs: run the daily checks on demand ─────────────── */
+
+interface JobDef {
+  key: string;
+  label: string;
+  blurb: string;
+  path: string;
+  /** Turn the route's JSON result into a one-line outcome. */
+  summary: (r: any) => string;
+}
+
+const JOBS: JobDef[] = [
+  {
+    key: 'expiry',
+    label: 'Check papers expiry',
+    blurb: 'Notify owners/admins of CRs and licences that are expired or within 30 days.',
+    path: '/api/registry/expiry-check',
+    summary: (r) => `${r.notified} notice${r.notified === 1 ? '' : 's'} sent, ${r.skipped} already current.`,
+  },
+  {
+    key: 'contracts',
+    label: 'Chase stuck contracts',
+    blurb: 'Notify about contract requests waiting with Legal for more than three days.',
+    path: '/api/contracts/chase',
+    summary: (r) => `${r.notified} chased, ${r.skipped} already flagged.`,
+  },
+  {
+    key: 'payments',
+    label: 'Check payments due',
+    blurb: 'Notify finance about client money overdue or ready to invoice.',
+    path: '/api/finance/payments-due',
+    summary: (r) => `${r.notified} notice${r.notified === 1 ? '' : 's'} sent, ${r.skipped} already flagged.`,
+  },
+];
+
+/**
+ * The three daily crons, each with a Run now button. They normally fire on a
+ * schedule (early-morning UTC); this is for when you want the inbox notices
+ * now rather than tomorrow. Each POSTs to its route, which re-checks that the
+ * caller is an owner/admin of this workspace and scans only this workspace.
+ * De-duplication still applies, so a second click in the same window reports
+ * everything as already flagged rather than sending twice.
+ */
+function BackgroundJobs({ workspaceId }: { workspaceId: string }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<Record<string, { ok: boolean; text: string }>>({});
+
+  const run = async (job: JobDef) => {
+    setBusy(job.key);
+    setResult((r) => ({ ...r, [job.key]: { ok: true, text: 'Running…' } }));
+    try {
+      const res = await fetch(job.path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        setResult((r) => ({ ...r, [job.key]: { ok: false, text: data?.error || `Failed (${res.status})` } }));
+      } else {
+        setResult((r) => ({ ...r, [job.key]: { ok: true, text: job.summary(data) } }));
+      }
+    } catch (e: any) {
+      setResult((r) => ({ ...r, [job.key]: { ok: false, text: e?.message ?? String(e) } }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="aq-card" style={{ padding: 18 }}>
+      <header style={{ marginBottom: 10 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700 }}>Background jobs</h3>
+        <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 2 }}>
+          These run automatically each morning. Run one now to send its inbox notices without waiting.
+        </p>
+      </header>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {JOBS.map((job) => {
+          const r = result[job.key];
+          return (
+            <div key={job.key} style={{
+              display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              padding: '10px 0', borderTop: '1px solid var(--aq-border-light)',
+            }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{job.label}</div>
+                <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{job.blurb}</div>
+                {r && (
+                  <div style={{
+                    fontSize: 12, marginTop: 4, fontWeight: 600,
+                    color: r.ok ? 'var(--aq-green-strong)' : 'var(--aq-red-strong)',
+                  }}>{r.text}</div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="aq-btn aq-btn-secondary aq-btn-sm"
+                disabled={busy === job.key}
+                onClick={() => run(job)}
+                style={{ whiteSpace: 'nowrap' }}
+              >{busy === job.key ? 'Running…' : 'Run now'}</button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
