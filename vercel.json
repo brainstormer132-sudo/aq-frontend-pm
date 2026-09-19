@@ -4,7 +4,8 @@
   "crons": [
     { "path": "/api/asana/sync", "schedule": "0 6 * * *" },
     { "path": "/api/contracts/chase", "schedule": "0 7 * * *" },
-    { "path": "/api/finance/payments-due", "schedule": "30 7 * * *" }
+    { "path": "/api/finance/payments-due", "schedule": "30 7 * * *" },
+    { "path": "/api/registry/expiry-check", "schedule": "0 8 * * *" }
   ],
 
   "rewrites": [

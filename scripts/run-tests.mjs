@@ -78,6 +78,7 @@ const LIBS = [
   'lib/asana-import.ts',
   'lib/task-calendar.ts',
   'lib/registry.ts',
+  'lib/expiry-notify.ts',
   'lib/concurrency.ts',
   'lib/client-credits.ts',
   'lib/finance.ts',
