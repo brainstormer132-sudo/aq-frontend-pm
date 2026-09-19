@@ -9,7 +9,7 @@ import { applyTheme, currentTheme, nextTheme, type Theme } from '@/lib/theme';
 const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'crm'
-          | 'clients' | 'vendors' | 'tracking' | 'contracts' | 'data' | 'finance'
+          | 'clients' | 'vendors' | 'vendor-performance' | 'tracking' | 'contracts' | 'data' | 'finance'
           | 'team' | 'settings'
           | 'legal-matters' | 'legal-documents' | 'legal-register' | 'legal-signatures';
 
@@ -57,6 +57,9 @@ const NAV: NavItem[] = [
   // Tracking Sheets — every campaign flagged with a tracking sheet (chosen at
   // triage via the "Tracking Sheet" subtask). Opens the ad/vendor grid.
   { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account','operations'], group: 'Delivery' },
+  // Vendor Performance — the ad lines rolled up per vendor: who posts on time,
+  // who is missing proof, what is overdue. A delivery read, not a money one.
+  { id: 'vendor-performance', label: 'Vendor Performance', icon: 'chart', visibleTo: ['owner','admin','marketing'], group: 'Delivery' },
   // Data — one search box over every client and vendor, and the same panels
   // narrowed to whoever is picked. It shows net_amount and aq_gross, which
   // are AQ's margin, so it is NOT visible to everyone: marketing and

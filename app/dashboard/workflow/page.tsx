@@ -26,6 +26,7 @@ import { TeamView } from '@/components/workflow/TeamView';
 import { ContractsView } from '@/components/workflow/ContractsView';
 import { ClientsView } from '@/components/workflow/ClientsView';
 import { VendorsView } from '@/components/workflow/VendorsView';
+import { VendorPerformanceView } from '@/components/workflow/VendorPerformanceView';
 import { TrackingListView } from '@/components/workflow/TrackingListView';
 import { DataView } from '@/components/workflow/DataView';
 import { FinanceView } from '@/components/workflow/FinanceView';
@@ -418,6 +419,7 @@ export default function WorkflowPage() {
           <ClientsView role={role} campaigns={allTasks} rollup={clientRollup} />
         )}
         {view === 'vendors'  && <VendorsView role={role} userName={user.full_name} />}
+        {view === 'vendor-performance' && <VendorPerformanceView workspaceId={workspace.id} role={role} />}
         {view === 'tracking' && <TrackingListView workspaceId={workspace.id} role={role} />}
 
         {/* Team owns people: your own profile, the roster, roles and logins.
@@ -581,6 +583,7 @@ function viewTitle(v: View) {
     : v === 'contracts'? 'Contract Requests'
     : v === 'clients'  ? 'Clients'
     : v === 'vendors'  ? 'Vendors'
+    : v === 'vendor-performance' ? 'Vendor Performance'
     : v === 'tracking' ? 'Tracking Sheets'
     : v === 'data'     ? 'Data'
     : v === 'finance'  ? 'Finance'
@@ -601,6 +604,7 @@ function viewSubtitle(v: View) {
     : v === 'contracts' ? 'Vendor and client contract requests submitted from tasks.'
     : v === 'clients'   ? 'Add and search approved clients used by projects and contracts.'
     : v === 'vendors'   ? 'Add vendors, bank details, and review pending registration requests.'
+    : v === 'vendor-performance' ? 'Who posts on time, who is missing proof, and what is overdue — per vendor.'
     : v === 'tracking'  ? 'Campaigns with a tracking sheet — open one to add and track vendors.'
     : v === 'data'      ? 'Everything, until you search for someone.'
     : v === 'finance'   ? 'Generate and re-issue client quotations, created in Zoho.'

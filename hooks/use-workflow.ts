@@ -9,7 +9,7 @@ import {
 } from '@/lib/crm-sync';
 import {
   totalsOf, adTypeSummary, contractDetails,
-  adsExpectingProof, adsMissingProof, type AdLine,
+  adsExpectingProof, adsMissingProof, hasProof, type AdLine,
 } from '@/lib/ad-lines';
 import {
   vendorContractNeeds, contractPlan, contractCoverage, singleBankId,
@@ -2417,6 +2417,82 @@ export async function updateAdLine(id: string, fields: Partial<AdLine>): Promise
   const { line_total, id: _id, subtask_id, ...rest } = fields as any;
   const { error } = await supabase.from('vendor_ad_lines').update(rest).eq('id', id);
   if (error) { logSbError('updateAdLine', error, { id }); throw error; }
+}
+
+/** One ad line flattened for the vendor-performance rollup (lib/vendor-performance). */
+export interface VendorPerfLine {
+  vendorId: number | null;
+  status: string | null;
+  dueDate: string | null;
+  postedOn: string | null;
+  hasProof: boolean;
+}
+
+/**
+ * Every ad line in the workspace, tagged with the vendor it was booked under,
+ * for the Vendor Performance screen. An ad line carries no vendor of its own —
+ * it belongs to a booking subtask, and the booking carries `vendor_id` — so we
+ * read the vendor bookings first, then their lines.
+ *
+ * The lines are read in id batches, not one `.in(...)` over every booking: a
+ * busy workspace has thousands of bookings, and a single `.in` with thousands
+ * of UUIDs overruns the request URL. Batched, `REQUEST_CONCURRENCY` at a time,
+ * and paged so nothing is lost past the 1000-row cap. Cached like the other
+ * reference reads.
+ */
+export function useVendorPerformanceLines(workspaceId: string) {
+  const [lines, setLines] = useState<VendorPerfLine[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async (force = false) => {
+    if (!workspaceId) { setLines([]); setLoading(false); return; }
+    const data = await cachedFetch<VendorPerfLine[]>(`vendorPerfLines:${workspaceId}`, async () => {
+      // The vendor bookings: child tasks that name a vendor, not deleted.
+      const bookings = await selectAllRows<{ id: string; vendor_id: number | null }>(
+        'useVendorPerformanceLines bookings',
+        () => supabase
+          .from('pm_tasks')
+          .select('id, vendor_id')
+          .eq('workspace_id', workspaceId)
+          .not('parent_task_id', 'is', null)
+          .not('vendor_id', 'is', null)
+          .is('deleted_at', null)
+          .order('id', { ascending: true }),
+      );
+      const vendorBySubtask = new Map<string, number>();
+      for (const b of bookings) if (b.vendor_id != null) vendorBySubtask.set(b.id, Number(b.vendor_id));
+
+      const ids = [...vendorBySubtask.keys()];
+      if (!ids.length) return [];
+
+      const BATCH = 100;
+      const chunks: string[][] = [];
+      for (let i = 0; i < ids.length; i += BATCH) chunks.push(ids.slice(i, i + BATCH));
+      const maps = await mapWithConcurrency(chunks, REQUEST_CONCURRENCY, (c) => fetchAdLinesForSubtasks(c));
+
+      const out: VendorPerfLine[] = [];
+      for (const m of maps) {
+        for (const [subtaskId, adLines] of m) {
+          const vid = vendorBySubtask.get(subtaskId) ?? null;
+          for (const l of adLines) {
+            out.push({
+              vendorId: vid,
+              status: l.status ?? null,
+              dueDate: (l as any).due_date ?? null,
+              postedOn: (l as any).posted_on ?? null,
+              hasProof: hasProof(l),
+            });
+          }
+        }
+      }
+      return out;
+    }, force);
+    setLines(data);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+  return { lines, loading, refetch: () => fetch(true) };
 }
 
 /**

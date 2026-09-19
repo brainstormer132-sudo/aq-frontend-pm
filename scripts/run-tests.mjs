@@ -79,6 +79,7 @@ const LIBS = [
   'lib/task-calendar.ts',
   'lib/registry.ts',
   'lib/expiry-notify.ts',
+  'lib/vendor-performance.ts',
   'lib/concurrency.ts',
   'lib/client-credits.ts',
   'lib/finance.ts',
