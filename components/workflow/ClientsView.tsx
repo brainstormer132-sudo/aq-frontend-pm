@@ -24,7 +24,7 @@ import {
 } from '@/lib/registry';
 import {
   RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
-  Detail, DETAIL_GRID, RegistryPager,
+  Detail, DETAIL_GRID, ExpiryDetail, RegistryPager,
 } from './RegistryTable';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import {
@@ -85,6 +85,7 @@ export function ClientsView({
     city: '',
     postcode: '',
     country: 'Saudi Arabia',
+    cr_expiry: '',
   });
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -259,6 +260,7 @@ export function ClientsView({
       city: c.city ?? '',
       postcode: c.postcode ?? '',
       country: c.country ?? 'Saudi Arabia',
+      cr_expiry: c.cr_expiry ?? '',
     });
     setError('');
     setEditId(String(c.id));
@@ -290,6 +292,7 @@ export function ClientsView({
           city: clean(form.city),
           postcode: clean(form.postcode),
           country: clean(form.country),
+          cr_expiry: clean(form.cr_expiry),
         });
       } else {
         // Creating: through the backend so field mapping + audit logging run
@@ -321,6 +324,7 @@ export function ClientsView({
         city: '',
         postcode: '',
         country: 'Saudi Arabia',
+        cr_expiry: '',
       });
       setEditId(null);
       setOpen(false);
@@ -600,6 +604,11 @@ export function ClientsView({
             <Field label="Country">
               <input className="aq-input" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
             </Field>
+            {editId && (
+              <Field label="CR expiry">
+                <input className="aq-input" type="date" value={form.cr_expiry} onChange={(e) => setForm({ ...form, cr_expiry: e.target.value })} />
+              </Field>
+            )}
           </div>
           {editId
             ? <ClientDocs clientId={editId} canEdit={canEdit} />
@@ -730,6 +739,7 @@ function ClientDetail({
         <Detail label="Email" value={c.company_email || c.contact_email} />
         <Detail label="Phone" value={c.contact_phone} />
         <Detail label="Address" value={address} missing />
+        <ExpiryDetail label="CR expiry" value={c.cr_expiry} />
       </div>
 
       {/* Standing payment terms: set once, and every campaign for this client

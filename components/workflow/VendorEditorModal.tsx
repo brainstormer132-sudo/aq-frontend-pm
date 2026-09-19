@@ -61,6 +61,7 @@ type VendorDraft = {
   category_id: string;
   id_number: string;
   license_number: string;
+  license_expiry: string;
   signatory_name: string;
   contact_name: string;
   email: string;
@@ -113,6 +114,7 @@ const EMPTY_DRAFT: VendorDraft = {
   category_id: '',
   id_number: '',
   license_number: '',
+  license_expiry: '',
   signatory_name: '',
   contact_name: '',
   email: '',
@@ -137,6 +139,7 @@ function vendorToDraft(v: LegacyVendor): VendorDraft {
     category_id:    v.category_id ?? '',
     id_number:      v.id_number ?? '',
     license_number: v.license_number ?? '',
+    license_expiry: v.license_expiry ?? '',
     signatory_name: v.signatory_name ?? '',
     contact_name:   v.contact_name ?? '',
     email:          v.email ?? '',
@@ -163,6 +166,7 @@ function draftToPayload(d: VendorDraft): VendorRegistrationInput {
     category_id:    d.category_id || null,
     id_number:      d.id_number.trim(),
     license_number: d.license_number.trim(),
+    license_expiry: d.license_expiry.trim() || null,
     signatory_name: d.signatory_name.trim(),
     contact_name:   d.contact_name.trim(),
     email:          d.email.trim(),
@@ -430,6 +434,9 @@ export function VendorEditorModal({
               </Field>
               <Field label="VAT number (optional)">
                 <input className="aq-input" value={draft.vat_number} onChange={setField('vat_number')} />
+              </Field>
+              <Field label="Licence expiry (optional)">
+                <input className="aq-input" type="date" value={draft.license_expiry} onChange={setField('license_expiry')} />
               </Field>
               <Field label="Organisation (licence holder)" full>
                 {!orgMode ? (

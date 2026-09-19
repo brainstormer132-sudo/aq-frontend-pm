@@ -386,6 +386,39 @@ export function Detail({
   );
 }
 
+export function expiryStatus(dateStr?: string | null): 'expired' | 'soon' | 'ok' | 'none' {
+  if (!dateStr) return 'none';
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return 'none';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((d.getTime() - today.getTime()) / 86400000);
+  if (days < 0) return 'expired';
+  if (days <= 30) return 'soon';
+  return 'ok';
+}
+
+export function ExpiryDetail({ label, value }: { label: string; value?: string | null }) {
+  const st = expiryStatus(value);
+  const color = st === 'expired' ? 'var(--aq-red, #dc2626)'
+    : st === 'soon' ? 'var(--aq-amber-strong, #b45309)'
+    : 'var(--aq-text)';
+  const note = st === 'expired' ? ' \u2014 expired' : st === 'soon' ? ' \u2014 expiring soon' : '';
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+        textTransform: 'uppercase', color: 'var(--aq-text-muted)',
+      }}>{label}</div>
+      <div style={{
+        fontSize: 12.5, marginTop: 2,
+        color: value ? color : 'var(--aq-text-muted)',
+        fontWeight: (st === 'expired' || st === 'soon') ? 700 : 400,
+        fontStyle: value ? 'normal' : 'italic',
+      }}>{value ? `${value}${note}` : 'not set'}</div>
+    </div>
+  );
+}
+
 export const DETAIL_GRID: React.CSSProperties = {
   display: 'grid', gap: 12,
   gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',

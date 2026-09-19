@@ -21,7 +21,7 @@ import {
 } from '@/lib/registry';
 import {
   RegistryTable, RegistryToolbar, RegistryHeader, Confirm, Chip, AddButton,
-  Detail, DETAIL_GRID, RegistryPager,
+  Detail, DETAIL_GRID, ExpiryDetail, RegistryPager,
 } from './RegistryTable';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { InviteLinkModal } from '@/components/workflow/InviteLinkModal';
@@ -372,6 +372,7 @@ function VendorDetail({
         <Detail label="VAT" value={v.vat_number} />
         <Detail label="ID number" value={v.id_number} />
         <Detail label="Licence" value={v.license_number} />
+        <ExpiryDetail label="Licence expiry" value={v.license_expiry} />
       </div>
 
       <div>

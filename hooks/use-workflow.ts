@@ -1384,6 +1384,7 @@ export async function updateClientDetails(id: string, fields: {
   city?: string | null;
   postcode?: string | null;
   country?: string | null;
+  cr_expiry?: string | null;
 }) {
   const { error } = await supabase.from('clients').update(fields).eq('id', id);
   if (error) throw error;
@@ -4607,6 +4608,7 @@ export interface LegacyVendor {
   id: number;
   name: string;
   license_number: string | null;
+  license_expiry?: string | null;
   created_at: string | null;
   // 089: the licence-holder org. org_id links a talent to a shared agency/company;
   //       org (attached at fetch) is that record, so the contract can name it.
@@ -6302,6 +6304,7 @@ export interface VendorRegistrationInput {
   // Identifiers — one or the other depending on category
   id_number?: string;
   license_number?: string;
+  license_expiry?: string | null;
   // Base
   signatory_name?: string;
   contact_name?: string;
@@ -6362,6 +6365,7 @@ export async function createApprovedVendorRegistration(input: VendorRegistration
     name: input.full_name,
     org_id: input.org_id ?? null,
     license_number: input.license_number ?? null,
+    license_expiry: input.license_expiry ?? null,
     id_number: input.id_number ?? '',
     category_id: input.category_id ?? null,
     signatory_name: input.signatory_name ?? '',
@@ -6427,6 +6431,7 @@ export async function updateVendorRegistration(
     ['category_id',     'category_id'],
     ['id_number',       'id_number'],
     ['license_number',  'license_number'],
+    ['license_expiry',  'license_expiry'],
     ['signatory_name',  'signatory_name'],
     ['contact_name',    'contact_name'],
     ['email',           'email'],
