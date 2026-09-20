@@ -186,7 +186,15 @@ export function hasRTLChars(s: string): boolean {
 export function blockAllText(b: Pick<TemplateBlock, 'content'>): string {
   const kv = blockKV(b);
   const sig = blockSig(b);
-  return `${blockText(b)} ${kv.label} ${kv.value} ${sig.right} ${sig.left}`.trim();
+  // A one-row table's cells ARE merge fields, so its column keys have to reach
+  // fillFieldsForBlocks (they become ordinary fields on the fill screen) and
+  // Publish's unknown-field check, exactly like a {{ placeholder }} in the
+  // wording. A rows table's columns are not fields of the contract - they are
+  // headings for rows the operator adds - so they stay out.
+  const cells = tableRowSource(b) === 'fields'
+    ? tableColumns(b).map((c) => `{{ ${c.key} }}`).join(' ')
+    : '';
+  return `${blockText(b)} ${kv.label} ${kv.value} ${sig.right} ${sig.left} ${cells}`.trim();
 }
 
 /**
@@ -527,7 +535,13 @@ export function contractCanonical(
       lines.push(`kv|${fillPlaceholders(kv.label, values)}=${fillPlaceholders(kv.value, values)}`);
     } else if (b.block_type === 'table') {
       const cols = tableColumns(b).map((c) => c.key).join(',');
-      lines.push(`table|${cols}|${values[tableKey(b.id ?? '')] ?? ''}`);
+      // A fields table's one row is not stored under tableKey - it is read from
+      // the ordinary values - so the seal has to cover the row as printed, or a
+      // contract could name one influencer and verify against another.
+      const body = tableRowSource(b) === 'fields'
+        ? serializeTableRows(tableRowsFor(b, values))
+        : (values[tableKey(b.id ?? '')] ?? '');
+      lines.push(`table|${cols}|${body}`);
     } else {
       lines.push(`${b.block_type}|${fillPlaceholders(blockText(b), values)}`);
     }
@@ -668,6 +682,47 @@ export function tableColumns(b: Pick<TemplateBlock, 'content'>): TableColumn[] {
     .map((c) => ({ key: c.key as string, label: typeof c.label === 'string' ? c.label : c.key }));
 }
 
+export type TableRowSource = 'rows' | 'fields';
+
+/**
+ * Where a table block's body comes from.
+ *
+ * `rows` - the operator adds rows on each contract. A CLIENT contract listing
+ *   the several vendors booked for one job wants this. It is the default, and
+ *   what a table block has always been.
+ * `fields` - the block is a header and exactly ONE row, whose cells are the
+ *   merge fields its columns name. A VENDOR contract is one contract per
+ *   vendor, so its outputs table describes that single vendor: the live
+ *   contract app's UGC template is literally a header row plus one row of
+ *   {{ name_2 }} {{ platform_smart }} {{ channel_name }} {{ ad_types }}
+ *   (contract-template-ar.js, block 11). Porting that as an add-rows table was
+ *   my mistake; this is the shape the document actually has.
+ *
+ * Pure.
+ */
+export function tableRowSource(b: Pick<TemplateBlock, 'content'>): TableRowSource {
+  return (b.content as any)?.row_source === 'fields' ? 'fields' : 'rows';
+}
+
+/** The single row a `fields` table prints, read straight off the contract's
+ *  values. Pure. */
+export function tableFieldRow(cols: TableColumn[], values: Record<string, string>): TableRow {
+  const out: TableRow = {};
+  for (const c of cols) out[c.key] = values[c.key] ?? '';
+  return out;
+}
+
+/** The rows a table block prints, however it gets them - one field-filled row,
+ *  or the operator's rows. One place, so preview, print and fingerprint cannot
+ *  disagree about what the document says. Pure. */
+export function tableRowsFor(
+  b: Pick<TemplateBlock, 'content'> & { id?: string },
+  values: Record<string, string>,
+): TableRow[] {
+  if (tableRowSource(b) === 'fields') return [tableFieldRow(tableColumns(b), values)];
+  return parseTableRows(values[tableKey(b.id ?? '')]);
+}
+
 /** Resolve a table's columns to their registry fields (for typed cell inputs),
  *  dropping any whose key is not registered. Pure. */
 export function tableColumnFields(cols: TableColumn[], placeholders: Placeholder[]): (TableColumn & { field: Placeholder })[] {
@@ -797,7 +852,7 @@ export function contractPrintHTML(args: {
     if (b.block_type === 'table') {
       const cols = tableColumns(b);
       if (!cols.length) return '';
-      const rows = parseTableRows(values[tableKey(b.id ?? '')]);
+      const rows = tableRowsFor(b, values);
       const head = cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join('');
       const bodyRows = rows.length
         ? rows.map((r) => `<tr>${cols.map((c) => `<td>${escapeHtml(r[c.key] ?? '')}</td>`).join('')}</tr>`).join('')

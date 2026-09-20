@@ -17,6 +17,7 @@ import {
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
+  tableRowSource, tableRowsFor,
   type Placeholder, type TemplateBlock, type TableRow,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -51,7 +52,13 @@ export function ContractFill({
   // from the visible set, so an excluded clause and its fields simply vanish.
   const visible = useMemo(() => visibleBlocks(blocks, offIds), [blocks, offIds]);
   const optionalBlocks = useMemo(() => blocks.filter(isOptionalBlock), [blocks]);
-  const tableBlocks = useMemo(() => visible.filter((b) => b.block_type === 'table'), [visible]);
+  // Only the add-rows tables get a TableFill above the form. A one-row table
+  // (a vendor contract's outputs table) has no rows to add: its four cells are
+  // ordinary fields and appear in the Fields card like any other.
+  const tableBlocks = useMemo(
+    () => visible.filter((b) => b.block_type === 'table' && tableRowSource(b) === 'rows'),
+    [visible],
+  );
 
   // The fields the visible wording uses, in first-appearance order.
   const fields = useMemo(
@@ -492,7 +499,7 @@ function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Reco
         if (b.block_type === 'table') {
           const cols = tableColumns(b);
           if (!cols.length) return null;
-          const rows = parseTableRows(values[tableKey(b.id)]);
+          const rows = tableRowsFor(b, values);
           return (
             <table key={b.id} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, margin: '6px 0' }}>
               <thead>

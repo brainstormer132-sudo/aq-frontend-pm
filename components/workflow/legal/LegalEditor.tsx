@@ -5,8 +5,9 @@ import { useDocEditor, useLegalPlaceholders } from '@/hooks/use-legal';
 import {
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, blockText, blockKV, blockSig, canPublish,
   kindLabel, statusLabel, statusBadge, detectDir, usedPlaceholderKeys, unknownPlaceholders,
-  tableColumns,
+  tableColumns, tableRowSource,
   type EditorBlockType, type TemplateBlock, type Dir, type Placeholder, type TableColumn,
+  type TableRowSource,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { FieldsPanel } from '@/components/workflow/legal/FieldsPanel';
@@ -210,7 +211,10 @@ function TableColumnsEditor({
   const used = new Set(cols.map((c) => c.key));
   const available = regFields.filter((f) => !used.has(f.key));
 
+  const src = tableRowSource(block);
   const setCols = (next: TableColumn[]) => onSave({ ...block.content, columns: next });
+  const setSrc = (next: TableRowSource) =>
+    onSave({ ...block.content, columns: cols, row_source: next });
   const addCol = () => {
     const f = regFields.find((x) => x.key === addKey);
     if (!f) return;
@@ -225,14 +229,37 @@ function TableColumnsEditor({
   if (!editable) {
     return (
       <div style={{ fontSize: 13 }}>
-        <span style={{ color: 'var(--aq-text-muted)' }}>Table columns: </span>
+        <span style={{ color: 'var(--aq-text-muted)' }}>
+          {src === 'fields' ? 'One row, filled from the fields: ' : 'Table columns: '}
+        </span>
         {cols.length ? cols.map((c) => c.label).join(', ') : <span style={{ color: 'var(--aq-text-muted)' }}>(none)</span>}
       </div>
     );
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>Columns (each is a typed field; rows are added per contract):</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ fontSize: 12, fontWeight: 600 }}>How this table gets its rows</div>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12.5 }}>
+          <input type="radio" name={`rs-${block.id}`} checked={src === 'fields'}
+            onChange={() => setSrc('fields')} style={{ marginTop: 3 }} />
+          <span>
+            <b>One row, from the fields.</b> The table is a header and a single row;
+            each column is an ordinary field on the contract. This is what a vendor
+            contract wants - one contract per vendor, so the row describes that vendor.
+          </span>
+        </label>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12.5 }}>
+          <input type="radio" name={`rs-${block.id}`} checked={src === 'rows'}
+            onChange={() => setSrc('rows')} style={{ marginTop: 3 }} />
+          <span>
+            <b>Rows added per contract.</b> The operator adds as many rows as the job
+            needs. This is what a client contract wants, where one document covers
+            several vendors.
+          </span>
+        </label>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>Columns (each is a typed field):</div>
       {cols.length === 0 ? (
         <div style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>No columns yet - add fields below.</div>
       ) : (

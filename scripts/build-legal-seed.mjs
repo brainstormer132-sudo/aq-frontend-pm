@@ -2,7 +2,8 @@
  * Generate the legal-system seed for the live UGC contract.
  *
  *   node scripts/build-legal-seed.mjs
- *   -> supabase/seeds/105_ugc_template.sql
+ *   -> supabase/seeds/105_ugc_template.sql        (VERSION 1)
+ *   -> supabase/seeds/109_ugc_template_v<N>.sql   (VERSION 2 and up)
  *
  * The contract text lives in public/contracts/contract-template-ar.js, which
  * is itself generated from the DOCX in aq-backend template storage. This
@@ -33,12 +34,26 @@
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
-const OUT = join(ROOT, 'supabase', 'seeds', '105_ugc_template.sql');
+/**
+ * The version this seed publishes.
+ *
+ * v1 (2026-09-20) shipped the outputs table as an add-rows grid. That was
+ * wrong: contract-template-ar.js block 11 is a header row and exactly one row
+ * of {{ placeholders }}, because a UGC contract covers one vendor. A published
+ * version is frozen by the 098 trigger and must stay that way, so the fix is a
+ * new version, not an edit - and step 3 archives v1 on the way past.
+ */
+const VERSION = 2;
+
+// One file per version. 105 is what prod ran for v1 and stays in the repo as
+// the record of it; a bumped VERSION writes its own file beside it.
+const OUT = join(ROOT, 'supabase', 'seeds',
+  VERSION === 1 ? '105_ugc_template.sql' : `109_ugc_template_v${VERSION}.sql`);
 
 // AQ Creativity. Prod carries a second, empty workspace (bd1faf73-...) that
 // must stay untouched - see claude/aq-legal-template-seed-v1.md.
@@ -117,7 +132,11 @@ const blocks = tpl.blocks.map((b, i) => {
     case 'kv':
       return { type: 'kv', content: splitKV(b.v) };
     case 'table':
-      return { type: 'table', content: { columns: tableColumns(b.rows) } };
+      // row_source 'fields': the live template's table is a header and ONE row
+      // of merge fields, because a vendor contract is one contract per vendor.
+      // Porting it as an add-rows table (what v1 shipped) put a "+ Add row"
+      // grid on a document that never had one.
+      return { type: 'table', content: { columns: tableColumns(b.rows), row_source: 'fields' } };
     case 'sig':
       return { type: 'sig', content: { right: b.right ?? '', left: b.left ?? '' } };
     default:
@@ -151,11 +170,11 @@ const blockRows = blocks.map((b, i) =>
   `    (v_ver, v_ws, ${i + 1}, ${q(b.type)}, ${jb(b.content)})`).join(',\n');
 
 const sql = `-- ============================================================
--- 105_ugc_template.sql   GENERATED - do not hand-edit.
+-- ${basename(OUT)}   GENERATED - do not hand-edit.
 --   node scripts/build-legal-seed.mjs
 --
 -- Ports the live "${TEMPLATE_NAME}" contract into legal.*: ${FIELDS.length} typed
--- fields and ${blocks.length} blocks as version 1, published, in workspace
+-- fields and ${blocks.length} blocks as version ${VERSION}, published, in workspace
 -- ${WORKSPACE}.
 --
 -- Source: public/contracts/contract-template-ar.js
@@ -204,11 +223,11 @@ ${fieldRows}
   end if;
 
   select id into v_ver from legal.doc_template_version
-   where template_id = v_tpl and version = 1;
+   where template_id = v_tpl and version = ${VERSION};
   if v_ver is null then
     -- Blocks are writable only while the version is a draft (098 freeze).
     insert into legal.doc_template_version (template_id, workspace_id, version, status)
-    values (v_tpl, v_ws, 1, 'draft') returning id into v_ver;
+    values (v_tpl, v_ws, ${VERSION}, 'draft') returning id into v_ver;
 
     insert into legal.doc_template_block (version_id, workspace_id, position, block_type, content)
     values
@@ -219,7 +238,7 @@ ${blockRows};
      where id = v_ver;
     raise notice 'seeded % blocks', ${blocks.length};
   else
-    raise notice 'version 1 already exists - blocks left alone';
+    raise notice 'version ${VERSION} already exists - blocks left alone';
   end if;
 
   -- 3. retire every other published vendor_contract -------------

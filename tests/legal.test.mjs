@@ -13,6 +13,7 @@ import {
   OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
   dateAlertState, contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
+  tableRowSource, tableFieldRow, tableRowsFor,
   tableHasInvalidCell,
 } from '../.test-build/legal.js';
 
@@ -450,6 +451,66 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   // so adding it now would make every already-issued contract read "differs".
   eq('sig stays out of the canonical string',
     contractCanonical('v1', [S('First', 'Second')], {}), 'v:v1\nsig|');
+}
+
+// ---- a table's rows: the operator's, or the contract's own fields ----
+//
+// The live UGC template (contract-template-ar.js block 11) is a header row and
+// ONE row of merge fields, because a vendor contract covers one vendor. v1
+// ported it as an add-rows grid; row_source 'fields' is the correction.
+{
+  const COLS = [
+    { key: 'name_2', label: 'Influencer' },
+    { key: 'platform_smart', label: 'Platform' },
+  ];
+  const ROWS = { id: 't1', block_type: 'table', content: { columns: COLS } };
+  const ONE = { id: 't1', block_type: 'table', content: { columns: COLS, row_source: 'fields' } };
+  const V = { name_2: 'Sara', platform_smart: 'TikTok', [tableKey('t1')]: '[{"name_2":"ignored"}]' };
+
+  eq('a table defaults to operator rows', tableRowSource(ROWS), 'rows');
+  eq('row_source fields is read', tableRowSource(ONE), 'fields');
+  eq('an unknown row_source falls back to rows',
+    tableRowSource({ content: { columns: COLS, row_source: 'magic' } }), 'rows');
+
+  eq('the one row is read from the values', tableFieldRow(COLS, V),
+    { name_2: 'Sara', platform_smart: 'TikTok' });
+  eq('a missing value is an empty cell, not undefined', tableFieldRow(COLS, {}),
+    { name_2: '', platform_smart: '' });
+
+  eq('a fields table prints exactly one row', tableRowsFor(ONE, V).length, 1);
+  eq('and it ignores any stored rows', tableRowsFor(ONE, V)[0].name_2, 'Sara');
+  eq('a rows table still reads its stored rows', tableRowsFor(ROWS, V),
+    [{ name_2: 'ignored' }]);
+  eq('a rows table with nothing stored has no rows', tableRowsFor(ROWS, {}), []);
+
+  // The column keys have to reach the fill form and Publish's unknown-field
+  // check, or the four cells would be unfillable and unvalidated.
+  ok('a fields table surfaces its columns as merge fields',
+    parsePlaceholderKeys(blockAllText(ONE)).join(',') === 'name_2,platform_smart');
+  eq('a rows table surfaces none of them', parsePlaceholderKeys(blockAllText(ROWS)), []);
+  eq('the fill form offers a fields table\'s columns',
+    fillFieldsForBlocks([ONE], [
+      { key: 'name_2', label: 'Influencer', field_type: 'text' },
+      { key: 'platform_smart', label: 'Platform', field_type: 'text' },
+    ]).map((f) => f.key), ['name_2', 'platform_smart']);
+
+  // The seal must cover the row as printed. Sealing a fields table over the
+  // (empty) tableKey slot would let the influencer's name change with the
+  // fingerprint still reading Verified.
+  const c1 = contractCanonical('v1', [ONE], V);
+  const c2 = contractCanonical('v1', [ONE], { ...V, name_2: 'Noura' });
+  ok('changing a cell changes the sealed string', c1 !== c2);
+  ok('the sealed string carries the cell', c1.includes('Sara'));
+  // A rows table's canonical is untouched, so no already-issued contract moves.
+  eq('a rows table hashes its stored rows as before',
+    contractCanonical('v1', [ROWS], V), 'v:v1\ntable|name_2,platform_smart|[{"name_2":"ignored"}]');
+
+  ok('print draws the one row', contractPrintHTML({
+    title: 'T', dir: 'rtl', blocks: [ONE], values: V, meta: {},
+  }).includes('Sara'));
+  ok('print does not say (no rows) for a fields table', !contractPrintHTML({
+    title: 'T', dir: 'rtl', blocks: [ONE], values: {}, meta: {},
+  }).includes('(no rows)'));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
