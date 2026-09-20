@@ -329,6 +329,61 @@ export function fillPlaceholders(text: string, values: Record<string, string>): 
     (m, k) => (Object.prototype.hasOwnProperty.call(values, k) ? values[k] : m));
 }
 
+/** One piece of a filled line: literal wording, or a merge field and its state. */
+export interface FillSegment {
+  t: 'text' | 'field';
+  /** The merge key, for a field segment. */
+  key?: string;
+  /** What to show: the value, or the placeholder word when there is none. */
+  v: string;
+  /** Nobody has filled this and nobody will - it prints blank. */
+  missing?: boolean;
+  /** Empty on purpose: something else fills it later (the contract number, at
+   *  issue). Not a gap, and colouring it like one would cry wolf every time. */
+  pending?: boolean;
+}
+
+/**
+ * Fill a line into segments rather than a string, so the preview can show
+ * which words came from the form and which are the template's own.
+ *
+ * This is what the live contract app does (app.js:3983): filled values get a
+ * highlight, a gap is red and underlined, a pending value is grey. Reading a
+ * 42-block Arabic contract to find the one field you forgot is otherwise a
+ * spot-the-difference puzzle. `pendingKeys` names the fields that are empty on
+ * purpose. Pure.
+ */
+export function fillSegments(
+  text: string,
+  values: Record<string, string>,
+  opts?: { missingWord?: string; pendingWord?: string; pendingKeys?: string[] },
+): FillSegment[] {
+  const missingWord = opts?.missingWord ?? '';
+  const pendingWord = opts?.pendingWord ?? '';
+  const pending = new Set(opts?.pendingKeys ?? []);
+  const src = String(text ?? '');
+  const re = new RegExp(PLACEHOLDER_G.source, 'g');
+  const out: FillSegment[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    if (m.index > last) out.push({ t: 'text', v: src.slice(last, m.index) });
+    const key = m[1];
+    const value = String(values[key] ?? '');
+    const isPending = value === '' && pending.has(key);
+    out.push({
+      t: 'field',
+      key,
+      v: value || (isPending ? pendingWord : missingWord),
+      missing: value === '' && !isPending,
+      pending: isPending,
+    });
+    last = re.lastIndex;
+  }
+  if (last < src.length) out.push({ t: 'text', v: src.slice(last) });
+  return out;
+}
+
 // ---- managed lists (the dropdown enumerations) -------------------------
 //
 // "Legal chooses, it does not write": a list-type field draws from a managed

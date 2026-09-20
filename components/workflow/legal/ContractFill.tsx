@@ -7,6 +7,7 @@ import {
 import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
+  performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
 } from '@/lib/legal-prefill';
 import { useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
@@ -17,8 +18,8 @@ import {
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
-  tableRowSource, tableRowsFor,
-  type Placeholder, type TemplateBlock, type TableRow,
+  tableRowSource, tableRowsFor, fillSegments,
+  type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 
@@ -66,12 +67,16 @@ export function ContractFill({
     [visible, reg.placeholders],
   );
 
-  // The contract number is not one of them. legal.reserve_contract_number
-  // assigns it the moment before the contract is issued, so a typed value would
-  // be overwritten and an abandoned draft would have burned a number. It is
-  // shown, read-only, above the form.
-  const fillFields = useMemo(() => fields.filter((f) => f.key !== CONTRACT_NO_KEY), [fields]);
-  const usesContractNo = fillFields.length !== fields.length;
+  // Two of them are never typed. The contract number is assigned by
+  // legal.reserve_contract_number the moment before issue, so a typed value
+  // would be overwritten and an abandoned draft would have burned a number.
+  // The weekday is derived from the date, and a weekday edited apart from its
+  // date is a contract that contradicts itself on line four. Both are shown
+  // read-only above the form instead.
+  const DERIVED_KEYS = [CONTRACT_NO_KEY, UGC_DAY_KEY];
+  const fillFields = useMemo(() => fields.filter((f) => !DERIVED_KEYS.includes(f.key)), [fields]);
+  const usesContractNo = useMemo(() => fields.some((f) => f.key === CONTRACT_NO_KEY), [fields]);
+  const usesDay = useMemo(() => fields.some((f) => f.key === UGC_DAY_KEY), [fields]);
 
   // Which pickers this template wants, and which account is already chosen.
   const usesBrand = useMemo(() => fields.some((f) => f.key === UGC_BRAND_KEY), [fields]);
@@ -122,6 +127,33 @@ export function ContractFill({
     }
     return false;
   }, [tableBlocks, reg.placeholders, values, lists.valuesByList]);
+
+  // The contract's own date, Riyadh's rather than the browser's: a contract
+  // drafted at 1am in Jeddah is dated today there, not yesterday in UTC.
+  const riyadhToday = useMemo(
+    () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
+    [],
+  );
+
+  /** The date and the weekday move together, always. */
+  const setDate = (iso: string) => {
+    const next = datedValues(values, iso);
+    ed.setValue(UGC_DATE_KEY, next[UGC_DATE_KEY] ?? '');
+    ed.setValue(UGC_DAY_KEY, next[UGC_DAY_KEY] ?? '');
+  };
+
+  // A draft that reaches the screen with no date gets today's, once. Nobody
+  // should have to type the date of the contract they are writing now, and the
+  // weekday is not something to work out by hand.
+  const usesDate = useMemo(() => fields.some((f) => f.key === UGC_DATE_KEY), [fields]);
+  const [dateStamped, setDateStamped] = useState(false);
+  useEffect(() => {
+    if (loading || !contract || !editable || !usesDate || dateStamped) return;
+    if ((values[UGC_DATE_KEY] ?? '') !== '') { setDateStamped(true); return; }
+    setDateStamped(true);
+    setDate(riyadhToday);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, contract, editable, usesDate, dateStamped, riyadhToday]);
 
   // Date alerts: a tracked date that is expired blocks Issue; expiring-soon warns.
   const today = new Date().toISOString().slice(0, 10);
@@ -307,6 +339,11 @@ export function ContractFill({
                         const p = licenceParty(vend as ContractVendor | null);
                         ed.setValue('license_name', p.name);
                         ed.setValue('license_number', p.number);
+                        // The outputs table names the performer, first and last.
+                        // For talent on their own licence that IS the licence
+                        // name; under an agency it is the influencer, not the
+                        // agency, which is who the table is about.
+                        ed.setValue(UGC_PERFORMER_KEY, performerName(vend as ContractVendor | null));
                         for (const k of UGC_BANK_KEYS) ed.setValue(k, '');
                         void ed.setVendor(vend ? Number(vend.id) : null);
                       }}
@@ -363,6 +400,14 @@ export function ContractFill({
                     you abandon does not use one up.
                   </span>
                 )}
+                {usesDay && (
+                  <>
+                    <span style={{ fontSize: 13, fontWeight: 600, marginInlineStart: 12 }}>Day</span>
+                    <span dir="auto" style={{ fontSize: 13 }}>
+                      {values[UGC_DAY_KEY] || <span style={{ color: 'var(--aq-text-muted)' }}>set the date first</span>}
+                    </span>
+                  </>
+                )}
               </div>
             )}
             {fillFields.length === 0 ? (
@@ -375,7 +420,10 @@ export function ContractFill({
                   <FieldInput key={f.key} field={f} value={values[f.key] ?? ''} editable={!!editable}
                     options={sortListValues(((f.list_id ? lists.valuesByList[f.list_id] : undefined) ?? []).filter((v) => v.active))}
                     allowed={listsByKey[f.key]}
-                    onChange={(v) => ed.setValue(f.key, v)} />
+                    hint={f.key === UGC_DATE_KEY && usesDay
+                      ? `The weekday follows this date: ${values[UGC_DAY_KEY] || '-'}`
+                      : undefined}
+                    onChange={(v) => (f.key === UGC_DATE_KEY ? setDate(v) : ed.setValue(f.key, v))} />
                 ))}
               </div>
             )}
@@ -422,13 +470,15 @@ export function ContractFill({
 }
 
 function FieldInput({
-  field, value, options, allowed, editable, onChange,
+  field, value, options, allowed, editable, hint, onChange,
 }: {
   field: Placeholder;
   value: string;
   options: { id: string; value: string; label: string }[];
   allowed?: string[];
   editable: boolean;
+  /** A line under the control, for a field that drives another one. */
+  hint?: string;
   onChange: (v: string) => void;
 }) {
   const err = validateFieldValue(field, value, allowed ? { values: allowed } : undefined);
@@ -473,11 +523,47 @@ function FieldInput({
         <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{fieldTypeLabel(field.field_type)}</span>
       </label>
       {control()}
+      {editable && hint && (
+        <div dir="auto" style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>{hint}</div>
+      )}
       {editable && err && value.trim() !== '' && (
         <div style={{ fontSize: 11.5, color: 'var(--aq-danger, #c0392b)', marginTop: 3 }}>{err}</div>
       )}
     </div>
   );
+}
+
+/**
+ * A filled line, with the values that came from the form marked.
+ *
+ * The same three states the live contract app draws (app.js:3983): a filled
+ * value is highlighted, a gap is red and underlined, a value something else
+ * supplies later is grey. Reading a 42-block Arabic contract to find the one
+ * field you forgot is otherwise a spot-the-difference puzzle.
+ */
+function Filled({ text, values }: { text: string; values: Record<string, string> }) {
+  const segs = fillSegments(text, values, {
+    missingWord: '\u063a\u064a\u0631 \u0645\u062f\u062e\u0644',
+    pendingWord: '\u064a\u064f\u0636\u0627\u0641 \u0639\u0646\u062f \u0627\u0644\u0625\u0646\u0634\u0627\u0621',
+    pendingKeys: [CONTRACT_NO_KEY],
+  });
+  return <>{segs.map((sg, i) => <Seg key={i} s={sg} />)}</>;
+}
+
+function Seg({ s }: { s: FillSegment }) {
+  if (s.t === 'text') return <>{s.v}</>;
+  if (s.missing) {
+    return <span style={{ color: 'var(--aq-danger, #c0392b)', fontWeight: 700, whiteSpace: 'nowrap',
+      borderBottom: '1px dashed var(--aq-danger, #c0392b)' }}>{s.v}</span>;
+  }
+  if (s.pending) {
+    return <span style={{ color: 'var(--aq-text-muted)', whiteSpace: 'nowrap',
+      borderBottom: '1px dashed var(--aq-border)' }}>{s.v}</span>;
+  }
+  // Filled from the form. Fixed colours, not tokens: this sits on the preview
+  // sheet, which is a printed page in both themes.
+  return <span style={{ fontWeight: 700, background: '#fbf0b8', color: '#141414',
+    padding: '0 3px', borderRadius: 3 }}>{s.v}</span>;
 }
 
 function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Record<string, string> }) {
@@ -491,8 +577,8 @@ function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Reco
           const kv = blockKV(b);
           return (
             <div key={b.id} dir="auto" style={{ fontSize: 14 }}>
-              <span style={{ fontWeight: 600 }}>{fillPlaceholders(kv.label, values)}:</span>{' '}
-              <span>{fillPlaceholders(kv.value, values)}</span>
+              <span style={{ fontWeight: 600 }}><Filled text={kv.label} values={values} />:</span>{' '}
+              <span><Filled text={kv.value} values={values} /></span>
             </div>
           );
         }
@@ -509,13 +595,17 @@ function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Reco
                 {rows.length === 0 ? (
                   <tr><td colSpan={cols.length} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', color: 'var(--aq-text-muted)', textAlign: 'center' }}>(no rows)</td></tr>
                 ) : rows.map((r, ri) => (
-                  <tr key={ri}>{cols.map((c) => <td key={c.key} dir="auto" style={{ border: '1px solid var(--aq-border)', padding: '3px 6px' }}>{r[c.key] ?? ''}</td>)}</tr>
+                  <tr key={ri}>{cols.map((c) => (
+                    <td key={c.key} dir="auto" style={{ border: '1px solid var(--aq-border)', padding: '3px 6px' }}>
+                      <Filled text={`{{ ${c.key} }}`} values={r} />
+                    </td>
+                  ))}</tr>
                 ))}
               </tbody>
             </table>
           );
         }
-        const text = fillPlaceholders(blockText(b), values);
+        const text = <Filled text={blockText(b)} values={values} />;
         if (b.block_type === 'title') return <div key={b.id} dir="auto" style={{ fontSize: 18, fontWeight: 700 }}>{text}</div>;
         if (b.block_type === 'h') return <div key={b.id} dir="auto" style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{text}</div>;
         if (b.block_type === 'li') return <div key={b.id} dir="auto" style={{ fontSize: 14, paddingInlineStart: 16 }}>{'\u2022'} {text}</div>;

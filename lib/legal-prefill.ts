@@ -29,10 +29,13 @@
  *    the date here, because the opening sentence names both and they have to
  *    agree.
  *
- * The four influencer columns are NOT single fields. The live template's
- * one-row table became typed columns in the port, so a campaign with three
- * influencers is three rows rather than three contracts. They come back as
- * `tableRow`, which the caller stores under the table block's key.
+ * The four influencer columns describe THE ONE vendor this contract is for.
+ * The live template's table is a header and a single row of merge fields
+ * (contract-template-ar.js block 11), so three influencers are three
+ * contracts, not three rows - only a CLIENT contract lists several vendors in
+ * one document. They still come back as `tableRow` for the caller that fills
+ * the row directly; on the fill screen they are ordinary fields, because the
+ * seeded block carries row_source 'fields'.
  */
 
 /** The resolved booking, in the shape the vendor contract request already uses. */
@@ -232,6 +235,62 @@ export function stampContractNumber(
   const no = txt(contractNo);
   if (!no || values[CONTRACT_NO_KEY] === no) return values;
   return { ...values, [CONTRACT_NO_KEY]: no };
+}
+
+/** The keys that are not typed by hand: the date drives the weekday, the
+ *  licence drives the performer's name, and both lists come from the registry. */
+export const UGC_DATE_KEY = 'date';
+export const UGC_DAY_KEY = 'day';
+export const UGC_PERFORMER_KEY = 'name_2';
+export const UGC_PLATFORM_KEY = 'platform_smart';
+export const UGC_AD_TYPE_KEY = 'ad_types';
+
+/**
+ * A person's first and last name, with anything in between dropped.
+ *
+ * Saudi names on a licence are commonly four parts - given, father,
+ * grandfather, family - and the contract's outputs table names the performer,
+ * not their lineage. Siraj: "name_2 auto takes first and last name from
+ * license". A single-word name comes back whole; a name that is already two
+ * words is unchanged. Latin and Arabic alike, because this only splits on
+ * whitespace. Pure.
+ */
+export function firstLast(name: unknown): string {
+  const parts = txt(name).split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Who the outputs table names: the vendor themselves, shortened to first and
+ * last.
+ *
+ * NOT licenceParty(). When a talent is licensed under an agency the agency is
+ * the contracting party (license_name), but the influencer doing the work is
+ * still this person - the live contract app takes name_2 from vendor.name
+ * either way (contract-preview.js:263). For a vendor on their own licence the
+ * two are the same name, which is the case Siraj described. Pure.
+ */
+export function performerName(v: ContractVendor | null | undefined): string {
+  return v ? firstLast(v.name) : '';
+}
+
+/**
+ * The date and the weekday it implies, as one change.
+ *
+ * The contract's opening sentence names both ("on <day> <date>"), so they must
+ * never be set apart from each other - a date edited by hand with a stale
+ * weekday beside it is a contract that contradicts itself on line four. Pure;
+ * returns the same object when nothing moves. Pass '' to clear both.
+ */
+export function datedValues(
+  values: Record<string, string>,
+  iso: string,
+): Record<string, string> {
+  const d = txt(iso);
+  const day = arabicWeekday(d);
+  if (values[UGC_DATE_KEY] === d && values[UGC_DAY_KEY] === day) return values;
+  return { ...values, [UGC_DATE_KEY]: d, [UGC_DAY_KEY]: day };
 }
 
 /** A vendor as the contract needs to see them, with their licence org attached. */

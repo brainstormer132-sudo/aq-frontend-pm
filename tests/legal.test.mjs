@@ -13,7 +13,7 @@ import {
   OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
   dateAlertState, contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
-  tableRowSource, tableFieldRow, tableRowsFor,
+  tableRowSource, tableFieldRow, tableRowsFor, fillSegments,
   tableHasInvalidCell,
 } from '../.test-build/legal.js';
 
@@ -511,6 +511,38 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   ok('print does not say (no rows) for a fields table', !contractPrintHTML({
     title: 'T', dir: 'rtl', blocks: [ONE], values: {}, meta: {},
   }).includes('(no rows)'));
+}
+
+// ---- the preview shows which words came from the form ----
+{
+  const T = 'Party {{ license_name }} under {{ id }} for {{ brand_name }}.';
+  const segs = fillSegments(T, { license_name: 'Sara', brand_name: '' },
+    { missingWord: 'MISSING', pendingWord: 'PENDING', pendingKeys: ['id'] });
+
+  eq('literal wording and fields alternate', segs.map((s) => s.t),
+    ['text', 'field', 'text', 'field', 'text', 'field', 'text']);
+  eq('a filled field shows its value', segs[1].v, 'Sara');
+  ok('and is neither missing nor pending', !segs[1].missing && !segs[1].pending);
+  eq('a pending field shows the pending word', segs[3].v, 'PENDING');
+  ok('pending is not missing - it is filled later, not forgotten',
+    segs[3].pending === true && segs[3].missing === false);
+  eq('an empty field shows the missing word', segs[5].v, 'MISSING');
+  ok('and is marked missing', segs[5].missing === true);
+  eq('the key rides along for each field', segs[5].key, 'brand_name');
+
+  eq('text with no fields is one segment', fillSegments('plain', {}), [{ t: 'text', v: 'plain' }]);
+  eq('empty text is no segments', fillSegments('', {}), []);
+  eq('a field at the very start makes no empty leading text',
+    fillSegments('{{ a }} tail', { a: 'x' }).length, 2);
+  // Re-reading the same line must not depend on a shared regex's lastIndex.
+  eq('a second call over the same text is identical',
+    JSON.stringify(fillSegments(T, { license_name: 'Sara' })),
+    JSON.stringify(fillSegments(T, { license_name: 'Sara' })));
+  // Nothing is dropped: the segments rejoin to what fillPlaceholders shows.
+  eq('segments rejoin to the filled line',
+    fillSegments(T, { license_name: 'Sara', id: 'AQ-1', brand_name: 'Rabea' })
+      .map((s) => s.v).join(''),
+    fillPlaceholders(T, { license_name: 'Sara', id: 'AQ-1', brand_name: 'Rabea' }));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

@@ -3,6 +3,7 @@ import {
   UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS, ARABIC_WEEKDAYS,
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, stampContractNumber,
+  firstLast, performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY,
 } from '../.test-build/legal-prefill.js';
 import { contractCanonical } from '../.test-build/legal.js';
 
@@ -222,6 +223,51 @@ ok('a row with only a platform is not empty',
   const after = contractCanonical('v1', blocks, stampContractNumber(base, 'AQ-2026-0007'));
   ok('sealing after the number changes what is sealed', before !== after);
   ok('the sealed text carries the number', after.includes('AQ-2026-0007'));
+}
+
+// ---- who the outputs table names, and how short ----
+{
+  // Saudi names on a licence run given / father / grandfather / family. The
+  // table names the influencer, not their lineage.
+  eq('four parts become first and last',
+    firstLast('Mohammed Abdullah Salem Alqahtani'), 'Mohammed Alqahtani');
+  eq('two parts are left alone', firstLast('Sara Khaled'), 'Sara Khaled');
+  eq('one part comes back whole', firstLast('Rawad'), 'Rawad');
+  eq('runs of whitespace do not make empty parts',
+    firstLast('  Mohammed   Abdullah    Alqahtani  '), 'Mohammed Alqahtani');
+  eq('nothing in, nothing out', firstLast(''), '');
+  eq('null does not crash', firstLast(null), '');
+
+  const solo = { id: 1, name: 'Sara Khaled Alotaibi', license_number: '70123' };
+  const underOrg = { id: 3, name: 'Sara Khaled Alotaibi', license_number: '70123',
+    org: { name: 'Talent Agency Ltd', license_number: '4030' } };
+
+  eq('the performer is the vendor, shortened', performerName(solo), 'Sara Alotaibi');
+  // The agency signs (licenceParty), but the table is about who does the work.
+  eq('an agency licence does not rename the performer',
+    performerName(underOrg), 'Sara Alotaibi');
+  eq('the licence party is still the agency',
+    licenceParty(underOrg).name, 'Talent Agency Ltd');
+  eq('no vendor is an empty name', performerName(null), '');
+}
+
+// ---- the date and the weekday move together ----
+{
+  const v = { license_name: 'Sara' };
+  // 2026-09-20 is a Sunday.
+  const d = datedValues(v, '2026-09-20');
+  eq('the date is set', d[UGC_DATE_KEY], '2026-09-20');
+  eq('and the weekday follows it', d[UGC_DAY_KEY], ARABIC_WEEKDAYS[0]);
+  ok('the caller\'s object is untouched', v[UGC_DATE_KEY] === undefined);
+
+  // The bug this exists to stop: a date edited by hand leaving last week's
+  // weekday beside it, so line four of the contract contradicts itself.
+  const moved = datedValues(d, '2026-09-21');
+  eq('moving the date moves the weekday', moved[UGC_DAY_KEY], ARABIC_WEEKDAYS[1]);
+  eq('a junk date clears the weekday rather than keeping a stale one',
+    datedValues(d, 'not-a-date')[UGC_DAY_KEY], '');
+  eq('clearing the date clears the weekday', datedValues(d, '')[UGC_DAY_KEY], '');
+  ok('setting the same date again is the same object', datedValues(d, '2026-09-20') === d);
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);
