@@ -580,6 +580,27 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     try { await fn(); } catch (e: any) { setError(e?.message ?? String(e)); throw e; } finally { setBusy(false); }
   };
 
+  /**
+   * Point this contract at a vendor, or at nobody.
+   *
+   * A contract raised from a booking already knows its vendor; one raised in
+   * the Register does not, and the vendor is what makes the licence fields and
+   * the IBAN list resolvable. Writing it on the contract rather than only into
+   * the field values means the bank picker can reload for the new vendor and
+   * the register can later say who a contract is with.
+   *
+   * Only while a draft: the guard is the same one the field writes use, and
+   * the database refuses a field write on an issued contract anyway.
+   */
+  const setVendor = (vendorId: number | null) => run(async () => {
+    guard();
+    const { error: e } = await legal().from('contract')
+      .update({ vendor_id: vendorId })
+      .eq('id', contract!.id);
+    if (e) throw e;
+    setContract((c) => (c ? { ...c, vendor_id: vendorId } : c));
+  });
+
   /** Upsert one row per field key with its current value. The reserved keys -
    *  the optional-clause choice and each table's rows - ride along whenever the
    *  operator has touched them. */
@@ -638,6 +659,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
 
   return {
     contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds,
+    setVendor,
     reload: load, setValue, saveAll, issue, rename, toggleBlockOff,
   };
 }

@@ -210,6 +210,53 @@ export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): Ugc
 export const UGC_BRAND_KEY = 'brand_name';
 export const UGC_BANK_KEYS = ['bank_name', 'account_name', 'account_number', 'iban'];
 
+/** A vendor as the contract needs to see them, with their licence org attached. */
+export interface ContractVendor {
+  id: number | string;
+  name?: string | null;
+  contact_name?: string | null;
+  license_number?: string | null;
+  id_number?: string | null;
+  /** The licence-holding organization, when this talent performs under one. */
+  org?: { name?: string | null; license_number?: string | null; id_number?: string | null } | null;
+}
+
+/**
+ * Who the contract's second party actually is, and the number that proves it.
+ *
+ * When talent performs under an agency's commercial licence the ORG is the
+ * party - its name leads the contract and its licence number is the licence -
+ * while the talent's own name still names the performer further down. Talent
+ * on their own licence are the party themselves. An influencer with no licence
+ * falls back to their ID number, because that is what the contract needs and
+ * requiring a licence blocked every vendor contract that had none.
+ *
+ * The same rule as buildVendorContractPayload in hooks/use-workflow.ts, here
+ * so the picker and the booking path cannot drift apart.
+ */
+export function licenceParty(v: ContractVendor | null | undefined): { name: string; number: string } {
+  if (!v) return { name: '', number: '' };
+  const orgName = txt(v.org?.name);
+  const own = [txt(v.license_number), txt(v.id_number)].find(Boolean) ?? '';
+  if (orgName) {
+    const orgNum = [txt(v.org?.license_number), txt(v.org?.id_number), own].find(Boolean) ?? '';
+    return { name: orgName, number: orgNum };
+  }
+  return { name: txt(v.name), number: own };
+}
+
+/**
+ * How a vendor reads in the picker. The number is the disambiguator: two
+ * talents called the same thing are told apart by their licence, and an
+ * agency's people all show the agency beneath their own name.
+ */
+export function vendorPickerHint(v: ContractVendor): string {
+  const p = licenceParty(v);
+  const parts = [p.number];
+  if (txt(v.org?.name) && txt(v.org?.name) !== txt(v.name)) parts.push(txt(v.org?.name));
+  return parts.filter(Boolean).join(' - ');
+}
+
 /** One of a vendor's bank accounts, as much of it as a contract needs. */
 export interface VendorBankAccount {
   id: number | string;

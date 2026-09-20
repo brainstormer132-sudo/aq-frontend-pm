@@ -2,6 +2,7 @@ import {
   ugcPrefill, ugcPrefillGaps, moneyText, isEmptyTableRow, arabicWeekday,
   UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS, ARABIC_WEEKDAYS,
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
+  licenceParty, vendorPickerHint,
 } from '../.test-build/legal-prefill.js';
 
 let pass = 0, fail = 0;
@@ -169,6 +170,29 @@ ok('a row with only a platform is not empty',
     matchBankAccount([A, B], 'sa85 0500 0068 2027 0782 4000').id, 1);
   eq('an iban from no account matches nothing', matchBankAccount([A, B], 'SA9999'), null);
   eq('an empty iban matches nothing', matchBankAccount([A, B], ''), null);
+}
+
+// ---- who the second party is ----
+{
+  const solo = { id: 1, name: 'Sara', contact_name: 'Sara', license_number: '70123', id_number: '1099' };
+  const noLicence = { id: 2, name: 'Noura', id_number: '1055' };
+  const underOrg = { id: 3, name: 'Sara', contact_name: 'Sara', license_number: '70123',
+    org: { name: 'Talent Agency Ltd', license_number: '4030' } };
+
+  eq('talent on their own licence are the party', licenceParty(solo), { name: 'Sara', number: '70123' });
+  eq('no licence falls back to the ID', licenceParty(noLicence), { name: 'Noura', number: '1055' });
+  // The agency holds the licence, so the agency is the party - the performer
+  // is named further down the contract, not on the licence line.
+  eq('an agency licence makes the agency the party', licenceParty(underOrg),
+    { name: 'Talent Agency Ltd', number: '4030' });
+  eq('an org with no number of its own borrows the talent\'s',
+    licenceParty({ ...underOrg, org: { name: 'Talent Agency Ltd' } }),
+    { name: 'Talent Agency Ltd', number: '70123' });
+  eq('no vendor at all is empty, not a crash', licenceParty(null), { name: '', number: '' });
+
+  eq('the hint disambiguates by licence number', vendorPickerHint(solo), '70123');
+  ok('the hint names the agency when there is one', vendorPickerHint(underOrg).includes('Talent Agency Ltd'));
+  ok('a solo vendor gets no agency in the hint', !vendorPickerHint(solo).includes(' - '));
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);

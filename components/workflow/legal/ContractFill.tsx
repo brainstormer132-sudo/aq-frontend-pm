@@ -6,7 +6,9 @@ import {
 } from '@/hooks/use-legal';
 import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
+  licenceParty, vendorPickerHint, type ContractVendor,
 } from '@/lib/legal-prefill';
+import { useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
@@ -35,6 +37,11 @@ export function ContractFill({
   const lists = useManagedLists(workspaceId ?? null);
   const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds } = ed;
 
+  // The vendor book, already paged and cached, with each talent's licence org
+  // attached - the same list the campaign page uses, so no second read of
+  // three thousand rows just for this picker.
+  const { vendors } = useLegacyVendors();
+
   // The brand and bank pickers. Both only appear when this template actually
   // uses those fields, so a template that names neither is unchanged.
   const { brands, banks } = useContractSources(contract ?? null);
@@ -54,6 +61,19 @@ export function ContractFill({
 
   // Which pickers this template wants, and which account is already chosen.
   const usesBrand = useMemo(() => fields.some((f) => f.key === UGC_BRAND_KEY), [fields]);
+  const usesVendor = useMemo(
+    () => fields.some((f) => f.key === 'license_name' || f.key === 'license_number'),
+    [fields],
+  );
+  const vendorOptions = useMemo(
+    () => (vendors as any[]).map((v) => ({
+      value: String(v.id),
+      label: String(v.name ?? ''),
+      hint: vendorPickerHint(v as ContractVendor),
+      keywords: [v.contact_name, v.license_number, v.id_number, v.org?.name].filter(Boolean).join(' '),
+    })),
+    [vendors],
+  );
   const usesBank = useMemo(() => fields.some((f) => UGC_BANK_KEYS.includes(f.key)), [fields]);
   const chosenBankId = useMemo(
     () => String(matchBankAccount(banks, values.iban ?? '')?.id ?? ''),
@@ -231,7 +251,7 @@ export function ContractFill({
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {/* Fill form */}
           <div style={{ flex: '1 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {editable && (usesBrand || usesBank) && (
+            {editable && (usesBrand || usesVendor || usesBank) && (
               <div className="aq-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
                   color: 'var(--aq-text-muted)' }}>From the records</div>
@@ -252,6 +272,32 @@ export function ContractFill({
                           : 'No campaign behind this contract, so there is no client to take brands from.'}
                       </div>
                     )}
+                  </div>
+                )}
+                {usesVendor && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Vendor</div>
+                    <SearchablePicker
+                      options={vendorOptions}
+                      value={contract.vendor_id != null ? String(contract.vendor_id) : null}
+                      onChange={(v) => {
+                        const vend = (vendors as any[]).find((x) => String(x.id) === v) ?? null;
+                        // The licence party leads the contract; picking a new
+                        // vendor also drops the old one's bank details, because
+                        // an IBAN left over from the previous choice is the
+                        // worst thing this screen could do.
+                        const p = licenceParty(vend as ContractVendor | null);
+                        ed.setValue('license_name', p.name);
+                        ed.setValue('license_number', p.number);
+                        for (const k of UGC_BANK_KEYS) ed.setValue(k, '');
+                        void ed.setVendor(vend ? Number(vend.id) : null);
+                      }}
+                      placeholder={'Search vendors\u2026'}
+                    />
+                    <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+                      Fills the licence name and number. An agency-licensed talent contracts
+                      under the agency; the performer is named in the table above.
+                    </div>
                   </div>
                 )}
                 {usesBank && (
