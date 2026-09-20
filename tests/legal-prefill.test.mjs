@@ -1,6 +1,6 @@
 import {
-  ugcPrefill, ugcPrefillGaps, moneyText, isEmptyTableRow,
-  UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS,
+  ugcPrefill, ugcPrefillGaps, moneyText, isEmptyTableRow, arabicWeekday,
+  UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS, ARABIC_WEEKDAYS,
 } from '../.test-build/legal-prefill.js';
 
 let pass = 0, fail = 0;
@@ -48,8 +48,8 @@ const OPTS = { today: '2026-09-20', currency: 'SAR', durationDays: 30 };
   eq('duration is a day count', p.values.duration, '30');
   eq('bank carried', p.values.bank_name, 'Alinma');
   eq('iban carried', p.values.iban, 'SA8505000068202707824000');
-  eq('contract number left for the operator', p.values.id, '');
-  eq('weekday left for the operator', p.values.day, '');
+  eq('contract number is left for the database to reserve at issue', p.values.id, '');
+  eq('weekday is derived from the date', p.values.day, ARABIC_WEEKDAYS[0]);
   eq('nothing missing', ugcPrefillGaps(p), []);
 
   // The four influencer columns are a TABLE ROW, not single fields.
@@ -113,6 +113,28 @@ ok('a row with only a platform is not empty',
   const produced = [...Object.keys(p.values), ...Object.keys(p.tableRow)];
   eq('no key outside the seeded registry', produced.filter((k) => !SEEDED.includes(k)), []);
   eq('every seeded key is accounted for', SEEDED.filter((k) => !produced.includes(k)), []);
+}
+
+// ---- the Arabic weekday ----
+// 2026-09-20 is a Sunday; the week runs Sunday-first to match getUTCDay().
+{
+  eq('seven weekday names', ARABIC_WEEKDAYS.length, 7);
+  eq('all seven are distinct', new Set(ARABIC_WEEKDAYS).size, 7);
+  eq('Sunday', arabicWeekday('2026-09-20'), ARABIC_WEEKDAYS[0]);
+  eq('Monday', arabicWeekday('2026-09-21'), ARABIC_WEEKDAYS[1]);
+  eq('Saturday', arabicWeekday('2026-09-26'), ARABIC_WEEKDAYS[6]);
+  eq('the day before a Sunday is a Saturday', arabicWeekday('2026-09-19'), ARABIC_WEEKDAYS[6]);
+  // A local Date would read midnight UTC as the previous day west of
+  // Greenwich; this is built from the date's own numbers instead.
+  eq('the first of a month is not the last of the one before',
+    arabicWeekday('2026-10-01'), ARABIC_WEEKDAYS[4]);
+  eq('a leap day is a real day', arabicWeekday('2028-02-29'), ARABIC_WEEKDAYS[2]);
+  eq('31 February is not', arabicWeekday('2026-02-31'), '');
+  eq('month 13 is not', arabicWeekday('2026-13-01'), '');
+  eq('a slash date is refused', arabicWeekday('20/09/2026'), '');
+  eq('empty is refused', arabicWeekday(''), '');
+  eq('a bad today leaves the day empty too',
+    ugcPrefill(SRC, { today: '20/09/2026' }).values.day, '');
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);

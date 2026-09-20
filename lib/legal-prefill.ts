@@ -22,11 +22,12 @@
  *    the net, and the comment in use-workflow.ts records why. `amount` here
  *    is that net. Passing a client price in would re-open the same hole.
  *
- * 2. **`id` and `day` stay empty.** The old preview marked both "pending" and
- *    filled neither - the contract number is stamped at generation and the
- *    weekday was never wired. Leaving them blank matches today exactly; the
- *    operator can type them, because they are `text` fields rather than the
- *    `auto` type nothing in the app can fill.
+ * 2. **`id` is left for the database and `day` is derived.** The old preview
+ *    marked both "pending" and filled neither. The contract number is now
+ *    reserved by legal.reserve_contract_number (migration 108) just before
+ *    issue, so an abandoned draft does not burn one; the weekday comes off
+ *    the date here, because the opening sentence names both and they have to
+ *    agree.
  *
  * The four influencer columns are NOT single fields. The live template's
  * one-row table became typed columns in the port, so a campaign with three
@@ -111,6 +112,41 @@ export function moneyText(value: unknown): string {
   return `${negative ? '-' : ''}${out}.${frac}`;
 }
 
+/**
+ * The Arabic weekday names, Sunday first, matching getUTCDay()'s order. Written
+ * as \u escapes so this file stays ASCII and survives a console paste.
+ */
+export const ARABIC_WEEKDAYS = [
+  '\u0627\u0644\u0623\u062d\u062f',
+  '\u0627\u0644\u0625\u062b\u0646\u064a\u0646',
+  '\u0627\u0644\u062b\u0644\u0627\u062b\u0627\u0621',
+  '\u0627\u0644\u0623\u0631\u0628\u0639\u0627\u0621',
+  '\u0627\u0644\u062e\u0645\u064a\u0633',
+  '\u0627\u0644\u062c\u0645\u0639\u0629',
+  '\u0627\u0644\u0633\u0628\u062a',
+];
+
+/**
+ * The Arabic weekday for a YYYY-MM-DD date, or '' if it is not one.
+ *
+ * Built from the date's own numbers through Date.UTC, never from a local
+ * Date: `new Date('2026-09-20')` is midnight UTC, which is the day before in
+ * any timezone west of Greenwich and reads as the wrong weekday. The contract
+ * says "the agreement was concluded on <day> <date>", so the two have to be
+ * the same day.
+ */
+export function arabicWeekday(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(txt(iso));
+  if (!m) return '';
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+  const t = Date.UTC(y, mo - 1, d);
+  const back = new Date(t);
+  // Rejects 31 February and friends: the roll-over lands on another date.
+  if (back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) return '';
+  return ARABIC_WEEKDAYS[back.getUTCDay()] ?? '';
+}
+
 /** True for a YYYY-MM-DD string, which is what the `date` field type accepts. */
 function isIsoDate(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -131,9 +167,13 @@ export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): Ugc
 
   const values: Record<string, string> = {
     // Stamped at generation in the old flow; left for the operator here.
+    // Assigned by legal.reserve_contract_number (migration 108) as the last
+    // step before issue, so an abandoned draft does not burn a number.
     id: '',
-    day: '',
     date: isIsoDate(txt(opts.today)) ? txt(opts.today) : '',
+    // The weekday the contract's own opening sentence names, derived from
+    // that date rather than left for somebody to work out.
+    day: arabicWeekday(txt(opts.today)),
     license_name: txt(src.vendor_name),
     license_number: txt(src.license_number),
     brand_name: txt(src.brand_name),
