@@ -74,6 +74,7 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
                   style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
                   <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{c.title || '(untitled)'}</span>
                   <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                    {c.contract_no ? <><code style={{ direction: 'ltr' }}>{c.contract_no}</code> {'\u00b7'} </> : null}
                     {c.template_name} {'\u00b7'} {kindLabel(c.doc_kind)}
                   </span>
                 </span>

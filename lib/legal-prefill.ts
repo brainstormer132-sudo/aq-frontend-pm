@@ -210,6 +210,30 @@ export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): Ugc
 export const UGC_BRAND_KEY = 'brand_name';
 export const UGC_BANK_KEYS = ['bank_name', 'account_name', 'account_number', 'iban'];
 
+/**
+ * The field the template prints as the contract number. Nobody types it:
+ * legal.reserve_contract_number (migration 108) writes both this field and
+ * legal.contract.contract_no in one statement, as the last act of the draft.
+ */
+export const CONTRACT_NO_KEY = 'id';
+
+/**
+ * The values a contract is sealed over, with the reserved number stamped in.
+ *
+ * Returns the same object when there is nothing to stamp, so a caller can tell
+ * a no-op apart and a re-issue of an already numbered contract hashes the same
+ * string it hashed the first time. Pure - the number comes from the database,
+ * this only decides what the fingerprint covers.
+ */
+export function stampContractNumber(
+  values: Record<string, string>,
+  contractNo: string | null | undefined,
+): Record<string, string> {
+  const no = txt(contractNo);
+  if (!no || values[CONTRACT_NO_KEY] === no) return values;
+  return { ...values, [CONTRACT_NO_KEY]: no };
+}
+
 /** A vendor as the contract needs to see them, with their licence org attached. */
 export interface ContractVendor {
   id: number | string;

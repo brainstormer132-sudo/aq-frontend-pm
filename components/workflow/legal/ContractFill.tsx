@@ -6,7 +6,7 @@ import {
 } from '@/hooks/use-legal';
 import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
-  licenceParty, vendorPickerHint, type ContractVendor,
+  licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
 } from '@/lib/legal-prefill';
 import { useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
@@ -59,6 +59,13 @@ export function ContractFill({
     [visible, reg.placeholders],
   );
 
+  // The contract number is not one of them. legal.reserve_contract_number
+  // assigns it the moment before the contract is issued, so a typed value would
+  // be overwritten and an abandoned draft would have burned a number. It is
+  // shown, read-only, above the form.
+  const fillFields = useMemo(() => fields.filter((f) => f.key !== CONTRACT_NO_KEY), [fields]);
+  const usesContractNo = fillFields.length !== fields.length;
+
   // Which pickers this template wants, and which account is already chosen.
   const usesBrand = useMemo(() => fields.some((f) => f.key === UGC_BRAND_KEY), [fields]);
   const usesVendor = useMemo(
@@ -91,7 +98,7 @@ export function ContractFill({
     return out;
   }, [fields, lists.valuesByList]);
 
-  const ready = contractReady(fields, values, listsByKey);
+  const ready = contractReady(fillFields, values, listsByKey);
 
   // Any table cell that fails its column's type/bounds blocks Issue.
   const tablesInvalid = useMemo(() => {
@@ -176,6 +183,10 @@ export function ContractFill({
         <button className="aq-btn aq-btn-ghost" onClick={onBack}>&larr; Register</button>
         <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 16, fontWeight: 700 }}>{contract?.title || 'Contract'}</span>
+          {contract?.contract_no ? (
+            <code style={{ fontSize: 12.5, fontWeight: 700, direction: 'ltr',
+              color: 'var(--aq-text-secondary)' }}>{contract.contract_no}</code>
+          ) : null}
           {contract ? (
             <span className={`aq-badge ${contractStatusBadge(contract.status)}`}>{contractStatusLabel(contract.status)}</span>
           ) : null}
@@ -333,13 +344,27 @@ export function ContractFill({
 
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
               color: 'var(--aq-text-muted)' }}>Fields</div>
-            {fields.length === 0 ? (
+            {usesContractNo && (
+              <div className="aq-card" style={{ padding: 14, display: 'flex', alignItems: 'center',
+                gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Contract number</span>
+                {contract.contract_no ? (
+                  <code style={{ fontSize: 13, fontWeight: 700, direction: 'ltr' }}>{contract.contract_no}</code>
+                ) : (
+                  <span style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+                    Assigned by the register when you issue this contract - it is not typed, and a draft
+                    you abandon does not use one up.
+                  </span>
+                )}
+              </div>
+            )}
+            {fillFields.length === 0 ? (
               <div className="aq-card" style={{ padding: 20, fontSize: 13, color: 'var(--aq-text-muted)' }}>
                 This template version has no merge fields - nothing to fill. The document is fixed as published.
               </div>
             ) : (
               <div className="aq-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {fields.map((f) => (
+                {fillFields.map((f) => (
                   <FieldInput key={f.key} field={f} value={values[f.key] ?? ''} editable={!!editable}
                     options={sortListValues(((f.list_id ? lists.valuesByList[f.list_id] : undefined) ?? []).filter((v) => v.active))}
                     allowed={listsByKey[f.key]}

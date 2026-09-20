@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
 import type { VendorBankAccount } from '@/lib/legal-prefill';
+import { stampContractNumber } from '@/lib/legal-prefill';
 import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
   Dept, ManagedList, ManagedListValue, FieldDef, Contract, ContractStatus,
@@ -619,14 +620,27 @@ export function useContractEditor(workspaceId: string | null, contractId: string
 
   const saveAll = (keys: string[]) => run(async () => { guard(); await persist(keys); });
 
-  /** Save the values, stamp an integrity fingerprint, then move the contract to
-   *  `issued` (fields freeze). The fingerprint + issue time are written while
-   *  still a draft, so the freeze trigger permits them. */
+  /** Save the values, take the contract's number, stamp an integrity
+   *  fingerprint, then move the contract to `issued` (fields freeze).
+   *
+   *  The order is load-bearing. The number has to be reserved before the
+   *  fingerprint, so the sealed document covers the number it prints; and both
+   *  have to be written while the contract is still a draft, because the freeze
+   *  trigger (100_contracts.sql) refuses any field write the moment it is
+   *  issued. reserve_contract_number writes the `id` field itself and is
+   *  idempotent, so a retry after a failed issue re-uses the same number
+   *  instead of burning another. */
   const issue = (keys: string[]) => run(async () => {
     guard();
     await persist(keys);
-    const shown = visibleBlocks(blocks, parseOffIds(values[OPT_OFF_KEY]));
-    const canonical = contractCanonical((contract as Contract).version_id, shown, values);
+    const { data: noData, error: eN } = await legal().rpc('reserve_contract_number', {
+      p_contract_id: contractId,
+    });
+    if (eN) throw eN;
+    const contractNo = typeof noData === 'string' ? noData : null;
+    const sealed = stampContractNumber(values, contractNo);
+    const shown = visibleBlocks(blocks, parseOffIds(sealed[OPT_OFF_KEY]));
+    const canonical = contractCanonical((contract as Contract).version_id, shown, sealed);
     const hash = await sha256Hex(canonical);
     const { error: eF } = await legal().from('contract_field').upsert([
       { contract_id: contractId, workspace_id: workspaceId, key: FINGERPRINT_KEY, value: hash },

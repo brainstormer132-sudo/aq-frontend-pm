@@ -2,8 +2,9 @@ import {
   ugcPrefill, ugcPrefillGaps, moneyText, isEmptyTableRow, arabicWeekday,
   UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS, ARABIC_WEEKDAYS,
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
-  licenceParty, vendorPickerHint,
+  licenceParty, vendorPickerHint, CONTRACT_NO_KEY, stampContractNumber,
 } from '../.test-build/legal-prefill.js';
+import { contractCanonical } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
 const eq = (name, got, want) => {
@@ -193,6 +194,34 @@ ok('a row with only a platform is not empty',
   eq('the hint disambiguates by licence number', vendorPickerHint(solo), '70123');
   ok('the hint names the agency when there is one', vendorPickerHint(underOrg).includes('Talent Agency Ltd'));
   ok('a solo vendor gets no agency in the hint', !vendorPickerHint(solo).includes(' - '));
+}
+
+// ---- the contract number the database hands back ----
+{
+  const base = { license_name: 'Sara', id: '' };
+
+  eq('a reserved number is stamped onto the values',
+    stampContractNumber(base, 'AQ-2026-0007').id, 'AQ-2026-0007');
+  eq('the key the template prints is the one written', CONTRACT_NO_KEY, 'id');
+  ok('stamping leaves the caller\'s object alone', base.id === '');
+  ok('no number is a no-op, same object back', stampContractNumber(base, null) === base);
+  ok('a blank number is a no-op too', stampContractNumber(base, '   ') === base);
+  // Re-issuing a numbered contract must hash the same string it hashed the
+  // first time, so the identity check on the card keeps saying Verified.
+  const already = { ...base, id: 'AQ-2026-0007' };
+  ok('re-stamping the same number returns the same object',
+    stampContractNumber(already, 'AQ-2026-0007') === already);
+  eq('a number arriving with spaces is trimmed',
+    stampContractNumber(base, ' AQ-2026-0008 ').id, 'AQ-2026-0008');
+
+  // The point of reserving before sealing: the fingerprint covers the number.
+  // If these two hashed the same, a contract could be issued under one number
+  // and printed under another with the stamp still reading Verified.
+  const blocks = [{ block_type: 'p', content: { text: 'Contract {{ id }} for {{ license_name }}' } }];
+  const before = contractCanonical('v1', blocks, base);
+  const after = contractCanonical('v1', blocks, stampContractNumber(base, 'AQ-2026-0007'));
+  ok('sealing after the number changes what is sealed', before !== after);
+  ok('the sealed text carries the number', after.includes('AQ-2026-0007'));
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);
