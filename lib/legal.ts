@@ -410,6 +410,14 @@ export interface Contract {
   status: ContractStatus;
   created_at?: string | null;
   updated_at?: string | null;
+  /** Where it came from (migration 106). All null on a contract raised with
+   *  no project behind it - which is a perfectly ordinary contract. */
+  pm_task_id?: string | null;
+  subtask_id?: string | null;
+  vendor_id?: number | null;
+  bank_account_id?: number | null;
+  /** AQ-<year>-0001, reserved at issue (migration 108). Null while a draft. */
+  contract_no?: string | null;
 }
 
 export interface ContractFieldValue {

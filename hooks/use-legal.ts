@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
+import type { VendorBankAccount } from '@/lib/legal-prefill';
 import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
   Dept, ManagedList, ManagedListValue, FieldDef, Contract, ContractStatus,
@@ -440,7 +441,7 @@ export function useContracts(workspaceId: string | null) {
     setLoading(true); setError('');
     const c = legal();
     const { data: cs, error: e1 } = await c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no')
       .eq('workspace_id', workspaceId).order('created_at', { ascending: false });
     if (e1) { setError(e1.message ?? String(e1)); setContracts([]); setLoading(false); return; }
     const { data: tpls } = await c.from('doc_template')
@@ -482,6 +483,58 @@ export function useContracts(workspaceId: string | null) {
  * draft; saveAll upserts them, and issue saves then flips the status, at which
  * point the database freezes the fields.
  */
+/**
+ * What the brand and bank pickers on a contract can offer.
+ *
+ * Both read `public`, not `legal`: client_brands is reachable by any signed-in
+ * user and bank_accounts by any staff member, so legal can see them without a
+ * SECURITY DEFINER detour. Both are small per row - one client's brands, one
+ * vendor's accounts - so neither is paged.
+ *
+ * A contract with no campaign has no client, and one with no vendor has no
+ * accounts; both come back empty and the pickers simply do not appear. That is
+ * the standalone case, not an error.
+ */
+export function useContractSources(contract: Contract | null) {
+  const [brands, setBrands] = useState<{ id: string; brand_name: string }[]>([]);
+  const [banks, setBanks] = useState<VendorBankAccount[]>([]);
+  const taskId = contract?.pm_task_id ?? null;
+  const vendorId = contract?.vendor_id ?? null;
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const pub = createClient();
+      let nextBrands: { id: string; brand_name: string }[] = [];
+      if (taskId) {
+        const { data: t } = await pub.from('pm_tasks')
+          .select('client_id').eq('id', taskId).maybeSingle();
+        const clientId = (t as any)?.client_id ?? null;
+        if (clientId) {
+          const { data } = await pub.from('client_brands')
+            .select('id, brand_name, status').eq('client_id', clientId).order('brand_name');
+          nextBrands = ((data ?? []) as any[])
+            .filter((b) => (b.status ?? 'active') === 'active')
+            .map((b) => ({ id: String(b.id), brand_name: String(b.brand_name ?? '') }));
+        }
+      }
+      let nextBanks: VendorBankAccount[] = [];
+      if (vendorId != null) {
+        const { data } = await pub.from('bank_accounts')
+          .select('id, bank_name, account_name, account_number, iban')
+          .eq('vendor_id', vendorId).order('id');
+        nextBanks = ((data ?? []) as any[]) as VendorBankAccount[];
+      }
+      if (!live) return;
+      setBrands(nextBrands);
+      setBanks(nextBanks);
+    })();
+    return () => { live = false; };
+  }, [taskId, vendorId]);
+
+  return { brands, banks };
+}
+
 export function useContractEditor(workspaceId: string | null, contractId: string | null) {
   const [contract, setContract] = useState<Contract | null>(null);
   const [blocks, setBlocks] = useState<TemplateBlock[]>([]);
@@ -497,7 +550,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setLoading(true); setError('');
     const c = legal();
     const { data: ct, error: e0 } = await c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no')
       .eq('id', contractId).single();
     if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
     setContract(ct as Contract);

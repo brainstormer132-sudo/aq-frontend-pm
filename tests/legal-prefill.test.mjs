@@ -1,6 +1,7 @@
 import {
   ugcPrefill, ugcPrefillGaps, moneyText, isEmptyTableRow, arabicWeekday,
   UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS, ARABIC_WEEKDAYS,
+  UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
 } from '../.test-build/legal-prefill.js';
 
 let pass = 0, fail = 0;
@@ -135,6 +136,39 @@ ok('a row with only a platform is not empty',
   eq('empty is refused', arabicWeekday(''), '');
   eq('a bad today leaves the day empty too',
     ugcPrefill(SRC, { today: '20/09/2026' }).values.day, '');
+}
+
+// ---- the bank picker ----
+{
+  const A = { id: 1, bank_name: 'Alinma', account_name: 'Talent', account_number: '682027', iban: 'SA8505000068202707824000' };
+  const B = { id: 2, bank_name: 'Alinma', account_name: 'Talent', account_number: '999', iban: 'SA1122000000000000009999' };
+
+  eq('the four bank fields', UGC_BANK_KEYS, ['bank_name', 'account_name', 'account_number', 'iban']);
+  eq('the brand field', UGC_BRAND_KEY, 'brand_name');
+
+  // Two accounts at the same bank must not read identically in the dropdown.
+  eq('label shows the bank and the tail of the iban', bankAccountLabel(A), 'Alinma - SA...4000');
+  ok('two accounts at one bank are distinguishable', bankAccountLabel(A) !== bankAccountLabel(B));
+  ok('the whole iban is never in the label', !bankAccountLabel(A).includes(A.iban));
+  eq('no bank name falls back to the account name',
+    bankAccountLabel({ id: 3, account_name: 'Sara', iban: 'SA0000000000000000001234' }), 'Sara - SA...1234');
+  eq('a short iban is shown as it is', bankAccountLabel({ id: 4, bank_name: 'X', iban: 'SA12' }), 'X - SA12');
+  eq('nothing at all still reads as something', bankAccountLabel({ id: 5 }), 'Account');
+
+  // Choosing an account sets all four together - a bank name from one row
+  // beside an iban from another is how money goes to the wrong place.
+  eq('picking an account fills all four', bankValuesFor(A),
+    { bank_name: 'Alinma', account_name: 'Talent', account_number: '682027', iban: 'SA8505000068202707824000' });
+  eq('picking nothing clears all four', bankValuesFor(null),
+    { bank_name: '', account_name: '', account_number: '', iban: '' });
+  eq('bankValuesFor covers exactly the bank keys', Object.keys(bankValuesFor(A)).sort(), [...UGC_BANK_KEYS].sort());
+
+  // Reopening a draft should show the account it already uses as selected.
+  eq('matches the account already on the contract', matchBankAccount([A, B], A.iban).id, 1);
+  eq('matching ignores spacing and case',
+    matchBankAccount([A, B], 'sa85 0500 0068 2027 0782 4000').id, 1);
+  eq('an iban from no account matches nothing', matchBankAccount([A, B], 'SA9999'), null);
+  eq('an empty iban matches nothing', matchBankAccount([A, B], ''), null);
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);

@@ -199,6 +199,64 @@ export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): Ugc
 }
 
 /**
+ * The fields the UGC template fills from a picker rather than by typing.
+ *
+ * Keyed by name here rather than by a `source` column on legal.placeholder,
+ * which is where this belongs eventually - the column exists and is empty.
+ * Keys are honest about the coupling: change the template's field names and
+ * these move with them, and the pickers simply stop appearing rather than
+ * writing to the wrong field.
+ */
+export const UGC_BRAND_KEY = 'brand_name';
+export const UGC_BANK_KEYS = ['bank_name', 'account_name', 'account_number', 'iban'];
+
+/** One of a vendor's bank accounts, as much of it as a contract needs. */
+export interface VendorBankAccount {
+  id: number | string;
+  bank_name?: string | null;
+  account_name?: string | null;
+  account_number?: string | null;
+  iban?: string | null;
+}
+
+/**
+ * How one account reads in the picker: the bank, then enough of the IBAN to
+ * tell two accounts at the same bank apart, and never the whole thing - a
+ * dropdown is a screen-sharing hazard and the full number is on the field
+ * below anyway.
+ */
+export function bankAccountLabel(a: VendorBankAccount): string {
+  const bank = txt(a.bank_name);
+  const iban = txt(a.iban).replace(/\s+/g, '');
+  const tail = iban.length > 4 ? `${iban.slice(0, 2)}...${iban.slice(-4)}` : iban;
+  const name = txt(a.account_name);
+  return [bank || name || 'Account', tail].filter(Boolean).join(' - ');
+}
+
+/**
+ * The four field values one chosen account sets. Picking an account fills all
+ * of them together, the way the contract app does: a bank name from one
+ * account beside an IBAN from another is how money goes to the wrong place.
+ */
+export function bankValuesFor(a: VendorBankAccount | null | undefined): Record<string, string> {
+  return {
+    bank_name: txt(a?.bank_name),
+    account_name: txt(a?.account_name),
+    account_number: txt(a?.account_number),
+    iban: txt(a?.iban),
+  };
+}
+
+/** The account whose IBAN matches what the contract currently holds, if any. */
+export function matchBankAccount(
+  accounts: VendorBankAccount[], iban: string,
+): VendorBankAccount | null {
+  const want = txt(iban).replace(/\s+/g, '').toUpperCase();
+  if (!want) return null;
+  return accounts.find((a) => txt(a.iban).replace(/\s+/g, '').toUpperCase() === want) ?? null;
+}
+
+/**
  * Which required fields the booking could not supply, so the caller can say
  * "this will open with three gaps" instead of the operator finding out at the
  * Issue button. Keys, in template order; empty means nothing to fill by hand.

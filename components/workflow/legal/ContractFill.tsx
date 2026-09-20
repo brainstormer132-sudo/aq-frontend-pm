@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useContractEditor, useLegalPlaceholders, useManagedLists, sha256Hex } from '@/hooks/use-legal';
+import {
+  useContractEditor, useLegalPlaceholders, useManagedLists, useContractSources, sha256Hex,
+} from '@/hooks/use-legal';
+import {
+  UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
+} from '@/lib/legal-prefill';
+import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
@@ -29,6 +35,10 @@ export function ContractFill({
   const lists = useManagedLists(workspaceId ?? null);
   const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds } = ed;
 
+  // The brand and bank pickers. Both only appear when this template actually
+  // uses those fields, so a template that names neither is unchanged.
+  const { brands, banks } = useContractSources(contract ?? null);
+
   // The blocks that make up this contract: all except optional clauses switched
   // off. Everything downstream - fields, preview, print, fingerprint - works
   // from the visible set, so an excluded clause and its fields simply vanish.
@@ -40,6 +50,14 @@ export function ContractFill({
   const fields = useMemo(
     () => fillFieldsForBlocks(visible, reg.placeholders),
     [visible, reg.placeholders],
+  );
+
+  // Which pickers this template wants, and which account is already chosen.
+  const usesBrand = useMemo(() => fields.some((f) => f.key === UGC_BRAND_KEY), [fields]);
+  const usesBank = useMemo(() => fields.some((f) => UGC_BANK_KEYS.includes(f.key)), [fields]);
+  const chosenBankId = useMemo(
+    () => String(matchBankAccount(banks, values.iban ?? '')?.id ?? ''),
+    [banks, values.iban],
   );
 
   // Allowed active values per list-field key, for validation and readiness.
@@ -213,6 +231,60 @@ export function ContractFill({
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {/* Fill form */}
           <div style={{ flex: '1 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {editable && (usesBrand || usesBank) && (
+              <div className="aq-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                  color: 'var(--aq-text-muted)' }}>From the records</div>
+                {usesBrand && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Brand</div>
+                    {brands.length ? (
+                      <SearchablePicker
+                        options={brands.map((b) => ({ value: b.brand_name, label: b.brand_name }))}
+                        value={values[UGC_BRAND_KEY] || null}
+                        onChange={(v) => ed.setValue(UGC_BRAND_KEY, v ?? '')}
+                        placeholder={'Search this client\u2019s brands\u2026'}
+                      />
+                    ) : (
+                      <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+                        {contract.pm_task_id
+                          ? 'That client has no brands on file yet - type the brand in the field below.'
+                          : 'No campaign behind this contract, so there is no client to take brands from.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {usesBank && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Bank account</div>
+                    {banks.length ? (
+                      <select className="aq-select" style={{ width: '100%', maxWidth: 360 }}
+                        value={chosenBankId}
+                        onChange={(e) => {
+                          const a = banks.find((x) => String(x.id) === e.target.value) ?? null;
+                          // All four together. A bank name from one account
+                          // beside an IBAN from another is how money goes to
+                          // the wrong place.
+                          const v = bankValuesFor(a);
+                          for (const k of UGC_BANK_KEYS) ed.setValue(k, v[k] ?? '');
+                        }}>
+                        <option value="">{'-- choose --'}</option>
+                        {banks.map((a) => (
+                          <option key={String(a.id)} value={String(a.id)}>{bankAccountLabel(a)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+                        {contract.vendor_id != null
+                          ? 'This vendor has no bank account on file - add one on their registry page.'
+                          : 'No vendor on this contract, so there are no accounts to choose from.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
               color: 'var(--aq-text-muted)' }}>Fields</div>
             {fields.length === 0 ? (
