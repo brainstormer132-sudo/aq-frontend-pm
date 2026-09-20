@@ -20,7 +20,7 @@
  *
  * Edge cases handled:
  *   - Email is already a registered auth user → reuse that auth.user_id
- *     and just upsert the workspace_members row (so admins can grant
+ *     and insert the workspace_members row (so admins can grant
  *     workspace access to someone with an existing account).
  *   - Member row already exists for that user_id → 409 with explanation.
  */
@@ -29,10 +29,10 @@ import { NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase-server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 
-type Role = 'owner' | 'admin' | 'operations' | 'sales' | 'marketing' | 'key_account' | 'member';
+type Role = 'owner' | 'admin' | 'operations' | 'sales' | 'marketing' | 'key_account' | 'finance' | 'member';
 
 const VALID_ROLES: Role[] = [
-  'owner', 'admin', 'operations', 'sales', 'marketing', 'key_account', 'member',
+  'owner', 'admin', 'operations', 'sales', 'marketing', 'key_account', 'finance', 'member',
 ];
 
 type Body = {
@@ -139,16 +139,23 @@ export async function POST(request: Request) {
   }
 
   // ─── 4. Link the user to the workspace ─────────────────────────────
-  // The composite unique constraint (workspace_id, user_id) on
-  // workspace_members guarantees idempotency on retries.
+  // INSERT, not upsert. The upsert this replaced rewrote `role` on the
+  // existing row, so posting an owner's email with role:'member' silently
+  // demoted them - the one thing remove-member refuses to let an admin do.
+  // The composite unique constraint (workspace_id, user_id) turns a repeat
+  // into 23505, which we answer with the 409 this route's header promises.
   const { error: memberErr } = await adminClient
     .from('workspace_members')
-    .upsert(
-      { workspace_id: workspaceId, user_id: authUserId, role, joined_at: new Date().toISOString() },
-      { onConflict: 'workspace_id,user_id' },
-    );
+    .insert({ workspace_id: workspaceId, user_id: authUserId, role, joined_at: new Date().toISOString() });
 
   if (memberErr) {
+    if (memberErr.code === '23505') {
+      return NextResponse.json({
+        error: 'That account is already a member of this workspace. Change their role from the Team screen instead.',
+        auth_user_id: authUserId,
+        created_new_user: createdNewUser,
+      }, { status: 409 });
+    }
     return NextResponse.json({
       error: `Auth user ${createdNewUser ? 'was created but' : 'exists, but'} I couldn't add them to the workspace: ${memberErr.message}`,
       auth_user_id: authUserId,
