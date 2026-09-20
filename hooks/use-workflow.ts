@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
+import { ugcPrefill, isEmptyTableRow } from '@/lib/legal-prefill';
 import { mapWithConcurrency, REQUEST_CONCURRENCY } from '@/lib/concurrency';
 import {
   onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
@@ -23,6 +25,11 @@ import {
 } from '@/lib/tracking-sync';
 
 const supabase = createClient();
+
+// legal.* lives in its own schema, exposed to PostgREST. Same cast dance as
+// hooks/use-legal.ts: the installed @supabase/ssr and supabase-js disagree on
+// the client's schema generics, which narrows .schema() to `never` otherwise.
+const legalSchema = () => (createClient() as unknown as SupabaseClient).schema('legal');
 
 /** Pretty-print a Supabase / PostgrestError so it doesn't show up as `{}`. */
 function logSbError(label: string, err: any, ctx?: Record<string, unknown>) {
@@ -5832,6 +5839,73 @@ export async function sendVendorContractRequest(opts: {
     ));
   }
   return ids;
+}
+
+/**
+ * Raise a UGC contract in the legal system from one booking, prefilled.
+ *
+ * The same resolution as sendVendorContractRequest - licence party, the
+ * vendor's fee rather than the client's price, platform and ad types from
+ * the ads when there are any - handed to ugcPrefill and then to the
+ * SECURITY DEFINER function from migration 107, because legal.* is RLS'd to
+ * owner/admin/legal and the people on this screen are not. Operations raises
+ * the draft; legal opens it in the Register, checks it and Issues.
+ *
+ * Returns the new contract id. The caller does not get to read the contract
+ * back - contracts_for_campaign gives status only.
+ */
+export async function createUgcContractFromBooking(opts: {
+  subtask: PMTask;
+  parent: PMTask;
+  vendor: LegacyVendor | null;
+  bank: LegacyBankAccount | null;
+  client?: ClientRow | null;
+  lines?: AdLine[];
+  /** YYYY-MM-DD in the workspace's own day, not UTC's. */
+  today: string;
+  /** The currency word the template prints after the amount. */
+  currency?: string;
+}): Promise<string> {
+  const { subtask, parent, vendor, bank } = opts;
+  if (!subtask.workspace_id) throw new Error('This booking has no workspace.');
+  if (!vendor) throw new Error('This booking has no vendor, so there is nobody to contract with.');
+
+  const lines = opts.lines ?? await fetchVendorAdLines(subtask.id);
+  const p = buildVendorContractPayload({
+    subtask, parent, vendor, bank, client: opts.client,
+    requestedBy: '', lines,
+  });
+
+  const { values, tableRow } = ugcPrefill({
+    vendor_name: p.vendor_name,
+    license_number: p.license_number,
+    brand_name: p.brand_name,
+    contact_name: p.contact_name,
+    platform_handle: p.platform_handle,
+    platforms: p.platforms,
+    ad_type: p.ad_type,
+    amount: p.amount,
+    bank_name: p.bank_name,
+    account_name: p.account_name,
+    account_number: p.account_number,
+    iban: p.iban,
+  }, { today: opts.today, currency: opts.currency });
+
+  const title = `${p.vendor_name || vendor.name} - ${p.brand_name || parent.brand_name || 'UGC'}`;
+
+  const { data, error } = await legalSchema().rpc('create_contract_from_booking', {
+    p_workspace_id: subtask.workspace_id,
+    p_pm_task_id: parent.id,
+    p_subtask_id: subtask.id,
+    p_vendor_id: vendor.id,
+    p_bank_account_id: bank?.id ?? null,
+    p_title: title,
+    p_values: values,
+    p_table_row: isEmptyTableRow(tableRow) ? null : tableRow,
+  });
+  if (error) throw error;
+  if (!data) throw new Error('The contract was not created.');
+  return String(data);
 }
 
 /**

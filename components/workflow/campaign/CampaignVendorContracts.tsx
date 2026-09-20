@@ -4,6 +4,7 @@ import React, { useMemo, useState } from 'react';
 import {
   useLegacyVendors, updateTaskFields,
   vendorContractReadiness, sendVendorContractRequest, sendVendorContractRequests,
+  createUgcContractFromBooking,
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { Card, Note, Missing, inkButton, TONE } from './ui';
@@ -186,6 +187,22 @@ export function CampaignVendorContracts({
       : `${ids.length} contracts requested for ${row.name}, one per line.`);
   });
 
+  // Raise the UGC contract in the legal system, prefilled from this booking.
+  // Separate from Ask on purpose while both worlds exist: Ask sends a request
+  // to the contract app, Draft puts a real contract in the Register for legal
+  // to check and Issue. The date is the workspace's own day - 'en-CA' is the
+  // one locale that formats as YYYY-MM-DD, which is what the date field takes.
+  const draftOne = (row: typeof rows[number]) => run(async () => {
+    const id = await createUgcContractFromBooking({
+      subtask: row.sub, parent: task, vendor: row.vendor,
+      bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
+      client,
+      today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
+      currency: 'SAR',
+    });
+    setNotice(`Contract drafted for ${row.name}. Legal will find it in the Register (${id.slice(0, 8)}).`);
+  });
+
   const askAll = () => run(async () => {
     const res = await sendVendorContractRequests({
       subtasks: ready.map((r) => r.sub),
@@ -316,6 +333,12 @@ export function CampaignVendorContracts({
               {canRequest && r.track.state === 'none' && (
                 <button type="button" style={inkButton(busy)} disabled={busy}
                   onClick={() => askOne(r)}>Ask</button>
+              )}
+              {canRequest && r.vendor && (
+                <button type="button" style={inkButton(busy)} disabled={busy}
+                  onClick={() => draftOne(r)}
+                  title="Put a prefilled UGC contract in the legal Register for legal to check and issue"
+                >Draft contract</button>
               )}
               {/* Ads added after the contract went out. The old shape could
                   not express this at all — the booking had a contract, so it
