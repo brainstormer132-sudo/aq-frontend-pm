@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useDocEditor, useLegalPlaceholders } from '@/hooks/use-legal';
 import {
-  EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, blockText, blockKV, canPublish,
+  EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, blockText, blockKV, blockSig, canPublish,
   kindLabel, statusLabel, statusBadge, detectDir, usedPlaceholderKeys, unknownPlaceholders,
   tableColumns,
   type EditorBlockType, type TemplateBlock, type Dir, type Placeholder, type TableColumn,
@@ -171,6 +171,8 @@ function BlockRow({
           </div>
         ) : block.block_type === 'kv' ? (
           <KVEditor block={block} editable={editable} onSave={onSave} registerInsert={registerInsert} />
+        ) : block.block_type === 'sig' ? (
+          <SigEditor block={block} editable={editable} onSave={onSave} registerInsert={registerInsert} />
         ) : block.block_type === 'table' ? (
           <TableColumnsEditor block={block} editable={editable} regFields={regFields} onSave={onSave} />
         ) : (
@@ -354,6 +356,60 @@ function KVEditor({
       <input ref={valueRef} dir="auto" className="aq-input" value={value} onFocus={() => registerInsert(mkInsert(valueRef, 'value'))}
         onChange={(e) => setValue(e.target.value)} onBlur={commit}
         placeholder="Value (e.g. 12 months)" style={{ flex: 1 }} />
+    </div>
+  );
+}
+
+/**
+ * The two signing lines. Same shape as KVEditor, over {right, left} instead of
+ * {label, value}: `right` is the first party, `left` the second, named for
+ * where each sits on the page. Until now a sig block said "not editable here
+ * yet" and printed as nothing at all.
+ */
+function SigEditor({
+  block, editable, onSave, registerInsert,
+}: {
+  block: TemplateBlock; editable: boolean;
+  onSave: (c: Record<string, unknown>) => void;
+  registerInsert: (fn: (s: string) => void) => void;
+}) {
+  const sig = blockSig(block);
+  const rightRef = useRef<HTMLInputElement | null>(null);
+  const leftRef = useRef<HTMLInputElement | null>(null);
+  const [right, setRight] = useState(sig.right);
+  const [left, setLeft] = useState(sig.left);
+  useEffect(() => { const s = blockSig(block); setRight(s.right); setLeft(s.left); }, [block]);
+  const commit = () => {
+    const s = blockSig(block);
+    if (right !== s.right || left !== s.left) onSave({ ...block.content, right, left });
+  };
+
+  const mkInsert = (ref: { current: HTMLInputElement | null }, field: 'right' | 'left') => (s: string) => {
+    const el = ref.current; if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const inserted = el.value.slice(0, start) + s + el.value.slice(end);
+    const r = field === 'right' ? inserted : (rightRef.current?.value ?? right);
+    const l = field === 'left' ? inserted : (leftRef.current?.value ?? left);
+    setRight(r); setLeft(l);
+    onSave({ ...block.content, right: r, left: l });
+    requestAnimationFrame(() => { const e2 = ref.current; if (e2) { const p = start + s.length; e2.focus(); e2.setSelectionRange(p, p); } });
+  };
+
+  if (!editable) {
+    return <div dir="auto" style={{ display: 'flex', gap: 24, fontSize: 14 }}>
+      <span style={{ flex: 1 }}>{right || <span style={{ color: 'var(--aq-text-muted)' }}>(first party)</span>}</span>
+      <span style={{ flex: 1 }}>{left || <span style={{ color: 'var(--aq-text-muted)' }}>(second party)</span>}</span>
+    </div>;
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      <input ref={rightRef} dir="auto" className="aq-input" value={right} onFocus={() => registerInsert(mkInsert(rightRef, 'right'))}
+        onChange={(e) => setRight(e.target.value)} onBlur={commit}
+        placeholder="First party (right)" style={{ flex: 1 }} />
+      <input ref={leftRef} dir="auto" className="aq-input" value={left} onFocus={() => registerInsert(mkInsert(leftRef, 'left'))}
+        onChange={(e) => setLeft(e.target.value)} onBlur={commit}
+        placeholder="Second party (left)" style={{ flex: 1 }} />
     </div>
   );
 }

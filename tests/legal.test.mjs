@@ -1,7 +1,7 @@
 import {
   DOC_KINDS, kindLabel, statusLabel, statusBadge, groupTemplatesByKind, validateNewTemplate,
   EDITOR_BLOCK_TYPES, blockTypeLabel, isEditableBlockType, defaultBlockContent,
-  blockText, blockKV, moveItem, withPositions, nextPosition, canPublish,
+  blockText, blockKV, blockSig, moveItem, withPositions, nextPosition, canPublish,
   hasRTLChars, blockAllText, detectDir,
   parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
   DEPTS, deptLabel, validateListValue, sortListValues,
@@ -61,10 +61,10 @@ eq('unknown kind rejected', validateNewTemplate('X', 'bogus'), 'Pick a document 
 eq('valid -> null', validateNewTemplate('Standard NDA', 'nda'), null);
 
 // ---- blocks ----
-eq('six editor block types', EDITOR_BLOCK_TYPES.map((b) => b.key), ['title', 'h', 'p', 'li', 'kv', 'table']);
+eq('seven editor block types', EDITOR_BLOCK_TYPES.map((b) => b.key), ['title', 'h', 'p', 'li', 'kv', 'table', 'sig']);
 eq('block type label', blockTypeLabel('kv'), 'Field');
 eq('table block type label', blockTypeLabel('table'), 'Table');
-eq('unknown block type label is itself', blockTypeLabel('sig'), 'sig');
+eq('unknown block type label is itself', blockTypeLabel('clause'), 'clause');
 ok('kv is editable', isEditableBlockType('kv'));
 ok('clause is not editable', !isEditableBlockType('clause'));
 eq('default text content', defaultBlockContent('p'), { text: '' });
@@ -415,6 +415,41 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   ok('bad date -> invalid', tableHasInvalidCell(cols, [{ draft: '10/01/2026' }], listsByKey));
   ok('one bad row among good -> invalid', tableHasInvalidCell(cols, [{ price: '5' }, { price: '-1' }], listsByKey));
   ok('no rows -> not invalid', !tableHasInvalidCell(cols, [], listsByKey));
+}
+
+// sig blocks: the two signing lines. Until 2026-09-20 a sig block was
+// "not editable here yet" in the editor and rendered as NOTHING in print,
+// so a ported contract lost its signature lines silently.
+{
+  const S = (right, left) => ({ block_type: 'sig', content: { right, left } });
+  eq('blockSig reads both sides', blockSig(S('First', 'Second')), { right: 'First', left: 'Second' });
+  eq('blockSig defaults to empty', blockSig({ content: {} }), { right: '', left: '' });
+  eq('blockSig ignores non-strings', blockSig({ content: { right: 7, left: null } }), { right: '', left: '' });
+  eq('blockAllText joins sig', blockAllText({ content: { right: 'Party A', left: 'Party B' } }), 'Party A Party B');
+  ok('sig is an editable block type', isEditableBlockType('sig'));
+  eq('sig has a label', blockTypeLabel('sig'), 'Signatures');
+
+  const reg = [{ key: 'signatory', label: 'Signatory', field_type: 'text', required: false,
+    num_min: null, num_max: null, list_id: null, default_value: '', alert_days: null }];
+  eq('a merge field inside a signing line becomes a contract field',
+    fillFieldsForBlocks([S('First party: {{ signatory }}', 'Second party:')], reg).map((f) => f.key),
+    ['signatory']);
+
+  const html = contractPrintHTML({
+    title: 'T', dir: 'rtl', values: { signatory: 'Ahmed' },
+    blocks: [S('First party: {{ signatory }}', 'Second party:')],
+  });
+  ok('sig renders in print', html.includes('class="sig-row"'));
+  ok('sig fills its placeholders', html.includes('First party: Ahmed'));
+  ok('sig renders both sides', html.includes('Second party:'));
+  ok('sig draws a rule to sign on', html.includes('class="sig-rule"'));
+  ok('an empty sig block renders nothing',
+    !contractPrintHTML({ title: 'T', dir: 'ltr', values: {}, blocks: [S('', '')] }).includes('class="sig-row"'));
+
+  // Deliberately excluded from the fingerprint: a published version is frozen,
+  // so adding it now would make every already-issued contract read "differs".
+  eq('sig stays out of the canonical string',
+    contractCanonical('v1', [S('First', 'Second')], {}), 'v:v1\nsig|');
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

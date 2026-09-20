@@ -71,7 +71,7 @@ export function validateNewTemplate(name: string, kind: string): string | null {
  * a block whose type is outside this list still renders (read-only) but is not
  * offered in the Add palette.
  */
-export type EditorBlockType = 'title' | 'h' | 'p' | 'li' | 'kv' | 'table';
+export type EditorBlockType = 'title' | 'h' | 'p' | 'li' | 'kv' | 'table' | 'sig';
 
 export const EDITOR_BLOCK_TYPES: { key: EditorBlockType; label: string; hint: string }[] = [
   { key: 'title', label: 'Title', hint: 'The document heading, once at the top.' },
@@ -80,6 +80,7 @@ export const EDITOR_BLOCK_TYPES: { key: EditorBlockType; label: string; hint: st
   { key: 'li', label: 'Bullet', hint: 'One bullet in a list.' },
   { key: 'kv', label: 'Field', hint: 'A label and its value, e.g. Term: 12 months.' },
   { key: 'table', label: 'Table', hint: 'A grid of typed columns; rows are added per contract (e.g. the outputs table).' },
+  { key: 'sig', label: 'Signatures', hint: 'The two signing lines at the end, one party on each side.' },
 ];
 
 export function blockTypeLabel(t: string): string {
@@ -120,6 +121,17 @@ export function blockText(b: Pick<TemplateBlock, 'content'>): string {
 export function blockKV(b: Pick<TemplateBlock, 'content'>): { label: string; value: string } {
   const l = b.content?.label, v = b.content?.value;
   return { label: typeof l === 'string' ? l : '', value: typeof v === 'string' ? v : '' };
+}
+
+/**
+ * The two signing lines of a sig block, each defaulting to ''. `right` is the
+ * first party and `left` the second, named for where they sit on the page; in
+ * an RTL document the first party is on the right, which is why the live UGC
+ * template stores them under those names.
+ */
+export function blockSig(b: Pick<TemplateBlock, 'content'>): { right: string; left: string } {
+  const r = b.content?.right, l = b.content?.left;
+  return { right: typeof r === 'string' ? r : '', left: typeof l === 'string' ? l : '' };
 }
 
 /**
@@ -170,10 +182,11 @@ export function hasRTLChars(s: string): boolean {
   return RTL_RE.test(s);
 }
 
-/** All the human text a block carries (the text field, or a kv's label+value). */
+/** All the human text a block carries (text, a kv's label+value, a sig's two sides). */
 export function blockAllText(b: Pick<TemplateBlock, 'content'>): string {
   const kv = blockKV(b);
-  return `${blockText(b)} ${kv.label} ${kv.value}`.trim();
+  const sig = blockSig(b);
+  return `${blockText(b)} ${kv.label} ${kv.value} ${sig.right} ${sig.left}`.trim();
 }
 
 /**
@@ -761,6 +774,18 @@ export function contractPrintHTML(args: {
       return `<div class="kv"><span class="kv-l">${escapeHtml(fillPlaceholders(kv.label, values))}:</span> `
         + `<span class="kv-v">${escapeHtml(fillPlaceholders(kv.value, values))}</span></div>`;
     }
+    if (b.block_type === 'sig') {
+      // Two signing lines with a rule to sign on. Deliberately NOT in
+      // contractCanonical: a published version is frozen, so this wording
+      // cannot drift, and adding it to the fingerprint now would make every
+      // already-issued contract verify as "differs". Revisit if a signing
+      // line ever carries a {{ merge field }}.
+      const sig = blockSig(b);
+      const side = (s: string) => `<div class="sig-col"><div class="sig-name">`
+        + `${escapeHtml(fillPlaceholders(s, values))}</div><div class="sig-rule"></div></div>`;
+      if (!sig.right && !sig.left) return '';
+      return `<div class="sig-row">${side(sig.right)}${side(sig.left)}</div>`;
+    }
     if (b.block_type === 'table') {
       const cols = tableColumns(b);
       if (!cols.length) return '';
@@ -816,6 +841,10 @@ export function contractPrintHTML(args: {
   .doc-table th, .doc-table td { border: 1px solid #999; padding: 4px 6px; text-align: start; vertical-align: top; }
   .doc-table th { background: #f0f0f0; font-weight: 700; }
   .doc-table-empty { color: #888; text-align: center; }
+  .sig-row { display: flex; justify-content: space-between; gap: 48px; margin: 34px 0 8px; page-break-inside: avoid; }
+  .sig-col { flex: 1; min-width: 0; }
+  .sig-name { font-weight: 700; margin-bottom: 26px; }
+  .sig-rule { border-top: 1px solid #333; }
   .foot { margin-top: 28px; border-top: 1px solid #bbb; padding-top: 8px; font-size: 9pt; color: #666; }
   .foot-row { display: flex; justify-content: space-between; gap: 12px; }
   .foot-fp { margin-top: 6px; font-family: 'Courier New', monospace; font-size: 8pt; color: #444; word-break: break-all; direction: ltr; text-align: left; }
