@@ -65,11 +65,6 @@ export interface UgcContractSource {
 export interface UgcPrefillOptions {
   /** Today as YYYY-MM-DD. Passed in, never read from the clock, so this stays pure. */
   today: string;
-  /**
-   * The currency word appended to the amount, e.g. the template's own
-   * `strings.riyal`. Passed in so this file needs no non-ASCII literal.
-   */
-  currency?: string;
   /** Campaign length in days, when the caller knows it. Nothing stores it. */
   durationDays?: number | null;
 }
@@ -164,7 +159,6 @@ function isIsoDate(s: string): boolean {
  * what `contractReady` checks against.
  */
 export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): UgcPrefill {
-  const currency = txt(opts.currency);
   const amount = moneyText(src.amount);
   const days = opts.durationDays;
 
@@ -180,8 +174,21 @@ export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): Ugc
     license_name: txt(src.vendor_name),
     license_number: txt(src.license_number),
     brand_name: txt(src.brand_name),
-    // The vendor's fee, with the currency word the template itself carries.
-    Amount_full: amount ? (currency ? `${amount} ${currency}` : amount) : '',
+    // THE NUMBER ONLY - no currency word. Siraj, reading a filled contract:
+    // "the 500 then saudi riyal needs to be removed."
+    //
+    // It also removes a real inconsistency. Two paths fill this field and they
+    // appended DIFFERENT words: the campaign's Draft contract button passed
+    // 'SAR' and the Tasks screen appended the Arabic for Saudi riyal, so one
+    // clause of one template version read two ways depending only on which
+    // button raised it - and each was fingerprinted and frozen that way. The
+    // clause already says what the number is ("the advertising amount, being
+    // X, exclusive of tax"), so the word carried no meaning, only the
+    // inconsistency.
+    //
+    // The fix is the OPTION, not the two call sites: UgcPrefillOptions has no
+    // currency field any more, so no caller can put a word there again.
+    Amount_full: amount,
     duration: typeof days === 'number' && Number.isFinite(days) && days > 0 ? String(Math.round(days)) : '',
     bank_name: txt(src.bank_name),
     account_name: txt(src.account_name),

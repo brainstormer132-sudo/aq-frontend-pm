@@ -43,7 +43,7 @@ const SRC = {
   account_number: '68202707824000',
   iban: 'SA8505000068202707824000',
 };
-const OPTS = { today: '2026-09-20', currency: 'SAR', durationDays: 30 };
+const OPTS = { today: '2026-09-20', durationDays: 30 };
 
 {
   const p = ugcPrefill(SRC, OPTS);
@@ -51,7 +51,7 @@ const OPTS = { today: '2026-09-20', currency: 'SAR', durationDays: 30 };
   eq('licence party leads the contract', p.values.license_name, 'Talent Agency Ltd');
   eq('licence number carried', p.values.license_number, '70123');
   eq('brand carried', p.values.brand_name, 'Brand X');
-  eq('amount is formatted with the currency word', p.values.Amount_full, '4,200.00 SAR');
+  eq('amount is the number alone, no currency word', p.values.Amount_full, '4,200.00');
   eq('duration is a day count', p.values.duration, '30');
   eq('bank carried', p.values.bank_name, 'Alinma');
   eq('iban carried', p.values.iban, 'SA8505000068202707824000');
@@ -74,7 +74,7 @@ const OPTS = { today: '2026-09-20', currency: 'SAR', durationDays: 30 };
 // 9,000-instead-of-4,200 bug the request payload already fixed; this test
 // only pins the formatting, so the guard is the doc comment plus the caller.
 eq('a vendor fee of 4200 does not become 9000',
-  ugcPrefill({ ...SRC, amount: 4200 }, OPTS).values.Amount_full, '4,200.00 SAR');
+  ugcPrefill({ ...SRC, amount: 4200 }, OPTS).values.Amount_full, '4,200.00');
 
 // ---- gaps ----
 {
@@ -87,7 +87,7 @@ eq('a vendor fee of 4200 does not become 9000',
   eq('required keys are the template\'s nine', UGC_REQUIRED_KEYS.length, 9);
 }
 {
-  const p = ugcPrefill(SRC, { today: '2026-09-20', currency: 'SAR' });
+  const p = ugcPrefill(SRC, { today: '2026-09-20' });
   eq('no duration known -> empty, and reported as a gap', p.values.duration, '');
   eq('duration is the only gap', ugcPrefillGaps(p), ['duration']);
 }
@@ -95,12 +95,19 @@ eq('a vendor fee of 4200 does not become 9000',
 // ---- edge cases ----
 eq('a bad today is refused rather than written through',
   ugcPrefill(SRC, { today: '20/09/2026' }).values.date, '');
-eq('no currency word -> bare amount',
-  ugcPrefill(SRC, { today: '2026-09-20' }).values.Amount_full, '4,200.00');
+// Siraj: "the 500 then saudi riyal needs to be removed". It is also the fix
+// for two paths printing DIFFERENT words into one sentence - the campaign
+// button passed 'SAR', the Tasks screen appended the Arabic. No caller can
+// put a word there now, because there is no option to pass one.
+eq('a currency passed in is ignored, because there is nowhere to put it',
+  ugcPrefill(SRC, { today: '2026-09-20', currency: 'SAR' }).values.Amount_full, '4,200.00');
+eq('and the Arabic one likewise',
+  ugcPrefill(SRC, { today: '2026-09-20', currency: '\u0631\u064a\u0627\u0644' }).values.Amount_full,
+  '4,200.00');
 eq('null amount -> empty, not "0.00"',
   ugcPrefill({ ...SRC, amount: null }, OPTS).values.Amount_full, '');
 eq('zero is a real agreed fee and is kept',
-  ugcPrefill({ ...SRC, amount: 0 }, OPTS).values.Amount_full, '0.00 SAR');
+  ugcPrefill({ ...SRC, amount: 0 }, OPTS).values.Amount_full, '0.00');
 eq('whitespace is trimmed', ugcPrefill({ ...SRC, brand_name: '  Brand X  ' }, OPTS).values.brand_name, 'Brand X');
 eq('a fractional duration is rounded', ugcPrefill(SRC, { ...OPTS, durationDays: 29.6 }).values.duration, '30');
 eq('a zero duration is not a duration', ugcPrefill(SRC, { ...OPTS, durationDays: 0 }).values.duration, '');

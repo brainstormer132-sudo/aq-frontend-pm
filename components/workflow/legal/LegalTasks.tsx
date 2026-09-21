@@ -146,10 +146,6 @@ function NewTaskForm({
   const [platform, setPlatform] = useState('');
   const [err, setErr] = useState('');
 
-  // The currency word the template itself carries, so the amount reads exactly
-  // as a contract raised from a campaign does.
-  const RIYAL = '\u0631\u064a\u0627\u0644 \u0633\u0639\u0648\u062f\u064a';
-
   const optionsFor = (key: string) => {
     const f = reg.placeholders.find((p) => p.key === key);
     if (!f?.list_id) return [];
@@ -175,7 +171,8 @@ function NewTaskForm({
       [UGC_DATE_KEY]: dated[UGC_DATE_KEY] ?? '',
       [UGC_DAY_KEY]: dated[UGC_DAY_KEY] ?? '',
       duration: duration.trim(),
-      Amount_full: money ? `${money} ${RIYAL}` : '',
+      // The number alone - the contract's own sentence supplies the rest.
+      Amount_full: money,
       [UGC_AD_TYPE_KEY]: adType,
       [UGC_PLATFORM_KEY]: platform,
     };
@@ -256,7 +253,7 @@ function NewTaskForm({
           <input type="number" min={0} step="0.01" className="aq-input" value={price}
             onChange={(e) => setPrice(e.target.value)} style={{ width: '100%' }} />
           <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
-            {moneyText(price) ? `${moneyText(price)} ${RIYAL}` : 'The vendor\u2019s fee, not the client price.'}
+            {moneyText(price) || 'The vendor\u2019s fee, not the client price.'}
           </div>
         </label>
       </div>

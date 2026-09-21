@@ -198,7 +198,6 @@ export function CampaignVendorContracts({
       bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
       client,
       today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
-      currency: 'SAR',
     });
     setNotice(`Contract drafted for ${row.name}. Legal will find it in the Register (${id.slice(0, 8)}).`);
   });

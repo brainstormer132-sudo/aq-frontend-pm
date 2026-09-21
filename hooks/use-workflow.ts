@@ -5892,8 +5892,6 @@ export async function createUgcContractFromBooking(opts: {
   lines?: AdLine[];
   /** YYYY-MM-DD in the workspace's own day, not UTC's. */
   today: string;
-  /** The currency word the template prints after the amount. */
-  currency?: string;
 }): Promise<string> {
   const { subtask, parent, vendor, bank } = opts;
   if (!subtask.workspace_id) throw new Error('This booking has no workspace.');
@@ -5918,7 +5916,7 @@ export async function createUgcContractFromBooking(opts: {
     account_name: p.account_name,
     account_number: p.account_number,
     iban: p.iban,
-  }, { today: opts.today, currency: opts.currency });
+  }, { today: opts.today });
 
   const title = `${p.vendor_name || vendor.name} - ${p.brand_name || parent.brand_name || 'UGC'}`;
 
