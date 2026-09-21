@@ -3,8 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   useContractEditor, useLegalPlaceholders, useManagedLists, useContractSources, sha256Hex,
-  useSupersedeLinks, raiseCorrection,
+  useSupersedeLinks, raiseCorrection, fileSignedCopy, removeSignedCopy, signedCopyUrl,
 } from '@/hooks/use-legal';
+import {
+  hasSignedCopy, cannotFileSigned, validateSignedFile, signedNote, humanBytes,
+  SIGNED_EXTENSIONS,
+} from '@/lib/legal-signed';
 import {
   supersedeState, supersedeNote, supersedeBadge, supersedeLabel, cannotSupersede,
   validateSupersedeReason, printReplacesLine, printReplacedLine, isLiveCorrection,
@@ -68,6 +72,17 @@ export function ContractFill({
   const supNote = contract ? supersedeNote(contract, sup) : null;
   const supBlocked = contract ? cannotSupersede(contract, sup) : 'No contract loaded.';
   const reasonErr = validateSupersedeReason(reason);
+
+  // The signed counterpart (migration 117). Nothing in this app signs
+  // anything: the contract goes out, comes back on paper, and the scan of it
+  // is the evidence. Filing that IS the act of signing here, and it does not
+  // unfreeze one field - a signed contract is an issued contract with its
+  // counterpart attached.
+  const [filing, setFiling] = useState(false);
+  const [signedOn, setSignedOn] = useState('');
+  const [signErr, setSignErr] = useState('');
+  const signBlocked = contract ? cannotFileSigned(contract as any) : 'No contract loaded.';
+  const onFile = contract ? hasSignedCopy(contract as any) : false;
 
   // The vendor book, already paged and cached, with each talent's licence org
   // attached - the same list the campaign page uses, so no second read of
@@ -488,6 +503,94 @@ export function ContractFill({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* The signed counterpart. Sits directly above the fingerprint card
+          because the two answer the same question from opposite ends: the
+          fingerprint says what we issued, this says what came back. */}
+      {contract && !editable && (signBlocked === null || onFile) && (
+        <div className="aq-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
+              textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>Signed copy</span>
+            {onFile
+              ? <span className="aq-badge aq-badge-success">On file</span>
+              : <span className="aq-badge aq-badge-warning">Not back yet</span>}
+          </div>
+
+          {onFile ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--aq-text-secondary)' }}>
+                {signedNote(contract as any, {
+                  on: contract.signed_on ? new Date(`${contract.signed_on}T00:00:00`).toLocaleDateString() : undefined,
+                  recorded: contract.signed_recorded_at
+                    ? new Date(contract.signed_recorded_at).toLocaleDateString() : undefined,
+                }) ?? 'On file'}
+              </span>
+              <button className="aq-btn aq-btn-ghost" disabled={filing}
+                onClick={async () => {
+                  setSignErr('');
+                  const url = await signedCopyUrl(String(contract.signed_path), contract.signed_name);
+                  if (url) window.open(url, '_blank');
+                  else setSignErr('Could not open the signed copy.');
+                }}>Open</button>
+              <button className="aq-btn aq-btn-ghost" disabled={filing}
+                title="Take the signed copy off. The contract goes back to issued."
+                onClick={async () => {
+                  if (!confirm('Remove the signed copy? The contract goes back to issued.')) return;
+                  setFiling(true); setSignErr('');
+                  try { await removeSignedCopy(contract); await ed.reload(); }
+                  catch (e: any) { setSignErr(e?.message ?? 'Could not remove it.'); }
+                  finally { setFiling(false); }
+                }}>Remove</button>
+            </div>
+          ) : (
+            <>
+              <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', margin: 0 }}>
+                A PDF or a photo of the signed pages. Filing it marks the contract signed -
+                the values stay frozen and the fingerprint is untouched.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', flex: '0 0 auto' }}>
+                  Date on the document
+                </label>
+                <input className="aq-input" type="date" value={signedOn}
+                  onChange={(e) => setSignedOn(e.target.value)}
+                  title="The date written on the paper - not today, if they differ."
+                  style={{ flex: '0 0 auto', width: 'auto' }} />
+                <label className="aq-btn aq-btn-primary"
+                  style={{ flex: '0 0 auto', cursor: filing ? 'default' : 'pointer', opacity: filing ? 0.6 : 1 }}>
+                  {filing ? 'Filing\u2026' : 'Upload the signed copy'}
+                  <input type="file" hidden disabled={filing}
+                    accept={SIGNED_EXTENSIONS.map((x) => `.${x}`).join(',')}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.currentTarget.value = '';
+                      if (!f || !workspaceId || !contract) return;
+                      const bad = validateSignedFile({ name: f.name, size: f.size });
+                      if (bad) { setSignErr(bad); return; }
+                      setFiling(true); setSignErr('');
+                      try {
+                        await fileSignedCopy({
+                          workspaceId, contract, file: f, signedOn: signedOn || null,
+                        });
+                        await ed.reload();
+                      } catch (err: any) {
+                        setSignErr(err?.message ?? 'Could not file the signed copy.');
+                      } finally { setFiling(false); }
+                    }} />
+                </label>
+                <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+                  {`up to ${humanBytes(25 * 1024 * 1024)}`}
+                </span>
+              </div>
+            </>
+          )}
+
+          {signErr && (
+            <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 9 }}>{signErr}</div>
+          )}
         </div>
       )}
 

@@ -9,6 +9,7 @@ import {
 import {
   supersedeLinks, supersedeState, supersedeBadge, supersedeLabel,
 } from '@/lib/legal-supersede';
+import { signedTally, hasSignedCopy } from '@/lib/legal-signed';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { ContractFill } from '@/components/workflow/legal/ContractFill';
 
@@ -66,6 +67,11 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   // has to know a contract was replaced even when the correction is filtered
   // out of view.
   const links = useMemo(() => supersedeLinks(contracts), [contracts]);
+
+  // The signed-contracts checklist, as one line. `awaiting` is the working
+  // number - what went out and has not come back - because "issued" on its
+  // own says how much was sent, not how much is outstanding.
+  const tally = useMemo(() => signedTally(contracts as any), [contracts]);
 
   const view = useMemo(() => {
     const rows = filterContracts(contracts, q, status);
@@ -154,6 +160,35 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
         </button>
       </div>
 
+      {/* Signed contracts, at a glance. Clicking a number filters to it, so
+          the checklist is the register rather than a second screen showing
+          the same rows a different way. */}
+      {!loading && contracts.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+          fontSize: 13, color: 'var(--aq-text-secondary)' }}>
+          <span role="button" tabIndex={0} style={{ cursor: 'pointer' }}
+            onClick={() => setStatus('signed')}
+            onKeyDown={(e) => { if (e.key === 'Enter') setStatus('signed'); }}>
+            <b style={{ fontSize: 15 }}>{tally.signed}</b> signed
+          </span>
+          <span role="button" tabIndex={0} style={{ cursor: 'pointer' }}
+            onClick={() => setStatus('issued')}
+            onKeyDown={(e) => { if (e.key === 'Enter') setStatus('issued'); }}
+            title="Issued and not signed yet - what is outstanding">
+            <b style={{ fontSize: 15, color: tally.awaiting ? 'var(--aq-warning, #a86200)' : undefined }}>
+              {tally.awaiting}
+            </b> waiting to come back
+          </span>
+          <span style={{ color: 'var(--aq-text-muted)' }}>
+            {tally.issued} issued in total
+          </span>
+          {status ? (
+            <button className="aq-btn aq-btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
+              onClick={() => setStatus('')}>Show all</button>
+          ) : null}
+        </div>
+      )}
+
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
 
       {loading ? (
@@ -223,6 +258,12 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
                     {c.template_name} {'\u00b7'} {kindLabel(c.doc_kind)}
                   </span>
                 </span>
+                {hasSignedCopy(c as any) && (
+                  <span title="The signed copy is on file"
+                    style={{ flex: '0 0 auto', color: 'var(--aq-success, #1a7f37)', fontWeight: 700 }}>
+                    {'\u2713'}
+                  </span>
+                )}
                 {(() => {
                   const st = supersedeState(c, links);
                   return st === 'none' ? null : (

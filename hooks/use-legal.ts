@@ -24,6 +24,9 @@ import type { PrintContract, PrintBuild, FieldRow } from '@/lib/legal-bulk';
 import { chunk, versionIdsOf, buildPrintDocs } from '@/lib/legal-bulk';
 import type { SupersedeContract, SupersedeLinks } from '@/lib/legal-supersede';
 import {
+  SIGNED_BUCKET, validateSignedFile, signedStoragePath, cannotFileSigned,
+} from '@/lib/legal-signed';
+import {
   validateSupersedeReason, correctionTitle, carriedValues, supersedeLinks,
 } from '@/lib/legal-supersede';
 
@@ -462,7 +465,7 @@ export function useContracts(workspaceId: string | null) {
     // the order: with a non-unique order two pages overlap and a row falls
     // between them. See selectAllRows and tests/paging.
     const cs = await selectAllRows<any>('useContracts', () => c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .order('id'), (m) => setError(m));
@@ -697,7 +700,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setLoading(true); setError('');
     const c = legal();
     const { data: ct, error: e0 } = await c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at')
       .eq('id', contractId).single();
     if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
     setContract(ct as Contract);
@@ -1338,4 +1341,92 @@ export function useSupersedeLinks(workspaceId: string | null) {
 
   useEffect(() => { void load(); }, [load]);
   return { links, loading, reload: load };
+}
+
+/**
+ * File the signed counterpart against a contract (migration 117).
+ *
+ * The order is the same shape as every other two-step write in this file, and
+ * for the same reason. The BYTES GO FIRST, then the row. If the upload
+ * succeeds and the row update fails, what is left is an orphaned object in a
+ * private bucket that nobody sees - recoverable, and costing nothing. The
+ * other order would leave a contract marked `signed` pointing at a file that
+ * does not exist, which is the state somebody discovers in a dispute.
+ *
+ * 117 does the rest: the CHECK refuses a status without a file or a file
+ * without the status, and the trigger refuses anything that was not issued
+ * and stamps when it was filed.
+ *
+ * `upsert: false` on purpose. The path carries a random segment, so a
+ * collision means something is wrong rather than something needs replacing.
+ */
+export async function fileSignedCopy(input: {
+  workspaceId: string;
+  contract: Contract;
+  file: File;
+  /** The date written on the document, when she knows it. Not the upload day. */
+  signedOn?: string | null;
+}): Promise<void> {
+  const blocked = cannotFileSigned(input.contract as any);
+  if (blocked) throw new Error(blocked);
+  const bad = validateSignedFile({ name: input.file.name, size: input.file.size });
+  if (bad) throw new Error(bad);
+
+  const sb = createClient() as unknown as SupabaseClient;
+  const path = signedStoragePath(
+    input.workspaceId, input.contract.id, input.file.name,
+    (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).replace(/-/g, '').slice(0, 10),
+  );
+
+  const { error: eU } = await sb.storage.from(SIGNED_BUCKET).upload(path, input.file, {
+    contentType: input.file.type || 'application/octet-stream',
+    upsert: false,
+  });
+  if (eU) throw new Error(`Could not upload the signed copy: ${eU.message}`);
+
+  const { data: who } = await sb.auth.getUser();
+  const { error: eR } = await legal().from('contract').update({
+    status: 'signed',
+    signed_path: path,
+    signed_name: input.file.name,
+    signed_bytes: input.file.size,
+    signed_on: input.signedOn || null,
+    signed_by: who?.user?.id ?? null,
+  }).eq('id', input.contract.id);
+  if (eR) {
+    // Take the orphan back out rather than leaving it. Best effort: if this
+    // fails too, the object is invisible in a private bucket and the contract
+    // is correctly still `issued`, which is the safe half of the pair.
+    await sb.storage.from(SIGNED_BUCKET).remove([path]).catch(() => {});
+    throw eR;
+  }
+}
+
+/**
+ * Take the signed copy back off.
+ *
+ * The ROW goes first here, which is the mirror of filing and the same rule:
+ * end on the state that is safe to be wrong. Clearing the row drops the
+ * contract back to `issued` (117's trigger), so if the storage delete then
+ * fails, what is left is an unreferenced object nobody can reach - not a
+ * contract marked signed whose file has been deleted.
+ */
+export async function removeSignedCopy(contract: Contract): Promise<void> {
+  const path = String((contract as any)?.signed_path ?? '');
+  const { error } = await legal().from('contract')
+    .update({ status: 'issued', signed_path: null }).eq('id', contract.id);
+  if (error) throw error;
+  if (path) {
+    await (createClient() as unknown as SupabaseClient)
+      .storage.from(SIGNED_BUCKET).remove([path]).catch(() => {});
+  }
+}
+
+/** A short-lived link to the signed copy, named so the download is called
+ *  what she uploaded. The bucket is private; nothing is ever public. */
+export async function signedCopyUrl(path: string, fileName?: string | null): Promise<string | null> {
+  const { data } = await (createClient() as unknown as SupabaseClient)
+    .storage.from(SIGNED_BUCKET)
+    .createSignedUrl(path, 60, fileName ? { download: fileName } : undefined);
+  return data?.signedUrl ?? null;
 }

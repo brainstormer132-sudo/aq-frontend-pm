@@ -513,6 +513,16 @@ export interface Contract {
   /** Why it was corrected, in the operator's own words. Required whenever
    *  supersedes_id is set, and never printed on the document. */
   supersede_reason?: string | null;
+  /** The signed counterpart that came back (migration 117). A contract is
+   *  `signed` if and only if signed_path is set - the database holds both
+   *  directions of that, so neither can drift from the other. */
+  signed_path?: string | null;
+  signed_name?: string | null;
+  signed_bytes?: number | null;
+  /** The date written ON the document, which in a dispute is the date that
+   *  matters and is frequently not the day it was scanned. */
+  signed_on?: string | null;
+  signed_recorded_at?: string | null;
 }
 
 /** A task: shared terms once, one contract per vendor (migration 112). */
