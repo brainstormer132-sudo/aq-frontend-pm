@@ -25,10 +25,21 @@ const eq = (name, got, want) => {
 };
 const ok = (name, c) => { if (c) { pass++; } else { fail++; console.log(`FAIL ${name}`); } };
 
-// kinds
-eq('four kinds, vendor first', DOC_KINDS.map((d) => d.key), ['vendor_contract', 'nda', 'client_contract', 'other']);
+// kinds - the six the upload popup offers, in the order it offers them.
+eq('six kinds, the influencer agreement first', DOC_KINDS.map((d) => d.key),
+  ['vendor_contract', 'client_contract', 'nda', 'letter', 'model', 'other']);
 eq('kindLabel known', kindLabel('nda'), 'NDA');
 eq('kindLabel unknown -> Other', kindLabel('zzz'), 'Other');
+// vendor_contract IS the influencer/UGC agreement. The key stayed - renaming
+// it would rewrite every template, every stamped contract and the seeds - and
+// only the label changed, which is the part anybody sees.
+eq('the vendor key reads as what it actually is',
+  kindLabel('vendor_contract'), 'Influencer / UGC agreement');
+eq('the two kinds migration 115 added are here',
+  DOC_KINDS.filter((d) => d.key === 'letter' || d.key === 'model').map((d) => d.label),
+  ['Letter', 'Model release']);
+eq('every kind has a label', DOC_KINDS.filter((d) => !d.label).length, 0);
+eq('and every key is unique', new Set(DOC_KINDS.map((d) => d.key)).size, DOC_KINDS.length);
 
 // status
 eq('draft label', statusLabel('draft'), 'Draft');

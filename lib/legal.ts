@@ -1,13 +1,29 @@
 // Pure helpers for the legal document system. No React, no Supabase, no
 // argless Date - compiled and exercised by tests/legal.test.mjs.
 
-export type DocKind = 'vendor_contract' | 'nda' | 'client_contract' | 'other';
+export type DocKind = 'vendor_contract' | 'client_contract' | 'nda'
+  | 'letter' | 'model' | 'other';
 export type VersionStatus = 'draft' | 'published' | 'archived';
 
+/**
+ * The kinds of document legal works with, in the order the upload popup asks.
+ *
+ * Siraj, on what the popup should offer: "if its a influencer/ugc client nda
+ * letter or model". `letter` and `model` were added to the database in
+ * migration 115; the other four were always there.
+ *
+ * `vendor_contract` IS the influencer/UGC agreement - it is what the seeded
+ * template has always been, and "vendor" was our word for the other side
+ * rather than his. Only the LABEL changed. Renaming the key would mean
+ * rewriting every template, every contract stamped to one, and the seeds, all
+ * so a string nobody sees could read differently.
+ */
 export const DOC_KINDS: { key: DocKind; label: string }[] = [
-  { key: 'vendor_contract', label: 'Vendor contract' },
-  { key: 'nda', label: 'NDA' },
+  { key: 'vendor_contract', label: 'Influencer / UGC agreement' },
   { key: 'client_contract', label: 'Client contract' },
+  { key: 'nda', label: 'NDA' },
+  { key: 'letter', label: 'Letter' },
+  { key: 'model', label: 'Model release' },
   { key: 'other', label: 'Other' },
 ];
 
