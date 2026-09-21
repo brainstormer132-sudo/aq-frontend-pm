@@ -264,3 +264,123 @@ export function mattersLine(ms: MatterLite[]): string {
   const head = parts.join(', ');
   return closed ? `${head} - ${closed} closed` : head;
 }
+
+/* -- raising one by hand ----------------------------------------------- */
+
+/**
+ * Siraj: "i need a manual also entry like a legal crm."
+ *
+ * Everything above starts from something the ledger noticed, which only covers
+ * money. A content dispute, a breach, a threat from somebody's lawyer - none
+ * of those are a row in any ledger, and until there is a way to type one in,
+ * the screen is a debt chaser rather than a registry.
+ *
+ * A hand-raised matter carries NO source key. That is the whole difference:
+ * it was not derived from a warning, so it must never suppress one.
+ */
+
+export interface PartyOption {
+  /** The client's uuid or the vendor's numeric id, as a string. */
+  id: string;
+  name: string;
+}
+
+/**
+ * The parties worth offering for what has been typed so far.
+ *
+ * Capped, and the cap is the point: there are four thousand vendors after the
+ * Asana import, and a select with four thousand options is a frozen tab. A
+ * blank query offers the first few rather than nothing, so the box is useful
+ * before anybody types.
+ *
+ * A name that STARTS with the query comes first: searching "sara" should find
+ * Sara before Alsara Media. Pure.
+ */
+export function partySearch(
+  query: string,
+  options: PartyOption[],
+  limit = 8,
+): PartyOption[] {
+  const q = String(query ?? '').trim().toLowerCase();
+  const list = options ?? [];
+  if (!q) return list.slice(0, Math.max(0, limit));
+  const hits: { o: PartyOption; rank: number }[] = [];
+  for (const o of list) {
+    const n = String(o?.name ?? '').toLowerCase();
+    if (!n) continue;
+    const at = n.indexOf(q);
+    if (at < 0) continue;
+    hits.push({ o, rank: at === 0 ? 0 : 1 });
+  }
+  hits.sort((a, b) => (a.rank - b.rank)
+    || a.o.name.localeCompare(b.o.name)
+    || String(a.o.id).localeCompare(String(b.o.id)));
+  return hits.slice(0, Math.max(0, limit)).map((h) => h.o);
+}
+
+export interface NewMatterDraft {
+  partyName: string;
+  /** Null when the party is typed rather than picked - which is allowed. */
+  partyId: string | null;
+  title: string;
+  kind: string;
+  /** As typed. Blank means "not about a specific amount", which is fine. */
+  amount: string;
+}
+
+/**
+ * What is stopping this being saved, in the order somebody would fix it.
+ *
+ * Returned as a list rather than a boolean so the form can say what is wrong
+ * instead of just refusing, and so the rules are testable without a browser.
+ * An empty list means it can be saved. Pure.
+ */
+export function newMatterProblems(d: NewMatterDraft): string[] {
+  const out: string[] = [];
+  if (!String(d?.partyName ?? '').trim()) out.push('Name the other side.');
+  if (!String(d?.title ?? '').trim()) out.push('Give the matter a title.');
+  if (!MATTER_KINDS.some((k) => k.key === d?.kind)) out.push('Pick what it is about.');
+  const raw = String(d?.amount ?? '').trim();
+  if (raw) {
+    const n = Number(raw.replace(/,/g, ''));
+    if (!Number.isFinite(n)) out.push('The amount is not a number.');
+    else if (n < 0) out.push('The amount cannot be negative.');
+  }
+  return out;
+}
+
+/** The typed amount as a number, or null when it was left blank. Pure. */
+export function parseMatterAmount(amount: string): number | null {
+  const raw = String(amount ?? '').trim().replace(/,/g, '');
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * A title that is already right most of the time, so the field starts filled
+ * rather than empty. Still editable - it is a suggestion, not a format. Pure.
+ */
+export function defaultMatterTitle(partyName: string, kind: string): string {
+  const who = String(partyName ?? '').trim();
+  const what = matterKindLabel(kind);
+  if (!who) return what;
+  return `${who} - ${what}`;
+}
+
+/**
+ * The matters matching a search box, over every field somebody would type:
+ * the title, the party, and what it is about by its LABEL rather than its key,
+ * because nobody searches for "client_unpaid". Order is not changed - the
+ * caller has already sorted, and re-ranking search results would move a matter
+ * away from where it was a moment ago. Pure.
+ */
+export function searchMatters<T extends MatterLite>(query: string, ms: T[]): T[] {
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return ms ?? [];
+  return (ms ?? []).filter((m) => {
+    const hay = `${m.title ?? ''} ${m.party_name ?? ''} `
+      + `${matterKindLabel(m.kind)} ${matterStatusLabel(m.status)}`;
+    return hay.toLowerCase().includes(q);
+  });
+}

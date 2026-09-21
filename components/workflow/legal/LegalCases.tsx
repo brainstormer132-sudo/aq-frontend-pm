@@ -7,10 +7,11 @@ import { useMatters, useMatterEvents, type MatterRow } from '@/hooks/use-legal';
 import { scopeRows, ALL_TIME } from '@/lib/dashboard-data';
 import { clientLedger, vendorLedger, money, type TermSet } from '@/lib/money-ledger';
 import {
-  MATTER_STATUSES, EVENT_KINDS,
+  MATTER_STATUSES, MATTER_KINDS, EVENT_KINDS,
   matterStatusLabel, matterStatusBadge, matterClosed, matterKindLabel, eventKindLabel,
-  matterWarnings, warningsLine, sortMatters, mattersLine,
-  type MatterSide, type MatterWarning,
+  matterWarnings, warningsLine, sortMatters, mattersLine, searchMatters,
+  partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle,
+  type MatterSide, type MatterWarning, type PartyOption, type NewMatterDraft,
 } from '@/lib/legal-matters';
 import { AqDrawingBlock } from '@/components/AQLoading';
 
@@ -58,6 +59,8 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
   const [busy, setBusy] = useState('');
   const [formErr, setFormErr] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const [raising, setRaising] = useState(false);
+  const [q, setQ] = useState('');
 
   // Today is read after mount, never during render: the server does not know
   // what day it is here, and a date that differs between the two renders is a
@@ -65,7 +68,18 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
   const [today, setToday] = useState<string | null>(null);
   useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
 
-  useEffect(() => { setShowAll(false); setFormErr(''); }, [side]);
+  useEffect(() => { setShowAll(false); setFormErr(''); setQ(''); }, [side]);
+
+  /**
+   * The parties this side can be against. Built once from the lists already on
+   * screen rather than a fresh read, and handed to partySearch, which caps
+   * what is offered - there are four thousand vendors and a select with four
+   * thousand options is a frozen tab.
+   */
+  const partyOptions = useMemo<PartyOption[]>(() => (side === 'client'
+    ? clients.map((c) => ({ id: String(c.id), name: c.company_name || '' }))
+    : vendors.map((v) => ({ id: String(v.id), name: v.name || '' }))
+  ).filter((o) => o.name), [side, clients, vendors]);
 
   const clientNames = useMemo(
     () => new Map(clients.map((c) => [c.id, c.company_name])), [clients]);
@@ -117,10 +131,16 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
       side,
       warnings,
       warningsLine: warningsLine(warnings, side),
-      matters: sortMatters(mine) as MatterRow[],
+      // Sorted first, then filtered: searching narrows the list, it does not
+      // re-rank it, so a matter does not jump away from where it just was.
+      matters: searchMatters(q, sortMatters(mine) as MatterRow[]),
+      // The line counts ALL of this side's matters, not the search result -
+      // "1 open" under a filtered list would be a different number every
+      // keystroke and none of them the answer to "how many are open".
       mattersLine: mattersLine(mine),
+      total: mine.length,
     };
-  }, [side, scoped, clientNames, vendorNames, clientTerms, today, matters, partyIds]);
+  }, [side, scoped, clientNames, vendorNames, clientTerms, today, matters, partyIds, q]);
 
   const openWarnings = view.warnings.filter((w) => !w.handled);
   const shown = showAll ? openWarnings : openWarnings.slice(0, SHOW_WARNINGS);
@@ -143,6 +163,22 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
     } catch (e: any) {
       setFormErr(e?.message ?? 'Could not open the matter.');
     } finally { setBusy(''); }
+  };
+
+  const raiseByHand = async (d: NewMatterDraft) => {
+    // No source key. A hand-raised matter was not derived from a warning, so
+    // it must never suppress one.
+    const id = await open({
+      title: d.title,
+      partyType: side,
+      partyName: d.partyName,
+      clientId: side === 'client' ? d.partyId : null,
+      vendorId: side === 'vendor' && d.partyId ? Number(d.partyId) : null,
+      kind: d.kind,
+      amount: parseMatterAmount(d.amount),
+    });
+    setRaising(false);
+    setOpenId(id);
   };
 
   const loading = rowsLoading || mattersLoading;
@@ -203,8 +239,26 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
           </section>
 
           <section className="aq-card" style={{ padding: 18 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700 }}>Matters</h3>
-            <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>{view.mattersLine}</p>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700 }}>Matters</h3>
+                <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>{view.mattersLine}</p>
+              </div>
+              <button className="aq-btn aq-btn-primary" onClick={() => { setRaising(true); setFormErr(''); }}>
+                New matter
+              </button>
+            </div>
+            {/* The search box appears once there is enough to search. */}
+            {view.total > SHOW_WARNINGS && (
+              <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Search matters by name, title or status"
+                style={{ width: '100%', marginTop: 12 }} />
+            )}
+            {q && view.matters.length === 0 && (
+              <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 12 }}>
+                Nothing matches {'\u201c'}{q}{'\u201d'}.
+              </p>
+            )}
             {view.matters.length > 0 && (
               <ul style={{ listStyle: 'none', marginTop: 12 }}>
                 {view.matters.map((m, i) => (
@@ -231,6 +285,15 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
             )}
           </section>
         </div>
+      )}
+
+      {raising && (
+        <NewMatterForm
+          side={side}
+          options={partyOptions}
+          onCancel={() => setRaising(false)}
+          onSave={raiseByHand}
+        />
       )}
 
       {openId && (
@@ -352,6 +415,132 @@ function MatterDetail({ matter, onClose, onStatus, onDelete }: {
             ))}
           </ul>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Raise a matter by hand.
+ *
+ * Siraj: "i need a manual also entry like a legal crm." Everything else on
+ * this screen starts from something the ledger noticed, which only covers
+ * money. A content dispute, a breach, a letter from somebody's lawyer - none
+ * of those are a row in any ledger, and without this the screen is a debt
+ * chaser rather than a registry.
+ *
+ * The party is PICKED where possible and TYPED where not. Picking links the
+ * matter to the real record; typing covers the other side that is not in the
+ * system at all, which is common enough at the point a dispute starts that
+ * refusing it would send people to a spreadsheet.
+ */
+function NewMatterForm({ side, options, onCancel, onSave }: {
+  side: MatterSide;
+  options: PartyOption[];
+  onCancel: () => void;
+  onSave: (d: NewMatterDraft) => Promise<void>;
+}) {
+  const [partyName, setPartyName] = useState('');
+  const [partyId, setPartyId] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [kind, setKind] = useState(side === 'client' ? 'client_unpaid' : 'vendor_unpaid');
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Capped by partySearch, which is the whole reason this is a typeahead and
+  // not a <select>: four thousand vendors came in from Asana.
+  const hits = useMemo(() => partySearch(partyName, options, 6), [partyName, options]);
+  const exact = hits.some((h) => h.name.toLowerCase() === partyName.trim().toLowerCase());
+
+  // The title writes itself until somebody edits it, then it is theirs.
+  const shown = titleTouched ? title : defaultMatterTitle(partyName, kind);
+  const draft: NewMatterDraft = { partyName, partyId, title: shown, kind, amount };
+  const problems = newMatterProblems(draft);
+
+  const save = async () => {
+    if (problems.length) { setErr(problems[0]); return; }
+    setBusy(true); setErr('');
+    try { await onSave(draft); }
+    catch (e: any) { setErr(e?.message ?? 'Could not open the matter.'); }
+    finally { setBusy(false); }
+  };
+
+  const label = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)', marginBottom: 4 } as const;
+
+  return (
+    <div role="dialog" aria-modal="true" style={{
+      position: 'fixed', inset: 0, background: 'var(--aq-backdrop, rgba(0,0,0,0.4))',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
+    }} onClick={() => !busy && onCancel()}>
+      <div className="aq-card" style={{ padding: 22, width: 'min(520px, 100%)', maxHeight: '86vh', overflowY: 'auto' }}
+        onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>
+          New matter against a {side === 'client' ? 'client' : 'vendor'}
+        </h3>
+
+        <label style={label}>{side === 'client' ? 'Client' : 'Vendor'}</label>
+        <input className="aq-input" value={partyName} autoFocus disabled={busy}
+          onChange={(e) => { setPartyName(e.target.value); setPartyId(null); }}
+          placeholder={side === 'client' ? 'Search or type a client' : 'Search or type a vendor'}
+          style={{ width: '100%' }} />
+        {/* The list only helps while the name is not already exactly one of
+            them - once it is, it is six rows of noise under the answer. */}
+        {partyName.trim() && !exact && hits.length > 0 && (
+          <ul style={{ listStyle: 'none', marginTop: 6, border: '1px solid var(--aq-border-light)', borderRadius: 8 }}>
+            {hits.map((h, i) => (
+              <li key={h.id} role="button" tabIndex={0}
+                onClick={() => { setPartyName(h.name); setPartyId(h.id); }}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault(); setPartyName(h.name); setPartyId(h.id);
+                  }
+                }}
+                style={{
+                  padding: '8px 10px', fontSize: 13.5, cursor: 'pointer',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+                }}>
+                {h.name}
+              </li>
+            ))}
+          </ul>
+        )}
+        {partyName.trim() && !partyId && (
+          <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 6 }}>
+            Not linked to a record {'\u2014'} the matter will carry this name only.
+          </p>
+        )}
+
+        <label style={{ ...label, marginTop: 14 }}>What it is about</label>
+        <select className="aq-select" value={kind} disabled={busy}
+          onChange={(e) => setKind(e.target.value)} style={{ width: '100%' }}>
+          {MATTER_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+        </select>
+
+        <label style={{ ...label, marginTop: 14 }}>Title</label>
+        <input className="aq-input" value={shown} disabled={busy}
+          onChange={(e) => { setTitleTouched(true); setTitle(e.target.value); }}
+          style={{ width: '100%' }} />
+
+        <label style={{ ...label, marginTop: 14 }}>Amount in dispute (optional)</label>
+        <input className="aq-input" value={amount} disabled={busy} inputMode="decimal"
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="Leave blank if it is not about a sum" style={{ width: '100%' }} />
+
+        {(err || problems.length > 0) && (
+          <p style={{ fontSize: 12.5, color: err ? 'var(--aq-error, #b3261e)' : 'var(--aq-text-muted)', marginTop: 12 }}>
+            {err || problems[0]}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+          <button className="aq-btn aq-btn-ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="aq-btn aq-btn-primary" onClick={() => void save()}
+            disabled={busy || problems.length > 0}>
+            {busy ? 'Opening\u2026' : 'Open the matter'}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ import {
   MATTER_KINDS, matterKindLabel, EVENT_KINDS, eventKindLabel,
   warningSourceKey, matterWarnings, unhandledCount, warningsLine,
   sortMatters, mattersLine,
+  partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle, searchMatters,
 } from '../.test-build/legal-matters.js';
 
 let pass = 0, fail = 0;
@@ -291,6 +292,88 @@ eq('closed are counted separately',
   mattersLine([matter({}), matter({ status: 'won', closed_at: '2026-02-01' })]), '1 open - 1 closed');
 eq('all closed reads as zero open',
   mattersLine([matter({ status: 'lost', closed_at: '2026-02-01' })]), '0 open - 1 closed');
+
+/* -- raising one by hand -------------------------------------------- */
+
+const PARTIES = [
+  { id: '1', name: 'Alsara Media' },
+  { id: '2', name: 'Sara Al Otaibi' },
+  { id: '3', name: 'Rawad Media' },
+  { id: '4', name: 'sara studio' },
+  { id: '5', name: 'Zed' },
+];
+
+// A blank box still offers something: an empty list before anybody types
+// reads as "there are no vendors", which is the opposite of the truth.
+eq('blank query offers the first few', partySearch('', PARTIES, 3).map((p) => p.id), ['1', '2', '3']);
+eq('blank query respects the cap', partySearch('', PARTIES, 0).length, 0);
+eq('no options is no options', partySearch('sara', [], 8).length, 0);
+
+// Starts-with beats contains: searching "sara" finds Sara before Alsara.
+eq('a name that starts with the query comes first',
+  partySearch('sara', PARTIES, 8).map((p) => p.name),
+  ['Sara Al Otaibi', 'sara studio', 'Alsara Media']);
+eq('search is case-insensitive', partySearch('SARA', PARTIES, 8).length, 3);
+eq('the query is trimmed', partySearch('  rawad  ', PARTIES, 8).map((p) => p.id), ['3']);
+eq('no match is an empty list', partySearch('zzzz', PARTIES, 8).length, 0);
+
+// The cap is the point: four thousand vendors is a frozen tab, not a picker.
+{
+  const many = Array.from({ length: 4000 }, (_, i) => ({ id: String(i), name: `Vendor ${i}` }));
+  eq('four thousand vendors are capped', partySearch('vendor', many, 8).length, 8);
+  eq('and so is a blank query over them', partySearch('', many, 8).length, 8);
+}
+eq('an option with no name is skipped', partySearch('a', [{ id: '1', name: '' }], 8).length, 0);
+
+// newMatterProblems
+const draft = (o) => ({ partyName: 'Rawad', partyId: '3', title: 'A title', kind: 'breach', amount: '', ...o });
+eq('a complete draft has no problems', newMatterProblems(draft({})), []);
+eq('no party is a problem', newMatterProblems(draft({ partyName: '  ' })), ['Name the other side.']);
+eq('no title is a problem', newMatterProblems(draft({ title: '' })), ['Give the matter a title.']);
+eq('an unknown kind is a problem', newMatterProblems(draft({ kind: 'zzz' })), ['Pick what it is about.']);
+eq('every kind in the list is accepted',
+  MATTER_KINDS.filter((k) => newMatterProblems(draft({ kind: k.key })).length).length, 0);
+eq('a blank amount is fine', newMatterProblems(draft({ amount: '   ' })), []);
+eq('a number with commas is fine', newMatterProblems(draft({ amount: '12,500' })), []);
+eq('a non-number amount is a problem',
+  newMatterProblems(draft({ amount: 'soon' })), ['The amount is not a number.']);
+eq('a negative amount is a problem',
+  newMatterProblems(draft({ amount: '-5' })), ['The amount cannot be negative.']);
+eq('problems come back in the order they would be fixed',
+  newMatterProblems({ partyName: '', title: '', kind: '', amount: 'x' }),
+  ['Name the other side.', 'Give the matter a title.', 'Pick what it is about.',
+    'The amount is not a number.']);
+
+// parseMatterAmount
+eq('blank is null, not zero', parseMatterAmount('  '), null);
+eq('commas are stripped', parseMatterAmount('12,500.50'), 12500.5);
+eq('junk is null', parseMatterAmount('soon'), null);
+eq('negative is null', parseMatterAmount('-1'), null);
+eq('zero is a real amount', parseMatterAmount('0'), 0);
+
+// defaultMatterTitle
+eq('title names the party and what it is about',
+  defaultMatterTitle('Rawad Media', 'breach'), 'Rawad Media - Breach of contract');
+eq('an unknown kind still titles as Other', defaultMatterTitle('Rawad', 'zzz'), 'Rawad - Other');
+eq('no party yet: just the kind', defaultMatterTitle('  ', 'content'), 'Content or rights');
+
+// searchMatters
+{
+  const ms = [
+    matter({ id: 'a', title: 'Rawad Media - unpaid', party_name: 'Rawad Media', kind: 'vendor_unpaid' }),
+    matter({ id: 'b', title: 'Content takedown', party_name: 'Zed', kind: 'content', status: 'filed' }),
+  ];
+  eq('a blank search changes nothing', searchMatters('', ms).map((m) => m.id), ['a', 'b']);
+  eq('search matches the title', searchMatters('takedown', ms).map((m) => m.id), ['b']);
+  eq('search matches the party', searchMatters('rawad', ms).map((m) => m.id), ['a']);
+  // Nobody types "vendor_unpaid" into a search box.
+  eq('search matches the kind by its LABEL, not its key',
+    searchMatters('not paid', ms).map((m) => m.id), ['a']);
+  eq('the key itself is not what is searched', searchMatters('vendor_unpaid', ms).length, 0);
+  eq('search matches the status label', searchMatters('lawsuit', ms).map((m) => m.id), ['b']);
+  eq('no match is empty', searchMatters('zzzz', ms).length, 0);
+  eq('the order is left alone', searchMatters('e', ms).map((m) => m.id), ['a', 'b']);
+}
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
