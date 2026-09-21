@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
+import { useClients, useVendorNames } from '@/hooks/use-workflow';
 import { useDashboardRows } from '@/hooks/use-dashboard';
-import { useMatters, useMatterEvents, type MatterRow } from '@/hooks/use-legal';
+import { useMatters, useMatterEvents, useContractStatuses, type MatterRow } from '@/hooks/use-legal';
 import { scopeRows, ALL_TIME } from '@/lib/dashboard-data';
 import { clientLedger, vendorLedger, money, type TermSet } from '@/lib/money-ledger';
 import {
@@ -11,6 +11,7 @@ import {
   matterStatusLabel, matterStatusBadge, matterClosed, matterKindLabel, eventKindLabel,
   matterWarnings, warningsLine, sortMatters, mattersLine, searchMatters,
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle,
+  legalKpis, kpiBadge, unhandledCount,
   type MatterSide, type MatterWarning, type PartyOption, type NewMatterDraft,
 } from '@/lib/legal-matters';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -49,7 +50,11 @@ const SHOW_WARNINGS = 5;
 export function LegalCases({ workspaceId }: { workspaceId?: string }) {
   const { rows, loading: rowsLoading } = useDashboardRows(workspaceId ?? null);
   const { clients } = useClients();
-  const { vendors } = useLegacyVendors();
+  // Names only. useLegacyVendors reads vendors.* for four thousand rows plus
+  // every bank account, category and org; this screen uses the id and the
+  // name. Siraj: "make it faster its so slow."
+  const { vendorNames } = useVendorNames();
+  const { statuses } = useContractStatuses(workspaceId ?? null);
   const {
     matters, loading: mattersLoading, error, open, setStatus, remove,
   } = useMatters(workspaceId ?? null);
@@ -78,13 +83,11 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
    */
   const partyOptions = useMemo<PartyOption[]>(() => (side === 'client'
     ? clients.map((c) => ({ id: String(c.id), name: c.company_name || '' }))
-    : vendors.map((v) => ({ id: String(v.id), name: v.name || '' }))
-  ).filter((o) => o.name), [side, clients, vendors]);
+    : [...vendorNames].map(([id, name]) => ({ id, name: name || '' }))
+  ).filter((o) => o.name), [side, clients, vendorNames]);
 
   const clientNames = useMemo(
     () => new Map(clients.map((c) => [c.id, c.company_name])), [clients]);
-  const vendorNames = useMemo(
-    () => new Map(vendors.map((v) => [String(v.id), v.name])), [vendors]);
   const clientTerms = useMemo(
     () => new Map<string, TermSet>(clients
       .filter((c) => c.payment_terms)
@@ -114,7 +117,14 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
    * from this one object, so none of them can be about a different side than
    * the others.
    */
-  const view = useMemo(() => {
+  /**
+   * What is owed and what is being done about it. Deliberately does NOT
+   * depend on the search box: the search box used to be a dependency of this
+   * memo, so every keystroke rebuilt the whole ledger over four thousand
+   * bookings. Measured at 2.2ms a keystroke against 0.2ms for the filter
+   * alone - small on its own, and pure waste on a screen he called slow.
+   */
+  const base = useMemo(() => {
     const ledger = side === 'client'
       ? clientLedger({
         parents: scoped.parents, subtasks: scoped.allSubtasks,
@@ -126,21 +136,58 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
       });
     const mine = matters.filter((m) => m.party_type === side);
     const handled = new Set(mine.map((m) => m.source_key).filter(Boolean) as string[]);
-    const warnings = matterWarnings({ rows: ledger, side, party: partyIds, handled });
     return {
       side,
-      warnings,
-      warningsLine: warningsLine(warnings, side),
-      // Sorted first, then filtered: searching narrows the list, it does not
-      // re-rank it, so a matter does not jump away from where it just was.
-      matters: searchMatters(q, sortMatters(mine) as MatterRow[]),
-      // The line counts ALL of this side's matters, not the search result -
-      // "1 open" under a filtered list would be a different number every
-      // keystroke and none of them the answer to "how many are open".
-      mattersLine: mattersLine(mine),
-      total: mine.length,
+      warnings: matterWarnings({ rows: ledger, side, party: partyIds, handled }),
+      sorted: sortMatters(mine) as MatterRow[],
+      mine,
     };
-  }, [side, scoped, clientNames, vendorNames, clientTerms, today, matters, partyIds, q]);
+  }, [side, scoped, clientNames, vendorNames, clientTerms, today, matters, partyIds]);
+
+  /**
+   * What is on the screen. Everything still comes from ONE object, so the
+   * header and the rows under it cannot be about different sides - the split
+   * above changed what is recomputed, not that invariant.
+   */
+  const view = useMemo(() => ({
+    side: base.side,
+    warnings: base.warnings,
+    warningsLine: warningsLine(base.warnings, base.side),
+    // Sorted first, then filtered: searching narrows the list, it does not
+    // re-rank it, so a matter does not jump away from where it just was.
+    matters: searchMatters(q, base.sorted),
+    // The line counts ALL of this side's matters, not the search result -
+    // "1 open" under a filtered list would be a different number every
+    // keystroke and none of them the answer to "how many are open".
+    mattersLine: mattersLine(base.mine),
+    total: base.mine.length,
+  }), [base, q]);
+
+  /**
+   * The strip across the top. Siraj: "you need a dashboard to understand the
+   * kpi" and, asked where: "no it should be within the cases log."
+   *
+   * Counted over BOTH sides, not the one on screen. "Open disputes: 2" has to
+   * mean two disputes, not two on the tab you happen to be looking at - a
+   * number that changes when you press a tab is a number nobody trusts.
+   */
+  const kpis = useMemo(() => {
+    const unhandled = (['client', 'vendor'] as MatterSide[]).reduce((n, sd) => {
+      const mine = matters.filter((m) => m.party_type === sd);
+      const handled = new Set(mine.map((m) => m.source_key).filter(Boolean) as string[]);
+      const ledger = sd === 'client'
+        ? clientLedger({
+          parents: scoped.parents, subtasks: scoped.allSubtasks,
+          clientName: clientNames, clientTerms, today: today ?? undefined,
+        })
+        : vendorLedger({
+          subtasks: scoped.subtasks, parents: scoped.parents,
+          vendorName: vendorNames, today: today ?? undefined,
+        });
+      return n + unhandledCount(matterWarnings({ rows: ledger, side: sd, handled }));
+    }, 0);
+    return legalKpis({ contracts: statuses, matters, unhandled });
+  }, [statuses, matters, scoped, clientNames, vendorNames, clientTerms, today]);
 
   const openWarnings = view.warnings.filter((w) => !w.handled);
   const shown = showAll ? openWarnings : openWarnings.slice(0, SHOW_WARNINGS);
@@ -194,6 +241,25 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
       {formErr && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{formErr}</div>}
+
+      {!loading && (
+        <section className="aq-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <ul style={{ listStyle: 'none', display: 'flex', flexWrap: 'wrap' }}>
+            {kpis.map((k, i) => (
+              <li key={k.key} style={{
+                flex: '1 1 160px', minWidth: 0, padding: '16px 18px',
+                borderInlineStart: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1 }}>{k.value}</span>
+                  <span className={`aq-badge ${kpiBadge(k.tone)}`} style={{ fontSize: 10 }}>{k.label}</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 6 }}>{k.note}</div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {loading ? (
         <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Reading the ledger\u2026'} /></div>
@@ -368,6 +434,7 @@ function MatterDetail({ matter, onClose, onStatus, onDelete }: {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)' }}>Status</label>
           <select className="aq-select" value={matter.status} disabled={busy}
+            style={{ flex: '0 0 auto', width: 'auto', minWidth: 150 }}
             onChange={(e) => void move(e.target.value)}>
             {MATTER_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
@@ -380,12 +447,18 @@ function MatterDetail({ matter, onClose, onStatus, onDelete }: {
         </div>
 
         <div style={{ marginTop: 18, borderTop: '1px solid var(--aq-border-light)', paddingTop: 14 }}>
+          {/* .aq-input and .aq-select both carry width:100% in globals.css. In a
+              flex row that makes the SELECT claim the whole line and squeezes
+              the box you actually type in down to nothing - which is what
+              Siraj photographed. The select is pinned to its own width and the
+              text box is given min-width:0 so it is allowed to grow. */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <select className="aq-select" value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy}>
+            <select className="aq-select" value={kind} onChange={(e) => setKind(e.target.value)}
+              disabled={busy} style={{ flex: '0 0 auto', width: 'auto', minWidth: 130 }}>
               {EVENT_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
             </select>
             <input className="aq-input" value={body} onChange={(e) => setBody(e.target.value)}
-              placeholder="What happened" style={{ flex: 1 }} disabled={busy}
+              placeholder="What happened" style={{ flex: '1 1 auto', minWidth: 0 }} disabled={busy}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void add(); } }} />
             <button className="aq-btn aq-btn-primary" onClick={() => void add()} disabled={busy || !body.trim()}>
               {busy ? 'Saving\u2026' : 'Log'}

@@ -384,3 +384,85 @@ export function searchMatters<T extends MatterLite>(query: string, ms: T[]): T[]
     return hay.toLowerCase().includes(q);
   });
 }
+
+/* -- what legal is asked at a glance ------------------------------------ */
+
+/**
+ * Siraj: "you need a dashboard to understand the kpi", and, asked where it
+ * belongs: "no it should be within the cases log."
+ *
+ * So there is no second dashboard. The Cases screen already knows what is
+ * owed and what is being chased; these are the four numbers that were missing
+ * beside them - how many contracts went out, how many came back, what is
+ * still a draft, and what got cancelled.
+ *
+ * A KPI here is a COUNT OF ROWS, not a rate or a trend. A rate needs a period
+ * and a denominator, and every one of those is an argument waiting to happen
+ * ("issued this month" - by issue date or by campaign date?). A count of
+ * contracts by status is the same number however you ask it.
+ */
+export interface LegalKpi {
+  key: string;
+  label: string;
+  value: number;
+  /** A line under the number, when the number alone would mislead. */
+  note: string;
+  tone: 'plain' | 'good' | 'warn' | 'bad';
+}
+
+/** One contract, as the KPI count reads it. */
+export interface ContractLite { status: string }
+
+/**
+ * The strip across the top of Cases.
+ *
+ * `signed` is shown even while it is always zero, and says so. Nothing in the
+ * app sets legal.contract.status to 'signed' yet - the column has allowed it
+ * since migration 100 and no code has ever written it. A KPI that is missing
+ * from the screen looks like a number nobody needs; a KPI that reads "0, not
+ * tracked yet" is a piece of work somebody can see is outstanding. Pure.
+ */
+export function legalKpis(input: {
+  contracts: ContractLite[];
+  matters: MatterLite[];
+  /** Unhandled warnings across both sides - what nobody has acted on. */
+  unhandled: number;
+}): LegalKpi[] {
+  const by = (s: string) => (input.contracts ?? []).filter(
+    (c) => String(c?.status ?? '').toLowerCase() === s).length;
+  const issued = by('issued');
+  const signed = by('signed');
+  const draft = by('draft');
+  const open = (input.matters ?? []).filter((m) => !matterClosed(m.status));
+  const filed = open.filter((m) => m.status === 'filed').length;
+
+  return [
+    {
+      key: 'issued', label: 'Contracts issued', value: issued, tone: 'plain',
+      note: draft ? `${draft} still a draft` : 'none waiting as a draft',
+    },
+    {
+      key: 'signed', label: 'Signed', value: signed, tone: signed ? 'good' : 'plain',
+      // Said out loud rather than hidden: the number is right, the tracking is
+      // what is missing.
+      note: signed === 0 && issued > 0 ? 'not tracked yet - signing is not built' : 'returned and recorded',
+    },
+    {
+      key: 'disputes', label: 'Open disputes', value: open.length,
+      tone: filed ? 'bad' : open.length ? 'warn' : 'good',
+      note: filed ? `${filed} in court` : open.length ? 'none in court' : 'nothing open',
+    },
+    {
+      key: 'unchased', label: 'Overdue, nobody on it', value: Math.max(0, input.unhandled),
+      tone: input.unhandled ? 'warn' : 'good',
+      note: input.unhandled ? 'no matter raised yet' : 'all overdue money is being chased',
+    },
+  ];
+}
+
+/** The badge class for a KPI's tone, so the screen holds no colour logic. */
+export function kpiBadge(tone: LegalKpi['tone']): string {
+  return tone === 'bad' ? 'aq-badge-error'
+    : tone === 'warn' ? 'aq-badge-warning'
+      : tone === 'good' ? 'aq-badge-success' : 'aq-badge-muted';
+}

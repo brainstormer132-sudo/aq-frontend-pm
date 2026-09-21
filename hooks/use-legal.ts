@@ -1124,3 +1124,32 @@ export async function templateSourceUrl(path: string): Promise<string | null> {
     .storage.from('legal-templates').createSignedUrl(path, 60);
   return data?.signedUrl ?? null;
 }
+
+/**
+ * Every contract's status, and nothing else, for the KPI strip on Cases.
+ *
+ * One narrow column over a paged read: the strip needs four counts, and
+ * counting them here costs less than four round trips asking PostgREST for a
+ * count each. Paged, unlike useContracts beside it, because the number it
+ * reports would otherwise quietly stop at a thousand - and a KPI that is
+ * wrong is worse than no KPI, because nobody checks it twice.
+ */
+export function useContractStatuses(workspaceId: string | null) {
+  const [rows, setRows] = useState<{ status: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setRows([]); setLoading(false); return; }
+    setLoading(true);
+    const data = await selectAllRows<{ status: string; id: string }>(
+      'legal.contract statuses',
+      () => legal().from('contract').select('id, status')
+        .eq('workspace_id', workspaceId).order('id'),
+    );
+    setRows(data.map((r) => ({ status: r.status })));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+  return { statuses: rows, loading, reload: load };
+}

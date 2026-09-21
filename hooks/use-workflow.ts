@@ -7008,3 +7008,42 @@ export async function deleteCrmTask(id: string) {
   const { error } = await supabase.from('crm_tasks').delete().eq('id', id);
   if (error) throw error;
 }
+
+/**
+ * Vendor ids and names, and nothing else.
+ *
+ * useLegacyVendors is the right hook when a screen needs a VENDOR - its
+ * licence, its bank accounts, its category, its org. It is the wrong one when
+ * a screen only needs to put a name next to an id, because it reads
+ * `vendors.*` for four thousand rows and then every bank account, every
+ * category and every org alongside.
+ *
+ * Legal -> Cases did exactly that. It used two fields and paid for all of it
+ * on a screen whose own data - the matters - is a handful of rows. Siraj:
+ * "make it faster its so slow."
+ *
+ * Cached under its own key, so it does not evict or wait on the full read.
+ */
+export function useVendorNames() {
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async (force = false) => {
+    const rows = await cachedFetch<{ id: number; name: string }[]>(
+      'vendor-names',
+      () => selectAllRows<{ id: number; name: string }>(
+        'useVendorNames',
+        // Duplicate vendor names are why aq-vendor-dedupe exists, so name
+        // alone is not a total order for a paged read.
+        () => supabase.from('vendors').select('id, name')
+          .order('name', { ascending: true }).order('id', { ascending: true }),
+      ),
+      force,
+    );
+    setNames(new Map(rows.map((v) => [String(v.id), v.name ?? ''])));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { void fetch(); }, [fetch]);
+  return { vendorNames: names, loading, refetch: () => fetch(true) };
+}

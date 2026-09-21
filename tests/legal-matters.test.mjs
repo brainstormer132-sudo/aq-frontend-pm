@@ -14,6 +14,7 @@ import {
   warningSourceKey, matterWarnings, unhandledCount, warningsLine,
   sortMatters, mattersLine,
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle, searchMatters,
+  legalKpis, kpiBadge,
 } from '../.test-build/legal-matters.js';
 
 let pass = 0, fail = 0;
@@ -374,6 +375,64 @@ eq('no party yet: just the kind', defaultMatterTitle('  ', 'content'), 'Content 
   eq('no match is empty', searchMatters('zzzz', ms).length, 0);
   eq('the order is left alone', searchMatters('e', ms).map((m) => m.id), ['a', 'b']);
 }
+
+/* -- the KPI strip -------------------------------------------------- */
+
+const kpi = (o) => legalKpis({ contracts: [], matters: [], unhandled: 0, ...o });
+const val = (ks, k) => ks.find((x) => x.key === k).value;
+const note = (ks, k) => ks.find((x) => x.key === k).note;
+const tone = (ks, k) => ks.find((x) => x.key === k).tone;
+
+eq('four numbers, in this order', kpi({}).map((k) => k.key),
+  ['issued', 'signed', 'disputes', 'unchased']);
+eq('an empty workspace is all zeros', kpi({}).map((k) => k.value), [0, 0, 0, 0]);
+eq('every KPI has a label', kpi({}).filter((k) => !k.label).length, 0);
+
+{
+  const contracts = [{ status: 'issued' }, { status: 'issued' }, { status: 'draft' },
+    { status: 'signed' }, { status: 'void' }];
+  const ks = kpi({ contracts });
+  eq('issued counts only issued', val(ks, 'issued'), 2);
+  eq('signed counts only signed', val(ks, 'signed'), 1);
+  eq('drafts are a note, not a number of their own', note(ks, 'issued'), '1 still a draft');
+  eq('a void contract is in no count', val(ks, 'issued') + val(ks, 'signed'), 3);
+}
+eq('status is matched case-insensitively', val(kpi({ contracts: [{ status: 'ISSUED' }] }), 'issued'), 1);
+eq('a contract with no status counts as nothing',
+  kpi({ contracts: [{ status: null }, {}] }).map((k) => k.value), [0, 0, 0, 0]);
+
+// Said out loud rather than hidden: nothing sets 'signed' yet, and a KPI that
+// silently reads 0 looks like a number nobody needs.
+eq('zero signed against issued contracts says why',
+  note(kpi({ contracts: [{ status: 'issued' }] }), 'signed'), 'not tracked yet - signing is not built');
+eq('and it does not say that when there is nothing issued either',
+  note(kpi({}), 'signed'), 'returned and recorded');
+
+{
+  const ms = [matter({ status: 'open' }), matter({ status: 'filed' }),
+    matter({ status: 'won', closed_at: '2026-01-01' })];
+  const ks = kpi({ matters: ms });
+  eq('disputes counts the open ones only', val(ks, 'disputes'), 2);
+  eq('and calls out the ones in court', note(ks, 'disputes'), '1 in court');
+  eq('a lawsuit makes it read as bad', tone(ks, 'disputes'), 'bad');
+}
+eq('open but nothing filed reads as a warning',
+  tone(kpi({ matters: [matter({ status: 'warned' })] }), 'disputes'), 'warn');
+eq('nothing open reads as good', tone(kpi({}), 'disputes'), 'good');
+eq('a closed matter is not a dispute',
+  val(kpi({ matters: [matter({ status: 'lost', closed_at: '2026-02-01' })] }), 'disputes'), 0);
+
+eq('unchased carries the unhandled count', val(kpi({ unhandled: 7 }), 'unchased'), 7);
+eq('and never goes negative', val(kpi({ unhandled: -3 }), 'unchased'), 0);
+eq('nothing unchased reads as good', tone(kpi({ unhandled: 0 }), 'unchased'), 'good');
+eq('something unchased says nobody has raised it',
+  note(kpi({ unhandled: 2 }), 'unchased'), 'no matter raised yet');
+
+// The screen holds no colour logic of its own.
+eq('bad is the error badge', kpiBadge('bad'), 'aq-badge-error');
+eq('warn is the warning badge', kpiBadge('warn'), 'aq-badge-warning');
+eq('good is the success badge', kpiBadge('good'), 'aq-badge-success');
+eq('plain is muted', kpiBadge('plain'), 'aq-badge-muted');
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

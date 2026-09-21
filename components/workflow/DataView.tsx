@@ -171,17 +171,27 @@ export function DataView({
   // Liability rows after switching back and forth on 4,000 bookings; the
   // three separate memos this used to be gave that a way to happen, and
   // the table below is keyed on the side so it is rebuilt, not patched.
-  const ledgerView = useMemo(() => {
+  // The ledger itself, and its totals. Deliberately does NOT depend on the
+  // filter or the sort. They were dependencies of this memo, which meant
+  // every keystroke in the search box rebuilt the whole ledger and re-totalled
+  // it over four thousand bookings before filtering a single row. Siraj:
+  // "make it faster its so slow."
+  const ledgerBase = useMemo(() => {
     const rows = side === 'clients'
       ? clientLedger({ parents: scoped.parents, subtasks: scoped.allSubtasks, clientName: clientNames, clientTerms, today: today ?? undefined })
       : vendorLedger({ subtasks: scoped.subtasks, parents: scoped.parents, vendorName: vendorNames, today: today ?? undefined });
-    return {
-      side,
-      rows,
-      totals: ledgerTotals(rows, side),
-      shown: sortLedger(filterLedger(rows, ledgerFilter), ledgerSort),
-    };
-  }, [side, scoped, clientNames, vendorNames, clientTerms, today, ledgerFilter, ledgerSort]);
+    return { side, rows, totals: ledgerTotals(rows, side) };
+  }, [side, scoped, clientNames, vendorNames, clientTerms, today]);
+
+  // What is on screen. Still ONE object, so the header, the rows and the
+  // totals cannot come from different sides - the split changed what gets
+  // recomputed, not that invariant, which is the bug this memo exists for.
+  const ledgerView = useMemo(() => ({
+    side: ledgerBase.side,
+    rows: ledgerBase.rows,
+    totals: ledgerBase.totals,
+    shown: sortLedger(filterLedger(ledgerBase.rows, ledgerFilter), ledgerSort),
+  }), [ledgerBase, ledgerFilter, ledgerSort]);
   const ledger = ledgerView.rows;
   const ledgerAll = ledgerView.totals;
   const ledgerShown = ledgerView.shown;
