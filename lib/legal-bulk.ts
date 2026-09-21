@@ -34,6 +34,8 @@ import {
   contractStatusLabel, kindLabel, FINGERPRINT_KEY, OPT_OFF_KEY,
 } from './legal';
 import type { Letterhead } from './legal-letterhead';
+import type { SupersedeLinks } from './legal-supersede';
+import { isLiveCorrection, printReplacesLine, printReplacedLine } from './legal-supersede';
 
 // Relative, not '@/lib/legal': scripts/run-tests.mjs compiles these with bare
 // tsc and no tsconfig, so the path alias does not exist there. A '@/' import
@@ -48,6 +50,9 @@ export interface PrintContract {
   contract_no?: string | null;
   template_name?: string | null;
   doc_kind?: string | null;
+  /** The contract this one corrects (116). Null on nearly all of them. */
+  supersedes_id?: string | null;
+  supersede_reason?: string | null;
 }
 
 /** One field value row, as legal.contract_field stores it. */
@@ -139,6 +144,17 @@ export function buildPrintDocs(input: {
   fields: FieldRow[];
   letterhead?: Letterhead;
   generatedOn?: string;
+  /**
+   * The supersede arrows (116), so a printed page can say it was replaced.
+   *
+   * They come from the CALLER, over the whole workspace, not from the
+   * contracts being printed. The dangerous case is printing one old contract
+   * on its own: its correction is not in that selection, so a print built
+   * from the selection alone would come out looking like the live agreement.
+   * Omitted means no arrows are known and no notice is printed - which is
+   * correct for a workspace that has never corrected anything.
+   */
+  links?: SupersedeLinks;
 }): PrintBuild {
   const byVersion = blocksByVersion(input.blocks ?? []);
   const byContract = valuesByContract(input.fields ?? []);
@@ -168,6 +184,20 @@ export function buildPrintDocs(input: {
       reference: printReference(c),
       fingerprint: fp ? formatFingerprint(fp) : undefined,
     };
+    // Only a LIVE correction replaces anything. One still in draft has no
+    // number and has replaced nothing, and stamping SUPERSEDED on a contract
+    // still in force because somebody started typing would be worse than
+    // saying nothing at all.
+    const by = input.links?.correctionOf?.[c.id];
+    if (by && isLiveCorrection(by)) {
+      const line = printReplacedLine(by);
+      if (line) meta.replacedBy = line;
+    }
+    const of = input.links?.replaces?.[c.id];
+    if (of) {
+      const line = printReplacesLine(of);
+      if (line) meta.replaces = line;
+    }
     if (input.generatedOn) meta.generatedOn = input.generatedOn;
     if (input.letterhead) meta.letterhead = input.letterhead;
     docs.push({

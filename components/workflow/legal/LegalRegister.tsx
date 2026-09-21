@@ -6,6 +6,9 @@ import { kindLabel, contractStatusLabel, contractStatusBadge, CONTRACT_STATUSES,
 import {
   filterContracts, toggleId, selectedInOrder, skippedNote, bulkPrintNote,
 } from '@/lib/legal-bulk';
+import {
+  supersedeLinks, supersedeState, supersedeBadge, supersedeLabel,
+} from '@/lib/legal-supersede';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { ContractFill } from '@/components/workflow/legal/ContractFill';
 
@@ -56,6 +59,14 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   // One memo for the view, everything else derived from it. Two memos that
   // each filter would be two answers to "which contracts are we looking at",
   // and the count beside the button would eventually disagree with the rows.
+  // The supersede arrows (116) cost nothing here: this screen already holds
+  // every contract in the workspace, so the links are derived rather than
+  // read. Outside the filter memo on purpose - they are a fact about the
+  // whole register, not about what is currently on screen, and a batch print
+  // has to know a contract was replaced even when the correction is filtered
+  // out of view.
+  const links = useMemo(() => supersedeLinks(contracts), [contracts]);
+
   const view = useMemo(() => {
     const rows = filterContracts(contracts, q, status);
     return { rows, shown: rows.slice(0, SHOW_MAX), hidden: Math.max(0, rows.length - SHOW_MAX) };
@@ -64,7 +75,10 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   const picked = useMemo(() => selectedInOrder(view.rows, sel), [view.rows, sel]);
 
   if (openId) {
-    return <ContractFill workspaceId={workspaceId} contractId={openId} onBack={() => setOpenId(null)} />;
+    return (
+      <ContractFill workspaceId={workspaceId} contractId={openId}
+        onBack={() => setOpenId(null)} onOpen={(id) => setOpenId(id)} />
+    );
   }
 
   const startNew = async () => {
@@ -95,7 +109,7 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
     if (!picked.length || printing) return;
     setPrinting(true); setNote('');
     try {
-      const built = await loadContractPrintDocs(picked, (m) => setNote(m));
+      const built = await loadContractPrintDocs(picked, (m) => setNote(m), links);
       const left = skippedNote(built.skipped);
       if (!built.docs.length) {
         setNote(left ?? 'Nothing in the selection could be printed.');
@@ -209,6 +223,12 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
                     {c.template_name} {'\u00b7'} {kindLabel(c.doc_kind)}
                   </span>
                 </span>
+                {(() => {
+                  const st = supersedeState(c, links);
+                  return st === 'none' ? null : (
+                    <span className={`aq-badge ${supersedeBadge(st)}`}>{supersedeLabel(st)}</span>
+                  );
+                })()}
                 <span className={`aq-badge ${contractStatusBadge(c.status)}`}>{contractStatusLabel(c.status)}</span>
                 {c.status === 'draft' && (
                   <button className="aq-btn aq-btn-ghost" title="Delete draft" style={{ padding: '4px 8px' }}

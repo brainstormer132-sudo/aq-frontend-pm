@@ -22,6 +22,10 @@ import {
 } from '@/lib/legal';
 import type { PrintContract, PrintBuild, FieldRow } from '@/lib/legal-bulk';
 import { chunk, versionIdsOf, buildPrintDocs } from '@/lib/legal-bulk';
+import type { SupersedeContract, SupersedeLinks } from '@/lib/legal-supersede';
+import {
+  validateSupersedeReason, correctionTitle, carriedValues, supersedeLinks,
+} from '@/lib/legal-supersede';
 
 /** SHA-256 of a string as lowercase hex, via the Web Crypto API (browser + Node 18+). */
 export async function sha256Hex(input: string): Promise<string> {
@@ -458,7 +462,7 @@ export function useContracts(workspaceId: string | null) {
     // the order: with a non-unique order two pages overlap and a row falls
     // between them. See selectAllRows and tests/paging.
     const cs = await selectAllRows<any>('useContracts', () => c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .order('id'), (m) => setError(m));
@@ -693,7 +697,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setLoading(true); setError('');
     const c = legal();
     const { data: ct, error: e0 } = await c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason')
       .eq('id', contractId).single();
     if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
     setContract(ct as Contract);
@@ -1190,6 +1194,11 @@ export function useContractStatuses(workspaceId: string | null) {
 export async function loadContractPrintDocs(
   contracts: PrintContract[],
   onError?: (message: string) => void,
+  /** The supersede arrows over the WHOLE workspace, so a replaced contract
+   *  prints as replaced even when its correction is not in the selection.
+   *  The Register derives them for free; see useSupersedeLinks for a screen
+   *  that does not already hold every contract. */
+  links?: SupersedeLinks,
 ): Promise<PrintBuild> {
   const list = contracts ?? [];
   if (!list.length) return { docs: [], skipped: [] };
@@ -1223,5 +1232,110 @@ export async function loadContractPrintDocs(
   };
 
   const [blocks, fields] = await Promise.all([readBlocks(), readFields()]);
-  return buildPrintDocs({ contracts: list, blocks, fields });
+  return buildPrintDocs({ contracts: list, blocks, fields, links });
+}
+
+/**
+ * Raise a correction of an issued contract (migration 116).
+ *
+ * A NEW contract, stamped to the SAME template version, carrying the
+ * original's values minus its seal and its number, pointing back at it with a
+ * reason. The original is not touched at all - not its status, not its
+ * number, not one field value. That is the whole point: nothing here needs
+ * the freeze relaxed, and the seal on the original still verifies afterwards.
+ *
+ * THE VERSION IS DELIBERATELY THE SAME ONE. A correction corrects the facts -
+ * a fee, an IBAN, a spelling. If the WORDING was wrong then the template was
+ * wrong, and the honest answer is a new contract off the new version, not a
+ * correction that quietly swaps the clauses out from under a number that
+ * claims to replace the old one.
+ *
+ * The order is load-bearing, the same way issue() is. The row is inserted
+ * first and its values written second, because the values need a contract to
+ * hang on; and they are written while it is a draft, which it is, because the
+ * freeze trigger refuses field writes on anything else. If the insert
+ * succeeds and the copy fails, what is left is an empty draft correction that
+ * can be deleted - not a half-corrected contract.
+ */
+export async function raiseCorrection(input: {
+  workspaceId: string;
+  original: Contract;
+  reason: string;
+  values: Record<string, string>;
+}): Promise<string> {
+  const err = validateSupersedeReason(input.reason);
+  if (err) throw new Error(err);
+  const o = input.original;
+  const c = legal();
+
+  const { data, error: e1 } = await c.from('contract').insert({
+    workspace_id: input.workspaceId,
+    template_id: o.template_id,
+    version_id: o.version_id,
+    title: correctionTitle(o.title),
+    status: 'draft',
+    // Carried so the correction knows who it is for and where the money goes.
+    // A correction of a vendor's contract is still that vendor's contract.
+    pm_task_id: o.pm_task_id ?? null,
+    subtask_id: o.subtask_id ?? null,
+    vendor_id: o.vendor_id ?? null,
+    bank_account_id: o.bank_account_id ?? null,
+    supersedes_id: o.id,
+    supersede_reason: input.reason.trim(),
+  }).select('id').single();
+  if (e1) throw e1;
+  const id = (data as any).id as string;
+
+  const carried = carriedValues(input.values);
+  const rows = Object.entries(carried).map(([key, value]) => ({
+    contract_id: id, workspace_id: input.workspaceId, key, value,
+  }));
+  if (rows.length) {
+    const { error: e2 } = await c.from('contract_field').insert(rows);
+    if (e2) throw e2;
+  }
+  return id;
+}
+
+/**
+ * The supersede arrows for a workspace, for a screen that holds one contract
+ * rather than the whole register.
+ *
+ * Two narrow reads. The first is every CORRECTION - `supersedes_id is not
+ * null` - which is a handful of rows in a register of thousands, because
+ * correcting a contract is rare and always will be. The second is the
+ * contracts those point at, so a correction can name what it replaces.
+ *
+ * It has to be the whole workspace, not the contract on screen and its
+ * neighbours. The dangerous case is printing ONE old contract on its own: if
+ * its correction is not in the data, the page comes out looking like the
+ * current agreement. The Register needs none of this - it already holds every
+ * contract and builds the same links locally with supersedeLinks.
+ */
+export function useSupersedeLinks(workspaceId: string | null) {
+  const [links, setLinks] = useState<SupersedeLinks>({ correctionOf: {}, replaces: {} });
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setLinks({ correctionOf: {}, replaces: {} }); setLoading(false); return; }
+    setLoading(true);
+    const c = legal();
+    const corrections = await selectAllRows<SupersedeContract>('legal supersede corrections', () =>
+      c.from('contract').select('id, title, status, contract_no, supersedes_id, supersede_reason')
+        .eq('workspace_id', workspaceId)
+        .not('supersedes_id', 'is', null)
+        .order('id'));
+    const targets: SupersedeContract[] = [];
+    const ids = [...new Set(corrections.map((x) => String(x.supersedes_id ?? '')).filter(Boolean))];
+    for (const part of chunk(ids, 60)) {
+      targets.push(...await selectAllRows<SupersedeContract>('legal supersede targets', () =>
+        c.from('contract').select('id, title, status, contract_no, supersedes_id, supersede_reason')
+          .in('id', part).order('id')));
+    }
+    setLinks(supersedeLinks([...targets, ...corrections]));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+  return { links, loading, reload: load };
 }

@@ -22,6 +22,7 @@ import {
   contractPrintHTML, contractsPrintHTML, contractSheetHtml, printReference,
   bulkPrintTitle, FINGERPRINT_KEY, OPT_OFF_KEY,
 } from '../.test-build/legal.js';
+import { supersedeLinks } from '../.test-build/legal-supersede.js';
 
 let pass = 0, fail = 0;
 const ok = (name, c) => { if (c) { pass++; } else { fail++; console.log(`FAIL ${name}`); } };
@@ -225,6 +226,50 @@ eq('an id no longer on screen is not printed', selectedInOrder(rows, ['zz']), []
 
 eq('a small batch says nothing', bulkPrintNote(3), null);
 ok('a big one warns rather than refuses', (bulkPrintNote(BULK_PRINT_WARN_AT) ?? '').includes('big print'));
+
+/* -- 9. a batch never hands over a replaced contract looking current -- */
+//
+// The whole reason buildPrintDocs takes the links from the CALLER rather than
+// from the contracts being printed: printing one old contract on its own is
+// exactly the case where its correction is not in the selection.
+
+{
+  const original = ct({ id: 'c1', v: 'v1', title: 'Original', no: 'AQ-0001' });
+  const liveCorr = ct({ id: 'c9', v: 'v1', title: 'Correction', no: 'AQ-0009', status: 'issued' });
+  liveCorr.supersedes_id = 'c1';
+  liveCorr.supersede_reason = 'the fee was wrong';
+  const links = supersedeLinks([original, liveCorr]);
+
+  // Printing the ORIGINAL ALONE - the correction is nowhere in the selection.
+  const one = buildPrintDocs({ contracts: [original], blocks, fields: [], links });
+  ok('a replaced contract printed on its own still says it was replaced',
+    contractsPrintHTML(one.docs).includes('SUPERSEDED - replaced by AQ-0009.'));
+  ok('and the notice is the boxed one, not a footnote',
+    contractsPrintHTML(one.docs).includes('class="doc-replaced"'));
+
+  const both = buildPrintDocs({ contracts: [original, liveCorr], blocks, fields: [], links });
+  ok('the correction says what it replaces',
+    contractsPrintHTML(both.docs).includes('This agreement replaces AQ-0001.'));
+  ok('the reason stays off the paper',
+    !contractsPrintHTML(both.docs).includes('the fee was wrong'));
+
+  // A correction still in DRAFT has replaced nothing.
+  const draftCorr = ct({ id: 'c8', v: 'v1', title: 'Draft correction', status: 'draft' });
+  draftCorr.supersedes_id = 'c1';
+  draftCorr.supersede_reason = 'still working on it';
+  const pending = buildPrintDocs({
+    contracts: [original], blocks, fields: [],
+    links: supersedeLinks([original, draftCorr]),
+  });
+  ok('a contract with only a DRAFT correction prints clean',
+    !contractsPrintHTML(pending.docs).includes('SUPERSEDED'));
+
+  // No links at all is the ordinary case and must print nothing extra.
+  const plain = buildPrintDocs({ contracts: [original], blocks, fields: [] });
+  ok('a workspace that has never corrected anything prints no notice',
+    !contractsPrintHTML(plain.docs).includes('SUPERSEDED')
+    && !contractsPrintHTML(plain.docs).includes('doc-replaces"'));
+}
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

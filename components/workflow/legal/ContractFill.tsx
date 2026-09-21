@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   useContractEditor, useLegalPlaceholders, useManagedLists, useContractSources, sha256Hex,
+  useSupersedeLinks, raiseCorrection,
 } from '@/hooks/use-legal';
+import {
+  supersedeState, supersedeNote, supersedeBadge, supersedeLabel, cannotSupersede,
+  validateSupersedeReason, printReplacesLine, printReplacedLine, isLiveCorrection,
+  REASON_MAX,
+} from '@/lib/legal-supersede';
 import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
@@ -37,12 +43,31 @@ import { AqDrawingBlock } from '@/components/AQLoading';
  * every required field is valid; an issued contract is frozen and read-only.
  */
 export function ContractFill({
-  workspaceId, contractId, onBack,
-}: { workspaceId?: string; contractId: string; onBack: () => void }) {
+  workspaceId, contractId, onBack, onOpen,
+}: {
+  workspaceId?: string; contractId: string; onBack: () => void;
+  /** Open a different contract in place - how a freshly raised correction is
+   *  handed over. Falls back to going Back when the parent does not offer it. */
+  onOpen?: (id: string) => void;
+}) {
   const ed = useContractEditor(workspaceId ?? null, contractId);
   const reg = useLegalPlaceholders(workspaceId ?? null);
   const lists = useManagedLists(workspaceId ?? null);
+  const { links: sup } = useSupersedeLinks(workspaceId ?? null);
   const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds } = ed;
+
+  // Correcting an issued contract (migration 116). The original is never
+  // touched - a correction is a NEW contract pointing back at this one, so
+  // nothing here needs the freeze relaxed and this contract's fingerprint
+  // still verifies afterwards.
+  const [correcting, setCorrecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const [raising, setRaising] = useState(false);
+  const [supErr, setSupErr] = useState('');
+  const supState = contract ? supersedeState(contract, sup) : 'none';
+  const supNote = contract ? supersedeNote(contract, sup) : null;
+  const supBlocked = contract ? cannotSupersede(contract, sup) : 'No contract loaded.';
+  const reasonErr = validateSupersedeReason(reason);
 
   // The vendor book, already paged and cached, with each talent's licence org
   // attached - the same list the campaign page uses, so no second read of
@@ -316,6 +341,14 @@ export function ContractFill({
         reference: printReference(contract),
         generatedOn: new Date().toLocaleDateString(),
         fingerprint: fingerprint ? formatFingerprint(fingerprint) : undefined,
+        // A reprint of a replaced contract says so, loudly. The one moment
+        // this matters is somebody pulling an old copy off the printer and
+        // handing it over as the current agreement.
+        replacedBy: (() => {
+          const by = sup.correctionOf?.[contract.id];
+          return by && isLiveCorrection(by) ? (printReplacedLine(by) ?? undefined) : undefined;
+        })(),
+        replaces: printReplacesLine(sup.replaces?.[contract.id]) ?? undefined,
       },
     });
     const w = window.open('', '_blank');
@@ -344,6 +377,16 @@ export function ContractFill({
         {contract && (
           <button className="aq-btn aq-btn-ghost" disabled={loading} onClick={printDoc}
             title="Open a print-ready copy to print or save as PDF">Print / Save as PDF</button>
+        )}
+        {/* Shown on anything that is not a draft, and DISABLED WITH A REASON
+            rather than hidden when it cannot be used. A button that vanishes
+            teaches nobody why. */}
+        {contract && !editable && (
+          <button className="aq-btn aq-btn-ghost" disabled={loading || !!supBlocked}
+            onClick={() => { setReason(''); setCorrecting(true); }}
+            title={supBlocked ?? 'Raise a correction: a new contract that replaces this one'}>
+            Correct
+          </button>
         )}
         {contract && editable && (
           <>
@@ -374,9 +417,77 @@ export function ContractFill({
           ))}
         </div>
       )}
+      {/* What this contract IS, before anything else on the screen. A replaced
+          contract that looks exactly like a live one is the whole failure
+          supersede exists to prevent, and the screen is where somebody looks
+          first. */}
+      {contract && supNote && (
+        <div className="aq-card" style={{ padding: 12, display: 'flex', alignItems: 'center',
+          gap: 10, flexWrap: 'wrap' }}>
+          <span className={`aq-badge ${supersedeBadge(supState)}`}>{supersedeLabel(supState)}</span>
+          <span style={{ fontSize: 13, color: 'var(--aq-text-secondary)' }}>{supNote}</span>
+        </div>
+      )}
+
       {!editable && contract && (
         <div className="aq-card" style={{ padding: 12, fontSize: 13, color: 'var(--aq-text-secondary)' }}>
           This contract is {contractStatusLabel(contract.status).toLowerCase()} and its field values are frozen.
+          {supState === 'replaced' ? ' It stays readable, and keeps its number, because it is the record of what was agreed at the time.'
+            : ' To change what it says, raise a correction - a new contract that replaces this one.'}
+        </div>
+      )}
+
+      {correcting && contract && (
+        <div role="dialog" aria-modal="true" style={{
+          position: 'fixed', inset: 0, background: 'var(--aq-backdrop, rgba(0,0,0,0.4))',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
+        }} onClick={() => !raising && setCorrecting(false)}>
+          <div className="aq-card" style={{ padding: 22, width: 'min(520px, 100%)' }}
+            onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>Correct this contract</h3>
+            <p style={{ fontSize: 13, color: 'var(--aq-text-secondary)', marginBottom: 14 }}>
+              {contract.contract_no || 'This contract'} keeps its number and stays exactly as it was issued.
+              A new draft is created with the same wording and the same values, ready to fix, and it takes
+              its own number when you issue it. Both say on their face what replaced what.
+            </p>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600,
+              color: 'var(--aq-text-muted)', marginBottom: 4 }}>What is being corrected?</label>
+            <textarea className="aq-input" value={reason} maxLength={REASON_MAX} rows={3} autoFocus
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. the fee was typed as 12,500 and the booking says 9,000"
+              style={{ width: '100%', resize: 'vertical' }} />
+            <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 6 }}>
+              In a year this is the only record of why two numbered contracts exist for one agreement.
+            </p>
+            {reason.trim() && reasonErr && (
+              <div className="aq-badge aq-badge-warning" style={{ display: 'block', marginTop: 10, padding: 8 }}>{reasonErr}</div>
+            )}
+            {supErr && (
+              <div className="aq-badge aq-badge-error" style={{ display: 'block', marginTop: 10, padding: 8 }}>{supErr}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+              <button className="aq-btn aq-btn-ghost" disabled={raising}
+                onClick={() => setCorrecting(false)}>Cancel</button>
+              <button className="aq-btn aq-btn-primary" disabled={raising || !!reasonErr}
+                onClick={async () => {
+                  if (!workspaceId || !contract) return;
+                  setRaising(true); setSupErr('');
+                  try {
+                    const id = await raiseCorrection({
+                      workspaceId, original: contract, reason, values,
+                    });
+                    setCorrecting(false);
+                    // Straight into the new draft: the next thing anybody
+                    // wants is to fix the thing they just said was wrong.
+                    if (onOpen) onOpen(id); else onBack();
+                  } catch (e: any) {
+                    setSupErr(e?.message ?? 'Could not raise the correction.');
+                  } finally { setRaising(false); }
+                }}>
+                {raising ? 'Creating\u2026' : 'Create the correction'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -505,6 +505,14 @@ export interface Contract {
   bank_account_id?: number | null;
   /** AQ-<year>-0001, reserved at issue (migration 108). Null while a draft. */
   contract_no?: string | null;
+  /** The contract this one corrects (migration 116). Written when the
+   *  correction is created and immutable after - the database refuses to move
+   *  it, which is what makes the chain trustworthy. Null on an ordinary
+   *  contract, which is nearly all of them. */
+  supersedes_id?: string | null;
+  /** Why it was corrected, in the operator's own words. Required whenever
+   *  supersedes_id is set, and never printed on the document. */
+  supersede_reason?: string | null;
 }
 
 /** A task: shared terms once, one contract per vendor (migration 112). */
@@ -1017,6 +1025,12 @@ export interface PrintMeta {
   fingerprint?: string;
   /** The company letterhead. Omitted means AQ's own - see legal-letterhead. */
   letterhead?: Letterhead;
+  /** On a correction: the number of the contract it replaces (116). */
+  replaces?: string;
+  /** On an original that has been corrected: the number that replaced it.
+   *  Printed loudly, because an old copy coming out of the printer looking
+   *  like the current agreement is the failure supersede exists to prevent. */
+  replacedBy?: string;
 }
 
 /** One contract, everything the printer needs of it and nothing else. */
@@ -1103,6 +1117,15 @@ export function contractSheetHtml(args: PrintDoc): string {
 
   const ref = meta.reference ? escapeHtml(meta.reference) : '';
   const fp = meta.fingerprint ? escapeHtml(meta.fingerprint) : '';
+
+  // The supersede lines (116). DELIBERATELY OUTSIDE contractCanonical, like
+  // the reference and the fingerprint itself: an original is sealed at issue,
+  // and its correction is written afterwards. Folding "replaced by" into the
+  // canonical would make every superseded contract verify as "differs" - the
+  // seal reporting tampering because we told it the truth. tests/legal-bulk
+  // pins this.
+  const replaces = meta.replaces ? escapeHtml(meta.replaces) : '';
+  const replacedBy = meta.replacedBy ? escapeHtml(meta.replacedBy) : '';
   const lang = dir === 'rtl' ? 'ar' : 'en';
   const lh = meta.letterhead ?? DEFAULT_LETTERHEAD;
 
@@ -1123,6 +1146,8 @@ export function contractSheetHtml(args: PrintDoc): string {
   <tbody><tr><td>
 <div class="sheet">
   ${ref || draft ? `<div class="doc-ref">${ref}${draft ? `${ref ? ' ' : ''}<span class="doc-draft">DRAFT</span>` : ''}</div>` : ''}
+  ${replacedBy ? `<div class="doc-replaced">${replacedBy}</div>` : ''}
+  ${replaces ? `<div class="doc-replaces">${replaces}</div>` : ''}
   ${body}
   ${fp ? `<div class="doc-fp">SHA-256: ${fp}</div>` : ''}
 </div>
@@ -1138,6 +1163,13 @@ export function printCss(): string {
   .sheet { max-width: 800px; margin: 0 auto; padding: 24px 32px; }
   .doc-ref { font-size: 10pt; color: #444; direction: ltr; text-align: start; margin-bottom: 6mm; }
   .doc-draft { font-size: 9pt; font-weight: 800; letter-spacing: .18em; color: #b3261e; }
+  /* A superseded copy has to be unmistakable at arm's length, because the one
+     moment it matters is somebody picking it off a printer. Bordered as well
+     as coloured: the office printer is black and white. */
+  .doc-replaced { font-size: 10pt; font-weight: 800; letter-spacing: .08em; color: #b3261e;
+    border: 1.5pt solid #b3261e; padding: 2mm 3mm; margin-bottom: 6mm; text-align: center;
+    direction: ltr; }
+  .doc-replaces { font-size: 9.5pt; color: #444; margin-bottom: 6mm; direction: ltr; text-align: start; }
   .doc-title { font-size: 18pt; font-weight: 800; text-align: center; margin: 8px 0 20px; }
   .doc-h { font-size: 13pt; font-weight: 700; margin: 18px 0 6px; }
   .doc-p { margin: 8px 0; text-align: justify; }
