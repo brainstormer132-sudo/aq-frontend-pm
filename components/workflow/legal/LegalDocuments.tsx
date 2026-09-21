@@ -1,7 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useLegalTemplates } from '@/hooks/use-legal';
+import { useMemo, useRef, useState } from 'react';
+import {
+  useLegalTemplates, parseDocxFile, saveImportedTemplate, type ParsedDocx,
+} from '@/hooks/use-legal';
 import {
   DOC_KINDS, kindLabel, statusLabel, statusBadge, groupTemplatesByKind, validateNewTemplate,
   type DocKind,
@@ -10,9 +12,18 @@ import { AqDrawingBlock } from '@/components/AQLoading';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
 
 /**
- * Documents: the editable templates, grouped by kind, with a create action.
- * Slice 1 of the editable-document milestone - list + create the template and
- * its first draft. Opening a template into the block editor comes next.
+ * Documents: the editable templates, grouped by kind.
+ *
+ * Two ways in. "Upload a Word template" is the one Siraj asked for - "i need
+ * uploading a template to be seemless and work as easy as possible and as
+ * self explanitary as posiible" - and "New template" is the old empty start,
+ * kept for a document nobody has in Word yet.
+ *
+ * THE UPLOAD IS TWO STEPS ON PURPOSE. The file is read and described BEFORE
+ * anything is written: "41 blocks, 10 headings, a table with 4 columns, 15
+ * fields", and any warnings. A parse can be subtly wrong, and the only moment
+ * anybody will ever check is the moment before they press save. Nothing
+ * reaches the database or the bucket until they do.
  */
 export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
   const { templates, loading, error, createTemplate } = useLegalTemplates(workspaceId ?? null);
@@ -24,6 +35,45 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+
+  // The upload, in the order it happens: pick a file, read it, name it, save.
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [reading, setReading] = useState(false);
+  const [parsed, setParsed] = useState<ParsedDocx | null>(null);
+  const [impName, setImpName] = useState('');
+  const [impKind, setImpKind] = useState<DocKind>('vendor_contract');
+  const [impErr, setImpErr] = useState('');
+
+  const pick = async (f: File | null | undefined) => {
+    if (!f) return;
+    setReading(true); setImpErr('');
+    try {
+      const p = await parseDocxFile(f);
+      setParsed(p);
+      // The document's own title, or the file name without its extension -
+      // she should not have to type a name she has already written twice.
+      setImpName(p.summary.title || f.name.replace(/\.docx$/i, ''));
+    } catch (e: any) {
+      setImpErr(e?.message ?? 'That file could not be read.');
+    } finally {
+      setReading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const saveImport = async () => {
+    if (!parsed || !workspaceId) return;
+    setBusy(true); setImpErr('');
+    try {
+      const id = await saveImportedTemplate({
+        workspaceId, name: impName, kind: impKind, parsed,
+      });
+      setParsed(null); setImpName('');
+      setOpenId(id);   // straight into the editor on the new draft
+    } catch (e: any) {
+      setImpErr(e?.message ?? 'Could not save that template.');
+    } finally { setBusy(false); }
+  };
 
   const submit = async () => {
     const v = validateNewTemplate(name, kind);
@@ -44,11 +94,21 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
 
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="aq-btn aq-btn-primary" onClick={() => { setOpen(true); setFormErr(''); }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <input ref={fileRef} type="file" accept=".docx" style={{ display: 'none' }}
+          onChange={(e) => void pick(e.target.files?.[0])} />
+        <button className="aq-btn aq-btn-ghost" onClick={() => setOpen(true)}>
           New template
         </button>
+        <button className="aq-btn aq-btn-primary" disabled={reading}
+          onClick={() => { setImpErr(''); fileRef.current?.click(); }}>
+          {reading ? 'Reading\u2026' : 'Upload a Word template'}
+        </button>
       </div>
+
+      {impErr && !parsed && (
+        <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{impErr}</div>
+      )}
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
 
@@ -92,6 +152,17 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
         ))
       )}
 
+      {parsed && (
+        <ImportReview
+          parsed={parsed}
+          name={impName} onName={setImpName}
+          kind={impKind} onKind={setImpKind}
+          err={impErr} busy={busy}
+          onCancel={() => { setParsed(null); setImpErr(''); }}
+          onSave={saveImport}
+        />
+      )}
+
       {open && (
         <div role="dialog" aria-modal="true" style={{
           position: 'fixed', inset: 0, background: 'var(--aq-backdrop, rgba(0,0,0,0.4))',
@@ -119,6 +190,102 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the file turned out to be, before any of it is saved.
+ *
+ * Siraj: "as self explanitary as posiible". So this does NOT show a block
+ * tree. It says what came out in a sentence anybody can check against the
+ * document they just uploaded - a count per kind of block, the fields it
+ * found, and anything worth a second look - and then asks for the two things
+ * the app cannot work out on its own: what to call it and what kind it is.
+ *
+ * The fields are listed IN THE ORDER THEY APPEAR in the document, because the
+ * document is what she will be reading down while she checks them.
+ */
+function ImportReview({ parsed, name, onName, kind, onKind, err, busy, onCancel, onSave }: {
+  parsed: ParsedDocx;
+  name: string; onName: (s: string) => void;
+  kind: DocKind; onKind: (k: DocKind) => void;
+  err: string; busy: boolean;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const s = parsed.summary;
+  const bits = [
+    `${s.blocks} block${s.blocks === 1 ? '' : 's'}`,
+    s.headings ? `${s.headings} heading${s.headings === 1 ? '' : 's'}` : '',
+    s.paragraphs ? `${s.paragraphs} paragraph${s.paragraphs === 1 ? '' : 's'}` : '',
+    s.listItems ? `${s.listItems} list item${s.listItems === 1 ? '' : 's'}` : '',
+    s.tables ? `${s.tables} table${s.tables === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(', ');
+  const label = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)', marginBottom: 4 } as const;
+
+  return (
+    <div role="dialog" aria-modal="true" style={{
+      position: 'fixed', inset: 0, background: 'var(--aq-backdrop, rgba(0,0,0,0.4))',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
+    }} onClick={() => !busy && onCancel()}>
+      <div className="aq-card" style={{ padding: 22, width: 'min(560px, 100%)', maxHeight: '86vh', overflowY: 'auto' }}
+        onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ fontSize: 16, fontWeight: 700 }}>{parsed.file.name}</h3>
+        <p style={{ fontSize: 13.5, color: 'var(--aq-text-secondary)', marginTop: 6 }}>
+          Read {bits}.
+        </p>
+
+        {s.placeholders.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)' }}>
+              {s.placeholders.length} field{s.placeholders.length === 1 ? '' : 's'} found
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+              {s.placeholders.map((p) => (
+                <code key={p} style={{
+                  fontSize: 12, padding: '2px 7px', borderRadius: 6, direction: 'ltr',
+                  background: 'var(--aq-surface-2, #f2f2f2)',
+                }}>{`{{ ${p} }}`}</code>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {s.warnings.length > 0 && (
+          <ul style={{ listStyle: 'none', marginTop: 12 }}>
+            {s.warnings.map((w) => (
+              <li key={w} style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', padding: '3px 0' }}>
+                {'\u2022'} {w}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <label style={{ ...label, marginTop: 16 }}>Name</label>
+        <input className="aq-input" value={name} onChange={(e) => onName(e.target.value)}
+          style={{ width: '100%' }} disabled={busy} autoFocus />
+
+        <label style={{ ...label, marginTop: 14 }}>What kind of document is this?</label>
+        <select className="aq-select" value={kind} disabled={busy}
+          onChange={(e) => onKind(e.target.value as DocKind)} style={{ width: '100%' }}>
+          {DOC_KINDS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+        </select>
+
+        {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', marginTop: 12, padding: 8 }}>{err}</div>}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+          <button className="aq-btn aq-btn-ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="aq-btn aq-btn-primary" onClick={onSave} disabled={busy || !name.trim()}>
+            {busy ? 'Saving\u2026' : 'Save and open'}
+          </button>
+        </div>
+        <p style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 12 }}>
+          It saves as a draft (v1) and opens in the editor, so you can fix anything
+          that came out wrong and place more {'{{ fields }}'} before publishing. The
+          Word file is kept with the template.
+        </p>
+      </div>
     </div>
   );
 }

@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
 import { selectAllRows } from '@/hooks/use-workflow';
+import {
+  readDocxFile, docxToBlocks, summarise,
+  type ImportedBlock, type ImportSummary,
+} from '@/lib/legal-docx';
 import type { VendorBankAccount } from '@/lib/legal-prefill';
 import { stampContractNumber } from '@/lib/legal-prefill';
 import type {
@@ -989,4 +993,134 @@ export function useMatterEvents(matterId: string | null) {
   }, [matterId, load]);
 
   return { events, loading, error, reload: load, log };
+}
+
+/* ===================================================================
+   Importing a Word file as a template.
+   The parsing is in lib/legal-docx.ts and is pure; this is the half
+   that touches the browser and the database. Schema in
+   supabase/migrations/115_template_upload.sql.
+   =================================================================== */
+
+/**
+ * Raw deflate, from the browser's own decompressor.
+ *
+ * DecompressionStream has been in every browser this app supports for years
+ * and is in Node 18+, which is why lib/legal-docx.ts takes the inflater as an
+ * argument instead of importing one: no JSZip, no pako, nothing to keep
+ * up to date, and the suite can run the same code path under node.
+ *
+ * 'deflate-raw', not 'deflate': a zip entry carries no zlib header, and
+ * asking for 'deflate' fails on the very first byte.
+ */
+async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('This browser cannot unpack a .docx. Try Chrome or Edge.');
+  }
+  const ds = new DecompressionStream('deflate-raw');
+  const stream = new Blob([bytes as unknown as BlobPart]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+export interface ParsedDocx {
+  blocks: ImportedBlock[];
+  summary: ImportSummary;
+  /** Kept so the file can be stored only if the person actually saves. */
+  file: File;
+}
+
+/**
+ * Read a .docx and say what is in it - WITHOUT writing anything.
+ *
+ * Deliberately two steps. Siraj asked for the upload to be "as self
+ * explanitary as posiible", and the screen can only explain what it found if
+ * it has the answer before it commits to it. Nothing reaches the database, or
+ * the bucket, until somebody has seen the summary and pressed save.
+ */
+export async function parseDocxFile(file: File): Promise<ParsedDocx> {
+  if (!/\.docx$/i.test(file.name)) {
+    throw new Error('That is not a .docx. A .doc from an old Word needs saving as .docx first.');
+  }
+  if (file.size > 8_000_000) {
+    throw new Error('That file is over 8MB - a contract template should be a fraction of that.');
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const xml = await readDocxFile(bytes, 'word/document.xml', inflateRaw);
+  const blocks = docxToBlocks(xml);
+  return { blocks, summary: summarise(blocks), file };
+}
+
+/**
+ * Save a parsed document as a new template, its first draft version, and its
+ * blocks - then keep the original file beside it.
+ *
+ * THE ORDER MATTERS. The template and its blocks are written FIRST and the
+ * upload comes last, because a template with no copy of its Word file is
+ * merely missing something, while a file in the bucket with no template is
+ * rubbish nobody will ever find. If the upload fails the template still
+ * stands and says so, which is what the half-upload CHECK in 115 is for.
+ */
+export async function saveImportedTemplate(input: {
+  workspaceId: string;
+  name: string;
+  kind: DocKind;
+  parsed: ParsedDocx;
+}): Promise<string> {
+  const c = legal();
+  const { data: t, error: e1 } = await c.from('doc_template')
+    .insert({ workspace_id: input.workspaceId, doc_kind: input.kind, name: input.name.trim() })
+    .select('id').single();
+  if (e1) throw e1;
+  const templateId = (t as any).id as string;
+
+  const { data: v, error: e2 } = await c.from('doc_template_version')
+    .insert({ template_id: templateId, workspace_id: input.workspaceId, version: 1, status: 'draft' })
+    .select('id').single();
+  if (e2) throw e2;
+  const versionId = (v as any).id as string;
+
+  if (input.parsed.blocks.length) {
+    // Positions are spaced, not 1..n, so a block can be dropped between two
+    // others later without renumbering the whole document - the same spacing
+    // nextPosition() uses.
+    const rows = input.parsed.blocks.map((b, i) => ({
+      version_id: versionId,
+      workspace_id: input.workspaceId,
+      position: (i + 1) * 10,
+      block_type: b.block_type,
+      content: b.content,
+    }));
+    const { error: e3 } = await c.from('doc_template_block').insert(rows);
+    if (e3) throw e3;
+  }
+
+  // Last, and non-fatal: see the header.
+  try {
+    const f = input.parsed.file;
+    const path = `${input.workspaceId}/${templateId}.docx`;
+    const { error: up } = await (createClient() as unknown as SupabaseClient)
+      .storage.from('legal-templates').upload(path, f, {
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        upsert: true,
+      });
+    if (up) throw up;
+    await c.from('doc_template').update({
+      source_path: path,
+      source_name: f.name,
+      source_bytes: f.size,
+      imported_at: new Date().toISOString(),
+    }).eq('id', templateId);
+  } catch {
+    // The template is real and usable; it just has no copy of the original.
+    // Swallowed on purpose - failing here would leave a good template behind
+    // an error message and tempt somebody to import it a second time.
+  }
+  return templateId;
+}
+
+/** A signed link to the original Word file, good for one minute. */
+export async function templateSourceUrl(path: string): Promise<string | null> {
+  const { data } = await (createClient() as unknown as SupabaseClient)
+    .storage.from('legal-templates').createSignedUrl(path, 60);
+  return data?.signedUrl ?? null;
 }
