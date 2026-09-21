@@ -257,6 +257,10 @@ export interface Placeholder {
    *  today or later); N > 0 = warn when within N days. A past tracked date
    *  blocks issuing. Only meaningful on a `date` field. */
   alert_days: number | null;
+  /** Migration 111. A list field that also accepts a value of its own, for the
+   *  case the list does not cover. Siraj: "add an other in case there is
+   *  something specific". Only meaningful on a `list` field. */
+  allow_other?: boolean;
 }
 
 /** The columns a field write sends - the shape of the new/edit field form. */
@@ -521,7 +525,7 @@ export function fillFieldsForBlocks(
  * values to check membership. Returns an error sentence, or null if ok. Pure.
  */
 export function validateFieldValue(
-  f: Pick<Placeholder, 'field_type' | 'required' | 'num_min' | 'num_max'>,
+  f: Pick<Placeholder, 'field_type' | 'required' | 'num_min' | 'num_max'> & { allow_other?: boolean },
   value: string,
   list?: { values: string[] },
 ): string | null {
@@ -534,7 +538,12 @@ export function validateFieldValue(
     if (f.num_max != null && n > f.num_max) return `Must be at most ${f.num_max}.`;
   }
   if (f.field_type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return 'Pick a date.';
-  if (f.field_type === 'list' && list && !list.values.includes(v)) return 'Choose a value from the list.';
+  // A list field with allow_other takes anything: the operator has said this
+  // one is not on the list. Without the flag an off-list value is still an
+  // error, so a list that IS meant to be closed stays closed.
+  if (f.field_type === 'list' && list && !f.allow_other && !list.values.includes(v)) {
+    return 'Choose a value from the list.';
+  }
   return null;
 }
 

@@ -8,6 +8,7 @@ import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
   performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
+  FIELD_GROUPS, fieldGroup, normalizeHandle, handleBody, UGC_CHANNEL_KEY, type FieldGroup,
 } from '@/lib/legal-prefill';
 import { useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
@@ -191,6 +192,92 @@ export function ContractFill({
     catch { /* ed.error shows it */ }
   };
 
+  /** The record-backed picker for a card, rendered inside the card its fields
+   *  sit on rather than in one strip above everything: the brand belongs with
+   *  the job, the vendor with the vendor, the bank account with the money. */
+  const pickerFor = (g: FieldGroup) => {
+    if (!editable || !contract) return null;
+    if (g === 'contract') return usesBrand ? (
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Brand</div>
+        {brands.length ? (
+          <SearchablePicker
+            options={brands.map((b) => ({ value: b.brand_name, label: b.brand_name }))}
+            value={values[UGC_BRAND_KEY] || null}
+            onChange={(v) => ed.setValue(UGC_BRAND_KEY, v ?? '')}
+            placeholder={'Search this client\u2019s brands\u2026'}
+          />
+        ) : (
+          <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+            {contract.pm_task_id
+              ? 'That client has no brands on file yet - type the brand in the field below.'
+              : 'No campaign behind this contract, so there is no client to take brands from.'}
+          </div>
+        )}
+      </div>
+    ) : null;
+    if (g === 'vendor') return usesVendor ? (
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Vendor</div>
+        <SearchablePicker
+          options={vendorOptions}
+          value={contract.vendor_id != null ? String(contract.vendor_id) : null}
+          onChange={(v) => {
+            const vend = (vendors as any[]).find((x) => String(x.id) === v) ?? null;
+            // The licence party leads the contract; picking a new
+            // vendor also drops the old one's bank details, because
+            // an IBAN left over from the previous choice is the
+            // worst thing this screen could do.
+            const p = licenceParty(vend as ContractVendor | null);
+            ed.setValue('license_name', p.name);
+            ed.setValue('license_number', p.number);
+            // The outputs table names the performer, first and last.
+            // For talent on their own licence that IS the licence
+            // name; under an agency it is the influencer, not the
+            // agency, which is who the table is about.
+            ed.setValue(UGC_PERFORMER_KEY, performerName(vend as ContractVendor | null));
+            for (const k of UGC_BANK_KEYS) ed.setValue(k, '');
+            void ed.setVendor(vend ? Number(vend.id) : null);
+          }}
+          placeholder={'Search vendors\u2026'}
+        />
+        <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+          Fills the licence name and number. An agency-licensed talent contracts
+          under the agency; the performer is named in the table above.
+        </div>
+      </div>
+    ) : null;
+    if (g === 'payment') return usesBank ? (
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Bank account</div>
+        {banks.length ? (
+          <select className="aq-select" style={{ width: '100%', maxWidth: 360 }}
+            value={chosenBankId}
+            onChange={(e) => {
+              const a = banks.find((x) => String(x.id) === e.target.value) ?? null;
+              // All four together. A bank name from one account
+              // beside an IBAN from another is how money goes to
+              // the wrong place.
+              const v = bankValuesFor(a);
+              for (const k of UGC_BANK_KEYS) ed.setValue(k, v[k] ?? '');
+            }}>
+            <option value="">{'-- choose --'}</option>
+            {banks.map((a) => (
+              <option key={String(a.id)} value={String(a.id)}>{bankAccountLabel(a)}</option>
+            ))}
+          </select>
+        ) : (
+          <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+            {contract.vendor_id != null
+              ? 'This vendor has no bank account on file - add one on their registry page.'
+              : 'No vendor on this contract, so there are no accounts to choose from.'}
+          </div>
+        )}
+      </div>
+    ) : null;
+    return null;
+  };
+
   // Render the filled contract to a stand-alone document and hand it to the
   // browser's Print / Save-as-PDF. The new window is same-origin about:blank,
   // so no server or PDF library is involved.
@@ -301,93 +388,6 @@ export function ContractFill({
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {/* Fill form */}
           <div style={{ flex: '1 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {editable && (usesBrand || usesVendor || usesBank) && (
-              <div className="aq-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
-                  color: 'var(--aq-text-muted)' }}>From the records</div>
-                {usesBrand && (
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Brand</div>
-                    {brands.length ? (
-                      <SearchablePicker
-                        options={brands.map((b) => ({ value: b.brand_name, label: b.brand_name }))}
-                        value={values[UGC_BRAND_KEY] || null}
-                        onChange={(v) => ed.setValue(UGC_BRAND_KEY, v ?? '')}
-                        placeholder={'Search this client\u2019s brands\u2026'}
-                      />
-                    ) : (
-                      <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
-                        {contract.pm_task_id
-                          ? 'That client has no brands on file yet - type the brand in the field below.'
-                          : 'No campaign behind this contract, so there is no client to take brands from.'}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {usesVendor && (
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Vendor</div>
-                    <SearchablePicker
-                      options={vendorOptions}
-                      value={contract.vendor_id != null ? String(contract.vendor_id) : null}
-                      onChange={(v) => {
-                        const vend = (vendors as any[]).find((x) => String(x.id) === v) ?? null;
-                        // The licence party leads the contract; picking a new
-                        // vendor also drops the old one's bank details, because
-                        // an IBAN left over from the previous choice is the
-                        // worst thing this screen could do.
-                        const p = licenceParty(vend as ContractVendor | null);
-                        ed.setValue('license_name', p.name);
-                        ed.setValue('license_number', p.number);
-                        // The outputs table names the performer, first and last.
-                        // For talent on their own licence that IS the licence
-                        // name; under an agency it is the influencer, not the
-                        // agency, which is who the table is about.
-                        ed.setValue(UGC_PERFORMER_KEY, performerName(vend as ContractVendor | null));
-                        for (const k of UGC_BANK_KEYS) ed.setValue(k, '');
-                        void ed.setVendor(vend ? Number(vend.id) : null);
-                      }}
-                      placeholder={'Search vendors\u2026'}
-                    />
-                    <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-                      Fills the licence name and number. An agency-licensed talent contracts
-                      under the agency; the performer is named in the table above.
-                    </div>
-                  </div>
-                )}
-                {usesBank && (
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Bank account</div>
-                    {banks.length ? (
-                      <select className="aq-select" style={{ width: '100%', maxWidth: 360 }}
-                        value={chosenBankId}
-                        onChange={(e) => {
-                          const a = banks.find((x) => String(x.id) === e.target.value) ?? null;
-                          // All four together. A bank name from one account
-                          // beside an IBAN from another is how money goes to
-                          // the wrong place.
-                          const v = bankValuesFor(a);
-                          for (const k of UGC_BANK_KEYS) ed.setValue(k, v[k] ?? '');
-                        }}>
-                        <option value="">{'-- choose --'}</option>
-                        {banks.map((a) => (
-                          <option key={String(a.id)} value={String(a.id)}>{bankAccountLabel(a)}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
-                        {contract.vendor_id != null
-                          ? 'This vendor has no bank account on file - add one on their registry page.'
-                          : 'No vendor on this contract, so there are no accounts to choose from.'}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
-              color: 'var(--aq-text-muted)' }}>Fields</div>
             {usesContractNo && (
               <div className="aq-card" style={{ padding: 14, display: 'flex', alignItems: 'center',
                 gap: 10, flexWrap: 'wrap' }}>
@@ -414,19 +414,31 @@ export function ContractFill({
               <div className="aq-card" style={{ padding: 20, fontSize: 13, color: 'var(--aq-text-muted)' }}>
                 This template version has no merge fields - nothing to fill. The document is fixed as published.
               </div>
-            ) : (
-              <div className="aq-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {fillFields.map((f) => (
-                  <FieldInput key={f.key} field={f} value={values[f.key] ?? ''} editable={!!editable}
-                    options={sortListValues(((f.list_id ? lists.valuesByList[f.list_id] : undefined) ?? []).filter((v) => v.active))}
-                    allowed={listsByKey[f.key]}
-                    hint={f.key === UGC_DATE_KEY && usesDay
-                      ? `The weekday follows this date: ${values[UGC_DAY_KEY] || '-'}`
-                      : undefined}
-                    onChange={(v) => (f.key === UGC_DATE_KEY ? setDate(v) : ed.setValue(f.key, v))} />
-                ))}
-              </div>
-            )}
+            ) : FIELD_GROUPS.map((g) => {
+              const groupFields = fillFields.filter((f) => fieldGroup(f.key) === g.key);
+              const picker = pickerFor(g.key);
+              if (!groupFields.length && !picker) return null;
+              return (
+                <div key={g.key} className="aq-card" style={{ padding: 16, display: 'flex',
+                  flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em',
+                      textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>{g.label}</div>
+                    <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 2 }}>{g.hint}</div>
+                  </div>
+                  {picker}
+                  {groupFields.map((f) => (
+                    <FieldInput key={f.key} field={f} value={values[f.key] ?? ''} editable={!!editable}
+                      options={sortListValues(((f.list_id ? lists.valuesByList[f.list_id] : undefined) ?? []).filter((v) => v.active))}
+                      allowed={listsByKey[f.key]}
+                      hint={f.key === UGC_DATE_KEY && usesDay
+                        ? `The weekday follows this date: ${values[UGC_DAY_KEY] || '-'}`
+                        : undefined}
+                      onChange={(v) => (f.key === UGC_DATE_KEY ? setDate(v) : ed.setValue(f.key, v))} />
+                  ))}
+                </div>
+              );
+            })}
 
             {optionalBlocks.length > 0 && (
               <>
@@ -469,6 +481,10 @@ export function ContractFill({
   );
 }
 
+/** The sentinel the Other row carries. Not a value anything stores - picking
+ *  it clears the field and opens the text box. */
+const OTHER_CHOICE = '__aq_other__';
+
 function FieldInput({
   field, value, options, allowed, editable, hint, onChange,
 }: {
@@ -484,6 +500,14 @@ function FieldInput({
   const err = validateFieldValue(field, value, allowed ? { values: allowed } : undefined);
   const label = field.label || field.key;
 
+  // A list field with allow_other keeps an "Other" choice at the bottom.
+  // Picking it swaps the dropdown for a text box; a stored value that is not
+  // in the list (someone chose Other earlier) reopens the box on load, so the
+  // contract does not silently look like nothing was chosen.
+  const inList = options.some((o) => o.value === value);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const other = !!field.allow_other && (otherOpen || (value !== '' && !inList));
+
   const control = () => {
     if (!editable) {
       return <div dir="auto" style={{ fontSize: 14, padding: '6px 0', color: 'var(--aq-text)' }}>
@@ -496,10 +520,43 @@ function FieldInput({
     }
     if (field.field_type === 'list') {
       return (
-        <select className="aq-select" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: '100%' }}>
-          <option value="">{'-- choose --'}</option>
-          {options.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
-        </select>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <select className="aq-select" value={other ? OTHER_CHOICE : value} style={{ width: '100%' }}
+            onChange={(e) => {
+              if (e.target.value === OTHER_CHOICE) { setOtherOpen(true); onChange(''); return; }
+              setOtherOpen(false);
+              onChange(e.target.value);
+            }}>
+            <option value="">{'-- choose --'}</option>
+            {/* The label is what you pick from; the value is what prints. The
+                two differ on purpose here: English to choose, Arabic in the
+                document. */}
+            {options.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
+            {field.allow_other && <option value={OTHER_CHOICE}>{'Other\u2026'}</option>}
+          </select>
+          {other && (
+            <input dir="auto" className="aq-input" value={value} autoFocus
+              onChange={(e) => onChange(e.target.value)}
+              placeholder={'Type it as it should read in the contract'}
+              style={{ width: '100%' }} />
+          )}
+        </div>
+      );
+    }
+    // The channel name is a handle, and a handle has exactly one @ on its left.
+    // normalizeHandle is the contract app's own rule (app.js:3569), so the
+    // register spells one account one way: @sara, not sara and @@sara too.
+    if (field.key === UGC_CHANNEL_KEY) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'stretch', width: '100%', maxWidth: 360, direction: 'ltr' }}>
+          <span style={{ display: 'flex', alignItems: 'center', padding: '0 10px', fontWeight: 700,
+            border: '1px solid var(--aq-border)', borderInlineEnd: 'none',
+            borderRadius: '6px 0 0 6px', background: 'var(--aq-surface-2, rgba(0,0,0,0.04))',
+            color: 'var(--aq-text-muted)' }}>@</span>
+          <input className="aq-input" dir="ltr" value={handleBody(value)} placeholder="name"
+            onChange={(e) => onChange(normalizeHandle(e.target.value))}
+            style={{ flex: 1, minWidth: 0, borderRadius: '0 6px 6px 0' }} />
+        </div>
       );
     }
     if (field.field_type === 'number') {

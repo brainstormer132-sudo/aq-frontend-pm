@@ -244,7 +244,7 @@ export function useLegalPlaceholders(workspaceId: string | null) {
     if (!workspaceId) { setPlaceholders([]); setLoading(false); return; }
     setLoading(true); setError('');
     const { data, error: e } = await legal().from('placeholder')
-      .select('id, key, label, field_type, required, default_value, num_min, num_max, list_id, owner_dept, alert_days')
+      .select('id, key, label, field_type, required, default_value, num_min, num_max, list_id, owner_dept, alert_days, allow_other')
       .eq('workspace_id', workspaceId).order('key');
     if (e) { setError(e.message ?? String(e)); setPlaceholders([]); setLoading(false); return; }
     setPlaceholders(((data ?? []) as any[]).map((r) => ({

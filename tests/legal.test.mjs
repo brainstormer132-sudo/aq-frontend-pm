@@ -545,5 +545,30 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     fillPlaceholders(T, { license_name: 'Sara', id: 'AQ-1', brand_name: 'Rabea' }));
 }
 
+// ---- a list that also takes a value of its own ----
+{
+  const closed = { field_type: 'list', required: false };
+  const open = { field_type: 'list', required: false, allow_other: true };
+  const LIST = { values: ['Reel', 'Story'] };
+
+  eq('a closed list refuses an off-list value',
+    validateFieldValue(closed, 'Podcast', LIST), 'Choose a value from the list.');
+  eq('allow_other takes it', validateFieldValue(open, 'Podcast', LIST), null);
+  eq('an in-list value is fine either way',
+    [validateFieldValue(closed, 'Reel', LIST), validateFieldValue(open, 'Reel', LIST)], [null, null]);
+  eq('allow_other does not make a required field optional',
+    validateFieldValue({ ...open, required: true }, '', LIST), 'This field is required.');
+  eq('and an empty optional one is still fine', validateFieldValue(open, '', LIST), null);
+  // The flag is only about list membership - a number is still a number.
+  eq('allow_other does not loosen a number field',
+    validateFieldValue({ field_type: 'number', required: false, allow_other: true, num_min: 1, num_max: 5 }, '9'),
+    'Must be at most 5.');
+  // contractReady reads the same rule, so Issue is not blocked by an Other.
+  ok('a contract with an Other value is ready',
+    contractReady([{ key: 'ad_types', ...open }], { ad_types: 'Podcast' }, { ad_types: LIST.values }));
+  ok('and one with an off-list value on a closed field is not',
+    !contractReady([{ key: 'ad_types', ...closed }], { ad_types: 'Podcast' }, { ad_types: LIST.values }));
+}
+
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -37,6 +37,8 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const OUT = join(ROOT, 'supabase', 'migrations', '110_legal_contract_lists.sql');
+// 110 is what prod ran and must not drift; the label correction is its own file.
+const OUT_LABELS = join(ROOT, 'supabase', 'migrations', '111_legal_list_labels.sql');
 
 /** [ english source term, arabic value, where the arabic came from ] */
 const PLATFORMS = [
@@ -210,7 +212,92 @@ end
 $lists$;
 `;
 
+// ---- 111: the label is English, the value stays Arabic -----------------
+//
+// Siraj: "make platform in english but it gets translated into arabic". 110
+// set both to Arabic, which was a misread - the LABEL is what the operator
+// picks from and the VALUE is what prints, so the label should be the English
+// term they think in and the value the Arabic the contract says. Same row,
+// two columns, no change to anything already stored on a contract.
+//
+// Also adds legal.placeholder.allow_other: a list field that additionally
+// takes a value of its own, for "add an other in case there is something
+// specific". Off by default, so a list meant to be closed stays closed.
+
+const labelPairs = []
+  .concat(PLATFORMS.map((p) => [p[1], p[0]]))
+  .concat(AD_TYPES.map((a) => [a[1], a[0]]));
+
+const labelRows = labelPairs
+  .map(([ar, en]) => `    (${q(ar)}, ${q(en)})`)
+  .join(',\n');
+
+const labelSql = `-- ============================================================
+-- ${basename(OUT_LABELS)}   GENERATED - do not hand-edit.
+--   node scripts/build-legal-lists.mjs
+--
+-- Two corrections to 110.
+--
+-- 1. THE LABEL IS ENGLISH. Siraj: "make platform in english but it gets
+--    translated into arabic". 110 set label and value both to Arabic, which
+--    was a misread of the same sentence that got the value right: the LABEL is
+--    what the operator picks from, the VALUE is what prints into the contract.
+--    So the dropdown reads Instagram / TikTok / Reel, and the document still
+--    says \u0627\u0646\u0633\u062a\u0642\u0631\u0627\u0645 / \u062a\u064a\u0643 \u062a\u0648\u0643 / \u0631\u064a\u064a\u0644. Matched on the Arabic value, so a
+--    value legal has since renamed by hand is left alone.
+--
+-- 2. legal.placeholder.allow_other. A list field that also accepts a value of
+--    its own - "add an other in case there is something specific". Set on
+--    platform_smart and ad_types. Default false, so every other list stays
+--    closed and an off-list value there is still an error.
+--
+-- Carried-over platforms from a workspace's own task_platforms are NOT in the
+-- pair list, so their label stays whatever it was - there is no English term
+-- to restore, they were English to begin with.
+--
+-- Idempotent. Run in staging, then prod. Then: notify pgrst.
+-- ============================================================
+
+set search_path = legal, public;
+
+alter table legal.placeholder
+  add column if not exists allow_other boolean not null default false;
+
+comment on column legal.placeholder.allow_other is
+  'A list field that also takes an off-list value the operator types. Only meaningful when field_type = list.';
+
+update legal.placeholder
+   set allow_other = true
+ where key in ('platform_smart', 'ad_types')
+   and allow_other is distinct from true;
+
+do $labels$
+declare
+  r record;
+  n integer := 0;
+begin
+  for r in
+    select * from (values
+${labelRows}
+    ) as t(ar, en)
+  loop
+    update legal.managed_list_value v
+       set label = r.en
+      from legal.managed_list l
+     where l.id = v.list_id
+       and l.key in ('platforms', 'ad_types')
+       and v.value = r.ar
+       and v.label is distinct from r.en;
+    n := n + 1;
+  end loop;
+  raise notice 'checked % label pairs', n;
+end
+$labels$;
+`;
+
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, sql, 'utf8');
+writeFileSync(OUT_LABELS, labelSql, 'utf8');
 console.log(`wrote ${OUT}`);
+console.log(`wrote ${OUT_LABELS}`);
 console.log(`  platforms ${PLATFORMS.length}, ad types ${AD_TYPES.length}`);

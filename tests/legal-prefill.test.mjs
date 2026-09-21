@@ -4,6 +4,7 @@ import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, stampContractNumber,
   firstLast, performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY,
+  normalizeHandle, handleBody, joinPlatformHandles, fieldGroup, FIELD_GROUPS,
 } from '../.test-build/legal-prefill.js';
 import { contractCanonical } from '../.test-build/legal.js';
 
@@ -268,6 +269,56 @@ ok('a row with only a platform is not empty',
     datedValues(d, 'not-a-date')[UGC_DAY_KEY], '');
   eq('clearing the date clears the weekday', datedValues(d, '')[UGC_DAY_KEY], '');
   ok('setting the same date again is the same object', datedValues(d, '2026-09-20') === d);
+}
+
+// ---- the handle standard: one @ on the left, always ----
+{
+  // normalizeHandle is byte-for-byte the contract app's (app.js:3569). The
+  // point is that one account has one spelling in the register.
+  eq('a bare name gains the @', normalizeHandle('sara'), '@sara');
+  eq('an @ already there is not doubled', normalizeHandle('@sara'), '@sara');
+  eq('a pile of @ collapses to one', normalizeHandle('@@@sara'), '@sara');
+  eq('surrounding space goes', normalizeHandle('  @sara  '), '@sara');
+  eq('empty stays empty', normalizeHandle(''), '');
+  eq('a bare @ is not a handle', normalizeHandle('@'), '');
+  eq('null does not crash', normalizeHandle(null), '');
+  // An inner dot or underscore is part of the name, not decoration.
+  eq('the rest of the name is untouched', normalizeHandle('sara.k_92'), '@sara.k_92');
+
+  eq('the typed part drops the @', handleBody('@sara'), 'sara');
+  eq('and is already bare when it has none', handleBody('sara'), 'sara');
+  eq('handleBody of nothing is nothing', handleBody(''), '');
+
+  // One platform prints the handle alone - which is what existing contracts
+  // say. Two or more name the platform, the way the app joins them.
+  eq('one platform is just the handle',
+    joinPlatformHandles([['Instagram', 'sara']]), '@sara');
+  eq('two are labelled and joined',
+    joinPlatformHandles([['Instagram', 'sara'], ['TikTok', '@sara2']]),
+    'Instagram: @sara TikTok: @sara2');
+  eq('a platform with no handle is dropped, not left bare',
+    joinPlatformHandles([['Instagram', 'sara'], ['TikTok', '']]), '@sara');
+  eq('nothing at all is an empty line', joinPlatformHandles([]), '');
+  eq('only empties is an empty line',
+    joinPlatformHandles([['Instagram', ''], ['TikTok', '  ']]), '');
+}
+
+// ---- which card a field sits on ----
+{
+  eq('the money and the bank are together',
+    ['Amount_full', 'bank_name', 'account_name', 'account_number', 'iban'].map(fieldGroup),
+    ['payment', 'payment', 'payment', 'payment', 'payment']);
+  eq('the vendor and their account are together',
+    ['license_name', 'license_number', 'name_2', 'platform_smart', 'channel_name', 'ad_types'].map(fieldGroup),
+    ['vendor', 'vendor', 'vendor', 'vendor', 'vendor', 'vendor']);
+  eq('the job carries the brand, the date and the duration',
+    ['brand_name', 'date', 'duration'].map(fieldGroup),
+    ['contract', 'contract', 'contract']);
+  // A template naming a field nobody mapped must still show it.
+  eq('an unknown key falls back rather than vanishing', fieldGroup('who_knows'), 'contract');
+  eq('an empty key does not crash', fieldGroup(''), 'contract');
+  eq('every group in the list is reachable',
+    FIELD_GROUPS.map((g) => g.key), ['contract', 'vendor', 'payment']);
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);

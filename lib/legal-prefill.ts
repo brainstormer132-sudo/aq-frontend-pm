@@ -293,6 +293,87 @@ export function datedValues(
   return { ...values, [UGC_DATE_KEY]: d, [UGC_DAY_KEY]: day };
 }
 
+export const UGC_CHANNEL_KEY = 'channel_name';
+
+/**
+ * A social handle in the one shape the contract app has always written:
+ * exactly one leading `@`, and nothing else touched.
+ *
+ * Ported byte-for-byte from normalizeHandle in public/contracts/app.js:3569.
+ * `@@sara`, `sara` and ` @sara ` are all the same account, and a register that
+ * spells them three ways cannot be grouped or searched. Empty stays empty -
+ * a bare `@` is not a handle. Pure.
+ */
+export function normalizeHandle(value: unknown): string {
+  const cleaned = txt(value).replace(/^@+/, '');
+  return cleaned ? `@${cleaned}` : '';
+}
+
+/**
+ * The handle as it is typed: no `@`, because the screen draws a fixed one to
+ * its left (the contract app renders `<span>@</span>` beside an input whose
+ * placeholder is just "name"). Pure.
+ */
+export function handleBody(value: unknown): string {
+  return txt(value).replace(/^@+/, '');
+}
+
+/**
+ * Several platforms on one contract become one line, the way the contract app
+ * joins them: `Instagram: @a TikTok: @b`. One platform is just its handle, with
+ * no label - which is what the existing contracts say. Pure.
+ *
+ * Takes [platform, handle] pairs in the order the operator chose them; a pair
+ * with no handle is dropped rather than printing a bare platform name.
+ */
+export function joinPlatformHandles(pairs: [string, string][]): string {
+  const one = pairs.filter(([, h]) => handleBody(h));
+  if (one.length === 0) return '';
+  if (one.length === 1) return normalizeHandle(one[0][1]);
+  return one.map(([p, h]) => `${txt(p)}: ${normalizeHandle(h)}`).join(' ');
+}
+
+// ---- how the fill screen is grouped ------------------------------------
+//
+// Siraj: "separate it so its easier to work with so price and bank info are in
+// one place and vendor data and account are in one place". Sixteen fields in
+// one column is a list to be got through; three short cards are three
+// questions with answers.
+
+export type FieldGroup = 'contract' | 'vendor' | 'payment';
+
+export const FIELD_GROUPS: { key: FieldGroup; label: string; hint: string }[] = [
+  { key: 'contract', label: 'The job', hint: 'What is being bought, for whom, and for how long.' },
+  { key: 'vendor', label: 'The vendor and their account', hint: 'Who is doing it, where, and as what.' },
+  { key: 'payment', label: 'Price and bank', hint: 'What they are paid and where it goes.' },
+];
+
+const GROUP_BY_KEY: Record<string, FieldGroup> = {
+  brand_name: 'contract',
+  date: 'contract',
+  duration: 'contract',
+  license_name: 'vendor',
+  license_number: 'vendor',
+  name_2: 'vendor',
+  platform_smart: 'vendor',
+  channel_name: 'vendor',
+  ad_types: 'vendor',
+  Amount_full: 'payment',
+  bank_name: 'payment',
+  account_name: 'payment',
+  account_number: 'payment',
+  iban: 'payment',
+};
+
+/**
+ * Which card a field belongs on. Unknown keys go to `contract`, so a template
+ * that names a field this map has never heard of still shows it rather than
+ * dropping it off the screen. Pure.
+ */
+export function fieldGroup(key: string): FieldGroup {
+  return GROUP_BY_KEY[txt(key)] ?? 'contract';
+}
+
 /** A vendor as the contract needs to see them, with their licence org attached. */
 export interface ContractVendor {
   id: number | string;
