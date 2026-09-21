@@ -116,7 +116,8 @@ export function FinanceView({
         .select('pm_task_id, doc_kind, status, requested_by, requested_at')
         .eq('workspace_id', workspaceId)
         .eq('status', 'pending')
-        .order('requested_at', { ascending: true }),
+        .order('requested_at', { ascending: true })
+        .order('id', { ascending: true }),
       () => { /* requests are supplementary; ignore a read error, treat as none */ },
     ), force);
     setReqs(rows);

@@ -60,7 +60,8 @@ export function ClientsView({
       .from('clients')
       .select('id, pending_client_id, company_name, signatory_name, contact_name, contact_email, company_email, contact_phone, cr_number, cr_expiry, vat_number, street, city, postcode, country, invite_status, status, payment_terms, payment_split_pct, payment_net_days')
       .eq('status', 'active')
-      .order('company_name'), (msg) => setError(msg));
+      .order('company_name')
+      .order('id'), (msg) => setError(msg));
     setAllClients(data ?? []);
     setLoading(false);
   };

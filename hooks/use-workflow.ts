@@ -969,7 +969,13 @@ export function useTrackingCampaigns(workspaceId: string | null) {
         .eq('workspace_id', workspaceId)
         .eq('has_tracking', true)
         .is('parent_task_id', null)
-        .order('created_at', { ascending: false }));
+        // Ending on id is not decoration: offset paging only lines up when the
+        // order is TOTAL, and the Asana import writes created_at as a date, so
+        // thousands of campaigns share one value. Without this, two pages
+        // overlap and a campaign falls between them - a campaign missing from
+        // the board looks like a deleted campaign. See selectAllRowsParallel.
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false }));
 
     const ids = campaigns.map((c) => c.id);
 
@@ -1043,7 +1049,8 @@ export function useTrackingRows(taskId: string | null) {
         .from('tracking_rows')
         .select('*')
         .eq('task_id', taskId)
-        .order('position', { ascending: true }));
+        .order('position', { ascending: true })
+        .order('id', { ascending: true }));
     if (mine !== gen.current) return;
     setRows(all);
     setLoading(false);
@@ -1517,7 +1524,10 @@ export function useWorkflowTasks(workspaceId: string | null, stage?: TaskStage |
         let query = supabase.from('pm_tasks').select('*')
           .eq('workspace_id', workspaceId).is('parent_task_id', null);
         if (stage && stage !== 'all') query = query.eq('stage', stage);
-        return query.order('created_at', { ascending: false });
+        // Total order, or offset paging drops and duplicates rows - see
+        // useTrackingCampaigns above and selectAllRowsParallel's own header.
+        return query.order('created_at', { ascending: false })
+          .order('id', { ascending: false });
       }),
       force,
     );
@@ -1855,7 +1865,8 @@ export function usePublishedTrackingRows(taskId: string | null) {
         .from('tracking_rows_published')
         .select('*')
         .eq('task_id', taskId)
-        .order('position', { ascending: true }));
+        .order('position', { ascending: true })
+        .order('id', { ascending: true }));
     if (mine !== gen.current) return;
     setRows(all);
     setLoading(false);
@@ -1880,7 +1891,8 @@ export async function fetchCampaignBookings(parentTaskId: string): Promise<Booki
       .from('pm_tasks')
       .select('id, vendor_id, platform, task_name, title, position')
       .eq('parent_task_id', parentTaskId)
-      .order('position', { ascending: true }));
+      .order('position', { ascending: true })
+      .order('id', { ascending: true }));
 
   if (!subtasks.length) return [];
 
@@ -2013,7 +2025,8 @@ export async function ensureTrackingRowsForBooking(input: {
         .from('tracking_rows')
         .select('id, position, influencer_name, ad_line_id, ad_line_seq, subtask_id, posting_date, price_excl, type_of_ad, platform')
         .eq('task_id', input.parent_task_id)
-        .order('position', { ascending: true }));
+        .order('position', { ascending: true })
+        .order('id', { ascending: true }));
 
     const nextPos = existing.reduce(
       (max: number, r: any) => Math.max(max, Number(r.position) || 0), -1) + 1;
@@ -2395,7 +2408,8 @@ export async function fetchAdLinesForSubtasks(
       .from('vendor_ad_lines')
       .select('*')
       .in('subtask_id', ids)
-      .order('position', { ascending: true }),
+      .order('position', { ascending: true })
+      .order('id', { ascending: true }),
   );
   for (const r of rows) {
     const key = (r as any).subtask_id as string;
@@ -3446,7 +3460,8 @@ export function useCommentsForTasks(taskIds: string[]) {
         .from('comments')
         .select('*, author:profiles(id, full_name, avatar_url)')
         .in('task_id', ids)
-        .order('created_at', { ascending: true }));
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true }));
     setComments(rows);
     setLoading(false);
   }, [key]);
@@ -3468,7 +3483,8 @@ export function useAttachmentsForTasks(taskIds: string[]) {
         .from('task_attachments')
         .select('*')
         .in('task_id', ids)
-        .order('created_at', { ascending: false }));
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false }));
     setAttachments(rows);
     setLoading(false);
   }, [key]);
@@ -4021,7 +4037,11 @@ export function useWorkspaceStats(workspaceId: string | null, userId: string | n
     const rows = await selectAllRows<any>('useWorkspaceStats', () => supabase
       .from('pm_tasks')
       .select('id, stage, status, due_date, completed_at, assignee_id, key_account_id, creator_id, parent_task_id, task_name, title, brand_name, created_at, subtask_kind, vendor_id, price, contract_request_id')
-      .eq('workspace_id', workspaceId));
+      .eq('workspace_id', workspaceId)
+      // An unordered paged read is the worst case of all: Postgres promises
+      // no order between two queries, so the counters on the landing screen
+      // could count a row twice and miss another.
+      .order('id', { ascending: true }));
     const today = new Date().toISOString().slice(0, 10);
     const parents = rows.filter((r) => !r.parent_task_id);
     const isMine = (r: any) => userId && (r.assignee_id === userId || r.key_account_id === userId || r.creator_id === userId);
@@ -4218,7 +4238,8 @@ export function useWorkspaceMembers(workspaceId: string | null) {
         .from('workspace_members')
         .select('*, profile:profiles(id, full_name, avatar_url)')
         .eq('workspace_id', workspaceId)
-        .order('joined_at', { ascending: true }));
+        .order('joined_at', { ascending: true })
+        .order('id', { ascending: true }));
     setMembers(all);
     setLoading(false);
   }, [workspaceId]);
@@ -4459,7 +4480,8 @@ export function useOpenContractRequests(workspaceId: string | null) {
         .eq('workspace_id', workspaceId)
         .eq('request_kind', 'vendor')
         .in('status', ['pending', 'approved'])
-        .order('created_at', { ascending: true }),
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true }),
     ), force);
 
     const at = new Map<string, string>();
@@ -4495,7 +4517,7 @@ export function useContractRequests(workspaceId: string | null, taskId?: string 
     const rows = await selectAllRows<ContractRequest>('useContractRequests', () => {
       let q = supabase.from('contract_requests').select('*').eq('workspace_id', workspaceId);
       if (taskId) q = q.eq('pm_task_id', taskId);
-      return q.order('created_at', { ascending: false });
+      return q.order('created_at', { ascending: false }).order('id', { ascending: false });
     });
     if (mine !== gen.current) return;
     setItems(rows);
@@ -4535,7 +4557,8 @@ export function useContractRequestsForTasks(workspaceId: string | null, taskIds:
         .select('*')
         .eq('workspace_id', workspaceId)
         .in('pm_task_id', ids)
-        .order('created_at', { ascending: false }));
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false }));
     setItems(rows);
     setLoading(false);
   }, [workspaceId, key]);
@@ -5180,7 +5203,10 @@ export function useLegacyVendors() {
         // cap that hitting it was a matter of time, and the failure is silent.
         const [v, b, { data: cats }, { data: orgs }] = await Promise.all([
           selectAllRows<LegacyVendor>('useLegacyVendors vendors',
-            () => supabase.from('vendors').select('*').order('name', { ascending: true })),
+            // Duplicate vendor names are the whole reason aq-vendor-dedupe
+            // exists, so name alone is not a total order for a paged read.
+            () => supabase.from('vendors').select('*')
+              .order('name', { ascending: true }).order('id', { ascending: true })),
           selectAllRows<LegacyBankAccount>('useLegacyVendors banks',
             () => supabase.from('bank_accounts').select('*').order('id', { ascending: true })),
           supabase.from('vendor_categories').select('id, key'),
@@ -5272,7 +5298,10 @@ export function useClients() {
       () => supabase
         .from('clients')
         .select('id, company_name, cr_number, vat_number, signatory_name, contact_email, contact_phone, city, country, status, zoho_customer_id, client_category_id, payment_terms, payment_split_pct, payment_net_days')
-        .order('company_name', { ascending: true }),
+        // Two clients can carry the same company_name, so the order is not
+        // total on its own and the paged read would skip one of them.
+        .order('company_name', { ascending: true })
+        .order('id', { ascending: true }),
     ), force);
     setClients(rows);
     setLoading(false);
@@ -6176,7 +6205,8 @@ export function useCrmActivityIndex(workspaceId: string | null) {
           .from('crm_activities')
           .select('target_type, target_id, kind, occurred_at')
           .eq('workspace_id', workspaceId)
-          .order('occurred_at', { ascending: false })),
+          .order('occurred_at', { ascending: false })
+          .order('id', { ascending: false })),
       force,
     );
     setItems(rows);

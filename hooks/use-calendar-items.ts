@@ -49,7 +49,10 @@ export function useCalendarItems(workspaceId: string | null) {
       () => supabase
         .from('pm_tasks')
         .select('id, parent_task_id, task_name, title, brand_name, due_date, status, stage, assignee_id, subtask_kind')
-        .eq('workspace_id', workspaceId),
+        .eq('workspace_id', workspaceId)
+        // Unordered + offset paged = rows counted twice and rows missed. A
+        // task missing here is a day on the calendar that looks empty.
+        .order('id', { ascending: true }),
     );
 
     const byId = new Map<string, any>(tasks.map((t) => [t.id, t]));
@@ -75,7 +78,8 @@ export function useCalendarItems(workspaceId: string | null) {
       'useCalendarItems ad lines',
       () => supabase
         .from('vendor_ad_lines')
-        .select('id, subtask_id, ad_type, description, due_date, status, quantity'),
+        .select('id, subtask_id, ad_type, description, due_date, status, quantity')
+        .order('id', { ascending: true }),
     );
 
     for (const l of lines) {
