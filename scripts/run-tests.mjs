@@ -90,6 +90,7 @@ const LIBS = [
   'lib/legal.ts',
   'lib/legal-prefill.ts',
   'lib/legal-matters.ts',
+  'lib/legal-letterhead.ts',
 ];
 
 const GREEN = '\x1b[32m';

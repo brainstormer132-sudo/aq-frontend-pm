@@ -255,9 +255,17 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   ok('fills kv value', html.includes('12,500 SAR'));
   ok('fills bullet placeholder', html.includes('&bull; Term 12m'));
   ok('title block is centered h1', html.includes('<h1 class="doc-title">Vendor Agreement</h1>'));
-  ok('letterhead org shown', html.includes('AQ Creativity'));
-  ok('status in meta', html.includes('Status: Issued'));
-  ok('reference in footer', html.includes('Ref: abc12345'));
+  // The letterhead replaced the "AQ Creativity" text block. It is the company
+  // strip now, on every page, and its own contents are asserted in
+  // tests/legal-letterhead - this only checks the print path reaches it.
+  ok('letterhead strip is on the sheet', html.includes('RAWAD ALTATHIR COMPANY'));
+  ok('the sheet is wrapped in the repeating table', html.includes('<table class="page">')
+    && html.includes('<thead>') && html.includes('<tfoot>'));
+  // An ISSUED contract says nothing about its status on its face. Printing
+  // "Status: Issued" on a document a vendor signs is not what the paper does.
+  ok('an issued contract is not stamped with its status', !html.includes('Status: Issued'));
+  ok('reference prints where the id sits on the paper', html.includes('Ref: abc12345')
+    && html.includes('class="doc-ref"'));
 }
 {
   const html = contractPrintHTML({
@@ -291,8 +299,18 @@ eq('formatFingerprint empty-safe', formatFingerprint(undefined), '');
     title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr',
     meta: { fingerprint: 'ABCD 1234' },
   });
-  ok('print footer shows fingerprint', html.includes('Fingerprint (SHA-256): ABCD 1234'));
-  ok('no fingerprint line when absent', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr' }).includes('Fingerprint (SHA-256)'));
+  // Once, at the end of the document - not on every page. It is a check
+  // somebody runs, not part of the agreement.
+  ok('the fingerprint prints once at the end', html.includes('SHA-256: ABCD 1234'));
+  ok('no fingerprint line when absent', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr' }).includes('SHA-256:'));
+  {
+    // A draft says so. Nothing else does.
+    const d = contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }],
+      values: {}, dir: 'ltr', meta: { status: 'draft' } });
+    ok('a draft is marked DRAFT', d.includes('>DRAFT<'));
+    ok('an issued contract is not', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }],
+      values: {}, dir: 'ltr', meta: { status: 'issued' } }).includes('>DRAFT<'));
+  }
 }
 
 // ---- optional clauses ----

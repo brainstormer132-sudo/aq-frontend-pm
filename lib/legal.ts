@@ -978,6 +978,11 @@ export function tableHasInvalidCell(
 // no PDF library: the browser is the renderer. Pure here (the caller supplies
 // any date string), so it is testable.
 
+import {
+  type Letterhead, DEFAULT_LETTERHEAD,
+  letterheadHeaderHtml, letterheadFooterHtml, letterheadCss,
+} from './legal-letterhead';
+
 /** HTML-escape a string for safe insertion as element text or an attribute. */
 export function escapeHtml(s: string): string {
   return String(s ?? '')
@@ -994,6 +999,8 @@ export interface PrintMeta {
   reference?: string;
   generatedOn?: string;
   fingerprint?: string;
+  /** The company letterhead. Omitted means AQ's own - see legal-letterhead. */
+  letterhead?: Letterhead;
 }
 
 /**
@@ -1050,17 +1057,19 @@ export function contractPrintHTML(args: {
     }
   }).filter(Boolean).join('\n  ');
 
-  const org = escapeHtml(meta.org ?? 'AQ Creativity');
   const safeTitle = escapeHtml(title || 'Contract');
-  const metaLines = [
-    safeTitle,
-    meta.status ? `Status: ${escapeHtml(meta.status)}` : '',
-    meta.generatedOn ? `Generated: ${escapeHtml(meta.generatedOn)}` : '',
-  ].filter(Boolean).join('<br>');
   const ref = meta.reference ? escapeHtml(meta.reference) : '';
   const fp = meta.fingerprint ? escapeHtml(meta.fingerprint) : '';
   const lang = dir === 'rtl' ? 'ar' : 'en';
-  const metaAlign = dir === 'rtl' ? 'left' : 'right';
+  const lh = meta.letterhead ?? DEFAULT_LETTERHEAD;
+
+  // A DRAFT is marked, and nothing else is. Siraj named the id and the status
+  // as the two things that may differ from the paper he sent - but a contract
+  // handed to a vendor with "Status: issued" printed on its face is not what
+  // he meant, and it is not what the real document does. The one status worth
+  // printing is the one that stops an unissued draft being mistaken for the
+  // agreement: a draft says so, an issued contract says nothing.
+  const draft = String(meta.status ?? '').toLowerCase() === 'draft';
 
   return `<!doctype html>
 <html lang="${lang}" dir="${dir}">
@@ -1071,10 +1080,9 @@ export function contractPrintHTML(args: {
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif; color: #1a1a1a; line-height: 1.75; font-size: 12pt; }
-  .sheet { max-width: 800px; margin: 0 auto; padding: 32px; }
-  .lh { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 2px solid #222; padding-bottom: 10px; margin-bottom: 22px; }
-  .lh-org { font-size: 18pt; font-weight: 800; letter-spacing: .5px; }
-  .lh-meta { font-size: 9pt; color: #555; text-align: ${metaAlign}; line-height: 1.5; }
+  .sheet { max-width: 800px; margin: 0 auto; padding: 24px 32px; }
+  .doc-ref { font-size: 10pt; color: #444; direction: ltr; text-align: start; margin-bottom: 6mm; }
+  .doc-draft { font-size: 9pt; font-weight: 800; letter-spacing: .18em; color: #b3261e; }
   .doc-title { font-size: 18pt; font-weight: 800; text-align: center; margin: 8px 0 20px; }
   .doc-h { font-size: 13pt; font-weight: 700; margin: 18px 0 6px; }
   .doc-p { margin: 8px 0; text-align: justify; }
@@ -1089,27 +1097,25 @@ export function contractPrintHTML(args: {
   .sig-col { flex: 1; min-width: 0; }
   .sig-name { font-weight: 700; margin-bottom: 26px; }
   .sig-rule { border-top: 1px solid #333; }
-  .foot { margin-top: 28px; border-top: 1px solid #bbb; padding-top: 8px; font-size: 9pt; color: #666; }
-  .foot-row { display: flex; justify-content: space-between; gap: 12px; }
-  .foot-fp { margin-top: 6px; font-family: 'Courier New', monospace; font-size: 8pt; color: #444; word-break: break-all; direction: ltr; text-align: left; }
+  .doc-fp { margin-top: 10mm; font-family: 'Courier New', monospace; font-size: 7pt; color: #777; word-break: break-all; direction: ltr; text-align: left; }
   @media print {
     .sheet { max-width: none; padding: 0; }
-    @page { size: A4; margin: 18mm; }
   }
+${letterheadCss()}
 </style>
 </head>
 <body>
+<table class="page">
+  <thead><tr><td>${letterheadHeaderHtml(lh)}</td></tr></thead>
+  <tfoot><tr><td>${letterheadFooterHtml(lh)}</td></tr></tfoot>
+  <tbody><tr><td>
 <div class="sheet">
-  <div class="lh">
-    <div class="lh-org">${org}</div>
-    <div class="lh-meta">${metaLines}</div>
-  </div>
+  ${ref || draft ? `<div class="doc-ref">${ref}${draft ? `${ref ? ' ' : ''}<span class="doc-draft">DRAFT</span>` : ''}</div>` : ''}
   ${body}
-  <div class="foot">
-    <div class="foot-row"><span>${ref}</span><span>${org}</span></div>
-    ${fp ? `<div class="foot-fp">Fingerprint (SHA-256): ${fp}</div>` : ''}
-  </div>
+  ${fp ? `<div class="doc-fp">SHA-256: ${fp}</div>` : ''}
 </div>
+  </td></tr></tbody>
+</table>
 </body>
 </html>`;
 }
