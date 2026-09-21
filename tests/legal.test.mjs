@@ -13,7 +13,7 @@ import {
   OPT_OFF_KEY, isOptionalBlock, parseOffIds, serializeOffIds, visibleBlocks,
   dateAlertState, contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
-  tableRowSource, tableFieldRow, tableRowsFor, fillSegments,
+  tableRowSource, tableFieldRow, tableRowsFor, fillSegments, batchProgress,
   tableHasInvalidCell,
 } from '../.test-build/legal.js';
 
@@ -568,6 +568,32 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     contractReady([{ key: 'ad_types', ...open }], { ad_types: 'Podcast' }, { ad_types: LIST.values }));
   ok('and one with an off-list value on a closed field is not',
     !contractReady([{ key: 'ad_types', ...closed }], { ad_types: 'Podcast' }, { ad_types: LIST.values }));
+}
+
+// ---- how a task's line reads ----
+//
+// It says the work LEFT, not the work done: the reason to open a task is the
+// part that is not finished.
+{
+  eq('an empty task says so', batchProgress({ total: 0, unassigned: 0, issued: 0 }),
+    'no contracts yet');
+  eq('the unfilled ones lead', batchProgress({ total: 12, unassigned: 5, issued: 0 }),
+    '12 contracts - 5 still need a vendor');
+  eq('even when some are issued', batchProgress({ total: 12, unassigned: 5, issued: 3 }),
+    '12 contracts - 5 still need a vendor');
+  eq('all assigned, none issued, is ready', batchProgress({ total: 12, unassigned: 0, issued: 0 }),
+    '12 contracts - ready to issue');
+  eq('part issued is counted both ways', batchProgress({ total: 12, unassigned: 0, issued: 3 }),
+    '12 contracts - 3 issued, 9 still draft');
+  eq('all issued is done', batchProgress({ total: 12, unassigned: 0, issued: 12 }),
+    '12 contracts - all issued');
+  eq('one contract is singular', batchProgress({ total: 1, unassigned: 0, issued: 1 }),
+    '1 contract - all issued');
+  // A count that has gone negative or fractional must not print as such.
+  eq('nonsense counts do not reach the screen',
+    batchProgress({ total: -3, unassigned: -1, issued: -1 }), 'no contracts yet');
+  eq('more issued than there are still reads as done',
+    batchProgress({ total: 2, unassigned: 0, issued: 9 }), '2 contracts - all issued');
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

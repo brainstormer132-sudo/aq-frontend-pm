@@ -70,7 +70,7 @@ const NAV: NavItem[] = [
   { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [], group: 'Admin' },
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'], group: 'Admin' },
 
-  { id: 'legal-matters',    label: 'Matters',    icon: 'grid',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
+  { id: 'legal-matters',    label: 'Tasks',      icon: 'grid',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-documents',  label: 'Documents',  icon: 'file',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-register',   label: 'Register',   icon: 'list',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-signatures', label: 'Signatures', icon: 'check', visibleTo: ['owner','admin','legal'], group: 'Legal' },

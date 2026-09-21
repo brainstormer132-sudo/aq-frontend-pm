@@ -487,6 +487,46 @@ export interface Contract {
   contract_no?: string | null;
 }
 
+/** A task: shared terms once, one contract per vendor (migration 112). */
+export interface ContractBatch {
+  id: string;
+  workspace_id: string;
+  title: string;
+  /** What every contract in it was created with. A record of the terms and the
+   *  seed for a vendor added later - never the source of truth for a contract,
+   *  which carries its own copy and can be edited on its own. */
+  shared: Record<string, string>;
+  version_id?: string | null;
+  created_at?: string | null;
+}
+
+/** A batch folded with the state of its contracts, for the list. */
+export interface ContractBatchLite extends ContractBatch {
+  total: number;
+  /** Contracts with nobody assigned yet - the work still to do. */
+  unassigned: number;
+  issued: number;
+}
+
+/**
+ * How a task's list row reads: "12 contracts - 5 still need a vendor".
+ *
+ * Says the work left rather than the work done, because the reason to open a
+ * task is the part that is not finished. All assigned and none issued is
+ * "ready to issue"; all issued is done. Pure.
+ */
+export function batchProgress(b: Pick<ContractBatchLite, 'total' | 'unassigned' | 'issued'>): string {
+  const n = Math.max(0, b.total | 0);
+  const un = Math.max(0, b.unassigned | 0);
+  const iss = Math.max(0, b.issued | 0);
+  const head = `${n} contract${n === 1 ? '' : 's'}`;
+  if (n === 0) return 'no contracts yet';
+  if (un > 0) return `${head} - ${un} still need a vendor`;
+  if (iss >= n) return `${head} - all issued`;
+  if (iss > 0) return `${head} - ${iss} issued, ${n - iss} still draft`;
+  return `${head} - ready to issue`;
+}
+
 export interface ContractFieldValue {
   id?: string;
   contract_id?: string;

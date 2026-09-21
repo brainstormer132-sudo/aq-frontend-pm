@@ -8,6 +8,7 @@ import { stampContractNumber } from '@/lib/legal-prefill';
 import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
   Dept, ManagedList, ManagedListValue, FieldDef, Contract, ContractStatus,
+  ContractBatch, ContractBatchLite,
 } from '@/lib/legal';
 import {
   defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
@@ -496,6 +497,131 @@ export function useContracts(workspaceId: string | null) {
  * accounts; both come back empty and the pickers simply do not appear. That is
  * the standalone case, not an error.
  */
+/**
+ * The tasks: a batch of contracts raised together off one set of terms.
+ *
+ * Two slim reads rather than an embedded join - the batches, then a count of
+ * their contracts - so the list stays predictable and the second read is one
+ * query however many batches there are.
+ */
+export function useContractBatches(workspaceId: string | null) {
+  const [batches, setBatches] = useState<ContractBatchLite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setBatches([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const c = legal();
+    const { data: bs, error: e1 } = await c.from('contract_batch')
+      .select('id, workspace_id, title, shared, version_id, created_at')
+      .eq('workspace_id', workspaceId).order('created_at', { ascending: false });
+    if (e1) { setError(e1.message ?? String(e1)); setBatches([]); setLoading(false); return; }
+    const ids = ((bs ?? []) as any[]).map((b) => b.id);
+    const counts = new Map<string, { total: number; unassigned: number; issued: number }>();
+    if (ids.length) {
+      const { data: cs } = await c.from('contract')
+        .select('batch_id, status, vendor_id').in('batch_id', ids);
+      for (const row of ((cs ?? []) as any[])) {
+        const cur = counts.get(row.batch_id) ?? { total: 0, unassigned: 0, issued: 0 };
+        cur.total += 1;
+        if (row.vendor_id == null) cur.unassigned += 1;
+        if (row.status !== 'draft') cur.issued += 1;
+        counts.set(row.batch_id, cur);
+      }
+    }
+    setBatches(((bs ?? []) as any[]).map((b) => ({
+      ...(b as ContractBatch),
+      shared: (b.shared ?? {}) as Record<string, string>,
+      ...(counts.get(b.id) ?? { total: 0, unassigned: 0, issued: 0 }),
+    })));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const run = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    setBusy(true); setError('');
+    try { return await fn(); }
+    catch (e: any) { setError(e?.message ?? String(e)); throw e; }
+    finally { setBusy(false); }
+  };
+
+  /** Create a task and its first N contracts. Returns the batch id. */
+  const create = (title: string, count: number, shared: Record<string, string>) =>
+    run(async () => {
+      if (!workspaceId) throw new Error('No workspace selected.');
+      const { data, error: e } = await legal().rpc('create_contract_batch', {
+        p_workspace_id: workspaceId, p_title: title.trim(), p_count: count, p_shared: shared,
+      });
+      if (e) throw e;
+      await load();
+      return String(data);
+    });
+
+  /** Add more contracts to a task, on the terms it was created with. */
+  const addMore = (batchId: string, count: number) => run(async () => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const { error: e } = await legal().rpc('create_contract_batch', {
+      p_workspace_id: workspaceId, p_title: null, p_count: count,
+      p_shared: null, p_version_id: null, p_batch_id: batchId,
+    });
+    if (e) throw e;
+    await load();
+  });
+
+  /** Delete the task. The contracts survive; they stop being grouped
+   *  (ON DELETE SET NULL, migration 112). */
+  const remove = (batchId: string) => run(async () => {
+    const { error: e } = await legal().from('contract_batch').delete().eq('id', batchId);
+    if (e) throw e;
+    await load();
+  });
+
+  return { batches, loading, error, busy, reload: load, create, addMore, remove };
+}
+
+/** The contracts in one task, with each one's vendor name folded in. */
+export function useBatchContracts(workspaceId: string | null, batchId: string | null) {
+  const [rows, setRows] = useState<Contract[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId || !batchId) { setRows([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const { data, error: e } = await legal().from('contract')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, batch_id')
+      .eq('batch_id', batchId).order('created_at', { ascending: true });
+    if (e) { setError(e.message ?? String(e)); setRows([]); setLoading(false); return; }
+    setRows(((data ?? []) as any[]) as Contract[]);
+    setLoading(false);
+  }, [workspaceId, batchId]);
+
+  useEffect(() => { void load(); }, [load]);
+  return { rows, loading, error, reload: load };
+}
+
+/** The active brands of one client, for the task form's brand picker. */
+export function useClientBrands(clientId: string | null) {
+  const [brands, setBrands] = useState<{ id: string; brand_name: string }[]>([]);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      if (!clientId) { if (live) setBrands([]); return; }
+      const { data } = await createClient().from('client_brands')
+        .select('id, brand_name, status').eq('client_id', clientId).order('brand_name');
+      if (!live) return;
+      setBrands(((data ?? []) as any[])
+        .filter((b) => (b.status ?? 'active') === 'active')
+        .map((b) => ({ id: String(b.id), brand_name: String(b.brand_name ?? '') })));
+    })();
+    return () => { live = false; };
+  }, [clientId]);
+  return brands;
+}
+
 export function useContractSources(contract: Contract | null) {
   const [brands, setBrands] = useState<{ id: string; brand_name: string }[]>([]);
   const [banks, setBanks] = useState<VendorBankAccount[]>([]);

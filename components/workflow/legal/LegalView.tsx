@@ -3,6 +3,7 @@
 import type { WorkspaceRole } from '@/hooks/use-workflow';
 import { LegalDocuments } from '@/components/workflow/legal/LegalDocuments';
 import { LegalRegister } from '@/components/workflow/legal/LegalRegister';
+import { LegalTasks } from '@/components/workflow/legal/LegalTasks';
 
 /**
  * The Legal section shell.
@@ -19,8 +20,8 @@ export type LegalSection = 'matters' | 'documents' | 'register' | 'signatures';
 
 const COPY: Record<LegalSection, { blurb: string; soon: string }> = {
   matters: {
-    blurb: 'The case log: matters with their parties, timeline and deadlines.',
-    soon: 'Matters is on the roadmap after the document editor.',
+    blurb: 'One set of terms, one contract per vendor, for work with no campaign behind it.',
+    soon: 'Tasks are live - this copy is only reached if the section is rendered without the screen.',
   },
   documents: {
     blurb: 'Editable document templates and the shared clause library.',
@@ -41,6 +42,7 @@ export function LegalView({ section, workspaceId }: {
   workspaceId?: string;
   role?: WorkspaceRole | null;
 }) {
+  if (section === 'matters') return <LegalTasks workspaceId={workspaceId} />;
   if (section === 'documents') return <LegalDocuments workspaceId={workspaceId} />;
   if (section === 'register') return <LegalRegister workspaceId={workspaceId} />;
   const c = COPY[section];
