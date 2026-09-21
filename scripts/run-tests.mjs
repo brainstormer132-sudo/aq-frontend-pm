@@ -95,6 +95,7 @@ const LIBS = [
   'lib/legal-bulk.ts',
   'lib/legal-supersede.ts',
   'lib/legal-signed.ts',
+  'lib/legal-external.ts',
 ];
 
 const GREEN = '\x1b[32m';

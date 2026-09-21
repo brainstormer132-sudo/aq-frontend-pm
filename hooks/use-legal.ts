@@ -26,6 +26,10 @@ import type { SupersedeContract, SupersedeLinks } from '@/lib/legal-supersede';
 import {
   SIGNED_BUCKET, validateSignedFile, signedStoragePath, cannotFileSigned,
 } from '@/lib/legal-signed';
+import type { ExternalDoc } from '@/lib/legal-external';
+import {
+  validateExternalDoc, validateExternalFile, externalStoragePath,
+} from '@/lib/legal-external';
 import {
   validateSupersedeReason, correctionTitle, carriedValues, supersedeLinks,
 } from '@/lib/legal-supersede';
@@ -1429,4 +1433,127 @@ export async function signedCopyUrl(path: string, fileName?: string | null): Pro
     .storage.from(SIGNED_BUCKET)
     .createSignedUrl(path, 60, fileName ? { download: fileName } : undefined);
   return data?.signedUrl ?? null;
+}
+
+/* ===================================================================
+   AGREEMENTS THAT WERE NEVER MADE IN THIS APP (migration 118)
+   =================================================================== */
+
+/**
+ * The filed outside agreements for a workspace.
+ *
+ * Paged and ordered on a total order, like every other read on this screen:
+ * a filing cabinet that silently stops at a thousand is a filing cabinet
+ * nobody can trust to be complete, which is the only reason it exists.
+ *
+ * The ORDER is decided in lib/legal-external, not here. This read returns
+ * them newest first because that is a total order the database can give
+ * cheaply; sortExternal then puts whatever has expired at the top, which is
+ * a question about today and so belongs in a pure function that takes today
+ * as an argument.
+ */
+export function useExternalDocs(workspaceId: string | null) {
+  const [docs, setDocs] = useState<ExternalDoc[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setDocs([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const rows = await selectAllRows<ExternalDoc>('useExternalDocs', () =>
+      legal().from('external_doc')
+        .select('id, workspace_id, title, doc_kind, party_name, reference, signed_on, expires_on, notes, file_path, file_name, file_bytes, created_at')
+        .eq('workspace_id', workspaceId)
+        .order('created_at', { ascending: false })
+        .order('id'), (m) => setError(m));
+    setDocs(rows);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  /**
+   * File one. The ROW goes in first here, and that is the opposite of
+   * fileSignedCopy - deliberately.
+   *
+   * A signed counterpart hangs off a contract that already exists, so the
+   * bytes can go first and an orphaned object is the safe failure. An
+   * external document has no row until we make one, and its storage path is
+   * keyed BY that row's id - so the id has to exist before the file can be
+   * named. The insert therefore goes first with a placeholder path, then the
+   * upload, then the real path.
+   *
+   * If the upload fails, the half-made row is DELETED rather than left
+   * behind: the table's own rule is that the document is the record, and a
+   * row pointing at a file that was never written is exactly the thing that
+   * rule exists to prevent.
+   */
+  const file = useCallback(async (input: {
+    title: string; doc_kind: string; party_name?: string; reference?: string;
+    signed_on?: string | null; expires_on?: string | null; notes?: string;
+    fileObj: File;
+  }): Promise<string> => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const bad = validateExternalDoc(input) ?? validateExternalFile({
+      name: input.fileObj.name, size: input.fileObj.size,
+    });
+    if (bad) throw new Error(bad);
+
+    const sb = createClient() as unknown as SupabaseClient;
+    const { data: who } = await sb.auth.getUser();
+    const { data: row, error: e1 } = await legal().from('external_doc').insert({
+      workspace_id: workspaceId,
+      title: input.title.trim(),
+      doc_kind: input.doc_kind,
+      party_name: (input.party_name ?? '').trim(),
+      reference: (input.reference ?? '').trim() || null,
+      signed_on: input.signed_on || null,
+      expires_on: input.expires_on || null,
+      notes: (input.notes ?? '').trim(),
+      // A placeholder that satisfies the NOT NULL and the non-blank CHECK
+      // for the moment between the insert and the upload. It is replaced
+      // below, and the row is deleted if the upload fails, so nothing ever
+      // observes it.
+      file_path: 'pending', file_name: input.fileObj.name,
+      file_bytes: input.fileObj.size,
+      created_by: who?.user?.id ?? null,
+    }).select('id').single();
+    if (e1) throw e1;
+    const id = (row as any).id as string;
+
+    try {
+      const path = externalStoragePath(
+        workspaceId, id, input.fileObj.name,
+        (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).replace(/-/g, '').slice(0, 10),
+      );
+      const { error: eU } = await sb.storage.from(SIGNED_BUCKET).upload(path, input.fileObj, {
+        contentType: input.fileObj.type || 'application/octet-stream', upsert: false,
+      });
+      if (eU) throw new Error(`Could not upload the document: ${eU.message}`);
+      const { error: e2 } = await legal().from('external_doc')
+        .update({ file_path: path }).eq('id', id);
+      if (e2) throw e2;
+    } catch (err) {
+      await legal().from('external_doc').delete().eq('id', id);
+      throw err;
+    }
+    await load();
+    return id;
+  }, [workspaceId, load]);
+
+  /** Remove one, file and all. The row goes first for the same reason it does
+   *  on a signed copy: an unreferenced object nobody can reach is a better
+   *  failure than a row pointing at a file that has been deleted. */
+  const remove = useCallback(async (doc: ExternalDoc) => {
+    const { error: e } = await legal().from('external_doc').delete().eq('id', doc.id);
+    if (e) throw e;
+    const path = String(doc?.file_path ?? '');
+    if (path && path !== 'pending') {
+      await (createClient() as unknown as SupabaseClient)
+        .storage.from(SIGNED_BUCKET).remove([path]).catch(() => {});
+    }
+    await load();
+  }, [load]);
+
+  return { docs, loading, error, reload: load, file, remove };
 }
