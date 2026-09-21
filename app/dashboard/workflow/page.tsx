@@ -408,6 +408,7 @@ export default function WorkflowPage() {
         )}
 
         {view === 'legal-matters'    && canLegal && <LegalView section="matters"    workspaceId={workspace.id} role={role} />}
+        {view === 'legal-cases'      && canLegal && <LegalView section="cases"      workspaceId={workspace.id} role={role} />}
         {view === 'legal-documents'  && canLegal && <LegalView section="documents"  workspaceId={workspace.id} role={role} />}
         {view === 'legal-register'   && canLegal && <LegalView section="register"   workspaceId={workspace.id} role={role} />}
         {view === 'legal-signatures' && canLegal && <LegalView section="signatures" workspaceId={workspace.id} role={role} />}
@@ -589,6 +590,7 @@ function viewTitle(v: View) {
     : v === 'finance'  ? 'Finance'
     : v === 'team'     ? 'Team'
     : v === 'legal-matters'    ? 'Tasks'
+    : v === 'legal-cases'      ? 'Cases'
     : v === 'legal-documents'  ? 'Documents'
     : v === 'legal-register'   ? 'Register'
     : v === 'legal-signatures' ? 'Signatures'
@@ -610,6 +612,7 @@ function viewSubtitle(v: View) {
     : v === 'finance'   ? 'Generate and re-issue client quotations, created in Zoho.'
     : v === 'team'      ? 'Your profile, and everyone in this workspace.'
     : v === 'legal-matters'    ? 'One set of terms, one contract per vendor, for work with no campaign behind it.'
+    : v === 'legal-cases'      ? 'Overdue money on completed campaigns, and the matters raised from it.'
     : v === 'legal-documents'  ? 'Editable templates and the shared clause library.'
     : v === 'legal-register'   ? 'Every generated document, with its template version.'
     : v === 'legal-signatures' ? 'Out for signature, signed, and expiring.'

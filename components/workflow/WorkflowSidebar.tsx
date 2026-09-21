@@ -11,7 +11,7 @@ const COLLAPSED_KEY = 'aq_sidebar_collapsed';
 type View = 'dashboard' | 'inbox' | 'marketing-triage' | 'new-task' | 'all-tasks' | 'crm'
           | 'clients' | 'vendors' | 'vendor-performance' | 'tracking' | 'contracts' | 'data' | 'finance'
           | 'team' | 'settings'
-          | 'legal-matters' | 'legal-documents' | 'legal-register' | 'legal-signatures';
+          | 'legal-matters' | 'legal-cases' | 'legal-documents' | 'legal-register' | 'legal-signatures';
 
 interface NavItem {
   id: View;
@@ -71,6 +71,9 @@ const NAV: NavItem[] = [
   { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'], group: 'Admin' },
 
   { id: 'legal-matters',    label: 'Tasks',      icon: 'grid',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
+  // Cases - the Registry. Derived warnings from the money the app already
+  // knows about, and the matters somebody raised from them.
+  { id: 'legal-cases',      label: 'Cases',      icon: 'briefcase', visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-documents',  label: 'Documents',  icon: 'file',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-register',   label: 'Register',   icon: 'list',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-signatures', label: 'Signatures', icon: 'check', visibleTo: ['owner','admin','legal'], group: 'Legal' },

@@ -1,6 +1,7 @@
 'use client';
 
 import type { WorkspaceRole } from '@/hooks/use-workflow';
+import { LegalCases } from '@/components/workflow/legal/LegalCases';
 import { LegalDocuments } from '@/components/workflow/legal/LegalDocuments';
 import { LegalRegister } from '@/components/workflow/legal/LegalRegister';
 import { LegalTasks } from '@/components/workflow/legal/LegalTasks';
@@ -16,9 +17,13 @@ import { LegalTasks } from '@/components/workflow/legal/LegalTasks';
  * document editor) replace these empty states in Milestone 1.
  */
 
-export type LegalSection = 'matters' | 'documents' | 'register' | 'signatures';
+export type LegalSection = 'matters' | 'cases' | 'documents' | 'register' | 'signatures';
 
 const COPY: Record<LegalSection, { blurb: string; soon: string }> = {
+  cases: {
+    blurb: 'Disputes, unpaid money and lawsuits, with a status and a log.',
+    soon: 'Cases are live - this copy is only reached if the section is rendered without the screen.',
+  },
   matters: {
     blurb: 'One set of terms, one contract per vendor, for work with no campaign behind it.',
     soon: 'Tasks are live - this copy is only reached if the section is rendered without the screen.',
@@ -43,6 +48,7 @@ export function LegalView({ section, workspaceId }: {
   role?: WorkspaceRole | null;
 }) {
   if (section === 'matters') return <LegalTasks workspaceId={workspaceId} />;
+  if (section === 'cases') return <LegalCases workspaceId={workspaceId} />;
   if (section === 'documents') return <LegalDocuments workspaceId={workspaceId} />;
   if (section === 'register') return <LegalRegister workspaceId={workspaceId} />;
   const c = COPY[section];

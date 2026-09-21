@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
+import { selectAllRows } from '@/hooks/use-workflow';
 import type { VendorBankAccount } from '@/lib/legal-prefill';
 import { stampContractNumber } from '@/lib/legal-prefill';
 import type {
@@ -802,4 +803,190 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setVendor,
     reload: load, setValue, saveAll, issue, rename, toggleBlockOff,
   };
+}
+
+/* ===================================================================
+   The Legal Registry: matters, and their log.
+   Schema in supabase/migrations/113_legal_matters.sql; the rules that
+   decide how they read are in lib/legal-matters.ts.
+   =================================================================== */
+
+export interface MatterRow {
+  id: string;
+  workspace_id: string;
+  title: string;
+  party_type: 'client' | 'vendor';
+  client_id: string | null;
+  vendor_id: number | null;
+  party_name: string;
+  kind: string;
+  status: string;
+  amount: number | null;
+  pm_task_id: string | null;
+  contract_id: string | null;
+  source_key: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  outcome: string;
+}
+
+const MATTER_COLS = 'id, workspace_id, title, party_type, client_id, vendor_id, party_name, '
+  + 'kind, status, amount, pm_task_id, contract_id, source_key, opened_at, closed_at, outcome';
+
+/**
+ * Every matter in the workspace.
+ *
+ * Paged, unlike useContracts above, which still stops at a thousand: a matter
+ * carries a status somebody is meant to act on, and one that fell off the end
+ * of the first page would be a case nobody is working because the screen never
+ * mentioned it. The order ends in `id` because offset paging needs a total
+ * order - opened_at alone repeats, and two pages would overlap.
+ *
+ * `open` goes through legal.open_matter rather than an insert: the RPC is what
+ * enforces the party rules and writes the opening log entry, and its
+ * source_key is what stops the same derived warning being raised twice.
+ */
+export function useMatters(workspaceId: string | null) {
+  const [matters, setMatters] = useState<MatterRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setMatters([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const rows = await selectAllRows<any>(
+      'legal.matter',
+      () => legal().from('matter').select(MATTER_COLS)
+        .eq('workspace_id', workspaceId)
+        .order('opened_at', { ascending: false })
+        .order('id', { ascending: false }),
+      setError,
+    );
+    setMatters(rows.map((r) => ({
+      ...r,
+      amount: r.amount === null || r.amount === undefined ? null : Number(r.amount),
+    })) as MatterRow[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const open = useCallback(async (input: {
+    title: string;
+    partyType: 'client' | 'vendor';
+    partyName: string;
+    clientId?: string | null;
+    vendorId?: number | null;
+    kind?: string;
+    amount?: number | null;
+    pmTaskId?: string | null;
+    contractId?: string | null;
+    sourceKey?: string | null;
+  }): Promise<string> => {
+    if (!workspaceId) throw new Error('No workspace selected.');
+    const { data, error: e } = await legal().rpc('open_matter', {
+      p_workspace_id: workspaceId,
+      p_title: input.title.trim(),
+      p_party_type: input.partyType,
+      p_party_name: input.partyName.trim(),
+      p_client_id: input.clientId ?? null,
+      p_vendor_id: input.vendorId ?? null,
+      p_kind: input.kind ?? 'other',
+      p_amount: input.amount ?? null,
+      p_pm_task_id: input.pmTaskId ?? null,
+      p_contract_id: input.contractId ?? null,
+      p_source_key: input.sourceKey ?? null,
+    });
+    if (e) throw e;
+    await load();
+    return String(data);
+  }, [workspaceId, load]);
+
+  /**
+   * Move a matter along the ladder. A plain update, not an RPC: the status
+   * trail is a TRIGGER, so it holds however the row is changed, and closed_at
+   * is stamped and cleared there too rather than here.
+   */
+  const setStatus = useCallback(async (id: string, status: string, outcome?: string) => {
+    const patch: Record<string, unknown> = { status };
+    if (outcome !== undefined) patch.outcome = outcome;
+    const { error: e } = await legal().from('matter').update(patch).eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  const edit = useCallback(async (id: string, patch: {
+    title?: string; kind?: string; amount?: number | null;
+  }) => {
+    const { error: e } = await legal().from('matter').update(patch).eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  const remove = useCallback(async (id: string) => {
+    const { error: e } = await legal().from('matter').delete().eq('id', id);
+    if (e) throw e;
+    await load();
+  }, [load]);
+
+  return { matters, loading, error, reload: load, open, setStatus, edit, remove };
+}
+
+export interface MatterEventRow {
+  id: string;
+  at: string;
+  actor: string | null;
+  kind: string;
+  body: string;
+  from_status: string | null;
+  to_status: string | null;
+  amount: number | null;
+}
+
+/**
+ * One matter's log, newest first.
+ *
+ * Not paged: it is one case's history, and a case with a thousand entries is a
+ * different problem from a list that silently truncates. `log` goes through
+ * legal.log_matter_event, which refuses kind='status' - those are the
+ * trigger's, and a hand-written one would be a status change that never
+ * happened.
+ */
+export function useMatterEvents(matterId: string | null) {
+  const [events, setEvents] = useState<MatterEventRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!matterId) { setEvents([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const { data, error: e } = await legal().from('matter_event')
+      .select('id, at, actor, kind, body, from_status, to_status, amount')
+      .eq('matter_id', matterId)
+      .order('at', { ascending: false })
+      .order('id', { ascending: false });
+    if (e) { setError(e.message ?? String(e)); setEvents([]); setLoading(false); return; }
+    setEvents(((data ?? []) as any[]).map((r) => ({
+      ...r,
+      amount: r.amount === null || r.amount === undefined ? null : Number(r.amount),
+    })) as MatterEventRow[]);
+    setLoading(false);
+  }, [matterId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const log = useCallback(async (kind: string, body: string, amount?: number | null) => {
+    if (!matterId) throw new Error('No matter open.');
+    const { error: e } = await legal().rpc('log_matter_event', {
+      p_matter_id: matterId,
+      p_kind: kind,
+      p_body: body.trim(),
+      p_amount: amount ?? null,
+      p_at: null,
+    });
+    if (e) throw e;
+    await load();
+  }, [matterId, load]);
+
+  return { events, loading, error, reload: load, log };
 }
