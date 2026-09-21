@@ -15,6 +15,7 @@ import {
   sortMatters, mattersLine,
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle, searchMatters,
   legalKpis, kpiBadge,
+  isCollectionMatter, splitMatters, distinctParties,
 } from '../.test-build/legal-matters.js';
 
 let pass = 0, fail = 0;
@@ -376,57 +377,174 @@ eq('no party yet: just the kind', defaultMatterTitle('  ', 'content'), 'Content 
   eq('the order is left alone', searchMatters('e', ms).map((m) => m.id), ['a', 'b']);
 }
 
+/* -- collection is not a case, and a case is not collection --------- */
+//
+// His job description asks for both numbers, and they come out of one table.
+// If a matter could land in both, the two KPIs on his sheet would add up to
+// more work than exists - so the property worth protecting is that they
+// partition the open matters exactly.
+
+eq('a client who has not paid is collection',
+  isCollectionMatter({ kind: 'client_unpaid' }), true);
+// Money going OUT. A vendor chasing us is a dispute she manages, not a debt
+// she collects, and calling it collection would put it in both numbers.
+eq('a vendor we have not paid is NOT collection',
+  isCollectionMatter({ kind: 'vendor_unpaid' }), false);
+eq('a breach is not collection', isCollectionMatter({ kind: 'breach' }), false);
+eq('nor a rights dispute', isCollectionMatter({ kind: 'content' }), false);
+eq('nor other', isCollectionMatter({ kind: 'other' }), false);
+eq('a kind nobody recognises is a case, not collection',
+  isCollectionMatter({ kind: 'nonsense' }), false);
+eq('and so is a missing one', isCollectionMatter({}), false);
+
+{
+  const ms = [
+    matter({ id: 'a', kind: 'client_unpaid' }),
+    matter({ id: 'b', kind: 'vendor_unpaid' }),
+    matter({ id: 'c', kind: 'breach' }),
+    matter({ id: 'd', kind: 'client_unpaid' }),
+  ];
+  const sp = splitMatters(ms);
+  eq('collection is the unpaid clients', sp.collection.map((m) => m.id), ['a', 'd']);
+  eq('everything else is a case', sp.cases.map((m) => m.id), ['b', 'c']);
+  eq('nothing is in both', sp.collection.length + sp.cases.length, ms.length);
+  eq('the order inside each is the order it came in',
+    splitMatters([matter({ id: 'z', kind: 'breach' }), matter({ id: 'y', kind: 'breach' })])
+      .cases.map((m) => m.id), ['z', 'y']);
+  eq('splitting nothing is two empty lists',
+    splitMatters([]), { collection: [], cases: [] });
+}
+
+/* -- how many people, not how many rows ----------------------------- */
+//
+// Siraj asked for collection "both, side by side": four clients, nine cases.
+// One client owing on five campaigns is five rows and one phone call.
+
+eq('nobody is nobody', distinctParties([]), 0);
+eq('five matters against one client is one client', distinctParties([
+  matter({ id: '1', client_id: 'c1' }), matter({ id: '2', client_id: 'c1' }),
+  matter({ id: '3', client_id: 'c1' }), matter({ id: '4', client_id: 'c1' }),
+  matter({ id: '5', client_id: 'c1' }),
+]), 1);
+eq('two clients are two', distinctParties([
+  matter({ id: '1', client_id: 'c1' }), matter({ id: '2', client_id: 'c2' }),
+]), 2);
+// 113 sets client_id to null when the record is deleted and keeps the name,
+// which is the whole reason party_name is snapshotted.
+eq('a matter whose client record was deleted still counts as somebody',
+  distinctParties([matter({ id: '1', client_id: null, party_name: 'Almarai' })]), 1);
+eq('and two of them against the same name are one',
+  distinctParties([
+    matter({ id: '1', client_id: null, party_name: 'Almarai' }),
+    matter({ id: '2', client_id: null, party_name: 'almarai  ' }),
+  ]), 1);
+// The fold: one linked, one typed, same client. Counting these as two is the
+// bug this function exists to avoid.
+eq('a linked and a typed matter against the same client are one client',
+  distinctParties([
+    matter({ id: '1', client_id: 'c1', party_name: 'Almarai' }),
+    matter({ id: '2', client_id: null, party_name: 'Almarai' }),
+  ]), 1);
+eq('but a different name beside it is still its own', distinctParties([
+  matter({ id: '1', client_id: 'c1', party_name: 'Almarai' }),
+  matter({ id: '2', client_id: null, party_name: 'Almarai' }),
+  matter({ id: '3', client_id: null, party_name: 'Snap Inc' }),
+]), 2);
+// The side decides WHICH id is read; 113's CHECK says only one is meaningful.
+eq('vendors are counted on the vendor id', distinctParties([
+  matter({ id: '1', party_type: 'vendor', client_id: null, vendor_id: 7 }),
+  matter({ id: '2', party_type: 'vendor', client_id: null, vendor_id: 7 }),
+  matter({ id: '3', party_type: 'vendor', client_id: null, vendor_id: 8 }),
+]), 2);
+eq('a vendor id of zero is an id, not a missing one', distinctParties([
+  matter({ id: '1', party_type: 'vendor', client_id: null, vendor_id: 0, party_name: 'A' }),
+  matter({ id: '2', party_type: 'vendor', client_id: null, vendor_id: 0, party_name: 'B' }),
+]), 1);
+eq('a client and a vendor with the same name are two parties', distinctParties([
+  matter({ id: '1', party_type: 'client', client_id: 'c1', party_name: 'Adex' }),
+  matter({ id: '2', party_type: 'vendor', client_id: null, vendor_id: 1, party_name: 'Adex' }),
+]), 2);
+
 /* -- the KPI strip -------------------------------------------------- */
 
 const kpi = (o) => legalKpis({ contracts: [], matters: [], unhandled: 0, ...o });
 const val = (ks, k) => ks.find((x) => x.key === k).value;
 const note = (ks, k) => ks.find((x) => x.key === k).note;
 const tone = (ks, k) => ks.find((x) => x.key === k).tone;
+const second = (ks, k) => ks.find((x) => x.key === k).second;
 
-eq('four numbers, in this order', kpi({}).map((k) => k.key),
-  ['issued', 'signed', 'disputes', 'unchased']);
-eq('an empty workspace is all zeros', kpi({}).map((k) => k.value), [0, 0, 0, 0]);
+// His three, plus the one that says what to do next.
+eq('five numbers, in this order', kpi({}).map((k) => k.key),
+  ['issued', 'signed', 'collection', 'cases', 'unchased']);
+eq('an empty workspace is all zeros', kpi({}).map((k) => k.value), [0, 0, 0, 0, 0]);
 eq('every KPI has a label', kpi({}).filter((k) => !k.label).length, 0);
 
 {
   const contracts = [{ status: 'issued' }, { status: 'issued' }, { status: 'draft' },
     { status: 'signed' }, { status: 'void' }];
   const ks = kpi({ contracts });
-  eq('issued counts only issued', val(ks, 'issued'), 2);
+  // A signed contract was ISSUED. Counting only status='issued' made this
+  // number go DOWN when a contract came back - see the header.
+  eq('issued counts everything that left draft', val(ks, 'issued'), 3);
   eq('signed counts only signed', val(ks, 'signed'), 1);
   eq('drafts are a note, not a number of their own', note(ks, 'issued'), '1 still a draft');
-  eq('a void contract is in no count', val(ks, 'issued') + val(ks, 'signed'), 3);
+  eq('and the signed note says how many are still out', note(ks, 'signed'), '2 still out');
 }
+// The regression, stated as the thing it was: three contracts out, all three
+// signed, and "how many documents issued" used to read zero.
+eq('all of them signed still reads as three issued',
+  val(kpi({ contracts: [{ status: 'signed' }, { status: 'signed' }, { status: 'signed' }] }), 'issued'), 3);
+eq('and says they all came back',
+  note(kpi({ contracts: [{ status: 'signed' }] }), 'signed'), 'all of them came back');
+eq('nothing issued says so rather than nothing', note(kpi({}), 'signed'), 'nothing issued yet');
+eq('a void contract is in no count',
+  val(kpi({ contracts: [{ status: 'void' }] }), 'issued'), 0);
 eq('status is matched case-insensitively', val(kpi({ contracts: [{ status: 'ISSUED' }] }), 'issued'), 1);
 eq('a contract with no status counts as nothing',
-  kpi({ contracts: [{ status: null }, {}] }).map((k) => k.value), [0, 0, 0, 0]);
-
-// Said out loud rather than hidden: nothing sets 'signed' yet, and a KPI that
-// silently reads 0 looks like a number nobody needs.
-eq('zero signed against issued contracts says why',
-  note(kpi({ contracts: [{ status: 'issued' }] }), 'signed'), 'not tracked yet - signing is not built');
-eq('and it does not say that when there is nothing issued either',
-  note(kpi({}), 'signed'), 'returned and recorded');
+  kpi({ contracts: [{ status: null }, {}] }).map((k) => k.value), [0, 0, 0, 0, 0]);
 
 {
-  const ms = [matter({ status: 'open' }), matter({ status: 'filed' }),
-    matter({ status: 'won', closed_at: '2026-01-01' })];
+  // Four unpaid campaigns across two clients, one breach, one closed.
+  const ms = [
+    matter({ id: '1', kind: 'client_unpaid', client_id: 'c1' }),
+    matter({ id: '2', kind: 'client_unpaid', client_id: 'c1' }),
+    matter({ id: '3', kind: 'client_unpaid', client_id: 'c2' }),
+    matter({ id: '4', kind: 'breach', client_id: 'c3', status: 'filed' }),
+    matter({ id: '5', kind: 'client_unpaid', client_id: 'c4', status: 'won', closed_at: '2026-02-01' }),
+  ];
   const ks = kpi({ matters: ms });
-  eq('disputes counts the open ones only', val(ks, 'disputes'), 2);
-  eq('and calls out the ones in court', note(ks, 'disputes'), '1 in court');
-  eq('a lawsuit makes it read as bad', tone(ks, 'disputes'), 'bad');
+  eq('collection counts the clients', val(ks, 'collection'), 2);
+  eq('and the cases beside them', second(ks, 'collection').value, 3);
+  eq('the units are written out', [ks[2].unit, second(ks, 'collection').label], ['clients', 'cases']);
+  eq('cases counts what is not collection', val(ks, 'cases'), 1);
+  eq('and calls out the ones in court', note(ks, 'cases'), '1 in court');
+  eq('a lawsuit makes it read as bad', tone(ks, 'cases'), 'bad');
+  // THE PROPERTY: every open matter is in exactly one of the two.
+  eq('collection cases and legal cases account for every open matter',
+    second(ks, 'collection').value + val(ks, 'cases'), 4);
+  eq('a closed matter is in neither', val(ks, 'collection') + val(ks, 'cases'), 3);
 }
+eq('one client reads in the singular',
+  kpi({ matters: [matter({ kind: 'client_unpaid', client_id: 'c1' })] })[2].unit, 'client');
+eq('and one case does too',
+  second(kpi({ matters: [matter({ kind: 'client_unpaid', client_id: 'c1' })] }), 'collection').label, 'case');
+eq('an unpaid vendor is a case, not collection',
+  [val(kpi({ matters: [matter({ kind: 'vendor_unpaid', party_type: 'vendor' })] }), 'collection'),
+    val(kpi({ matters: [matter({ kind: 'vendor_unpaid', party_type: 'vendor' })] }), 'cases')], [0, 1]);
 eq('open but nothing filed reads as a warning',
-  tone(kpi({ matters: [matter({ status: 'warned' })] }), 'disputes'), 'warn');
-eq('nothing open reads as good', tone(kpi({}), 'disputes'), 'good');
-eq('a closed matter is not a dispute',
-  val(kpi({ matters: [matter({ status: 'lost', closed_at: '2026-02-01' })] }), 'disputes'), 0);
+  tone(kpi({ matters: [matter({ kind: 'breach', status: 'warned' })] }), 'cases'), 'warn');
+eq('nothing open reads as good', tone(kpi({}), 'cases'), 'good');
+eq('nobody in collection reads as good', tone(kpi({}), 'collection'), 'good');
+eq('and says so rather than leaving a bare zero',
+  note(kpi({}), 'collection'), 'nobody owes us on an open matter');
 
 eq('unchased carries the unhandled count', val(kpi({ unhandled: 7 }), 'unchased'), 7);
 eq('and never goes negative', val(kpi({ unhandled: -3 }), 'unchased'), 0);
 eq('nothing unchased reads as good', tone(kpi({ unhandled: 0 }), 'unchased'), 'good');
-eq('something unchased says nobody has raised it',
-  note(kpi({ unhandled: 2 }), 'unchased'), 'no matter raised yet');
+// It is not a subset of Collection: these have no matter at all, and raising
+// one moves the number from here to there.
+eq('something unchased says no matter has been raised',
+  note(kpi({ unhandled: 2 }), 'unchased'), 'overdue with no matter raised');
 
 // The screen holds no colour logic of its own.
 eq('bad is the error badge', kpiBadge('bad'), 'aq-badge-error');

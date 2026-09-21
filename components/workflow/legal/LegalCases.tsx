@@ -11,7 +11,7 @@ import {
   matterStatusLabel, matterStatusBadge, matterClosed, matterKindLabel, eventKindLabel,
   matterWarnings, warningsLine, sortMatters, mattersLine, searchMatters,
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle,
-  legalKpis, kpiBadge, unhandledCount,
+  legalKpis, kpiBadge, unhandledCount, splitMatters,
   type MatterSide, type MatterWarning, type PartyOption, type NewMatterDraft,
 } from '@/lib/legal-matters';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -37,15 +37,32 @@ import { AqDrawingBlock } from '@/components/AQLoading';
  *
  * -- ONE MEMO, KEYED ON THE SIDE -------------------------------------
  *
- * The side, its warnings, its matters and both header lines come out of ONE
- * useMemo, and the body is keyed on the side so switching rebuilds it rather
- * than patching it. This is the Collection-header-over-Liability-rows bug from
- * the Data view, and it would be worse here: a client's name over a vendor's
+ * The side, its warnings and its header line come out of ONE useMemo, and
+ * that section is keyed on the side so switching rebuilds it rather than
+ * patching it. This is the Collection-header-over-Liability-rows bug from the
+ * Data view, and it would be worse here: a client's name over a vendor's
  * debt, on the screen that decides who gets a lawyer's letter.
+ *
+ * -- THE TWO CHECKLISTS DO NOT MOVE WITH THE TAB ---------------------
+ *
+ * Siraj's checklists, written out with the job description:
+ *
+ *   1. signed contracts   -> the Signatures screen
+ *   2. legal cases        -> here
+ *   3. collection         -> here
+ *
+ * Those are two topics, not two sides of the money, so the matter lists below
+ * span BOTH sides and do not change when the tab does. A vendor chasing us is
+ * a case; a client who has not paid is collection; the tab decides which
+ * ledger to read for the warnings and nothing else. Same reasoning as the KPI
+ * strip - a list that changes when you press a tab is a list nobody trusts
+ * to be the whole of anything.
  */
 
 /** Warnings shown before folding the rest into a counted line. */
 const SHOW_WARNINGS = 5;
+/** Matters rendered per checklist, per the rule every list here follows. */
+const SHOW_MATTERS = 200;
 
 export function LegalCases({ workspaceId }: { workspaceId?: string }) {
   const { rows, loading: rowsLoading } = useDashboardRows(workspaceId ?? null);
@@ -73,7 +90,10 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
   const [today, setToday] = useState<string | null>(null);
   useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
 
-  useEffect(() => { setShowAll(false); setFormErr(''); setQ(''); }, [side]);
+  // The search box is NOT cleared here any more: it filters the two
+  // checklists, which span both sides, so clearing it on a tab press would
+  // throw away a search that still applies.
+  useEffect(() => { setShowAll(false); setFormErr(''); }, [side]);
 
   /**
    * The parties this side can be against. Built once from the lists already on
@@ -134,34 +154,57 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
         subtasks: scoped.subtasks, parents: scoped.parents,
         vendorName: vendorNames, today: today ?? undefined,
       });
-    const mine = matters.filter((m) => m.party_type === side);
-    const handled = new Set(mine.map((m) => m.source_key).filter(Boolean) as string[]);
+    // Only this side's matters can suppress this side's warnings: the key is
+    // `client:<task>` or `vendor:<task>`, so a vendor matter never hides a
+    // client warning even when both are about the same campaign.
+    const handled = new Set(matters
+      .filter((m) => m.party_type === side)
+      .map((m) => m.source_key).filter(Boolean) as string[]);
     return {
       side,
       warnings: matterWarnings({ rows: ledger, side, party: partyIds, handled }),
-      sorted: sortMatters(mine) as MatterRow[],
-      mine,
     };
   }, [side, scoped, clientNames, vendorNames, clientTerms, today, matters, partyIds]);
 
   /**
-   * What is on the screen. Everything still comes from ONE object, so the
-   * header and the rows under it cannot be about different sides - the split
-   * above changed what is recomputed, not that invariant.
+   * The warnings half. Still ONE object, so the header and the rows under it
+   * cannot be about different sides - the split above changed what is
+   * recomputed, not that invariant.
    */
   const view = useMemo(() => ({
     side: base.side,
     warnings: base.warnings,
     warningsLine: warningsLine(base.warnings, base.side),
-    // Sorted first, then filtered: searching narrows the list, it does not
-    // re-rank it, so a matter does not jump away from where it just was.
-    matters: searchMatters(q, base.sorted),
-    // The line counts ALL of this side's matters, not the search result -
-    // "1 open" under a filtered list would be a different number every
-    // keystroke and none of them the answer to "how many are open".
-    mattersLine: mattersLine(base.mine),
-    total: base.mine.length,
-  }), [base, q]);
+  }), [base]);
+
+  /**
+   * The two checklists. Sorted ONCE over everything and split after, so a
+   * matter is in exactly one of them and both are in the same order.
+   *
+   * The header lines count ALL of each list, never the search result: "1
+   * open" under a filtered list would be a different number every keystroke
+   * and none of them the answer to "how many are open".
+   */
+  const lists = useMemo(() => {
+    const sorted = sortMatters(matters) as MatterRow[];
+    const { collection, cases } = splitMatters(sorted);
+    return {
+      collection, cases,
+      collectionLine: mattersLine(collection),
+      casesLine: mattersLine(cases),
+      total: matters.length,
+    };
+  }, [matters]);
+
+  /**
+   * Searching narrows the lists, it does not re-rank them, so a matter does
+   * not jump away from where it just was. Kept out of the memo above so a
+   * keystroke filters two arrays instead of re-sorting and re-splitting them.
+   */
+  const found = useMemo(() => ({
+    collection: searchMatters(q, lists.collection),
+    cases: searchMatters(q, lists.cases),
+  }), [lists, q]);
 
   /**
    * The strip across the top. Siraj: "you need a dashboard to understand the
@@ -237,6 +280,15 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
           onClick={() => setSide('client')}>Clients</button>
         <button className={`aq-btn ${side === 'vendor' ? 'aq-btn-primary' : 'aq-btn-ghost'}`}
           onClick={() => setSide('vendor')}>Vendors</button>
+        <span style={{ flex: 1, minWidth: 0 }} />
+        {/* Lives up here beside the toggle, because the toggle is what says
+            which side the new matter is against - the form's own title says
+            it again. The lists below span both sides and so have no side of
+            their own to raise one from. */}
+        <button className="aq-btn aq-btn-primary"
+          onClick={() => { setRaising(true); setFormErr(''); }}>
+          New matter
+        </button>
       </div>
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
@@ -250,9 +302,22 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
                 flex: '1 1 160px', minWidth: 0, padding: '16px 18px',
                 borderInlineStart: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
               }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1 }}>{k.value}</span>
-                  <span className={`aq-badge ${kpiBadge(k.tone)}`} style={{ fontSize: 10 }}>{k.label}</span>
+                  {k.unit && (
+                    <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{k.unit}</span>
+                  )}
+                  {/* "4 clients / 9 cases" - Siraj, asked which of the two
+                      collection should count: "Both, side by side." */}
+                  {k.second && (
+                    <>
+                      <span style={{ fontSize: 16, color: 'var(--aq-text-muted)' }}>/</span>
+                      <span style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1 }}>{k.second.value}</span>
+                      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{k.second.label}</span>
+                    </>
+                  )}
+                  <span className={`aq-badge ${kpiBadge(k.tone)}`}
+                    style={{ fontSize: 10, marginInlineStart: 2 }}>{k.label}</span>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 6 }}>{k.note}</div>
               </li>
@@ -264,10 +329,10 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
       {loading ? (
         <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Reading the ledger\u2026'} /></div>
       ) : (
-        // Keyed on the side: switching rebuilds this, it does not patch it.
-        <div key={view.side} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-          <section className="aq-card" style={{ padding: 18 }}>
+        <>
+          {/* Keyed on the side: switching rebuilds this, it does not patch
+              it. Only this section depends on the side now. */}
+          <section key={view.side} className="aq-card" style={{ padding: 18 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700 }}>What the app noticed</h3>
             <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>
               {view.warningsLine}
@@ -304,53 +369,32 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
             )}
           </section>
 
-          <section className="aq-card" style={{ padding: 18 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <h3 style={{ fontSize: 15, fontWeight: 700 }}>Matters</h3>
-                <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 4 }}>{view.mattersLine}</p>
-              </div>
-              <button className="aq-btn aq-btn-primary" onClick={() => { setRaising(true); setFormErr(''); }}>
-                New matter
-              </button>
-            </div>
-            {/* The search box appears once there is enough to search. */}
-            {view.total > SHOW_WARNINGS && (
-              <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
-                placeholder="Search matters by name, title or status"
-                style={{ width: '100%', marginTop: 12 }} />
-            )}
-            {q && view.matters.length === 0 && (
-              <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 12 }}>
-                Nothing matches {'\u201c'}{q}{'\u201d'}.
-              </p>
-            )}
-            {view.matters.length > 0 && (
-              <ul style={{ listStyle: 'none', marginTop: 12 }}>
-                {view.matters.map((m, i) => (
-                  <li key={m.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
-                    borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
-                    opacity: matterClosed(m.status) ? 0.6 : 1,
-                  }}>
-                    <span role="button" tabIndex={0} onClick={() => setOpenId(m.id)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(m.id); } }}
-                      style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
-                      <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{m.title}</span>
-                      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                        {m.party_name} {'\u00b7'} {matterKindLabel(m.kind)}
-                        {m.amount ? <> {'\u00b7'} SAR {money(m.amount)}</> : null}
-                      </span>
-                    </span>
-                    <span className={`aq-badge ${matterStatusBadge(m.status)}`}>{matterStatusLabel(m.status)}</span>
-                    <span role="button" tabIndex={0} onClick={() => setOpenId(m.id)}
-                      style={{ fontSize: 14, color: 'var(--aq-text-muted)', cursor: 'pointer' }}>&rsaquo;</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
+          {/* One search box over both checklists: they are one table split in
+              two, and two boxes would mean typing a name twice to find out
+              which of the two it is in. */}
+          {lists.total > SHOW_WARNINGS && (
+            <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="Search every matter by name, title or status"
+              style={{ width: '100%' }} />
+          )}
+
+          <MatterList
+            title="Collection"
+            blurb="Clients who have not paid. Money coming in."
+            line={lists.collectionLine}
+            matters={found.collection}
+            filtered={!!q}
+            onOpen={setOpenId}
+          />
+          <MatterList
+            title="Legal cases"
+            blurb="Everything that is not somebody owing us - a breach, a rights dispute, a vendor chasing us."
+            line={lists.casesLine}
+            matters={found.cases}
+            filtered={!!q}
+            onOpen={setOpenId}
+          />
+        </>
       )}
 
       {raising && (
@@ -371,6 +415,73 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * One checklist: Collection, or Cases.
+ *
+ * The same component twice rather than two copies of the same twenty rows,
+ * because the day the two drift is the day one of them is missing the status
+ * pill and nobody notices for a month.
+ *
+ * Rendering is capped at SHOW_MATTERS and says so when it bites. Four
+ * thousand vendors came in from Asana and the ledger screens have already
+ * been frozen once by a list that rendered all of something; a registry is
+ * the last place to repeat it.
+ */
+function MatterList({ title, blurb, line, matters, filtered, onOpen }: {
+  title: string;
+  blurb: string;
+  line: string;
+  matters: MatterRow[];
+  filtered: boolean;
+  onOpen: (id: string) => void;
+}) {
+  const shown = matters.slice(0, SHOW_MATTERS);
+  return (
+    <section className="aq-card" style={{ padding: 18 }}>
+      <h3 style={{ fontSize: 15, fontWeight: 700 }}>{title}</h3>
+      <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>{blurb}</p>
+      <p style={{ fontSize: 13, color: 'var(--aq-text-secondary)', marginTop: 6 }}>{line}</p>
+
+      {matters.length === 0 && filtered && (
+        <p style={{ fontSize: 13, color: 'var(--aq-text-muted)', marginTop: 12 }}>
+          Nothing here matches that.
+        </p>
+      )}
+
+      {shown.length > 0 && (
+        <ul style={{ listStyle: 'none', marginTop: 12 }}>
+          {shown.map((m, i) => (
+            <li key={m.id} style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
+              borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+              opacity: matterClosed(m.status) ? 0.6 : 1,
+            }}>
+              <span role="button" tabIndex={0} onClick={() => onOpen(m.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(m.id); } }}
+                style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
+                <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{m.title}</span>
+                <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                  {m.party_name} {'\u00b7'} {matterKindLabel(m.kind)}
+                  {m.amount ? <> {'\u00b7'} SAR {money(m.amount)}</> : null}
+                </span>
+              </span>
+              <span className={`aq-badge ${matterStatusBadge(m.status)}`}>{matterStatusLabel(m.status)}</span>
+              <span role="button" tabIndex={0} onClick={() => onOpen(m.id)}
+                style={{ fontSize: 14, color: 'var(--aq-text-muted)', cursor: 'pointer' }}>&rsaquo;</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {matters.length > SHOW_MATTERS && (
+        <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 10 }}>
+          Showing {SHOW_MATTERS} of {matters.length}. Search to narrow it.
+        </p>
+      )}
+    </section>
   );
 }
 

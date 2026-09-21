@@ -171,7 +171,14 @@ export interface SignedTally {
   awaiting: number;
 }
 
-export function signedTally(contracts: SignedContract[]): SignedTally {
+/**
+ * Takes anything with a status rather than a whole SignedContract, because
+ * that is all it reads - and because the Cases KPI strip counts the same two
+ * numbers from a read that fetches the status and nothing else. Narrowing the
+ * parameter to what is actually used is what lets ONE definition of "issued"
+ * serve both screens; the alternative is a second count somewhere that drifts.
+ */
+export function signedTally(contracts: { status?: string | null }[]): SignedTally {
   let issued = 0;
   let signed = 0;
   for (const c of contracts ?? []) {

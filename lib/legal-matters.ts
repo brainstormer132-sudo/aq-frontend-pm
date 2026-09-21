@@ -21,6 +21,7 @@
 // Relative, not '@/lib/...': scripts/run-tests.mjs compiles lib/*.ts with
 // bare tsc and no tsconfig, so the path alias does not exist there.
 import type { LedgerRow } from './money-ledger';
+import { signedTally } from './legal-signed';
 
 /** Which side of the money a matter is about. */
 export type MatterSide = 'client' | 'vendor';
@@ -79,6 +80,83 @@ export const MATTER_KINDS: { key: string; label: string }[] = [
 
 export function matterKindLabel(k: string | null | undefined): string {
   return MATTER_KINDS.find((x) => x.key === k)?.label ?? 'Other';
+}
+
+/* -- collection, and everything else ----------------------------------- */
+
+/**
+ * Which kinds are COLLECTION: money somebody owes us and has not paid.
+ *
+ * Siraj's job description gives legal three things to count, and two of them
+ * are answered out of this one table:
+ *
+ *   2. how much clients Im handling their collection case
+ *   3. how many legal cases Im handling
+ *
+ * If a matter could be both, those two numbers would add up to more work than
+ * exists, and the sheet they go on would be wrong in the direction that
+ * flatters. So a matter is one or the other, never both, and collection plus
+ * cases equals the number of open matters exactly - which is a property the
+ * suite checks rather than a claim in a comment.
+ *
+ * `client_unpaid` only. A VENDOR we have not paid is money going out, so it
+ * is not collection by any reading of the word - it is a dispute somebody
+ * has with us, which is a case she manages. Collection is what comes in.
+ */
+export const COLLECTION_KINDS: string[] = ['client_unpaid'];
+
+export function isCollectionMatter(m: { kind?: string | null }): boolean {
+  return COLLECTION_KINDS.includes(String(m?.kind ?? ''));
+}
+
+export interface MatterSplit<T> {
+  collection: T[];
+  cases: T[];
+}
+
+/**
+ * The two checklists, from one pass. Order inside each is whatever order came
+ * in, so the caller sorts once and splits after. Pure.
+ */
+export function splitMatters<T extends MatterLite>(ms: T[]): MatterSplit<T> {
+  const collection: T[] = [];
+  const cases: T[] = [];
+  for (const m of ms ?? []) {
+    if (isCollectionMatter(m)) collection.push(m); else cases.push(m);
+  }
+  return { collection, cases };
+}
+
+/**
+ * How many different people these matters are against.
+ *
+ * Siraj asked for the collection number "both, side by side" - four clients,
+ * nine cases - because one client can owe on five campaigns and five rows is
+ * not five clients.
+ *
+ * Keyed on the party's ID where the matter carries one, and on the NAME where
+ * it does not, because a matter whose client record was deleted still names
+ * them (113 snapshots party_name for exactly this reason). A name that an
+ * id-carrying matter already covers is folded into it, so one linked and one
+ * typed matter against the same client count as one client rather than two.
+ *
+ * The one case it gets wrong is a client renamed between two matters with no
+ * id on either, which reads as two. That is the safe direction for a number
+ * somebody is about to chase. Pure.
+ */
+export function distinctParties(ms: MatterLite[]): number {
+  const byId = new Map<string, string>();
+  const byName = new Set<string>();
+  for (const m of ms ?? []) {
+    const name = String(m?.party_name ?? '').trim().toLowerCase();
+    const id = String(m?.party_type ?? '') === 'vendor'
+      ? (m?.vendor_id === null || m?.vendor_id === undefined ? '' : `v:${m.vendor_id}`)
+      : (m?.client_id ? `c:${m.client_id}` : '');
+    if (id) byId.set(id, name);
+    else if (name) byName.add(name);
+  }
+  for (const n of byId.values()) byName.delete(n);
+  return byId.size + byName.size;
 }
 
 /** The log entry kinds a person can write. `status` is the trigger's, not theirs. */
@@ -224,6 +302,11 @@ export interface MatterLite {
   id: string;
   title: string;
   party_type: string;
+  // Both nullable and both optional: 113 sets them ON DELETE SET NULL so a
+  // matter outlives the record it was against, and party_name still names
+  // them. distinctParties reads these first and falls back to the name.
+  client_id?: string | null;
+  vendor_id?: number | null;
   party_name: string;
   kind: string;
   status: string;
@@ -392,9 +475,31 @@ export function searchMatters<T extends MatterLite>(query: string, ms: T[]): T[]
  * belongs: "no it should be within the cases log."
  *
  * So there is no second dashboard. The Cases screen already knows what is
- * owed and what is being chased; these are the four numbers that were missing
- * beside them - how many contracts went out, how many came back, what is
- * still a draft, and what got cancelled.
+ * owed and what is being chased; these are the numbers that were missing
+ * beside them. They are HIS list, written out with the job description:
+ *
+ *   1. how many legal documents issued   -> issued, and signed beside it
+ *   2. how much clients Im handling their collection case -> collection
+ *   3. how many legal cases Im handling  -> cases
+ *
+ * plus the one that says what to do next: overdue money nobody has raised a
+ * matter for.
+ *
+ * -- TWO THINGS THAT WERE WRONG BEFORE -------------------------------
+ *
+ * ONE NUMBER FOR TWO QUESTIONS. There used to be a single "Open disputes"
+ * counting every open matter. His 2 and 3 both come out of that table, so
+ * every unpaid client was in both answers and the two KPIs summed to more
+ * work than exists. They are split on the kind now, and the suite checks that
+ * the two counts add back up to the open matters exactly.
+ *
+ * "ISSUED" WENT DOWN WHEN A CONTRACT CAME BACK. It counted status='issued'
+ * only, which was a fine proxy right up until 117 made `signed` a status the
+ * app actually writes - after which filing the counterpart moved a contract
+ * out of the issued count. Three contracts out, all three signed, and the
+ * answer to "how many documents issued" read ZERO. It now uses signedTally,
+ * the same definition the Signatures screen counts with, so the two screens
+ * cannot disagree.
  *
  * A KPI here is a COUNT OF ROWS, not a rate or a trend. A rate needs a period
  * and a denominator, and every one of those is an argument waiting to happen
@@ -405,6 +510,15 @@ export interface LegalKpi {
   key: string;
   label: string;
   value: number;
+  /** What the value counts, when the label does not already say. */
+  unit?: string;
+  /**
+   * A second number beside the first - "4 clients / 9 cases". Siraj, asked
+   * whether collection should count clients or cases: "Both, side by side."
+   * One of them alone is a half-answer, and which half depends on whether
+   * you are asking how much work it is or how many people to call.
+   */
+  second?: { value: number; label: string };
   /** A line under the number, when the number alone would mislead. */
   note: string;
   tone: 'plain' | 'good' | 'warn' | 'bad';
@@ -416,11 +530,12 @@ export interface ContractLite { status: string }
 /**
  * The strip across the top of Cases.
  *
- * `signed` is shown even while it is always zero, and says so. Nothing in the
- * app sets legal.contract.status to 'signed' yet - the column has allowed it
- * since migration 100 and no code has ever written it. A KPI that is missing
- * from the screen looks like a number nobody needs; a KPI that reads "0, not
- * tracked yet" is a piece of work somebody can see is outstanding. Pure.
+ * Counted over EVERYTHING, never over the tab that happens to be showing: a
+ * number that changes when you press a tab is a number nobody trusts.
+ *
+ * A VOID contract is in no count. It was issued and then pulled, and adding
+ * it back to "documents issued" would make the number go up when a document
+ * is cancelled. Pure.
  */
 export function legalKpis(input: {
   contracts: ContractLite[];
@@ -428,34 +543,54 @@ export function legalKpis(input: {
   /** Unhandled warnings across both sides - what nobody has acted on. */
   unhandled: number;
 }): LegalKpi[] {
-  const by = (s: string) => (input.contracts ?? []).filter(
-    (c) => String(c?.status ?? '').toLowerCase() === s).length;
-  const issued = by('issued');
-  const signed = by('signed');
-  const draft = by('draft');
+  const draft = (input.contracts ?? []).filter(
+    (c) => String(c?.status ?? '').toLowerCase() === 'draft').length;
+  // ONE definition, shared with the Signatures screen. `issued` counts the
+  // signed ones too, because a signed contract was issued - see the header.
+  const { issued, signed, awaiting } = signedTally(input.contracts ?? []);
+
   const open = (input.matters ?? []).filter((m) => !matterClosed(m.status));
-  const filed = open.filter((m) => m.status === 'filed').length;
+  const { collection, cases } = splitMatters(open);
+  const filed = cases.filter((m) => m.status === 'filed').length;
+  const clients = distinctParties(collection);
 
   return [
     {
-      key: 'issued', label: 'Contracts issued', value: issued, tone: 'plain',
+      key: 'issued', label: 'Documents issued', value: issued, tone: 'plain',
       note: draft ? `${draft} still a draft` : 'none waiting as a draft',
     },
     {
       key: 'signed', label: 'Signed', value: signed, tone: signed ? 'good' : 'plain',
-      // Said out loud rather than hidden: the number is right, the tracking is
-      // what is missing.
-      note: signed === 0 && issued > 0 ? 'not tracked yet - signing is not built' : 'returned and recorded',
+      note: awaiting ? `${awaiting} still out`
+        : issued ? 'all of them came back' : 'nothing issued yet',
     },
     {
-      key: 'disputes', label: 'Open disputes', value: open.length,
-      tone: filed ? 'bad' : open.length ? 'warn' : 'good',
-      note: filed ? `${filed} in court` : open.length ? 'none in court' : 'nothing open',
+      key: 'collection', label: 'Collection', value: clients,
+      unit: clients === 1 ? 'client' : 'clients',
+      second: {
+        value: collection.length,
+        label: collection.length === 1 ? 'case' : 'cases',
+      },
+      tone: collection.length ? 'warn' : 'good',
+      // Named with the slice, per his own rule. "Collection: 4" invites the
+      // question this answers - four of what, on which side of the money.
+      note: collection.length ? 'clients who have not paid' : 'nobody owes us on an open matter',
+    },
+    {
+      key: 'cases', label: 'Legal cases', value: cases.length,
+      tone: filed ? 'bad' : cases.length ? 'warn' : 'good',
+      // Everything that is not somebody owing us: a breach, a rights
+      // dispute, a vendor chasing US. Said here because "cases" on its own
+      // sounds like it should include the collection ones.
+      note: filed ? `${filed} in court` : cases.length ? 'none in court' : 'nothing open',
     },
     {
       key: 'unchased', label: 'Overdue, nobody on it', value: Math.max(0, input.unhandled),
       tone: input.unhandled ? 'warn' : 'good',
-      note: input.unhandled ? 'no matter raised yet' : 'all overdue money is being chased',
+      // Not a subset of Collection and not an overlap with it: these are
+      // overdue campaigns with NO matter raised. The moment one is raised it
+      // leaves this number and joins that one.
+      note: input.unhandled ? 'overdue with no matter raised' : 'all overdue money is being chased',
     },
   ];
 }
