@@ -598,3 +598,160 @@ export function ugcPrefillGaps(p: UgcPrefill): string[] {
 export function isEmptyTableRow(row: Record<string, string>): boolean {
   return UGC_TABLE_COLUMN_KEYS.every((k) => !txt(row[k]));
 }
+
+/* ===================================================================
+   HOW MANY OF EACH AD TYPE
+   -------------------------------------------------------------------
+   Siraj: "I need a quantity with the ad type."
+
+   The format is not new. `adTypeSummary` in lib/ad-lines has always
+   produced "6 \u00d7 Home Ad, 6 \u00d7 Store Visit, 3 \u00d7 Reminder" and
+   fetchBookingPrefill has always written it into the contract's ad_types
+   field, so a contract raised from a booking with ad lines already prints
+   the counts. Two things were missing and one was broken:
+
+     * a contract raised in the REGISTER, or from a booking with no ad
+       lines, had no way to say "three reels" - the picker offered a tick
+       box per type and nothing else;
+     * and the picker could not READ the quantified form back. It splits on
+       the comma and matches each piece against the list of ad types, so
+       "6 \u00d7 Home Ad" matched nothing: every quantified value fell into the
+       "Other" free-text box with NO BOX TICKED.
+
+   That second one is a live bug, not a missing feature. Reproduced against
+   the real functions before any of this was written:
+
+     stored          "6 \u00d7 Home Ad, 3 \u00d7 Reminder"
+     ticked boxes    none
+     in "Other"      the whole string
+
+   So the screen tells her nothing is selected. If she then ticks Home Ad -
+   which looks unticked - she gets "Home Ad, 6 \u00d7 Home Ad, 3 \u00d7 Reminder",
+   the same ad type twice, once with no count. If instead she clears the
+   Other box because it looks like junk, the field empties completely. Both
+   are one click away on the main path into this screen.
+
+   -- WHY ONE IS WRITTEN BARE ------------------------------------------
+
+   joinQuantified writes a count of one as just the name: "Reel", not
+   "1 \u00d7 Reel". That is not cosmetic. Every contract already issued holds
+   an unquantified value, and the SHA-256 fingerprint is taken over the
+   filled text. If reopening one rewrote "Reel" as "1 \u00d7 Reel", every one
+   of those contracts would verify as "content differs" the first time
+   anybody touched the screen. One is bare, so the round trip is exact and
+   the seal holds.
+
+   -- PLATFORMS DO NOT GET COUNTS --------------------------------------
+
+   "3 \u00d7 Instagram" means nothing. MULTI_KEYS is still both fields; only
+   the ones in QTY_KEYS carry a number.
+   =================================================================== */
+
+/** The multi-value fields that carry a count per item. */
+export const QTY_KEYS = [UGC_AD_TYPE_KEY];
+
+export interface QuantifiedItem {
+  /** How many. Always >= 1. */
+  qty: number;
+  /** The ad type exactly as it prints. */
+  name: string;
+}
+
+/**
+ * Split one item: "6 x Home Ad" -> { qty: 6, name: 'Home Ad' }.
+ *
+ * The separator is the multiplication sign or a plain x, because both get
+ * typed - but they are NOT accepted on the same terms, and the difference is
+ * deliberate.
+ *
+ * The multiplication sign never appears inside an ad type's name, so it is
+ * read as a separator with or without a space before it.
+ *
+ * `x` DOES appear inside names, so it counts only with a space before it.
+ * That is what tells "3 x Reel" (three reels) from "2x Speed Edit" (an ad
+ * type whose name begins with 2x). The first version of this allowed
+ * optional space on both sides and read "2x Speed Edit" as two Speed Edits -
+ * the suite caught it, and the rule is now narrow enough to say out loud.
+ *
+ * Either way a space is required AFTER the separator, and anything that does
+ * not match is a NAME, untouched.
+ */
+export function parseQuantifiedItem(piece: string): QuantifiedItem {
+  const s = txt(piece);
+  const m = /^(\d{1,4})(?:\s*\u00d7|\s+[xX])\s+(.+)$/.exec(s);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const name = txt(m[2]);
+    if (name && n >= 1) return { qty: n, name };
+  }
+  return { qty: 1, name: s };
+}
+
+/** The whole field as a list. Empty pieces are dropped, as in parsePlatforms. */
+export function parseQuantified(value: unknown): QuantifiedItem[] {
+  return parsePlatforms(value).map(parseQuantifiedItem).filter((i) => !!i.name);
+}
+
+/**
+ * The list back as one value, in order, with duplicates MERGED rather than
+ * dropped.
+ *
+ * Merged, not dropped, because two entries of the same ad type are two
+ * quantities of one thing - "2 x Reel" and "1 x Reel" is three reels, and
+ * silently keeping the first would understate what was booked. joinPlatforms
+ * drops the later duplicate, which is right for a platform and wrong here.
+ *
+ * A count of one is written bare. See the header.
+ */
+export function joinQuantified(items: QuantifiedItem[]): string {
+  const order: string[] = [];
+  const by = new Map<string, number>();
+  for (const it of items ?? []) {
+    const name = txt(it?.name);
+    if (!name) continue;
+    const q = Math.max(1, Math.floor(Number(it?.qty) || 1));
+    if (!by.has(name)) order.push(name);
+    by.set(name, (by.get(name) ?? 0) + q);
+  }
+  return order.map((n) => {
+    const q = by.get(n) ?? 1;
+    return q > 1 ? `${q} \u00d7 ${n}` : n;
+  }).join(', ');
+}
+
+/** How many of one named type the field currently says. 0 when it is absent. */
+export function quantityOf(value: unknown, name: string): number {
+  const want = txt(name);
+  for (const it of parseQuantified(value)) if (it.name === want) return it.qty;
+  return 0;
+}
+
+/**
+ * Set the count for one type, keeping everything else where it was.
+ *
+ * A count of zero REMOVES it, which is what a number box being cleared to
+ * nothing means, and saves having a separate tick box fight with the number
+ * over which one is in charge.
+ */
+export function setQuantity(value: unknown, name: string, qty: number): string {
+  const want = txt(name);
+  if (!want) return txt(value);
+  const n = Math.max(0, Math.floor(Number(qty) || 0));
+  const items = parseQuantified(value);
+  const found = items.some((i) => i.name === want);
+  if (!found) return n > 0 ? joinQuantified([...items, { qty: n, name: want }]) : joinQuantified(items);
+  return joinQuantified(
+    items.map((i) => (i.name === want ? { ...i, qty: n } : i)).filter((i) => i.qty > 0),
+  );
+}
+
+/**
+ * Everything booked, added up: "12 in total" under the picker.
+ *
+ * Worth showing because the number that matters to whoever reads the contract
+ * is how many pieces of content they are getting, and three types of four is
+ * not obviously twelve at a glance.
+ */
+export function totalQuantity(value: unknown): number {
+  return parseQuantified(value).reduce((n, i) => n + i.qty, 0);
+}

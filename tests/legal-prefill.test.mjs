@@ -7,6 +7,8 @@ import {
   normalizeHandle, handleBody, joinPlatformHandles, fieldGroup, FIELD_GROUPS,
   parsePlatforms, joinPlatforms, parsePlatformHandles, platformHandlePairs,
   MULTI_KEYS, UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY,
+  QTY_KEYS, parseQuantifiedItem, parseQuantified, joinQuantified,
+  quantityOf, setQuantity, totalQuantity,
 } from '../.test-build/legal-prefill.js';
 import { contractCanonical } from '../.test-build/legal.js';
 
@@ -424,6 +426,119 @@ ok('a row with only a platform is not empty',
   eq('an empty key does not crash', fieldGroup(''), 'contract');
   eq('every group in the list is reachable',
     FIELD_GROUPS.map((g) => g.key), ['contract', 'vendor', 'payment']);
+}
+
+/* ===================================================================
+   HOW MANY OF EACH AD TYPE
+   -------------------------------------------------------------------
+   Two guarantees carry the weight here.
+
+   THE FIRST is that an already-issued contract is not rewritten. Its
+   ad_types value is unquantified ("Reel, Story") and its SHA-256
+   fingerprint is taken over the filled text. If a round trip through the
+   picker turned that into "1 \u00d7 Reel, 1 \u00d7 Story", every such
+   contract would verify as "content differs" the first time anybody opened
+   it. One is written bare so the round trip is exact.
+
+   THE SECOND is the bug this work started from. The picker split on the
+   comma and matched each piece against the ad-type list, so "6 \u00d7 Home
+   Ad" matched nothing: nothing ticked, the whole string in the "Other" box,
+   and one click from either duplicating a type or emptying the field.
+   =================================================================== */
+
+{
+  // -- the round trip is exact, which is what protects the seal ------
+  const unquantified = 'Reel, Story';
+  eq('an unquantified value survives a round trip untouched',
+    joinQuantified(parseQuantified(unquantified)), unquantified);
+  eq('and one is never written as "1 x"',
+    joinQuantified([{ qty: 1, name: 'Reel' }]), 'Reel');
+  const quantified = '6 \u00d7 Home Ad, 3 \u00d7 Reminder';
+  eq('a quantified value survives a round trip untouched',
+    joinQuantified(parseQuantified(quantified)), quantified);
+
+  // -- reading the form the booking already writes -------------------
+  eq('the booking summary parses into its parts',
+    parseQuantified('6 \u00d7 Home Ad, 6 \u00d7 Store Visit, 3 \u00d7 Reminder'),
+    [{ qty: 6, name: 'Home Ad' }, { qty: 6, name: 'Store Visit' }, { qty: 3, name: 'Reminder' }]);
+  eq('a bare name is one of it', parseQuantifiedItem('Reel'), { qty: 1, name: 'Reel' });
+  // All three separators get typed, so all three are read.
+  eq('the multiplication sign is read', parseQuantifiedItem('3 \u00d7 Reel'), { qty: 3, name: 'Reel' });
+  eq('a lower-case x too', parseQuantifiedItem('3 x Reel'), { qty: 3, name: 'Reel' });
+  eq('and an upper-case X', parseQuantifiedItem('3 X Reel'), { qty: 3, name: 'Reel' });
+  eq('spacing around the sign does not matter',
+    parseQuantifiedItem('12\u00d7 Story'), { qty: 12, name: 'Story' });
+  // An ad type genuinely called "2x Speed Edit" keeps its name. A plain x
+  // needs a SPACE BEFORE IT to count, because x appears inside names and the
+  // multiplication sign does not. The first version of this read it as two
+  // Speed Edits.
+  eq('a name that merely starts with a number is a name',
+    parseQuantifiedItem('2x Speed Edit'), { qty: 1, name: '2x Speed Edit' });
+  // A space BEFORE the sign is optional (no name contains one); a space
+  // AFTER it is required, so a count always reads as "N x Name" - which is
+  // how the booking writes it and how a person types it.
+  eq('the sign needs no space before it',
+    parseQuantifiedItem('2\u00d7 Speed Edit'), { qty: 2, name: 'Speed Edit' });
+  eq('but it does need one after',
+    parseQuantifiedItem('2\u00d7Speed Edit'), { qty: 1, name: '2\u00d7Speed Edit' });
+  eq('and so is one with no separator at all',
+    parseQuantifiedItem('4K Video'), { qty: 1, name: '4K Video' });
+  eq('zero is not a count', parseQuantifiedItem('0 \u00d7 Reel'), { qty: 1, name: '0 \u00d7 Reel' });
+  eq('nothing parses to nothing', parseQuantified(''), []);
+  eq('and so does a field of commas', parseQuantified(' , , '), []);
+
+  // -- duplicates are ADDED, not dropped -----------------------------
+  // joinPlatforms drops a repeat, which is right for a platform and wrong
+  // here: two Reels and one Reel is three Reels, not two.
+  eq('the same type twice is added up',
+    joinQuantified([{ qty: 2, name: 'Reel' }, { qty: 1, name: 'Reel' }]), '3 \u00d7 Reel');
+  eq('and the order is the order it was first named in',
+    joinQuantified([{ qty: 1, name: 'Story' }, { qty: 2, name: 'Reel' }, { qty: 1, name: 'Story' }]),
+    '2 \u00d7 Story, 2 \u00d7 Reel');
+
+  // -- setting one count leaves the rest alone -----------------------
+  eq('setting a count keeps the others in place',
+    setQuantity('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Reminder', 5),
+    '6 \u00d7 Home Ad, 5 \u00d7 Reminder');
+  eq('setting one on a bare name quantifies just that one',
+    setQuantity('Reel, Story', 'Reel', 3), '3 \u00d7 Reel, Story');
+  eq('setting it back to one writes it bare again',
+    setQuantity('3 \u00d7 Reel, Story', 'Reel', 1), 'Reel, Story');
+  eq('a type not there yet is added at the end',
+    setQuantity('Reel', 'Story', 2), 'Reel, 2 \u00d7 Story');
+  // Zero removes it: a number box cleared to nothing means "not this one",
+  // and that saves a tick box and a number arguing over which is in charge.
+  eq('zero takes it out', setQuantity('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Reminder', 0),
+    '6 \u00d7 Home Ad');
+  eq('taking out the last one empties the field',
+    setQuantity('3 \u00d7 Reel', 'Reel', 0), '');
+  eq('adding zero of something not there changes nothing',
+    setQuantity('Reel', 'Story', 0), 'Reel');
+  eq('a nameless set is a no-op', setQuantity('Reel', '  ', 4), 'Reel');
+
+  eq('how many of one type', quantityOf('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Reminder'), 3);
+  eq('a bare name is one', quantityOf('Reel, Story', 'Story'), 1);
+  eq('one that is not there is none', quantityOf('Reel', 'Story'), 0);
+
+  // -- the total, which is the number the vendor cares about ---------
+  eq('everything added up', totalQuantity('6 \u00d7 Home Ad, 6 \u00d7 Store Visit, 3 \u00d7 Reminder'), 15);
+  eq('bare names count as one each', totalQuantity('Reel, Story'), 2);
+  eq('nothing is nothing', totalQuantity(''), 0);
+
+  // -- only ad types carry a count -----------------------------------
+  // "3 x Instagram" means nothing.
+  eq('ad types carry a count', QTY_KEYS.includes(UGC_AD_TYPE_KEY), true);
+  eq('platforms do not', QTY_KEYS.includes(UGC_PLATFORM_KEY), false);
+  ok('and both are still multi-valued',
+    MULTI_KEYS.includes(UGC_AD_TYPE_KEY) && MULTI_KEYS.includes(UGC_PLATFORM_KEY));
+
+  // -- THE BUG, as an assertion --------------------------------------
+  // Ticking a type that is already there at a count must not add it a
+  // second time without one. This is what the screen used to do.
+  eq('ticking a type already booked does not duplicate it',
+    setQuantity('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Home Ad',
+      quantityOf('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Home Ad')),
+    '6 \u00d7 Home Ad, 3 \u00d7 Reminder');
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);

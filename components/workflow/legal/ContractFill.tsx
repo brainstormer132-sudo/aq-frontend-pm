@@ -19,7 +19,8 @@ import {
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
   performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
   FIELD_GROUPS, fieldGroup, normalizeHandle, handleBody, UGC_CHANNEL_KEY, type FieldGroup,
-  UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY, MULTI_KEYS,
+  UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY, MULTI_KEYS, QTY_KEYS,
+  parseQuantified, joinQuantified, quantityOf, setQuantity, totalQuantity,
   parsePlatforms, joinPlatforms, parsePlatformHandles,
   platformHandlePairs, joinPlatformHandles,
 } from '@/lib/legal-prefill';
@@ -779,14 +780,29 @@ function HandleBox({
  * what is being typed.
  */
 export function MultiChoice({
-  value, options, editable, onChange,
+  value, options, editable, onChange, withQuantity = false,
 }: {
   value: string;
   options: { id: string; value: string; label: string }[];
   editable: boolean;
   onChange: (v: string) => void;
+  /**
+   * Show a count beside each ticked item (ad types, not platforms).
+   *
+   * This also fixes a bug that had nothing to do with the counts being
+   * wanted. A contract raised from a booking with ad lines already stored
+   * "6 x Home Ad, 3 x Reminder" - fetchBookingPrefill has always written
+   * that - and this picker split on the comma and matched each piece
+   * against the ad-type list. "6 x Home Ad" matched nothing, so NOTHING WAS
+   * TICKED and the whole string sat in the "Other" box. One click from
+   * there either duplicated a type ("Home Ad, 6 x Home Ad, ...") or, if she
+   * cleared the box that looked like junk, emptied the field.
+   */
+  withQuantity?: boolean;
 }) {
-  const chosen = parsePlatforms(value);
+  // Parsed as quantities when this field carries them, so a value the
+  // booking wrote is understood rather than dumped in the Other box.
+  const chosen = withQuantity ? parseQuantified(value).map((i) => i.name) : parsePlatforms(value);
   const known = options.map((o) => o.value);
   const extra = chosen.filter((v) => !known.includes(v));
   const [otherText, setOtherText] = useState(() => extra.join(', '));
@@ -801,9 +817,17 @@ export function MultiChoice({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  const write = (picked: string[], other: string) =>
-    onChange(joinPlatforms([...picked, ...parsePlatforms(other)]));
   const picked = chosen.filter((v) => known.includes(v));
+
+  // Writing keeps each item's existing count. Ticking a type that is already
+  // there at six must leave it at six, not reset it to one - that is the
+  // difference between adding a type and re-reading the field.
+  const write = (next: string[], other: string) => {
+    const names = [...next, ...parsePlatforms(other)];
+    if (!withQuantity) { onChange(joinPlatforms(names)); return; }
+    onChange(joinQuantified(names.map((n) => ({ qty: quantityOf(value, n) || 1, name: n }))));
+  };
+  const total = withQuantity ? totalQuantity(value) : 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -819,6 +843,17 @@ export function MultiChoice({
               {/* English to choose from, Arabic in the document - the label and
                   the value differ on purpose. */}
               <span>{o.label || o.value}</span>
+              {/* The count, only once it is ticked - a number box beside an
+                  empty tick box is a question nobody asked. Clearing it to
+                  zero unticks the item, so the two cannot disagree. */}
+              {withQuantity && on && (
+                <input className="aq-input" type="number" min={1} max={999} disabled={!editable}
+                  value={quantityOf(value, o.value) || 1}
+                  onChange={(e) => onChange(setQuantity(value, o.value, Number(e.target.value)))}
+                  onClick={(e) => e.preventDefault()}
+                  title={`How many ${o.label || o.value}`}
+                  style={{ width: 62, padding: '2px 6px', fontSize: 12.5 }} />
+              )}
             </label>
           );
         })}
@@ -827,6 +862,13 @@ export function MultiChoice({
         onChange={(e) => { setOtherText(e.target.value); write(picked, e.target.value); }}
         placeholder={'Something else? Type it as it should read in the contract'}
         style={{ width: '100%', maxWidth: 420 }} />
+      {/* Three types of four is not obviously twelve, and twelve is the
+          number whoever signs this cares about. */}
+      {withQuantity && total > 0 && (
+        <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+          {total} in total
+        </span>
+      )}
     </div>
   );
 }
@@ -877,7 +919,10 @@ function FieldInput({
     // so out loud, because turning that flag off would quietly make every
     // multi-value contract unissuable.
     if (MULTI_KEYS.includes(field.key) && field.field_type === 'list') {
-      return <MultiChoice value={value} options={options} editable={editable} onChange={onChange} />;
+      return (
+        <MultiChoice value={value} options={options} editable={editable} onChange={onChange}
+          withQuantity={QTY_KEYS.includes(field.key)} />
+      );
     }
     if (field.field_type === 'list') {
       return (
