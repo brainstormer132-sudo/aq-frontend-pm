@@ -18,7 +18,7 @@ import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
-  contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML,
+  contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML, printReference,
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
@@ -308,7 +308,12 @@ export function ContractFill({
       meta: {
         org: 'AQ Creativity',
         status: contractStatusLabel(contract.status),
-        reference: `Ref: ${contract.id.slice(0, 8)}`,
+        // The contract NUMBER once it has one. This printed the first eight
+        // characters of the row id while the register showed the number
+        // beside the same contract - the id fragment means nothing to
+        // anybody holding the paper. printReference is the one answer, and
+        // the batch print uses it too.
+        reference: printReference(contract),
         generatedOn: new Date().toLocaleDateString(),
         fingerprint: fingerprint ? formatFingerprint(fingerprint) : undefined,
       },

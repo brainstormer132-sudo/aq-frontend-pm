@@ -20,6 +20,8 @@ import {
   contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
   OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks, TABLE_KEY_PREFIX,
 } from '@/lib/legal';
+import type { PrintContract, PrintBuild, FieldRow } from '@/lib/legal-bulk';
+import { chunk, versionIdsOf, buildPrintDocs } from '@/lib/legal-bulk';
 
 /** SHA-256 of a string as lowercase hex, via the Web Crypto API (browser + Node 18+). */
 export async function sha256Hex(input: string): Promise<string> {
@@ -447,10 +449,19 @@ export function useContracts(workspaceId: string | null) {
     if (!workspaceId) { setContracts([]); setLoading(false); return; }
     setLoading(true); setError('');
     const c = legal();
-    const { data: cs, error: e1 } = await c.from('contract')
+    // Paged, and ordered on a TOTAL order. A bare select stops at PostgREST's
+    // thousand-row limit with no error and no sign on screen, which on this
+    // screen means a register that silently stops listing contracts - and,
+    // now that the register can print a batch, a "print everything" that
+    // quietly leaves out everything past the thousandth. created_at alone is
+    // not unique (an import writes hundreds in the same second), so id ends
+    // the order: with a non-unique order two pages overlap and a row falls
+    // between them. See selectAllRows and tests/paging.
+    const cs = await selectAllRows<any>('useContracts', () => c.from('contract')
       .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no')
-      .eq('workspace_id', workspaceId).order('created_at', { ascending: false });
-    if (e1) { setError(e1.message ?? String(e1)); setContracts([]); setLoading(false); return; }
+      .eq('workspace_id', workspaceId)
+      .order('created_at', { ascending: false })
+      .order('id'), (m) => setError(m));
     const { data: tpls } = await c.from('doc_template')
       .select('id, name, doc_kind').eq('workspace_id', workspaceId);
     const byId = new Map(((tpls ?? []) as any[]).map((t) => [t.id, t]));
@@ -1130,9 +1141,11 @@ export async function templateSourceUrl(path: string): Promise<string | null> {
  *
  * One narrow column over a paged read: the strip needs four counts, and
  * counting them here costs less than four round trips asking PostgREST for a
- * count each. Paged, unlike useContracts beside it, because the number it
- * reports would otherwise quietly stop at a thousand - and a KPI that is
- * wrong is worse than no KPI, because nobody checks it twice.
+ * count each. Paged, because the number it reports would otherwise quietly
+ * stop at a thousand - and a KPI that is wrong is worse than no KPI, because
+ * nobody checks it twice. (useContracts is paged too now, for the same
+ * reason; this one stays separate because it reads one column and the Cases
+ * screen has no use for the rest.)
  */
 export function useContractStatuses(workspaceId: string | null) {
   const [rows, setRows] = useState<{ status: string }[]>([]);
@@ -1152,4 +1165,63 @@ export function useContractStatuses(workspaceId: string | null) {
 
   useEffect(() => { void load(); }, [load]);
   return { statuses: rows, loading, reload: load };
+}
+
+/**
+ * Everything a batch of contracts needs to print, in two reads.
+ *
+ * Siraj asked for "all pdfs at once instead of going one by one", and the
+ * naive way to do that is to run the fill screen's loader once per contract:
+ * three round trips each, sixty contracts, a hundred and eighty requests and
+ * a minute of staring. This reads the BLOCKS ONCE PER VERSION - fifty
+ * contracts off one template is one read, not fifty - and every field value
+ * for the whole selection in one more.
+ *
+ * Both are paged and both are chunked. Paged because a template with two
+ * hundred blocks across six versions passes a thousand rows sooner than
+ * anyone expects, and a print that silently drops the last clauses of an
+ * agreement is the worst bug this screen could have. Chunked because a
+ * hundred uuids in an `in(...)` is a two-kilobyte URL and PostgREST will not
+ * always say why it refused.
+ *
+ * The assembling is pure and lives in lib/legal-bulk, so what the printer
+ * receives is testable without a database.
+ */
+export async function loadContractPrintDocs(
+  contracts: PrintContract[],
+  onError?: (message: string) => void,
+): Promise<PrintBuild> {
+  const list = contracts ?? [];
+  if (!list.length) return { docs: [], skipped: [] };
+  const c = legal();
+
+  // Each read is written out where it pages, rather than through a shared
+  // helper taking a builder. The helper version was tidier and tests/paging
+  // rejected it, correctly: the rule is that a paged read ENDS ON .order('id')
+  // at the call site, and a builder passed in from elsewhere hides the order
+  // from the test and from anyone reading the line. The guard exists because
+  // 22 of 39 call sites had got this wrong.
+  const readBlocks = async () => {
+    const out: TemplateBlock[] = [];
+    for (const part of chunk(versionIdsOf(list), 60)) {
+      out.push(...await selectAllRows<TemplateBlock>('loadContractPrintDocs blocks', () =>
+        c.from('doc_template_block')
+          .select('id, version_id, workspace_id, position, block_type, content, optional, optional_group, optional_label, condition, clause_id')
+          .in('version_id', part).order('position').order('id'), onError));
+    }
+    return out;
+  };
+  const readFields = async () => {
+    const out: FieldRow[] = [];
+    for (const part of chunk(list.map((x) => x.id), 60)) {
+      out.push(...await selectAllRows<FieldRow>('loadContractPrintDocs fields', () =>
+        c.from('contract_field')
+          .select('id, contract_id, key, value')
+          .in('contract_id', part).order('id'), onError));
+    }
+    return out;
+  };
+
+  const [blocks, fields] = await Promise.all([readBlocks(), readFields()]);
+  return buildPrintDocs({ contracts: list, blocks, fields });
 }

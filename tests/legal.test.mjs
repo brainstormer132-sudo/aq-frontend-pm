@@ -270,7 +270,10 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   // strip now, on every page, and its own contents are asserted in
   // tests/legal-letterhead - this only checks the print path reaches it.
   ok('letterhead strip is on the sheet', html.includes('RAWAD ALTATHIR COMPANY'));
-  ok('the sheet is wrapped in the repeating table', html.includes('<table class="page">')
+  // The table carries its own lang and dir now, not only <html>: a batch
+  // print puts several of these in one document, and an Arabic contract
+  // printed after an English one has to turn itself round.
+  ok('the sheet is wrapped in the repeating table', html.includes('<table class="page" lang="en" dir="ltr">')
     && html.includes('<thead>') && html.includes('<tfoot>'));
   // An ISSUED contract says nothing about its status on its face. Printing
   // "Status: Issued" on a document a vendor signs is not what the paper does.

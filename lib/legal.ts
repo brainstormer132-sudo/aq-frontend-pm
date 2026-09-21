@@ -1019,21 +1019,49 @@ export interface PrintMeta {
   letterhead?: Letterhead;
 }
 
-/**
- * A self-contained, print-ready HTML document for a filled contract. The blocks
- * are rendered in order with their placeholders filled from `values`; unfilled
- * placeholders stay visible as their literal {{ key }} so a gap is obvious.
- * Direction (`dir`) drives lang + text alignment for Arabic. All interpolated
- * content is HTML-escaped. Pure - pass any date as `meta.generatedOn`.
- */
-export function contractPrintHTML(args: {
+/** One contract, everything the printer needs of it and nothing else. */
+export interface PrintDoc {
   title: string;
   blocks: (Pick<TemplateBlock, 'block_type' | 'content'> & { id?: string })[];
   values: Record<string, string>;
   dir: Dir;
   meta?: PrintMeta;
-}): string {
-  const { title, blocks, values, dir, meta = {} } = args;
+}
+
+/**
+ * What identifies the contract at the top of its printed page.
+ *
+ * The contract NUMBER once it has one, and the first eight characters of the
+ * row id only until then. Two screens used to answer this differently - the
+ * fill screen printed the id fragment while the register showed the number -
+ * so the same contract named itself two ways depending on which button was
+ * pressed. One function now, so it cannot drift again.
+ *
+ * A draft has no number: it is reserved at issue, before the fingerprint, so
+ * that the sealed document covers the number it prints.
+ */
+export function printReference(c: { id?: string | null; contract_no?: string | null }): string {
+  const no = String(c?.contract_no ?? '').trim();
+  if (no) return no;
+  const id = String(c?.id ?? '').trim();
+  return id ? `Ref: ${id.slice(0, 8)}` : '';
+}
+
+/**
+ * The page table for ONE contract: the repeating letterhead, then the blocks
+ * in order with their placeholders filled from `values`, then the footer.
+ * Unfilled placeholders stay visible as their literal {{ key }} so a gap is
+ * obvious. All interpolated content is HTML-escaped. Pure.
+ *
+ * This returns a FRAGMENT, not a document. One of them is a contract; fifty
+ * of them one after another is "all the PDFs at once", which Siraj asked for
+ * so he would stop opening contracts one by one. Both go through this same
+ * function, so there is no second renderer to keep in step with this one -
+ * the bug that would otherwise arrive is a letterhead fix landing on the
+ * single print and not on the batch, and nobody noticing for a month.
+ */
+export function contractSheetHtml(args: PrintDoc): string {
+  const { blocks, values, dir, meta = {} } = args;
 
   const body = blocks.map((b) => {
     if (b.block_type === 'kv') {
@@ -1073,7 +1101,6 @@ export function contractPrintHTML(args: {
     }
   }).filter(Boolean).join('\n  ');
 
-  const safeTitle = escapeHtml(title || 'Contract');
   const ref = meta.reference ? escapeHtml(meta.reference) : '';
   const fp = meta.fingerprint ? escapeHtml(meta.fingerprint) : '';
   const lang = dir === 'rtl' ? 'ar' : 'en';
@@ -1087,13 +1114,25 @@ export function contractPrintHTML(args: {
   // agreement: a draft says so, an issued contract says nothing.
   const draft = String(meta.status ?? '').toLowerCase() === 'draft';
 
-  return `<!doctype html>
-<html lang="${lang}" dir="${dir}">
-<head>
-<meta charset="utf-8">
-<title>${safeTitle}</title>
-<style>
-  * { box-sizing: border-box; }
+  // lang and dir ride on the TABLE, not only on <html>. A batch can hold an
+  // Arabic contract and an English one, and each has to set its own direction
+  // or the second one prints right-aligned inside the first one's document.
+  return `<table class="page" lang="${lang}" dir="${dir}">
+  <thead><tr><td>${letterheadHeaderHtml(lh)}</td></tr></thead>
+  <tfoot><tr><td>${letterheadFooterHtml(lh)}</td></tr></tfoot>
+  <tbody><tr><td>
+<div class="sheet">
+  ${ref || draft ? `<div class="doc-ref">${ref}${draft ? `${ref ? ' ' : ''}<span class="doc-draft">DRAFT</span>` : ''}</div>` : ''}
+  ${body}
+  ${fp ? `<div class="doc-fp">SHA-256: ${fp}</div>` : ''}
+</div>
+  </td></tr></tbody>
+</table>`;
+}
+
+/** The stylesheet every printed contract shares, batch or not. */
+export function printCss(): string {
+  return `  * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif; color: #1a1a1a; line-height: 1.75; font-size: 12pt; }
   .sheet { max-width: 800px; margin: 0 auto; padding: 24px 32px; }
@@ -1117,21 +1156,69 @@ export function contractPrintHTML(args: {
   @media print {
     .sheet { max-width: none; padding: 0; }
   }
-${letterheadCss()}
+  /* Each contract after the first starts a fresh page. Both spellings: the
+     old one is what every shipping engine honours, the new one is what the
+     spec says, and a batch that runs two contracts together on one sheet of
+     paper is a batch nobody can hand out. */
+  table.page + table.page { page-break-before: always; break-before: page; }
+  /* On screen a batch is one long scroll, so the joins are drawn. Print sees
+     none of this - there the join IS the page break. */
+  @media screen {
+    table.page + table.page { margin-top: 30px; border-top: 1px dashed #c4c4c4; padding-top: 30px; }
+  }
+${letterheadCss()}`;
+}
+
+/**
+ * Wrap one or more sheets in a stand-alone printable document. Pure.
+ *
+ * The document's own dir is the fallback for anything outside a sheet; each
+ * sheet sets its own, so a mixed batch is fine.
+ */
+export function printDocumentHtml(title: string, dir: Dir, sheets: string[]): string {
+  const safeTitle = escapeHtml(title || 'Contract');
+  const lang = dir === 'rtl' ? 'ar' : 'en';
+  return `<!doctype html>
+<html lang="${lang}" dir="${dir}">
+<head>
+<meta charset="utf-8">
+<title>${safeTitle}</title>
+<style>
+${printCss()}
 </style>
 </head>
 <body>
-<table class="page">
-  <thead><tr><td>${letterheadHeaderHtml(lh)}</td></tr></thead>
-  <tfoot><tr><td>${letterheadFooterHtml(lh)}</td></tr></tfoot>
-  <tbody><tr><td>
-<div class="sheet">
-  ${ref || draft ? `<div class="doc-ref">${ref}${draft ? `${ref ? ' ' : ''}<span class="doc-draft">DRAFT</span>` : ''}</div>` : ''}
-  ${body}
-  ${fp ? `<div class="doc-fp">SHA-256: ${fp}</div>` : ''}
-</div>
-  </td></tr></tbody>
-</table>
+${sheets.join('\n')}
 </body>
 </html>`;
+}
+
+/**
+ * One filled contract as a self-contained, print-ready document - what the
+ * fill screen's Print / Save as PDF opens.
+ */
+export function contractPrintHTML(args: PrintDoc): string {
+  return printDocumentHtml(args.title, args.dir, [contractSheetHtml(args)]);
+}
+
+/** What a batch print calls itself: the browser puts it on the saved PDF. */
+export function bulkPrintTitle(n: number): string {
+  return n === 1 ? 'Contract' : `${n} contracts`;
+}
+
+/**
+ * Every contract in `docs`, one after another in one document, each starting
+ * on a fresh page. One Print dialog, one PDF, however many contracts.
+ *
+ * The document direction is rtl only when EVERY contract is - a mixed batch
+ * is laid out left to right and each Arabic sheet turns itself round. There
+ * is no majority vote here on purpose: a document that flips its scrollbar
+ * depending on which contracts happened to be ticked is disorienting, and
+ * `every` is the one rule that keeps a batch of one identical to printing
+ * that contract on its own. tests/legal-bulk asserts that byte for byte.
+ */
+export function contractsPrintHTML(docs: PrintDoc[], title?: string): string {
+  const list = docs ?? [];
+  const dir: Dir = list.length && list.every((d) => d.dir === 'rtl') ? 'rtl' : 'ltr';
+  return printDocumentHtml(title || bulkPrintTitle(list.length), dir, list.map(contractSheetHtml));
 }

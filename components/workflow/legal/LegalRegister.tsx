@@ -1,8 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { useContracts, usePublishedVersions } from '@/hooks/use-legal';
-import { kindLabel, contractStatusLabel, contractStatusBadge } from '@/lib/legal';
+import { useMemo, useState } from 'react';
+import { useContracts, usePublishedVersions, loadContractPrintDocs } from '@/hooks/use-legal';
+import { kindLabel, contractStatusLabel, contractStatusBadge, CONTRACT_STATUSES, contractsPrintHTML } from '@/lib/legal';
+import {
+  filterContracts, toggleId, selectedInOrder, skippedNote, bulkPrintNote,
+} from '@/lib/legal-bulk';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { ContractFill } from '@/components/workflow/legal/ContractFill';
 
@@ -11,7 +14,28 @@ import { ContractFill } from '@/components/workflow/legal/ContractFill';
  * exact version it was made from. "New contract" starts one from a published
  * version and drops into the fill screen. A contract that is still a draft can
  * be reopened and edited; issued ones are frozen but still open read-only.
+ *
+ * -- PRINTING A STACK OF THEM --------------------------------------
+ *
+ * Siraj: "work on getting all pdfs at once also instead of going one by one".
+ * Tick the ones you want - or Select all, which takes everything MATCHING the
+ * search and status, not only the rows on screen - and they come out as one
+ * document, one contract per page, through one Print dialog. The sheets are
+ * built by the same function the fill screen's Print button uses; see
+ * lib/legal-bulk for why that matters.
  */
+
+/**
+ * How many rows are rendered at once.
+ *
+ * Every screen in this app that broke this week broke the same way: fine with
+ * twenty rows, frozen with four thousand. A register with every contract of a
+ * year in it is four thousand list items and a browser that stops responding,
+ * so the list stops at two hundred and says so. The SELECTION is not capped -
+ * Select all takes every matching contract, printed or not shown.
+ */
+const SHOW_MAX = 200;
+
 export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   const { contracts, loading, error, create, remove } = useContracts(workspaceId ?? null);
   const pub = usePublishedVersions(workspaceId ?? null);
@@ -22,6 +46,22 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
+
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('');
+  const [sel, setSel] = useState<string[]>([]);
+  const [printing, setPrinting] = useState(false);
+  const [note, setNote] = useState('');
+
+  // One memo for the view, everything else derived from it. Two memos that
+  // each filter would be two answers to "which contracts are we looking at",
+  // and the count beside the button would eventually disagree with the rows.
+  const view = useMemo(() => {
+    const rows = filterContracts(contracts, q, status);
+    return { rows, shown: rows.slice(0, SHOW_MAX), hidden: Math.max(0, rows.length - SHOW_MAX) };
+  }, [contracts, q, status]);
+
+  const picked = useMemo(() => selectedInOrder(view.rows, sel), [view.rows, sel]);
 
   if (openId) {
     return <ContractFill workspaceId={workspaceId} contractId={openId} onBack={() => setOpenId(null)} />;
@@ -41,11 +81,61 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
     } finally { setBusy(false); }
   };
 
+  /**
+   * Every ticked contract as one printable document, handed to the browser's
+   * Print / Save as PDF. Two reads however many contracts - see
+   * loadContractPrintDocs - then one window.
+   *
+   * A contract whose version has no content is LEFT OUT and named. The
+   * alternative is a blank page with a letterhead on it going out as an
+   * agreement, which is the sort of thing nobody notices until a vendor asks
+   * what they are supposed to sign.
+   */
+  const printPicked = async () => {
+    if (!picked.length || printing) return;
+    setPrinting(true); setNote('');
+    try {
+      const built = await loadContractPrintDocs(picked, (m) => setNote(m));
+      const left = skippedNote(built.skipped);
+      if (!built.docs.length) {
+        setNote(left ?? 'Nothing in the selection could be printed.');
+        return;
+      }
+      const w = window.open('', '_blank');
+      if (!w) { setNote('Allow pop-ups for this site to print.'); return; }
+      w.document.open();
+      w.document.write(contractsPrintHTML(built.docs));
+      w.document.close();
+      w.focus();
+      setTimeout(() => { try { w.print(); } catch { /* the user can print from the window */ } }, 400);
+      setNote(left ?? '');
+    } catch (e: any) {
+      setNote(e?.message ?? 'Could not build the print.');
+    } finally { setPrinting(false); }
+  };
+
+  const allPicked = view.rows.length > 0 && picked.length === view.rows.length;
+  const warn = bulkPrintNote(picked.length);
+
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      {/* The search box grows and the dropdown does not. .aq-input and
+          .aq-select both carry width:100% in globals.css, so in a flex row
+          the select claims the line and the input is squeezed to nothing
+          unless it is told min-width:0. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by number, title, template or kind"
+          style={{ flex: '1 1 auto', minWidth: 0 }} />
+        <select className="aq-select" value={status} onChange={(e) => setStatus(e.target.value)}
+          style={{ flex: '0 0 auto', width: 'auto', minWidth: 130 }}>
+          <option value="">All statuses</option>
+          {CONTRACT_STATUSES.map((s) => (
+            <option key={s.key} value={s.key}>{s.label}</option>
+          ))}
+        </select>
         <button className="aq-btn aq-btn-primary" onClick={() => { setPicking(true); setFormErr(''); }}
-          disabled={pub.loading}>
+          disabled={pub.loading} style={{ flex: '0 0 auto' }}>
           New contract
         </button>
       </div>
@@ -61,14 +151,55 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
             Create one from a published template - it stays stamped to that exact version.
           </p>
         </div>
+      ) : view.rows.length === 0 ? (
+        <div className="aq-card" style={{ padding: 28, textAlign: 'center' }}>
+          <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>
+            No contract matches that.
+          </p>
+        </div>
       ) : (
         <section className="aq-card" style={{ padding: 18 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            paddingBottom: 12, borderBottom: '1px solid var(--aq-border-light)',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={allPicked}
+                onChange={() => setSel(allPicked ? [] : view.rows.map((r) => r.id))} />
+              <span>
+                {allPicked ? 'Clear' : `Select all ${view.rows.length}`}
+                {view.hidden > 0 && !allPicked ? ' matching' : ''}
+              </span>
+            </label>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
+              {picked.length > 0
+                ? `${picked.length} selected`
+                : `${view.rows.length} contract${view.rows.length === 1 ? '' : 's'}`}
+            </span>
+            <button className="aq-btn aq-btn-ghost" disabled={!picked.length || printing}
+              onClick={printPicked}
+              title="Open every selected contract as one document to print or save as a single PDF">
+              {printing ? 'Preparing\u2026' : `Print / Save as PDF${picked.length ? ` (${picked.length})` : ''}`}
+            </button>
+          </div>
+
+          {warn && (
+            <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 10 }}>{warn}</p>
+          )}
+          {note && (
+            <div className="aq-badge aq-badge-warning" style={{ display: 'block', padding: 9, marginTop: 10 }}>{note}</div>
+          )}
+
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {contracts.map((c, i) => (
+            {view.shown.map((c, i) => (
               <li key={c.id} style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
                 borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
               }}>
+                <input type="checkbox" checked={sel.includes(c.id)}
+                  onChange={() => setSel((s) => toggleId(s, c.id))}
+                  aria-label={`Select ${c.title || 'contract'}`}
+                  style={{ flex: '0 0 auto', cursor: 'pointer' }} />
                 <span role="button" tabIndex={0} onClick={() => setOpenId(c.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(c.id); } }}
                   style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
@@ -90,6 +221,16 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
               </li>
             ))}
           </ul>
+
+          {view.hidden > 0 && (
+            <p style={{
+              fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 12, paddingTop: 12,
+              borderTop: '1px solid var(--aq-border-light)',
+            }}>
+              Showing the first {SHOW_MAX} of {view.rows.length}. Search or filter to reach the rest
+              {' '}{'\u2014'} Select all still takes all {view.rows.length}.
+            </p>
+          )}
         </section>
       )}
 

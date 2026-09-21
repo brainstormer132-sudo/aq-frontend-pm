@@ -1,0 +1,230 @@
+/**
+ * Printing a stack of contracts at once.
+ *
+ * The guarantee this suite exists for is the first one below: a batch of ONE
+ * is byte for byte the document that printing that contract on its own
+ * produces. Everything else here is detail; that one assertion is what stops
+ * the batch quietly becoming a second, worse renderer that misses the next
+ * letterhead fix.
+ *
+ * After it: that every contract asked for comes out, in the order asked for,
+ * separated by a page break; that a contract with nothing to print is LEFT
+ * OUT AND SAID rather than handed over as a blank page with a letterhead on
+ * it; that the clauses somebody switched off stay off; and that the blocks
+ * come back in position order however the pages they arrived on were sliced.
+ */
+import {
+  chunk, versionIdsOf, valuesByContract, blocksByVersion, buildPrintDocs,
+  skippedNote, filterContracts, toggleId, selectedInOrder, bulkPrintNote,
+  BULK_PRINT_WARN_AT,
+} from '../.test-build/legal-bulk.js';
+import {
+  contractPrintHTML, contractsPrintHTML, contractSheetHtml, printReference,
+  bulkPrintTitle, FINGERPRINT_KEY, OPT_OFF_KEY,
+} from '../.test-build/legal.js';
+
+let pass = 0, fail = 0;
+const ok = (name, c) => { if (c) { pass++; } else { fail++; console.log(`FAIL ${name}`); } };
+function eq(name, got, want) {
+  const g = JSON.stringify(got), w = JSON.stringify(want);
+  if (g === w) { pass++; return; }
+  fail++;
+  console.log(`FAIL ${name}\n  got:  ${g}\n  want: ${w}`);
+}
+
+const blk = (o) => ({
+  id: o.id, version_id: o.v, workspace_id: 'w', position: o.pos,
+  block_type: o.t ?? 'p', content: o.c ?? { text: o.text ?? 'Body' },
+  optional: o.optional ?? false, optional_group: o.group ?? null,
+  optional_label: o.label ?? null, condition: null, clause_id: null,
+});
+const ct = (o) => ({
+  id: o.id, version_id: o.v, title: o.title ?? 'A contract',
+  status: o.status ?? 'issued', contract_no: o.no ?? null,
+  template_name: o.tpl ?? 'UGC agreement', doc_kind: o.kind ?? 'vendor_contract',
+});
+const fld = (id, key, value) => ({ contract_id: id, key, value });
+
+/* -- 1. a batch of one IS the single print --------------------------- */
+//
+// Not "looks the same" - the same string. The two paths share
+// contractSheetHtml, and this is the assertion that keeps them sharing it.
+
+const oneDoc = {
+  title: 'Rawad UGC',
+  blocks: [blk({ id: 'b1', v: 'v1', pos: 1, t: 'title', c: { text: 'UGC AGREEMENT' } }),
+    blk({ id: 'b2', v: 'v1', pos: 2, text: 'The vendor shall deliver {{ deliverables }}.' })],
+  values: { deliverables: '3 reels' },
+  dir: 'ltr',
+  meta: { status: 'issued', reference: 'AQ-2026-0108' },
+};
+eq('a batch of one is the single document, byte for byte',
+  contractsPrintHTML([oneDoc], oneDoc.title), contractPrintHTML(oneDoc));
+
+const rtlDoc = { ...oneDoc, dir: 'rtl' };
+eq('and the same for an Arabic one, whose whole layout turns round',
+  contractsPrintHTML([rtlDoc], rtlDoc.title), contractPrintHTML(rtlDoc));
+
+ok('a mixed batch lays out left to right',
+  contractsPrintHTML([rtlDoc, oneDoc]).includes('<html lang="en" dir="ltr">'));
+// Deliberately not a majority vote. Two Arabic contracts and one English is
+// still laid out left to right, because a document that flips its scrollbar
+// depending on which rows happened to be ticked is disorienting - and every
+// Arabic sheet turns itself round regardless.
+ok('and still does when the Arabic ones outnumber the English one',
+  contractsPrintHTML([rtlDoc, rtlDoc, oneDoc]).includes('<html lang="en" dir="ltr">'));
+ok('an all-Arabic batch does not',
+  contractsPrintHTML([rtlDoc, rtlDoc]).includes('<html lang="ar" dir="rtl">'));
+ok('and each sheet still carries its own direction',
+  contractsPrintHTML([rtlDoc, oneDoc]).includes('<table class="page" lang="ar" dir="rtl">'));
+
+/* -- 2. every contract, in order, on its own page --------------------- */
+
+const two = contractsPrintHTML([
+  { ...oneDoc, title: 'First', meta: { reference: 'AQ-0001' } },
+  { ...oneDoc, title: 'Second', meta: { reference: 'AQ-0002' } },
+]);
+eq('one sheet per contract', two.split('<table class="page"').length - 1, 2);
+ok('in the order given', two.indexOf('AQ-0001') < two.indexOf('AQ-0002'));
+ok('the second starts a fresh page', two.includes('table.page + table.page'));
+ok('both spellings of the page break, because engines disagree',
+  two.includes('page-break-before: always') && two.includes('break-before: page'));
+eq('the document is named for the count', bulkPrintTitle(12), '12 contracts');
+eq('and reads naturally at one', bulkPrintTitle(1), 'Contract');
+ok('an empty batch is still a document, not a crash',
+  contractsPrintHTML([]).startsWith('<!doctype html>'));
+
+/* -- 3. the reference: the number once it has one -------------------- */
+//
+// The fill screen printed `Ref: <first 8 of the row id>` while the register
+// showed the contract number. Same contract, two names, depending on which
+// button was pressed.
+
+eq('an issued contract prints its number',
+  printReference({ id: '9f2c1a4e-0000', contract_no: 'AQ-2026-0108' }), 'AQ-2026-0108');
+eq('a draft has no number yet, so it falls back to the id',
+  printReference({ id: '9f2c1a4e-0000', contract_no: null }), 'Ref: 9f2c1a4e');
+eq('and blank is not a number', printReference({ id: 'abcdefgh12', contract_no: '  ' }), 'Ref: abcdefgh');
+eq('nothing at all prints nothing', printReference({}), '');
+
+/* -- 4. building the documents from raw rows ------------------------- */
+
+const blocks = [
+  blk({ id: 'b2', v: 'v1', pos: 2, text: 'Second clause.' }),
+  blk({ id: 'b1', v: 'v1', pos: 1, t: 'title', c: { text: 'UGC AGREEMENT' } }),
+  blk({ id: 'b9', v: 'v2', pos: 1, t: 'title', c: { text: 'NDA' } }),
+];
+const built = buildPrintDocs({
+  contracts: [ct({ id: 'c1', v: 'v1', title: 'One', no: 'AQ-0001' }),
+    ct({ id: 'c2', v: 'v2', title: 'Two', status: 'draft' })],
+  blocks,
+  fields: [fld('c1', 'deliverables', '3 reels'), fld('c1', FINGERPRINT_KEY, 'abc123'),
+    fld('c2', 'deliverables', '1 post')],
+});
+eq('one document per contract', built.docs.length, 2);
+eq('nothing was left out', built.skipped.length, 0);
+eq('the blocks come back in position order, whatever order they arrived in',
+  built.docs[0].blocks.map((b) => b.id), ['b1', 'b2']);
+eq('each contract gets its own values', built.docs[1].values.deliverables, '1 post');
+eq('and its own reference', built.docs[0].meta.reference, 'AQ-0001');
+eq('a draft carries its status through, so the page says DRAFT',
+  built.docs[1].meta.status, 'draft');
+ok('a draft prints the word', contractsPrintHTML([built.docs[1]]).includes('>DRAFT<'));
+ok('an issued one does not', !contractsPrintHTML([built.docs[0]]).includes('>DRAFT<'));
+ok('the fingerprint is stamped on the one that has one',
+  contractsPrintHTML([built.docs[0]]).includes('SHA-256:'));
+ok('and not invented for the one that does not',
+  !contractsPrintHTML([built.docs[1]]).includes('SHA-256:'));
+
+/* -- 5. a contract with nothing to print is left out, and said ------- */
+//
+// The alternative is one blank page with a letterhead on it, handed to
+// somebody as an agreement.
+
+const gone = buildPrintDocs({
+  contracts: [ct({ id: 'c1', v: 'v1', title: 'One' }), ct({ id: 'c3', v: 'vX', title: 'Orphan' })],
+  blocks, fields: [],
+});
+eq('the one that can be printed is', gone.docs.length, 1);
+eq('the one that cannot is not', gone.docs.map((d) => d.title), ['One']);
+eq('and it is named', gone.skipped[0].title, 'Orphan');
+eq('with a reason', gone.skipped[0].why, 'its template version has no content');
+eq('one skip reads as one', skippedNote(gone.skipped),
+  'Orphan was left out - its template version has no content.');
+eq('nothing skipped says nothing', skippedNote([]), null);
+
+// Group before you cap: five hundred is one fact, not five hundred rows.
+const many = Array.from({ length: 7 }, (_, i) => ({ id: `x${i}`, title: `T${i}`, why: 'its template version has no content' }));
+eq('many skips are counted, then the first few named',
+  skippedNote(many, 2),
+  '7 contracts were left out (T0, T1, and 5 more) - its template version has no content.');
+
+/* -- 6. the clauses somebody switched off stay off ------------------- */
+
+const optBlocks = [
+  blk({ id: 'k1', v: 'v3', pos: 1, text: 'Always.' }),
+  blk({ id: 'k2', v: 'v3', pos: 2, text: 'Only sometimes.', optional: true, group: 'g1' }),
+];
+const off = buildPrintDocs({
+  contracts: [ct({ id: 'c4', v: 'v3' })], blocks: optBlocks,
+  fields: [fld('c4', OPT_OFF_KEY, 'k2')],
+});
+eq('a clause turned off is not printed', off.docs[0].blocks.map((b) => b.id), ['k1']);
+ok('and its wording is nowhere in the document',
+  !contractsPrintHTML(off.docs).includes('Only sometimes'));
+const on = buildPrintDocs({
+  contracts: [ct({ id: 'c4', v: 'v3' })], blocks: optBlocks, fields: [],
+});
+eq('left on, it is printed', on.docs[0].blocks.map((b) => b.id), ['k1', 'k2']);
+
+const allOff = buildPrintDocs({
+  contracts: [ct({ id: 'c5', v: 'v3', title: 'Hollow' })],
+  blocks: [blk({ id: 'k2', v: 'v3', pos: 2, text: 'Only.', optional: true, group: 'g1' })],
+  fields: [fld('c5', OPT_OFF_KEY, 'k2')],
+});
+eq('a contract with every clause off is left out too', allOff.docs.length, 0);
+eq('and says which', allOff.skipped[0].why, 'every clause in it is switched off');
+
+/* -- 7. the reads that feed it -------------------------------------- */
+
+eq('one read per version, not per contract',
+  versionIdsOf([ct({ id: 'a', v: 'v1' }), ct({ id: 'b', v: 'v1' }), ct({ id: 'c', v: 'v2' })]).length, 2);
+eq('a contract with no version is not asked for', versionIdsOf([{ id: 'a', version_id: '' }]), []);
+eq('ids go to the database in pieces', chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+eq('an empty list is no reads at all', chunk([], 50), []);
+ok('a silly size still terminates', chunk([1, 2, 3], 0).length === 3);
+eq('field rows fold by contract',
+  valuesByContract([fld('c1', 'a', '1'), fld('c2', 'a', '2'), fld('c1', 'b', '3')]).c1, { a: '1', b: '3' });
+eq('a null value is an empty string, not a null', valuesByContract([fld('c1', 'a', null)]).c1.a, '');
+eq('blocks fold by version', Object.keys(blocksByVersion(blocks)).sort(), ['v1', 'v2']);
+
+/* -- 8. finding the contracts to tick ------------------------------- */
+
+const rows = [
+  ct({ id: 'c1', v: 'v1', title: 'Rawad UGC', no: 'AQ-2026-0108', status: 'issued' }),
+  ct({ id: 'c2', v: 'v1', title: 'Nadia NDA', tpl: 'NDA form', kind: 'nda', status: 'draft' }),
+  ct({ id: 'c3', v: 'v2', title: 'Client - Almarai', kind: 'client_contract', status: 'issued' }),
+];
+eq('the number finds it', filterContracts(rows, 'AQ-2026-0108', '').map((r) => r.id), ['c1']);
+eq('so does part of the title', filterContracts(rows, 'nadia', '').map((r) => r.id), ['c2']);
+eq('and the template name', filterContracts(rows, 'NDA form', '').map((r) => r.id), ['c2']);
+// The label, not the key: nobody has ever seen the word vendor_contract.
+eq('the kind is searched as it is LABELLED',
+  filterContracts(rows, 'influencer', '').map((r) => r.id), ['c1']);
+eq('and the status too', filterContracts(rows, 'draft', '').map((r) => r.id), ['c2']);
+eq('the status filter is exact', filterContracts(rows, '', 'issued').map((r) => r.id), ['c1', 'c3']);
+eq('both together narrow further', filterContracts(rows, 'client', 'issued').map((r) => r.id), ['c3']);
+eq('nothing typed is everything', filterContracts(rows, '', '').length, 3);
+
+eq('ticking adds', toggleId(['a'], 'b'), ['a', 'b']);
+eq('ticking again removes', toggleId(['a', 'b'], 'a'), ['b']);
+// The stack prints in the order of the register, not the order of ticking.
+eq('the selection prints in screen order, not click order',
+  selectedInOrder(rows, ['c3', 'c1']).map((r) => r.id), ['c1', 'c3']);
+eq('an id no longer on screen is not printed', selectedInOrder(rows, ['zz']), []);
+
+eq('a small batch says nothing', bulkPrintNote(3), null);
+ok('a big one warns rather than refuses', (bulkPrintNote(BULK_PRINT_WARN_AT) ?? '').includes('big print'));
+
+console.log(`${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
