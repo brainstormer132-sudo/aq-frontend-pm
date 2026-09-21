@@ -15,6 +15,7 @@ import {
   TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
   tableRowSource, tableFieldRow, tableRowsFor, fillSegments, batchProgress,
   tableHasInvalidCell,
+  optionalGroups, optionalGroupOn, toggleOptionalGroup,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -610,6 +611,76 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     batchProgress({ total: -3, unassigned: -1, issued: -1 }), 'no contracts yet');
   eq('more issued than there are still reads as done',
     batchProgress({ total: 2, unassigned: 0, issued: 9 }), '2 contracts - all issued');
+}
+
+// ---- an optional clause is a SECTION, not a block ----
+//
+// Siraj: "by default all legal requirement is recommended but they can choose
+// the ones they want to remove or edit". Section five of the UGC contract is a
+// heading, four paragraphs and four bank rows: nine blocks and ONE decision.
+// Before 114 that was nine checkboxes, each labelled with ninety characters of
+// its own text.
+{
+  const blk = (id, opt, group, label, text) => ({
+    id, version_id: 'v', workspace_id: 'w', position: 1, block_type: 'p',
+    content: { text: text ?? id }, optional: opt,
+    optional_group: group ?? null, optional_label: label ?? null,
+  });
+
+  const doc = [
+    blk('b1', false),                                   // structural
+    blk('b15', true),                                   // a standalone switch
+    blk('b21', true, 'terms', 'Fourth: terms'),         // a section...
+    blk('b22', true, 'terms'),
+    blk('b23', true, 'terms'),
+    blk('b36', true, 'notices', 'Sixth: notices'),      // ...and another
+    blk('b37', true, 'notices'),
+    blk('b40', false),                                  // structural
+  ];
+
+  const gs = optionalGroups(doc);
+  eq('three switches, not six', gs.map((g) => g.key), ['b15', 'terms', 'notices']);
+  eq('the section carries all its blocks',
+    gs[1].ids, ['b21', 'b22', 'b23']);
+  eq('and is labelled by its heading', gs[1].label, 'Fourth: terms');
+  eq('a lone block has no label, so the caller falls back to its text',
+    gs[0].label, '');
+  eq('and controls only itself', gs[0].ids, ['b15']);
+  // The order is the document's, by the first block of each group - the
+  // checkboxes read down the page in the order the clauses appear in it.
+  eq('order follows the document', gs.map((g) => g.firstId), ['b15', 'b21', 'b36']);
+  eq('structural blocks are not switches',
+    gs.some((g) => g.ids.includes('b1') || g.ids.includes('b40')), false);
+
+  // ---- switching one ----
+  eq('everything starts on', gs.map((g) => optionalGroupOn(g, [])), [true, true, true]);
+  const off1 = toggleOptionalGroup(gs[1], [], false);
+  eq('switching the section off takes all three blocks',
+    off1.slice().sort(), ['b21', 'b22', 'b23']);
+  eq('and the switch reads off', optionalGroupOn(gs[1], off1), false);
+  eq('while the others are untouched',
+    [optionalGroupOn(gs[0], off1), optionalGroupOn(gs[2], off1)], [true, true]);
+  const back = toggleOptionalGroup(gs[1], off1, true);
+  eq('switching it back on empties the list', back, []);
+
+  // A half-off group is only reachable by editing the stored value by hand.
+  // It reads as ON so that one more click turns all of it off, rather than
+  // one click turning the rest of it on behind your back.
+  ok('a half-off group reads as on', optionalGroupOn(gs[1], ['b22']));
+  eq('and one click finishes the job',
+    toggleOptionalGroup(gs[1], ['b22'], false).slice().sort(), ['b21', 'b22', 'b23']);
+
+  // A template with nothing optional - which is every version before v3 -
+  // yields no switches at all, so the card does not render.
+  eq('a template with no optional blocks has no switches',
+    optionalGroups([blk('x', false), blk('y', false)]), []);
+  eq('and an empty document does not crash', optionalGroups([]), []);
+
+  // A group name that is only whitespace is not a group; the block is its own
+  // switch. The 114 constraint refuses to store one, so this is belt and
+  // braces for a row written before it existed.
+  eq('a blank group name is not a group',
+    optionalGroups([blk('z', true, '   ')]).map((g) => g.key), ['z']);
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

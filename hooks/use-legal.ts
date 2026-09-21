@@ -127,7 +127,7 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
     setVersion(newest);
     if (!newest) { setBlocks([]); setLoading(false); return; }
     const { data: blks, error: e2 } = await c.from('doc_template_block')
-      .select('id, version_id, workspace_id, position, block_type, content, optional, condition, clause_id')
+      .select('id, version_id, workspace_id, position, block_type, content, optional, optional_group, optional_label, condition, clause_id')
       .eq('version_id', newest.id).order('position');
     if (e2) { setError(e2.message ?? String(e2)); setLoading(false); return; }
     setBlocks(((blks ?? []) as any[]) as TemplateBlock[]);
@@ -682,7 +682,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
     setContract(ct as Contract);
     const { data: blks, error: e1 } = await c.from('doc_template_block')
-      .select('id, version_id, workspace_id, position, block_type, content, optional, condition, clause_id')
+      .select('id, version_id, workspace_id, position, block_type, content, optional, optional_group, optional_label, condition, clause_id')
       .eq('version_id', (ct as any).version_id).order('position');
     if (e1) { setError(e1.message ?? String(e1)); setLoading(false); return; }
     setBlocks(((blks ?? []) as any[]) as TemplateBlock[]);

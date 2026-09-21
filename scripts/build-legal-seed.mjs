@@ -47,8 +47,16 @@ const ROOT = join(HERE, '..');
  * of {{ placeholders }}, because a UGC contract covers one vendor. A published
  * version is frozen by the 098 trigger and must stay that way, so the fix is a
  * new version, not an edit - and step 3 archives v1 on the way past.
+ *
+ * v3 (2026-09-21) marks the removable sections optional and groups them.
+ * Siraj: "by default all legal requirement is recommended but they can choose
+ * the ones they want to remove or edit from the app." Until now not one block
+ * in the template was optional, so the Optional clauses card on the fill
+ * screen has always rendered empty - the whole feature was unreachable. Same
+ * reasoning as v2: a published version is frozen, so the flags go on a new
+ * version and every contract stamped to v2 keeps reading exactly as it does.
  */
-const VERSION = 2;
+const VERSION = 3;
 
 // One file per version. 105 is what prod ran for v1 and stays in the repo as
 // the record of it; a bumped VERSION writes its own file beside it.
@@ -95,6 +103,35 @@ const FIELDS = [
   { key: 'account_name',   type: 'text', req: true,  ar: '\u0627\u0633\u0645 \u0627\u0644\u062d\u0633\u0627\u0628' },
   { key: 'account_number', type: 'text', req: true,  ar: '\u0631\u0642\u0645 \u0627\u0644\u062d\u0633\u0627\u0628' },
   { key: 'iban',           type: 'text', req: true,  ar: '\u0631\u0642\u0645 \u0627\u0644\u0627\u064a\u0628\u0627\u0646' },
+];
+
+// ---- which sections may be removed ----------------------------------------
+//
+// One switch per NUMBERED SECTION of the contract, because that is the unit a
+// person decides about. Section five alone is nine blocks (a heading, four
+// paragraphs and four bank rows); nine checkboxes for one decision is not a
+// choice, it is a puzzle. The heading always travels with its own content, so
+// nothing is ever left orphaned under a heading that was removed.
+//
+// Positions are 1-based and match the live template's order. What is NOT here
+// is as deliberate as what is: the parties, the subject, the outputs table,
+// the payment clause, the bank details and the signatures cannot be removed,
+// because what is left would not be a contract.
+//
+// The label is READ FROM THE HEADING BLOCK, never typed here - the Arabic
+// lives in contract-template-ar.js and crosses no console.
+const OPTIONAL_SECTIONS = [
+  { group: 'terms',       from: 21, to: 26 },  // rabi'an: terms and conditions
+  { group: 'termination', from: 27, to: 35 },  // khamisan: ending / changing it
+  { group: 'notices',     from: 36, to: 37 },  // sadisan: notices
+  { group: 'disputes',    from: 38, to: 39 },  // sabi'an: disputes, Saudi courts
+];
+
+// Standalone removable blocks: their own switch, no group. The fill screen
+// labels an ungrouped one with its own first ninety characters, which is
+// right for a single paragraph and wrong for a section.
+const OPTIONAL_SINGLES = [
+  15,  // "the second party confirms the bank details sent are correct"
 ];
 
 // ---- convert the 42 blocks -------------------------------------------------
@@ -144,6 +181,53 @@ const blocks = tpl.blocks.map((b, i) => {
   }
 });
 
+// ---- attach the optional flags, and prove the map is sane ------------------
+//
+// Asserted rather than trusted: a range that does not start on a heading has
+// no label to show, two ranges that overlap would fight over a block, and a
+// range running off the end silently marks nothing. Any of those would ship a
+// template whose checkboxes are wrong, which no test downstream would catch.
+const seen = new Map();
+for (const sec of OPTIONAL_SECTIONS) {
+  if (!(sec.from >= 1 && sec.to <= blocks.length && sec.from <= sec.to)) {
+    throw new Error(`section ${sec.group}: range ${sec.from}-${sec.to} is not inside 1-${blocks.length}`);
+  }
+  const head = blocks[sec.from - 1];
+  if (head.type !== 'h') {
+    throw new Error(`section ${sec.group}: block ${sec.from} is a "${head.type}", not a heading - nothing to label the checkbox with`);
+  }
+  const label = String(head.content.text ?? '').trim();
+  if (!label) throw new Error(`section ${sec.group}: its heading is empty`);
+  for (let pos = sec.from; pos <= sec.to; pos++) {
+    if (seen.has(pos)) {
+      throw new Error(`block ${pos} is in both "${seen.get(pos)}" and "${sec.group}"`);
+    }
+    seen.set(pos, sec.group);
+    const b = blocks[pos - 1];
+    b.optional = true;
+    b.optionalGroup = sec.group;
+    // Only the heading carries the label; the rest inherit it by sharing the
+    // group. Repeating it on nine rows is nine chances to disagree.
+    b.optionalLabel = pos === sec.from ? label : null;
+  }
+}
+for (const pos of OPTIONAL_SINGLES) {
+  if (seen.has(pos)) throw new Error(`block ${pos} is both a single and in "${seen.get(pos)}"`);
+  if (!(pos >= 1 && pos <= blocks.length)) throw new Error(`single ${pos} is outside 1-${blocks.length}`);
+  seen.set(pos, null);
+  blocks[pos - 1].optional = true;
+}
+// The structural blocks must stay exactly that. Named rather than derived, so
+// widening a range into one of them is a build failure and not a surprise.
+const STRUCTURAL = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 40, 41, 42];
+for (const pos of STRUCTURAL) {
+  if (blocks[pos - 1].optional) {
+    throw new Error(`block ${pos} is structural and must never be optional`);
+  }
+}
+const optionalCount = blocks.filter((b) => b.optional).length;
+if (optionalCount === 0) throw new Error('no block ended up optional - the whole point of v3');
+
 // Every {{ key }} in the converted wording must be in the registry, or the
 // template could never be published (LegalEditor refuses unknown keys).
 const registry = new Set(FIELDS.map((f) => f.key));
@@ -166,8 +250,11 @@ const jb = (o) => `${q(JSON.stringify(o))}::jsonb`;
 const fieldRows = FIELDS.map((f) =>
   `  perform legal._seed_field(v_ws, ${q(f.key)}, ${q(f.ar)}, ${q(f.type)}, ${f.req});`).join('\n');
 
+const nq = (s) => (s == null ? 'null' : q(s));
 const blockRows = blocks.map((b, i) =>
-  `    (v_ver, v_ws, ${i + 1}, ${q(b.type)}, ${jb(b.content)})`).join(',\n');
+  `    (v_ver, v_ws, ${i + 1}, ${q(b.type)}, ${jb(b.content)}, ` +
+  `${b.optional ? 'true' : 'false'}, ${nq(b.optionalGroup ?? null)}, ${nq(b.optionalLabel ?? null)})`
+).join(',\n');
 
 const sql = `-- ============================================================
 -- ${basename(OUT)}   GENERATED - do not hand-edit.
@@ -229,7 +316,8 @@ ${fieldRows}
     insert into legal.doc_template_version (template_id, workspace_id, version, status)
     values (v_tpl, v_ws, ${VERSION}, 'draft') returning id into v_ver;
 
-    insert into legal.doc_template_block (version_id, workspace_id, position, block_type, content)
+    insert into legal.doc_template_block (version_id, workspace_id, position, block_type, content,
+                                          optional, optional_group, optional_label)
     values
 ${blockRows};
 

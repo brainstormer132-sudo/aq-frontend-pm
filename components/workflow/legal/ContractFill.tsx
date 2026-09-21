@@ -23,6 +23,7 @@ import {
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
   tableRowSource, tableRowsFor, fillSegments,
+  optionalGroups, optionalGroupOn, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
   type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -56,7 +57,13 @@ export function ContractFill({
   // off. Everything downstream - fields, preview, print, fingerprint - works
   // from the visible set, so an excluded clause and its fields simply vanish.
   const visible = useMemo(() => visibleBlocks(blocks, offIds), [blocks, offIds]);
+  // One entry per DECISION, not per block. A clause is a section - section
+  // five is nine blocks and one choice - so blocks sharing an optional_group
+  // (114) collapse into a single switch carrying all their ids. An optional
+  // block with no group is still its own switch, which is what it was before
+  // groups existed.
   const optionalBlocks = useMemo(() => blocks.filter(isOptionalBlock), [blocks]);
+  const optGroups = useMemo(() => optionalGroups(blocks), [blocks]);
   // Only the add-rows tables get a TableFill above the form. A one-row table
   // (a vendor contract's outputs table) has no rows to add: its four cells are
   // ordinary fields and appear in the Fields card like any other.
@@ -458,15 +465,27 @@ export function ContractFill({
                 <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
                   color: 'var(--aq-text-muted)', marginTop: 6 }}>Optional clauses</div>
                 <div className="aq-card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {optionalBlocks.map((b) => {
-                    const included = !offIds.includes(b.id);
-                    const snippet = blockAllText(b).slice(0, 90) || '(empty clause)';
+                  {optGroups.map((g) => {
+                    const included = optionalGroupOn(g, offIds);
+                    // A group shows its heading; a lone block shows its own
+                    // first ninety characters, as it always did.
+                    const first = blocks.find((b) => b.id === g.firstId);
+                    const text = g.label
+                      || (first ? blockAllText(first).slice(0, 90) : '')
+                      || '(empty clause)';
                     return (
-                      <label key={b.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
+                      <label key={g.key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
                         opacity: included ? 1 : 0.55, cursor: editable ? 'pointer' : 'default' }}>
                         <input type="checkbox" checked={included} disabled={!editable}
-                          onChange={() => ed.toggleBlockOff(b.id, included)} style={{ marginTop: 3 }} />
-                        <span dir="auto" style={{ fontSize: 12.5, minWidth: 0 }}>{snippet}</span>
+                          onChange={() => ed.setValue(OPT_OFF_KEY,
+                            serializeOffIds(toggleOptionalGroup(g, offIds, !included)))}
+                          style={{ marginTop: 3 }} />
+                        <span dir="auto" style={{ fontSize: 12.5, minWidth: 0 }}>
+                          {text}
+                          {g.ids.length > 1 && (
+                            <span style={{ color: 'var(--aq-text-muted)' }}> {'\u00b7'} {g.ids.length} blocks</span>
+                          )}
+                        </span>
                         {!editable && (
                           <span className={`aq-badge ${included ? 'aq-badge-success' : 'aq-badge-muted'}`}
                             style={{ marginInlineStart: 'auto' }}>{included ? 'Included' : 'Excluded'}</span>

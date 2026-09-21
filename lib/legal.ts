@@ -100,6 +100,10 @@ export interface TemplateBlock {
   block_type: string;
   content: Record<string, unknown>;
   optional?: boolean;
+  /** Blocks sharing this switch on and off together as one clause (114). */
+  optional_group?: string | null;
+  /** What the checkbox says for the group; carried by its heading block. */
+  optional_label?: string | null;
   condition?: string | null;
   clause_id?: string | null;
 }
@@ -676,6 +680,79 @@ export const OPT_OFF_KEY = '__aq_opt_off';
 /** True when a block can be toggled off per contract. */
 export function isOptionalBlock(b: Pick<TemplateBlock, 'optional'>): boolean {
   return b.optional === true;
+}
+
+/**
+ * The optional clauses as a person decides about them: one entry per switch.
+ *
+ * A clause is a SECTION, not a block. Section five of the UGC contract is a
+ * heading, four paragraphs and four bank rows - nine blocks and one decision.
+ * Blocks sharing an `optional_group` collapse into a single entry carrying all
+ * their ids; an optional block with no group stays its own entry, which is
+ * right for a standalone paragraph.
+ *
+ * The label comes from whichever block in the group carries one (the seed puts
+ * it on the heading, once, so nine rows cannot come to disagree). Ungrouped
+ * entries have no label and the caller falls back to their own text, which is
+ * what it did before groups existed.
+ *
+ * Order follows the document, by the first block of each group: the checkboxes
+ * read down the page in the order the clauses appear in it. Pure.
+ */
+export interface OptionalGroup {
+  /** Stable across renders: the group name, or the lone block's id. */
+  key: string;
+  /** The heading, when the group has one. */
+  label: string;
+  /** Every block this switch controls. */
+  ids: string[];
+  /** The first block, for a caller that wants to show its text. */
+  firstId: string;
+}
+
+export function optionalGroups(blocks: TemplateBlock[]): OptionalGroup[] {
+  const out: OptionalGroup[] = [];
+  const byKey = new Map<string, OptionalGroup>();
+  for (const b of blocks) {
+    if (!isOptionalBlock(b)) continue;
+    const g = String(b.optional_group ?? '').trim();
+    if (!g) {
+      out.push({ key: b.id, label: '', ids: [b.id], firstId: b.id });
+      continue;
+    }
+    const found = byKey.get(g);
+    if (found) {
+      found.ids.push(b.id);
+      if (!found.label) found.label = String(b.optional_label ?? '').trim();
+      continue;
+    }
+    const made: OptionalGroup = {
+      key: g, label: String(b.optional_label ?? '').trim(), ids: [b.id], firstId: b.id,
+    };
+    byKey.set(g, made);
+    out.push(made);
+  }
+  return out;
+}
+
+/**
+ * Whether a switch is ON. A group is on unless EVERY block in it is off, so a
+ * half-off group (only reachable by editing the stored value by hand) reads as
+ * on and one more click turns all of it off, rather than the other way round.
+ * Pure.
+ */
+export function optionalGroupOn(g: OptionalGroup, offIds: string[]): boolean {
+  const off = new Set(offIds);
+  return g.ids.some((id) => !off.has(id));
+}
+
+/** The off-list after switching one group. Pure. */
+export function toggleOptionalGroup(
+  g: OptionalGroup, offIds: string[], on: boolean,
+): string[] {
+  const off = new Set(offIds);
+  for (const id of g.ids) { if (on) off.delete(id); else off.add(id); }
+  return [...off];
 }
 
 /** The block ids switched OFF, parsed from the reserved field's CSV value. */
