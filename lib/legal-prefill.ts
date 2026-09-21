@@ -334,7 +334,19 @@ export function joinPlatformHandles(pairs: [string, string][]): string {
 }
 
 /**
- * The platforms a contract names, as a list.
+ * The list fields a contract may name more than one of.
+ *
+ * Kept here rather than in the screen so a test can assert the set, and so the
+ * two places that render them (the fill screen and the task form) cannot come
+ * to disagree about which fields are multi-valued. Both carry allow_other in
+ * the registry (111); without it a joined value would fail validation, since
+ * it is not a member of the list by definition.
+ */
+export const MULTI_KEYS = [UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY];
+
+/**
+ * The platforms a contract names, as a list. Ad types are joined and split the
+ * same way - see MULTI_KEYS - so these four functions serve both.
  *
  * `platform_smart` is one field holding one string, because that is what the
  * document prints and what legal.contract_field stores. The contract app has

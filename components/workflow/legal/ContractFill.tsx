@@ -9,7 +9,8 @@ import {
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
   performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
   FIELD_GROUPS, fieldGroup, normalizeHandle, handleBody, UGC_CHANNEL_KEY, type FieldGroup,
-  UGC_PLATFORM_KEY, parsePlatforms, joinPlatforms, parsePlatformHandles,
+  UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY, MULTI_KEYS,
+  parsePlatforms, joinPlatforms, parsePlatformHandles,
   platformHandlePairs, joinPlatformHandles,
 } from '@/lib/legal-prefill';
 import { useLegacyVendors } from '@/hooks/use-workflow';
@@ -522,13 +523,16 @@ function HandleBox({
 }
 
 /**
- * The platform field, when several may be chosen.
+ * A list field you may tick more than one of.
  *
- * A single dropdown cannot say "Instagram and TikTok", and the contract app
- * never asked it to - it has always been a row of checkboxes whose keys are
- * comma-joined into one value (app.js:1360, 3616). This is that, with the Other
- * box the single-select version already had, because a platform nobody has
- * listed still has to be nameable.
+ * Two fields need it and for the same reason. A single dropdown cannot say
+ * "Instagram and TikTok", and it cannot say "a reel and three stories" either
+ * - Siraj: "one vendor could do multiple ads so this needs to be a drop down
+ * and choosable list". The contract app never asked a dropdown to: platforms
+ * have always been a row of checkboxes whose keys are comma-joined into one
+ * value (app.js:1360, 3616), and this is that, with the Other box the
+ * single-select version already had, because something nobody has listed still
+ * has to be nameable.
  *
  * The Other text is held locally rather than re-derived from the value on every
  * keystroke: joinPlatforms trims, so a re-derived box would eat the space the
@@ -536,7 +540,7 @@ function HandleBox({
  * adopts an external value - the contract finishing its load - without touching
  * what is being typed.
  */
-export function PlatformChoice({
+export function MultiChoice({
   value, options, editable, onChange,
 }: {
   value: string;
@@ -624,12 +628,18 @@ function FieldInput({
       return <input dir="auto" className="aq-input" value={value} readOnly
         placeholder="Filled automatically" style={{ width: '100%', opacity: 0.7 }} />;
     }
-    // The platform is the one list you may tick more than one of: a vendor who
-    // posts the same ad to Instagram and TikTok is one contract naming both,
-    // not two contracts. Everything downstream reads the joined value, so the
-    // document and the fingerprint see one field exactly as they always have.
-    if (field.key === UGC_PLATFORM_KEY && field.field_type === 'list') {
-      return <PlatformChoice value={value} options={options} editable={editable} onChange={onChange} />;
+    // The two lists you may tick more than one of. A vendor who posts the same
+    // ad to Instagram and TikTok is one contract naming both, not two; a vendor
+    // doing a reel AND three stories is one contract naming both ad types.
+    // Everything downstream reads the joined value, so the document and the
+    // fingerprint see one field exactly as they always have.
+    //
+    // Both carry allow_other (111), which is what lets a joined value validate
+    // at all - it is not a list member by definition. tests/legal.test.mjs says
+    // so out loud, because turning that flag off would quietly make every
+    // multi-value contract unissuable.
+    if (MULTI_KEYS.includes(field.key) && field.field_type === 'list') {
+      return <MultiChoice value={value} options={options} editable={editable} onChange={onChange} />;
     }
     if (field.field_type === 'list') {
       return (

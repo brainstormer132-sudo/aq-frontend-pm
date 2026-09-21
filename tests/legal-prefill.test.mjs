@@ -6,6 +6,7 @@ import {
   firstLast, performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY,
   normalizeHandle, handleBody, joinPlatformHandles, fieldGroup, FIELD_GROUPS,
   parsePlatforms, joinPlatforms, parsePlatformHandles, platformHandlePairs,
+  MULTI_KEYS, UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY,
 } from '../.test-build/legal-prefill.js';
 import { contractCanonical } from '../.test-build/legal.js';
 
@@ -368,6 +369,36 @@ ok('a row with only a platform is not empty',
     [['TikTok', 'b'], ['Instagram', 'a']]);
   eq('a platform the map has never heard of is a pair with no handle',
     platformHandlePairs(['Snapchat'], {}), [['Snapchat', '']]);
+}
+
+// ---- the fields you may tick more than one of ----
+//
+// Siraj: "one vendor could do multiple ads so this needs to be a drop down and
+// choosable list". Platforms were already multi; ad types are the second, and
+// they share every function, so the set is named once and asserted here rather
+// than written out in two screens.
+{
+  eq('two fields are multi-valued, and these two',
+    MULTI_KEYS, [UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY]);
+  eq('and they are the keys the template actually uses',
+    MULTI_KEYS, ['platform_smart', 'ad_types']);
+
+  // Ad types join and split with the same functions platforms do; if that ever
+  // stops being true, the screen renders one and stores the other.
+  eq('several ad types are one value',
+    joinPlatforms(['Reel', 'Story', 'Post']), 'Reel, Story, Post');
+  eq('and come back as several',
+    parsePlatforms('Reel, Story, Post'), ['Reel', 'Story', 'Post']);
+  eq('ticking the same one twice does not double it',
+    joinPlatforms(['Story', 'Story']), 'Story');
+  // parsePlatformHandles is not itself platform-aware - it would key on
+  // anything handed to it. What keeps ad types out of the handle boxes is the
+  // fill screen passing the PLATFORM list and only that (ContractFill's
+  // platformList reads UGC_PLATFORM_KEY). Asserted here so the claim is
+  // written down rather than assumed.
+  eq('the handle map keys on whatever list it is given, so the caller decides',
+    parsePlatformHandles('Reel: @a Story: @b', ['Reel', 'Story']),
+    { Reel: 'a', Story: 'b' });
 }
 
 // ---- which card a field sits on ----

@@ -7,7 +7,7 @@ import {
 } from '@/hooks/use-legal';
 import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
-import { ContractFill, PlatformChoice } from '@/components/workflow/legal/ContractFill';
+import { ContractFill, MultiChoice } from '@/components/workflow/legal/ContractFill';
 import {
   batchProgress, contractStatusLabel, contractStatusBadge, sortListValues,
 } from '@/lib/legal';
@@ -159,6 +159,7 @@ function NewTaskForm({
   const platformOptions = optionsFor(UGC_PLATFORM_KEY);
   // `platform` holds them comma-joined, as one contract_field value does.
   const chosenPlatforms = parsePlatforms(platform);
+  const chosenAdTypes = parsePlatforms(adType);
 
   const n = Number(count);
   const submit = async () => {
@@ -267,21 +268,24 @@ function NewTaskForm({
               what is ticked on a contract cannot come to mean different things.
               Tick more than one and every contract in the task asks for a
               handle per platform. */}
-          <PlatformChoice value={platform} options={platformOptions} editable onChange={setPlatform} />
+          <MultiChoice value={platform} options={platformOptions} editable onChange={setPlatform} />
           <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
             {chosenPlatforms.length > 1
               ? `${chosenPlatforms.length} platforms - each contract will ask for ${chosenPlatforms.length} handles.`
               : 'Tick more than one if the same ad runs on several.'}
           </div>
         </div>
-        <label style={{ flex: '1 1 200px' }}>
+        <div style={{ flex: '2 1 320px' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Ad type</div>
-          <select className="aq-select" value={adType} onChange={(e) => setAdType(e.target.value)}
-            style={{ width: '100%' }}>
-            <option value="">{'-- choose --'}</option>
-            {adOptions.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
-          </select>
-        </label>
+          {/* Tick as many as the job is. One vendor doing a reel and three
+              stories is one contract naming both. */}
+          <MultiChoice value={adType} options={adOptions} editable onChange={setAdType} />
+          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+            {chosenAdTypes.length > 1
+              ? `${chosenAdTypes.length} ad types on every contract in this task.`
+              : 'Tick more than one if the vendor is doing several.'}
+          </div>
+        </div>
       </div>
 
       {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{err}</div>}
