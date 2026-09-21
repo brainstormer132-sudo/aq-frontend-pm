@@ -333,6 +333,101 @@ export function joinPlatformHandles(pairs: [string, string][]): string {
   return one.map(([p, h]) => `${txt(p)}: ${normalizeHandle(h)}`).join(' ');
 }
 
+/**
+ * The platforms a contract names, as a list.
+ *
+ * `platform_smart` is one field holding one string, because that is what the
+ * document prints and what legal.contract_field stores. The contract app has
+ * always written several as a comma list (`keys.join(",")`, app.js:3616) and
+ * read them back by splitting on the comma (displayPlatforms, app.js:644), so
+ * this is that rule and not a new one. Pure.
+ */
+export function parsePlatforms(value: unknown): string[] {
+  return txt(value).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * The same list back as one value, in the order they were chosen, with
+ * duplicates dropped - two of the same platform would print twice in the
+ * contract and ask for the same handle twice on the screen. Pure.
+ */
+export function joinPlatforms(list: string[]): string {
+  const seen: string[] = [];
+  for (const p of list) {
+    const v = txt(p);
+    if (v && !seen.includes(v)) seen.push(v);
+  }
+  return seen.join(', ');
+}
+
+/**
+ * The reverse of joinPlatformHandles: which handle belongs to which platform.
+ *
+ * Needed because the screen has to REOPEN a saved contract with each handle
+ * back in its own box. Without this, a contract saved with two platforms comes
+ * back with one joined string in the first box and the second handle lost the
+ * moment anything is typed.
+ *
+ * Parsed by finding each platform's `<name>:` marker and taking everything up
+ * to the next one, rather than splitting on whitespace - a handle typed with a
+ * space in it then stays whole instead of being cut in half.
+ *
+ * Two kindnesses, both for values that already exist:
+ *  - one platform: the whole string is its handle, since that is how a
+ *    single-platform contract has always been written (no label at all).
+ *  - several platforms but no markers: the string is a bare handle from back
+ *    when the contract had one platform, so it belongs to the first. Dropping
+ *    it would silently empty a field somebody filled.
+ *
+ * Every platform passed in gets a key, empty when it has no handle, so the
+ * caller can render a box per platform without checking. Pure.
+ */
+export function parsePlatformHandles(
+  channel: unknown, platforms: string[],
+): Record<string, string> {
+  const keys: string[] = [];
+  for (const p of platforms) {
+    const v = txt(p);
+    if (v && !keys.includes(v)) keys.push(v);
+  }
+  const out: Record<string, string> = {};
+  for (const k of keys) out[k] = '';
+
+  const s = txt(channel);
+  if (!s || keys.length === 0) return out;
+  if (keys.length === 1) { out[keys[0]] = handleBody(s); return out; }
+
+  const marks: { key: string; at: number; len: number }[] = [];
+  for (const k of keys) {
+    const needle = `${k}:`;
+    const at = s.indexOf(needle);
+    if (at >= 0) marks.push({ key: k, at, len: needle.length });
+  }
+  if (marks.length === 0) { out[keys[0]] = handleBody(s); return out; }
+  marks.sort((a, b) => a.at - b.at);
+  for (let i = 0; i < marks.length; i++) {
+    const end = i + 1 < marks.length ? marks[i + 1].at : s.length;
+    out[marks[i].key] = handleBody(s.slice(marks[i].at + marks[i].len, end).trim());
+  }
+  return out;
+}
+
+/**
+ * The [platform, handle] pairs for joinPlatformHandles, in the order the
+ * platforms are named on the contract - so the printed line follows the
+ * dropdowns rather than whatever order a map happened to have. Pure.
+ */
+export function platformHandlePairs(
+  platforms: string[], byPlatform: Record<string, string>,
+): [string, string][] {
+  const seen: string[] = [];
+  for (const p of platforms) {
+    const v = txt(p);
+    if (v && !seen.includes(v)) seen.push(v);
+  }
+  return seen.map((p) => [p, txt(byPlatform[p])] as [string, string]);
+}
+
 // ---- how the fill screen is grouped ------------------------------------
 //
 // Siraj: "separate it so its easier to work with so price and bank info are in

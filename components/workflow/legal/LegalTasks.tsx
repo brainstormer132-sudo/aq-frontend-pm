@@ -7,12 +7,12 @@ import {
 } from '@/hooks/use-legal';
 import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
-import { ContractFill } from '@/components/workflow/legal/ContractFill';
+import { ContractFill, PlatformChoice } from '@/components/workflow/legal/ContractFill';
 import {
   batchProgress, contractStatusLabel, contractStatusBadge, sortListValues,
 } from '@/lib/legal';
 import {
-  moneyText, datedValues, arabicWeekday,
+  moneyText, datedValues, arabicWeekday, parsePlatforms,
   UGC_DATE_KEY, UGC_DAY_KEY, UGC_BRAND_KEY, UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY,
 } from '@/lib/legal-prefill';
 import { AqDrawingBlock } from '@/components/AQLoading';
@@ -157,6 +157,8 @@ function NewTaskForm({
   };
   const adOptions = optionsFor(UGC_AD_TYPE_KEY);
   const platformOptions = optionsFor(UGC_PLATFORM_KEY);
+  // `platform` holds them comma-joined, as one contract_field value does.
+  const chosenPlatforms = parsePlatforms(platform);
 
   const n = Number(count);
   const submit = async () => {
@@ -259,14 +261,19 @@ function NewTaskForm({
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <label style={{ flex: '1 1 200px' }}>
+        <div style={{ flex: '2 1 320px' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Platform</div>
-          <select className="aq-select" value={platform} onChange={(e) => setPlatform(e.target.value)}
-            style={{ width: '100%' }}>
-            <option value="">{'-- choose --'}</option>
-            {platformOptions.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
-          </select>
-        </label>
+          {/* The same control the fill screen uses, so what is ticked here and
+              what is ticked on a contract cannot come to mean different things.
+              Tick more than one and every contract in the task asks for a
+              handle per platform. */}
+          <PlatformChoice value={platform} options={platformOptions} editable onChange={setPlatform} />
+          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+            {chosenPlatforms.length > 1
+              ? `${chosenPlatforms.length} platforms - each contract will ask for ${chosenPlatforms.length} handles.`
+              : 'Tick more than one if the same ad runs on several.'}
+          </div>
+        </div>
         <label style={{ flex: '1 1 200px' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Ad type</div>
           <select className="aq-select" value={adType} onChange={(e) => setAdType(e.target.value)}

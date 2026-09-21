@@ -5,6 +5,7 @@ import {
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, stampContractNumber,
   firstLast, performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY,
   normalizeHandle, handleBody, joinPlatformHandles, fieldGroup, FIELD_GROUPS,
+  parsePlatforms, joinPlatforms, parsePlatformHandles, platformHandlePairs,
 } from '../.test-build/legal-prefill.js';
 import { contractCanonical } from '../.test-build/legal.js';
 
@@ -301,6 +302,72 @@ ok('a row with only a platform is not empty',
   eq('nothing at all is an empty line', joinPlatformHandles([]), '');
   eq('only empties is an empty line',
     joinPlatformHandles([['Instagram', ''], ['TikTok', '  ']]), '');
+}
+
+// ---- several platforms on one contract ----
+//
+// Siraj: "if you choose more than one platform it will put two drop downs based
+// on the platforms chosen". One field still holds them, comma-joined, because
+// that is what the document prints and what the contract app has always
+// written (app.js:3616).
+{
+  eq('one platform is a list of one', parsePlatforms('Instagram'), ['Instagram']);
+  eq('two come back as two', parsePlatforms('Instagram, TikTok'), ['Instagram', 'TikTok']);
+  eq('sloppy spacing does not make a third',
+    parsePlatforms(' Instagram ,TikTok ,, '), ['Instagram', 'TikTok']);
+  eq('nothing is no platforms', parsePlatforms(''), []);
+  eq('null is no platforms', parsePlatforms(null), []);
+
+  eq('joining keeps the order chosen',
+    joinPlatforms(['TikTok', 'Instagram']), 'TikTok, Instagram');
+  eq('the same platform twice is once',
+    joinPlatforms(['Instagram', 'Instagram']), 'Instagram');
+  eq('blanks do not become commas', joinPlatforms(['Instagram', '', '  ']), 'Instagram');
+  eq('nothing joins to nothing', joinPlatforms([]), '');
+  // The pair must survive a round trip or a saved contract loses a platform.
+  eq('parse and join are the same list back',
+    parsePlatforms(joinPlatforms(['Instagram', 'TikTok', 'Snapchat'])),
+    ['Instagram', 'TikTok', 'Snapchat']);
+
+  // ---- and the handle that goes with each ----
+  const two = ['Instagram', 'TikTok'];
+  eq('each handle goes back in its own box',
+    parsePlatformHandles('Instagram: @sara TikTok: @sara2', two),
+    { Instagram: 'sara', TikTok: 'sara2' });
+  eq('the order in the string does not matter',
+    parsePlatformHandles('TikTok: @sara2 Instagram: @sara', two),
+    { Instagram: 'sara', TikTok: 'sara2' });
+  eq('a platform with no handle in the line comes back empty, not missing',
+    parsePlatformHandles('Instagram: @sara', two), { Instagram: 'sara', TikTok: '' });
+  eq('every chosen platform gets a box even with nothing saved',
+    parsePlatformHandles('', two), { Instagram: '', TikTok: '' });
+  // A handle typed with a space in it must not be cut at the space.
+  eq('a spaced handle stays whole',
+    parsePlatformHandles('Instagram: @sara k TikTok: @s2', two),
+    { Instagram: 'sara k', TikTok: 's2' });
+  // One platform has never carried a label, so the whole line is its handle.
+  eq('a single platform takes the whole line',
+    parsePlatformHandles('@sara', ['Instagram']), { Instagram: 'sara' });
+  // The contract that already exists: one platform, a bare handle, and a
+  // second platform added afterwards. The handle belongs to the first.
+  eq('a bare handle from before belongs to the first platform',
+    parsePlatformHandles('@sara', two), { Instagram: 'sara', TikTok: '' });
+  eq('no platforms is an empty map', parsePlatformHandles('@sara', []), {});
+
+  // THE ROUND TRIP. This is the one that matters: open a saved contract, touch
+  // nothing, and the line it would write back is the line it read.
+  const line = 'Instagram: @sara TikTok: @sara2';
+  eq('reading and writing back changes nothing',
+    joinPlatformHandles(platformHandlePairs(two, parsePlatformHandles(line, two))), line);
+  eq('and one platform round-trips as a bare handle',
+    joinPlatformHandles(platformHandlePairs(['Instagram'],
+      parsePlatformHandles('@sara', ['Instagram']))), '@sara');
+
+  eq('pairs follow the platform order, not the map order',
+    platformHandlePairs(['TikTok', 'Instagram'], { Instagram: 'a', TikTok: 'b' }),
+    [['TikTok', 'b'], ['Instagram', 'a']]);
+  eq('a platform the map has never heard of is a pair with no handle',
+    platformHandlePairs(['Snapchat'], {}), [['Snapchat', '']]);
 }
 
 // ---- which card a field sits on ----

@@ -568,6 +568,22 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     contractReady([{ key: 'ad_types', ...open }], { ad_types: 'Podcast' }, { ad_types: LIST.values }));
   ok('and one with an off-list value on a closed field is not',
     !contractReady([{ key: 'ad_types', ...closed }], { ad_types: 'Podcast' }, { ad_types: LIST.values }));
+
+  // THE COUPLING THAT COULD BREAK SILENTLY. Several platforms are stored as one
+  // comma-joined value, which is by definition not a member of the list. It
+  // passes only because platform_smart carries allow_other. Turn that flag off
+  // in the registry and every multi-platform contract stops being issuable -
+  // so this is the test that says why the flag is there.
+  const PLATFORMS = { values: ['Instagram', 'TikTok'] };
+  eq('two platforms in one value are allowed by allow_other',
+    validateFieldValue({ field_type: 'list', required: true, allow_other: true },
+      'Instagram, TikTok', PLATFORMS), null);
+  eq('and are rejected the moment the flag comes off',
+    validateFieldValue({ field_type: 'list', required: true, allow_other: false },
+      'Instagram, TikTok', PLATFORMS), 'Choose a value from the list.');
+  ok('a two-platform contract is ready to issue',
+    contractReady([{ key: 'platform_smart', field_type: 'list', required: true, allow_other: true }],
+      { platform_smart: 'Instagram, TikTok' }, { platform_smart: PLATFORMS.values }));
 }
 
 // ---- how a task's line reads ----

@@ -9,6 +9,8 @@ import {
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
   performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
   FIELD_GROUPS, fieldGroup, normalizeHandle, handleBody, UGC_CHANNEL_KEY, type FieldGroup,
+  UGC_PLATFORM_KEY, parsePlatforms, joinPlatforms, parsePlatformHandles,
+  platformHandlePairs, joinPlatformHandles,
 } from '@/lib/legal-prefill';
 import { useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
@@ -94,6 +96,15 @@ export function ContractFill({
     })),
     [vendors],
   );
+  // The platforms this contract names, which decide how many handle boxes the
+  // channel field draws. Siraj: "if you choose more than one platform it will
+  // put two drop downs based on the platforms chosen". One field still holds
+  // them - the document prints one line - so the list is parsed back out of it.
+  const platformList = useMemo(
+    () => parsePlatforms(values[UGC_PLATFORM_KEY] ?? ''),
+    [values],
+  );
+
   const usesBank = useMemo(() => fields.some((f) => UGC_BANK_KEYS.includes(f.key)), [fields]);
   const chosenBankId = useMemo(
     () => String(matchBankAccount(banks, values.iban ?? '')?.id ?? ''),
@@ -431,6 +442,7 @@ export function ContractFill({
                     <FieldInput key={f.key} field={f} value={values[f.key] ?? ''} editable={!!editable}
                       options={sortListValues(((f.list_id ? lists.valuesByList[f.list_id] : undefined) ?? []).filter((v) => v.active))}
                       allowed={listsByKey[f.key]}
+                      platforms={platformList}
                       hint={f.key === UGC_DATE_KEY && usesDay
                         ? `The weekday follows this date: ${values[UGC_DAY_KEY] || '-'}`
                         : undefined}
@@ -485,8 +497,100 @@ export function ContractFill({
  *  it clears the field and opens the text box. */
 const OTHER_CHOICE = '__aq_other__';
 
+/**
+ * The handle box: a fixed `@` and a name beside it.
+ *
+ * Siraj: "make sure channle name fits the standared where an @ goes on the left
+ * and the name goes on the right". Drawn once and used by both the one-platform
+ * field and each row of the several-platform one, so the two cannot drift.
+ */
+function HandleBox({
+  value, onChange, width,
+}: { value: string; onChange: (v: string) => void; width?: number }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch', width: '100%', maxWidth: width ?? 360,
+      direction: 'ltr' }}>
+      <span style={{ display: 'flex', alignItems: 'center', padding: '0 10px', fontWeight: 700,
+        border: '1px solid var(--aq-border)', borderInlineEnd: 'none',
+        borderRadius: '6px 0 0 6px', background: 'var(--aq-surface-2, rgba(0,0,0,0.04))',
+        color: 'var(--aq-text-muted)' }}>@</span>
+      <input className="aq-input" dir="ltr" value={value} placeholder="name"
+        onChange={(e) => onChange(e.target.value)}
+        style={{ flex: 1, minWidth: 0, borderRadius: '0 6px 6px 0' }} />
+    </div>
+  );
+}
+
+/**
+ * The platform field, when several may be chosen.
+ *
+ * A single dropdown cannot say "Instagram and TikTok", and the contract app
+ * never asked it to - it has always been a row of checkboxes whose keys are
+ * comma-joined into one value (app.js:1360, 3616). This is that, with the Other
+ * box the single-select version already had, because a platform nobody has
+ * listed still has to be nameable.
+ *
+ * The Other text is held locally rather than re-derived from the value on every
+ * keystroke: joinPlatforms trims, so a re-derived box would eat the space the
+ * moment you typed one and "Ad board" could never be typed. The effect below
+ * adopts an external value - the contract finishing its load - without touching
+ * what is being typed.
+ */
+export function PlatformChoice({
+  value, options, editable, onChange,
+}: {
+  value: string;
+  options: { id: string; value: string; label: string }[];
+  editable: boolean;
+  onChange: (v: string) => void;
+}) {
+  const chosen = parsePlatforms(value);
+  const known = options.map((o) => o.value);
+  const extra = chosen.filter((v) => !known.includes(v));
+  const [otherText, setOtherText] = useState(() => extra.join(', '));
+
+  useEffect(() => {
+    const shown = parsePlatforms(otherText);
+    if (extra.length !== shown.length || extra.some((v, i) => v !== shown[i])) {
+      setOtherText(extra.join(', '));
+    }
+    // Only when what is STORED disagrees with what is shown; typing keeps them
+    // in step, so this does not fire mid-word.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const write = (picked: string[], other: string) =>
+    onChange(joinPlatforms([...picked, ...parsePlatforms(other)]));
+  const picked = chosen.filter((v) => known.includes(v));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
+        {options.map((o) => {
+          const on = picked.includes(o.value);
+          return (
+            <label key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 13, cursor: editable ? 'pointer' : 'default' }}>
+              <input type="checkbox" checked={on} disabled={!editable}
+                onChange={() => write(on ? picked.filter((v) => v !== o.value) : [...picked, o.value],
+                  otherText)} />
+              {/* English to choose from, Arabic in the document - the label and
+                  the value differ on purpose. */}
+              <span>{o.label || o.value}</span>
+            </label>
+          );
+        })}
+      </div>
+      <input dir="auto" className="aq-input" value={otherText} disabled={!editable}
+        onChange={(e) => { setOtherText(e.target.value); write(picked, e.target.value); }}
+        placeholder={'Something else? Type it as it should read in the contract'}
+        style={{ width: '100%', maxWidth: 420 }} />
+    </div>
+  );
+}
+
 function FieldInput({
-  field, value, options, allowed, editable, hint, onChange,
+  field, value, options, allowed, editable, hint, platforms, onChange,
 }: {
   field: Placeholder;
   value: string;
@@ -495,6 +599,8 @@ function FieldInput({
   editable: boolean;
   /** A line under the control, for a field that drives another one. */
   hint?: string;
+  /** The platforms this contract names - one handle box each. */
+  platforms?: string[];
   onChange: (v: string) => void;
 }) {
   const err = validateFieldValue(field, value, allowed ? { values: allowed } : undefined);
@@ -517,6 +623,13 @@ function FieldInput({
     if (field.field_type === 'auto') {
       return <input dir="auto" className="aq-input" value={value} readOnly
         placeholder="Filled automatically" style={{ width: '100%', opacity: 0.7 }} />;
+    }
+    // The platform is the one list you may tick more than one of: a vendor who
+    // posts the same ad to Instagram and TikTok is one contract naming both,
+    // not two contracts. Everything downstream reads the joined value, so the
+    // document and the fingerprint see one field exactly as they always have.
+    if (field.key === UGC_PLATFORM_KEY && field.field_type === 'list') {
+      return <PlatformChoice value={value} options={options} editable={editable} onChange={onChange} />;
     }
     if (field.field_type === 'list') {
       return (
@@ -547,17 +660,31 @@ function FieldInput({
     // normalizeHandle is the contract app's own rule (app.js:3569), so the
     // register spells one account one way: @sara, not sara and @@sara too.
     if (field.key === UGC_CHANNEL_KEY) {
-      return (
-        <div style={{ display: 'flex', alignItems: 'stretch', width: '100%', maxWidth: 360, direction: 'ltr' }}>
-          <span style={{ display: 'flex', alignItems: 'center', padding: '0 10px', fontWeight: 700,
-            border: '1px solid var(--aq-border)', borderInlineEnd: 'none',
-            borderRadius: '6px 0 0 6px', background: 'var(--aq-surface-2, rgba(0,0,0,0.04))',
-            color: 'var(--aq-text-muted)' }}>@</span>
-          <input className="aq-input" dir="ltr" value={handleBody(value)} placeholder="name"
-            onChange={(e) => onChange(normalizeHandle(e.target.value))}
-            style={{ flex: 1, minWidth: 0, borderRadius: '0 6px 6px 0' }} />
-        </div>
-      );
+      const list = platforms ?? [];
+      // Several platforms: one box each, labelled, and the contract still
+      // prints the single line the app has always written - "Instagram: @a
+      // TikTok: @b". Reading it back out is what lets a saved contract reopen
+      // with each handle in its own box instead of all of them in the first.
+      if (list.length > 1) {
+        const byPlatform = parsePlatformHandles(value, list);
+        const line = joinPlatformHandles(platformHandlePairs(list, byPlatform));
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {list.map((p) => (
+              <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span dir="auto" style={{ fontSize: 12.5, fontWeight: 600, minWidth: 92 }}>{p}</span>
+                <HandleBox width={260} value={byPlatform[p] ?? ''}
+                  onChange={(h) => onChange(joinPlatformHandles(
+                    platformHandlePairs(list, { ...byPlatform, [p]: h })))} />
+              </div>
+            ))}
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+              In the contract: <span dir="auto">{line || '-'}</span>
+            </div>
+          </div>
+        );
+      }
+      return <HandleBox value={handleBody(value)} onChange={(h) => onChange(normalizeHandle(h))} />;
     }
     if (field.field_type === 'number') {
       return <input type="number" className="aq-input" value={value} onChange={(e) => onChange(e.target.value)}
