@@ -97,8 +97,30 @@ declare
   v_nofile bigint;
   v_noref  bigint;
 begin
-  if auth.uid() is null
-     or not public.has_role(p_workspace_id, array['owner','admin','legal']) then
+  -- WHO IS ALLOWED TO RUN THIS, AND WHY IT IS NOT THE USUAL GUARD.
+  --
+  -- The first version of this file carried the same check every legal RPC
+  -- carries: `auth.uid() is null or not has_role(...)`. That refuses the
+  -- Supabase SQL EDITOR, which has no JWT - and the SQL editor is the only
+  -- place a one-off import is ever run from. The guard blocked the only
+  -- caller there will ever be, and the self-test at the bottom asserted that
+  -- refusal as if it were the correct behaviour.
+  --
+  -- So: a session must hold the role, and no session is allowed ONLY when the
+  -- caller is a superuser. That is the SQL editor or psql as the database
+  -- owner - somebody who can already write these rows by hand, so the guard
+  -- protects nothing against them.
+  --
+  -- It is not simply "allow when auth.uid() is null". A JWT minted with
+  -- role=authenticated and no `sub` would also have a null uid, and would
+  -- then import into any workspace it named. PostgREST never runs as a
+  -- superuser, so that path stays shut.
+  if auth.uid() is null then
+    if coalesce(current_setting('is_superuser', true), 'off') <> 'on' then
+      raise exception 'Only legal can import the contract app''s documents.'
+        using errcode = '42501';
+    end if;
+  elsif not public.has_role(p_workspace_id, array['owner','admin','legal']) then
     raise exception 'Only legal can import the contract app''s documents.'
       using errcode = '42501';
   end if;
@@ -218,8 +240,13 @@ create or replace function legal.undo_generated_contracts_import(p_workspace_id 
   as $fn$
 declare n bigint;
 begin
-  if auth.uid() is null
-     or not public.has_role(p_workspace_id, array['owner','admin']) then
+  -- Same rule as the import: a session must be an owner, and no session is
+  -- allowed only for a superuser. See the note there.
+  if auth.uid() is null then
+    if coalesce(current_setting('is_superuser', true), 'off') <> 'on' then
+      raise exception 'Only an owner can undo the import.' using errcode = '42501';
+    end if;
+  elsif not public.has_role(p_workspace_id, array['owner','admin']) then
     raise exception 'Only an owner can undo the import.' using errcode = '42501';
   end if;
   delete from legal.external_doc
@@ -261,11 +288,21 @@ end $$;
 do $$
 declare v_sig text;
 begin
+  -- BOTH PATHS, because the first version of this file tested only the one
+  -- that refuses and shipped a function nobody could run.
+  --
+  -- 1. A superuser with no session - the SQL editor, which is where this is
+  --    actually run from - must get THROUGH the guard. It will then fail on
+  --    the unknown workspace (42704), and that is the proof: reaching the
+  --    workspace check means the role check let it past.
   begin
     perform * from legal.import_generated_contracts('00000000-0000-0000-0000-000000000000');
-    raise exception 'legal: the import answered a caller with no session';
+    raise exception 'legal: a nonexistent workspace was accepted';
   exception
-    when sqlstate '42501' then null;
+    when sqlstate '42704' then
+      null;  -- got past the guard and refused the workspace. Correct.
+    when sqlstate '42501' then
+      raise exception 'legal: the import refuses the SQL editor - it cannot be run at all';
   end;
 
   -- THE SIGNATURE, not just the existence. A function that is present but is
