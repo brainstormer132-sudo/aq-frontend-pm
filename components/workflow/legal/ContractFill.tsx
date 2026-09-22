@@ -30,7 +30,7 @@ import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
-  contractStatusLabel, contractStatusBadge, fieldTypeLabel, contractPrintHTML, printReference,
+  contractStatusLabel, contractStatusBadge, contractPrintHTML, printReference,
   contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
@@ -833,6 +833,15 @@ function HandleBox({
  * what is being typed.
  */
 /**
+ * How wide a field box gets.
+ *
+ * Not the full width of the screen. These hold an IBAN, a bank name, a
+ * platform - none of them is a paragraph, and a short value in a very wide
+ * box reads as unfinished rather than roomy.
+ */
+const FIELD_WIDTH = 520;
+
+/**
  * Add a bank account to the vendor, without leaving the contract.
  *
  * The fill screen used to end at "This vendor has no bank account on file -
@@ -1142,16 +1151,40 @@ function FieldInput({
       placeholder={label} style={{ width: '100%' }} />;
   };
 
+  /*
+   * Siraj: "clean it up and make it look presentable it looks too bland and
+   * not profetional", with two screenshots of these rows.
+   *
+   * Every row carried THREE grey things beside its label - the required star,
+   * the raw key in monospace, and the type name pushed out to the right edge -
+   * and sixteen rows of that is why the eye cannot find the label. Both of the
+   * grey ones are developer-facing:
+   *
+   *   * the TYPE NAME said "Text" above a text box and "List" above a
+   *     dropdown. The control is already the answer to that question, so it
+   *     is gone.
+   *   * the KEY still earns its place - it is how you match a field to the
+   *     {{ placeholder }} in the template - but it is an aside, not a second
+   *     heading. It sits quietly at the right, where the type name used to
+   *     be, so the label owns the left of the row on its own.
+   *
+   * And the box is capped rather than stretching the full width of the
+   * screen. A twenty-character IBAN in a box a thousand pixels wide is the
+   * single thing that makes a form look unfinished.
+   */
   return (
     <div>
-      <label style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
+      <label style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 5 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600 }} dir="auto">{label}</span>
         {field.required && <span style={{ color: 'var(--aq-danger, #c0392b)', fontSize: 12 }}>*</span>}
-        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)', fontFamily: 'monospace' }}>{field.key}</span>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: 'var(--aq-text-muted)' }}>{fieldTypeLabel(field.field_type)}</span>
+        <span title="The name this field has in the template"
+          style={{
+            fontSize: 10.5, color: 'var(--aq-text-muted)', fontFamily: 'monospace',
+            direction: 'ltr', opacity: 0.7,
+          }}>{field.key}</span>
       </label>
-      {control()}
+      <div style={{ maxWidth: FIELD_WIDTH }}>{control()}</div>
       {editable && hint && (
         <div dir="auto" style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>{hint}</div>
       )}
