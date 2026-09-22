@@ -18,7 +18,7 @@ import {
   optionalGroups, optionalGroupOn, toggleOptionalGroup,
   isArchivedTemplate, splitTemplates, withoutArchived, archivedNote,
   archivedToggleLabel, archiveConfirm,
-  stripBulletMarker, shortContractId,
+  bulletText, BULLET, shortContractId, printCss,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -274,7 +274,9 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   // Only the SUBSTITUTED value is isolated - the literal " SAR" beside it is
   // the template's own wording and belongs to the line's direction.
   ok('fills kv value', html.includes('<bdi>12,500</bdi> SAR'));
-  ok('fills bullet placeholder', html.includes('&bull; Term <bdi>12m</bdi>'));
+  // CHANGED 22 Sep: the marker is a hyphen, because that is what every list
+  // marker in the Word original is. See the bullet section below.
+  ok('fills bullet placeholder', html.includes('- Term <bdi>12m</bdi>'));
   ok('a latin value inside the wording is isolated, so an @ leads',
     contractPrintHTML({ title: 't', dir: 'rtl', values: { h: '@test' },
       blocks: [{ block_type: 'p', content: { text: '\u0627\u0644\u062d\u0633\u0627\u0628 {{ h }}' } }],
@@ -380,33 +382,65 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
         blocks: [{ block_type: 'p', content: { text: '{{ id }}' } }] }).includes('<bdi>AQ-9</bdi>'));
   }
 }
-/* -- one bullet per bullet -------------------------------------------- */
-// The UGC wording was written in Word, where the marker belongs to the
-// paragraph style, and several clauses were pasted in carrying a literal
-// leading hyphen. The renderer adds its own marker, so the line printed with
-// two - `- -\u0627\u0644\u0627\u0644\u062a\u0632\u0627\u0645`. Found by rendering the real seeded
-// template and looking at page three, not by reading the seed.
+/* -- the numbers come off the Word original ---------------------------- */
+// Not eyeballed. Read out of word/styles.xml and word/document.xml in
+// `Rawad altathir UGC.docx`, 22 Sep: Normal is w:sz 24 (12pt), the title and
+// the bank lines are w:szCs 28 (14pt), line spacing is w:line 360 (1.5), and
+// the table is Word's "Grid Table 1 Light" - 0.5pt #999999 all round with a
+// 1.5pt #666666 rule under the header and NO fill.
+//
+// These assertions exist because the previous values (12.5pt, 1.9, a 19pt
+// title, a grey header band) were my own invention, and that is exactly what
+// "make it look exactly like the word doc" was complaining about. If somebody
+// changes one of these later it should be because they re-measured.
+{
+  const css = printCss();
+  ok('body is 12pt', /body \{[^}]*font-size: 12pt/s.test(css));
+  ok('and 1.5 line spacing', /body \{[^}]*line-height: 1\.5;/s.test(css));
+  ok('the title is 14pt, not a masthead', css.includes('.doc-title { font-size: 14pt'));
+  ok('a heading is the body size in bold', css.includes('.doc-h { font-size: 12pt; font-weight: 700'));
+  ok('table borders are the document grey', css.includes('border: 0.5pt solid #999999'));
+  ok('with a heavier rule under the header', css.includes('border-bottom: 1.5pt solid #666666'));
+  // The header band was mine. The document has no fill anywhere in the table.
+  ok('and no header fill at all', !/\.doc-table th \{[^}]*background/s.test(css));
+}
+
+/* -- one marker per bullet, and it is a hyphen ------------------------ */
+// MEASURED: every list marker in the Word original is a HYPHEN. Some are
+// typed into the text ("-\u0627\u0644\u0627\u0644\u062a\u0632\u0627\u0645"), some come from a Word list, and on
+// the page the two are indistinguishable. There is no bullet glyph in the
+// document at all - the round bullet was mine.
+//
+// So the author's own marker is kept and normalised, and one is added only to
+// a line that has none. Found by rendering the real seeded template and
+// looking at page three, where clauses printed with two markers.
 {
   const li = (t) => contractPrintHTML({ title: 't', dir: 'rtl', values: {},
     blocks: [{ block_type: 'li', content: { text: t } }] });
-  ok('a hyphen the author typed does not survive beside our bullet',
-    li('- first').includes('&bull; first'));
-  ok('nor does one with no space after it', li('-first').includes('&bull; first'));
-  ok('nor a bullet character', li('\u2022 first').includes('&bull; first'));
-  ok('nor an en dash', li('\u2013 first').includes('&bull; first'));
+  ok('the marker is the document\'s hyphen, not a bullet', !li('x').includes('&bull;'));
+  ok('a line with no marker gets one', li('first').includes('- first'));
+  ok('a hyphen the author typed is kept, not doubled', li('- first').includes('- first')
+    && !li('- first').includes('- - first'));
+  ok('and one with no space after it is normalised', li('-first').includes('- first'));
+  ok('a bullet character becomes the document\'s hyphen', li('\u2022 first').includes('- first'));
+  ok('so does an en dash', li('\u2013 first').includes('- first'));
   // ONE marker, and only from the front. A hyphen in the middle of a clause is
-  // the author's - "24-hour", "\u0645\u0627-\u0642\u0628\u0644" - and moving it would change the wording.
+  // the author's - "24-hour" - and moving it would change the wording.
   ok('a hyphen inside the line is left alone', li('- a 24-hour window')
-    .includes('&bull; a 24-hour window'));
-  ok('and only one marker is taken', li('-- twice').includes('&bull; - twice'));
-  eq('nothing to strip, nothing changes', stripBulletMarker('plain'), 'plain');
-  eq('and an empty line stays empty', stripBulletMarker(''), '');
-  // The strip happens BEFORE the fields are filled, so a value that begins
-  // with a hyphen is never eaten out of the middle of a sentence.
+    .includes('- a 24-hour window'));
+  ok('and only one leading marker is taken', li('-- twice').includes('- - twice'));
+  eq('a plain line gains a marker', bulletText('plain'), '- plain');
+  eq('a marked one keeps exactly one', bulletText('  -  plain'), '- plain');
+  // An empty line stays empty rather than becoming a marker with nothing
+  // after it - a lone hyphen on the page reads as a mistake.
+  eq('an empty line stays empty', bulletText(''), '');
+  eq('and so does a blank one', bulletText('   '), '   ');
+  // The marker is added BEFORE the fields are filled, so a value that begins
+  // with a hyphen is never mistaken for the line's marker.
   ok('a filled value keeps its own leading hyphen',
     contractPrintHTML({ title: 't', dir: 'ltr', values: { n: '-5' },
       blocks: [{ block_type: 'li', content: { text: '- delta {{ n }}' } }] })
-      .includes('&bull; delta <bdi>-5</bdi>'));
+      .includes('- delta <bdi>-5</bdi>'));
 }
 
 // ---- contract fingerprint ----

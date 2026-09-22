@@ -1174,20 +1174,32 @@ export function fillPlaceholdersHtml(text: string, values: Record<string, string
   return out;
 }
 
+/** Does this line already start with a marker the author typed? */
+const LEADING_MARKER = /^[\s\u00a0]*[-\u2010-\u2015\u2022\u00b7*][\s\u00a0]*/;
+
 /**
- * A bullet's text without the bullet somebody already typed.
+ * A bullet with exactly one marker on it.
  *
- * The UGC wording was written in Word, where the list marker is part of the
- * paragraph style, and several clauses were pasted in carrying a literal
- * leading hyphen. Printed through a renderer that adds its own marker, the
- * line came out `- -\u0627\u0644\u0627\u0644\u062a\u0632\u0627\u0645` - two markers, one of which nobody
- * chose. Strip ONE leading marker, and only from the front.
+ * MEASURED FROM THE WORD ORIGINAL, 22 Sep. Every list marker in
+ * `Rawad altathir UGC.docx` is a HYPHEN - some typed into the text
+ * ("-\u0627\u0644\u0627\u0644\u062a\u0632\u0627\u0645 \u0628\u0627\u0644\u062a\u0648\u0627\u0631\u064a\u062e"), some from a Word list, and the two are
+ * indistinguishable on the page. There is no bullet glyph anywhere in the
+ * document.
  *
- * Not a general tidy-up: a hyphen anywhere else in the line is the author's
- * and is left exactly where it is.
+ * So: the author's own marker is KEPT, normalised to "- ", and one is added
+ * only to a line that has none. The earlier version stripped the typed hyphen
+ * and substituted a round bullet, which fixed the doubled marker and changed
+ * the document's look in the same move. Keeping the hyphen does both jobs.
+ *
+ * One marker, and only from the front - a hyphen inside a clause ("24-hour")
+ * is the author's and moving it would change the wording.
  */
-export function stripBulletMarker(text: string): string {
-  return String(text ?? '').replace(/^[\s\u00a0]*[-\u2010-\u2015\u2022\u00b7*][\s\u00a0]*/, '');
+export const BULLET = '-';
+
+export function bulletText(text: string): string {
+  const s = String(text ?? '');
+  if (!s.trim()) return s;
+  return `${BULLET} ${s.replace(LEADING_MARKER, '')}`;
 }
 
 /**
@@ -1311,7 +1323,7 @@ export function contractSheetHtml(args: PrintDoc): string {
     switch (b.block_type) {
       case 'title': return `<h1 class="doc-title">${text}</h1>`;
       case 'h': return `<h2 class="doc-h">${text}</h2>`;
-      case 'li': return `<div class="doc-li">&bull; ${fillPlaceholdersHtml(stripBulletMarker(raw), values)}</div>`;
+      case 'li': return `<div class="doc-li">${fillPlaceholdersHtml(bulletText(raw), values)}</div>`;
       case 'p': return `<p class="doc-p">${text}</p>`;
       default: return text ? `<p class="doc-p">${text}</p>` : '';
     }
@@ -1414,8 +1426,19 @@ export function printCss(): string {
      Sakkal Majalla which is cleaner". It ships with Windows, so it resolves on
      the machine these are printed from; the rest of the stack is the fallback
      for a Mac or a server render, in descending order of how close they look. */
+  /* MEASURED FROM THE WORD ORIGINAL, 22 Sep 2026. Not guessed, not eyeballed -
+     read out of word/styles.xml and word/document.xml:
+
+       Normal            w:sz 24        -> 12pt
+       title, bank lines  w:szCs 28     -> 14pt
+       some clauses       w:szCs 22     -> 11pt
+       line spacing       w:line 360    -> 1.5
+       page               11900x16840 twips, margins 1440 -> A4, 1in
+
+     The previous 12.5pt/1.9 was my own invention and it is why the page read
+     as loose and over-large beside his. */
   body { font-family: 'Sakkal Majalla', 'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif;
-    color: #1a1a1a; line-height: 1.9; font-size: 12.5pt; }
+    color: #1a1a1a; line-height: 1.5; font-size: 12pt; }
   .sheet { max-width: 800px; margin: 0 auto; padding: 24px 32px; }
   /* The three labelled things at the top, on one rule. */
   .doc-meta { display: flex; flex-wrap: wrap; gap: 1mm 26px; align-items: baseline;
@@ -1440,8 +1463,11 @@ export function printCss(): string {
      page read as one undifferentiated block. A heading now owns the space
      above it, paragraphs breathe, and a section cannot be orphaned from its
      first line at a page break. */
-  .doc-title { font-size: 19pt; font-weight: 800; text-align: center; margin: 2mm 0 9mm; }
-  .doc-h { font-size: 13.5pt; font-weight: 700; margin: 8mm 0 2.5mm;
+  /* 14pt, not 19pt. In the Word original the title is barely larger than the
+     body - it is a line of text in quotation marks, not a masthead. */
+  .doc-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 2mm 0 8mm; }
+  /* A heading is the body size in bold. Same as the document. */
+  .doc-h { font-size: 12pt; font-weight: 700; margin: 7mm 0 2.5mm;
     page-break-after: avoid; break-after: avoid; }
   /* NOT justified. Siraj: "its too blocky its not smooth and the wording
      still looks weird". Arabic justifies by stretching the spaces between
@@ -1449,12 +1475,20 @@ export function printCss(): string {
      column comes out with rivers of white running down it and every line a
      different rhythm. Ragged-end is how the Word original reads and it is
      what "smooth" means here. */
-  .doc-p { margin: 0 0 3.5mm; text-align: start; }
-  .doc-li { margin: 0 0 2mm; padding-inline-start: 10px; }
-  /* A run of detail lines is one block, not four loose sentences. */
-  .kv-box { border: 0.5pt solid #d6d6d6; border-radius: 1.5mm; padding: 3.5mm 4.5mm;
+  .doc-p { margin: 0 0 4mm; text-align: start; }
+  /* The marker hangs outside the text block, so a bullet that wraps lines up
+     under its own first word rather than under the hyphen. */
+  .doc-li { margin: 0 0 2.5mm; padding-inline-start: 6mm; text-indent: -6mm; }
+  /* A run of detail lines is one block, not four loose sentences.
+     The Word original has NO border here - the bank block is four bold
+     right-aligned lines. The border is kept because Siraj asked for it twice
+     ("there is no boxes input is just pasted randomly", then "in the printed
+     contract" when asked where), but it is drawn as lightly as a rule can be
+     drawn so the page still reads like the document. 14pt bold, which is what
+     those four lines measure in the docx. */
+  .kv-box { border: 0.5pt solid #e2e2e2; border-radius: 1.5mm; padding: 3mm 4mm;
     margin: 0 0 4.5mm; page-break-inside: avoid; break-inside: avoid; }
-  .kv { margin: 0 0 2mm; line-height: 1.85; }
+  .kv { margin: 0 0 1.5mm; font-size: 13.5pt; font-weight: 700; line-height: 1.6; }
   .kv:last-child { margin-bottom: 0; }
   .kv-l { font-weight: 700; }
   /* Room to breathe. Siraj: "there is no spacing between lines and the words
@@ -1463,11 +1497,18 @@ export function printCss(): string {
      letterhead's own page-cell reset is a descendant selector that outscores
      this one, and scoping that rule was the real fix (see legal-letterhead),
      but a table inside a table is exactly where a future reset will collide
-     again and the contract's grid is not the thing that should lose. */
-  .doc-table { width: 100%; border-collapse: collapse; margin: 4mm 0 5mm; font-size: 11pt; }
-  .doc-table th, .doc-table td { border: 0.5pt solid #bfbfbf !important; padding: 2.6mm 3mm;
-    text-align: start; vertical-align: middle; line-height: 1.7; }
-  .doc-table th { background: #f7f7f7; font-weight: 700; }
+     again and the contract's grid is not the thing that should lose.
+
+     The numbers are Word's "Grid Table 1 Light", which is the style the
+     original actually uses: every border single, w:sz 4 (= 0.5pt), colour
+     #999999, and a heavier w:sz 12 (= 1.5pt) #666666 under the header row.
+     No fill - the grey header band was mine and the document has none. Cells
+     are centred vertically and every cell is bold, which is what the style's
+     firstRow and firstColumn conditionals come to on a four-column table. */
+  .doc-table { width: 100%; border-collapse: collapse; margin: 4mm 0 5mm; font-size: 12pt; }
+  .doc-table th, .doc-table td { border: 0.5pt solid #999999 !important; padding: 2mm 2.5mm;
+    text-align: center; vertical-align: middle; line-height: 1.5; font-weight: 700; }
+  .doc-table th { border-bottom: 1.5pt solid #666666 !important; }
   .doc-table-empty { color: #888; text-align: center; }
   .sig-row { display: flex; justify-content: space-between; gap: 48px; margin: 34px 0 8px; page-break-inside: avoid; }
   .sig-col { flex: 1; min-width: 0; }
