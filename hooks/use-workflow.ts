@@ -10,7 +10,8 @@ import {
   onClientPaymentChanged, onDealWon, onDealLost,
 } from '@/lib/crm-sync';
 import {
-  totalsOf, adTypeSummary, contractDetails,
+  totalsOf, contractDetails, contractAdType,
+  AD_TYPE_NEEDS_DETAIL as AD_TYPE_NEEDS_DETAIL_LIB,
   adsExpectingProof, adsMissingProof, hasProof, type AdLine,
 } from '@/lib/ad-lines';
 import {
@@ -382,7 +383,10 @@ export type ApprovalStage = typeof APPROVAL_STAGES[number];
  * question. 'Multi Service' is kept on the end for rows that already
  * carry it, and still asks for its free-text detail.
  */
-export const AD_TYPE_NEEDS_DETAIL = 'Multi Service';
+// Re-exported from lib/ad-lines, where the rule that reads it lives and can
+// be tested. One definition, so the sentinel and the code that expands it
+// cannot drift apart.
+export const AD_TYPE_NEEDS_DETAIL = AD_TYPE_NEEDS_DETAIL_LIB;
 
 export const CONTRACT_STATUSES = ['no_contract', 'po', 'pending', 'on_process', 'done', 'signed_attached'] as const;
 export type ContractStatus = typeof CONTRACT_STATUSES[number];
@@ -5657,6 +5661,11 @@ function buildVendorContractPayload(opts: {
   // campaign that also runs TikTok should say Instagram, not both.
   const platforms = txt(subtask.platform) ?? campaignPlatformText(parent);
   const adType = txt(subtask.ad_type) ?? txt(parent.ad_type);
+  // `ad_type_custom` sits beside the sentinel and held the real list. Until
+  // now nothing in the app read it, so a multi-type booking printed the words
+  // "Multi Service" at the vendor. Subtask first, campaign second, same as
+  // the type itself.
+  const adTypeDetail = txt(subtask.ad_type_custom) ?? txt(parent.ad_type_custom);
   const category = txt(vendor.vendor_category);
 
   return {
@@ -5719,7 +5728,12 @@ function buildVendorContractPayload(opts: {
     platforms,
     // "6 × Home Ad, 6 × Store Visit, 3 × Reminder" rather than one ad type,
     // so the contract says what was actually booked.
-    ad_type: lines.length ? adTypeSummary(lines) : adType,
+    // "6 x Home Ad, 6 x Store Visit" when the lines say what they are; the
+    // type picked on the booking when they do not. The gate used to be
+    // `lines.length`, which threw the picked type away whenever ad lines
+    // existed at all - including lines carrying only a quantity and a price,
+    // where groupByAdType's fallback made the contract read "3 x Ad".
+    ad_type: contractAdType(lines, adType, adTypeDetail),
     // Counted by quantity: six home ads are six ads, not one line.
     // `channel` is still left alone — it isn't the platform list, and filling
     // it with a copy would be inventing data.

@@ -68,8 +68,27 @@ const OPTS = { today: '2026-09-20', durationDays: 30 };
   eq('table row ad types', p.tableRow.ad_types, '6 x Home Ad, 3 x Reminder');
   eq('table keys are the seeded column order', UGC_TABLE_COLUMN_KEYS,
     ['name_2', 'platform_smart', 'channel_name', 'ad_types']);
-  ok('no table key leaked into the single fields',
-    UGC_TABLE_COLUMN_KEYS.every((k) => !(k in p.values)));
+  // REVERSED 22 Sep, and this assertion is why the bug lasted.
+  //
+  // It used to read "no table key leaked into the single fields", which was a
+  // reasonable-sounding rule that happened to pin the defect in place: the
+  // seeded template's table block is `row_source: 'fields'`, so `tableRowsFor`
+  // builds its one row out of exactly these four ordinary field values. With
+  // them only in `tableRow` - stored by migration 107 under the reserved key
+  // `__aq_table_<block id>` - the outputs table came out BLANK on every
+  // contract drafted from a booking. Not just the ad type Siraj noticed: the
+  // influencer, the platform and the handle as well.
+  //
+  // They now go in both places, so the fields template and a rows template
+  // both find them.
+  ok('every table column is also a field, which is where the template reads it',
+    UGC_TABLE_COLUMN_KEYS.every((k) => p.values[k] === p.tableRow[k]));
+  eq('the ad type the outputs table will print', p.values.ad_types, '6 x Home Ad, 3 x Reminder');
+  eq('and the influencer beside it', p.values.name_2, 'Sara');
+  // An empty column stays absent rather than writing a blank row: migration
+  // 107 skips empty strings, and a key holding '' reads as "filled" downstream.
+  ok('a column with nothing in it is not written at all',
+    !('channel_name' in ugcPrefill({ ...SRC, platform_handle: null }, OPTS).values));
 }
 
 // The amount is the VENDOR'S fee. Handing this the client price is the

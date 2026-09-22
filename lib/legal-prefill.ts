@@ -205,6 +205,31 @@ export function ugcPrefill(src: UgcContractSource, opts: UgcPrefillOptions): Ugc
     ad_types: txt(src.ad_type),
   };
 
+  // THE OUTPUTS TABLE IS READ FROM `values`, NOT FROM `tableRow`.
+  //
+  // Siraj: "ad type isnt automatic for some reason". It was worse than that -
+  // all four columns were blank on any contract drafted from a booking: the
+  // influencer, the platform, the handle and the ad type.
+  //
+  // The template's table block carries `row_source: 'fields'`, and for that
+  // source `tableRowsFor` builds its one row out of the contract's ordinary
+  // field values, keyed `name_2` / `platform_smart` / `channel_name` /
+  // `ad_types`. But this function returned them in `tableRow`, the caller
+  // passed that as `p_table_row`, and migration 107 stores it under the
+  // reserved key `__aq_table_<block id>` - which a `fields` table never reads.
+  //
+  // A STALE-MIGRATION MISMATCH, not a typo: 107 was written against seed 105,
+  // whose table block had no `row_source` and so defaulted to 'rows'. Seed 109
+  // flipped it to 'fields' and 107 was never revisited. Nothing failed, because
+  // both halves kept working perfectly on their own key.
+  //
+  // So the same four values go in BOTH places: `values` is what the seeded
+  // template reads today, and `tableRow` stays for a template that really does
+  // collect rows. Writing one and not the other is what caused this.
+  for (const k of UGC_TABLE_COLUMN_KEYS) {
+    if (tableRow[k]) values[k] = tableRow[k];
+  }
+
   return { values, tableRow };
 }
 

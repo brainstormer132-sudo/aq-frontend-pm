@@ -3,7 +3,7 @@
  *
  * Every case here failed before the fix. They are grouped by the bug rather
  * than by the function, because the interesting thing about all three is not
- * the arithmetic — it was fine — but that a name or a comment said one thing
+ * the arithmetic \u2014 it was fine \u2014 but that a name or a comment said one thing
  * and the code did another, and nothing in between could tell.
  */
 import { clientPaymentState, contractState, moneyByMonth, isComplete } from '../.test-build/dashboard-data.js';
@@ -11,7 +11,8 @@ import {
   clientLedger, vendorLedger, sortLedger, filterLedger, EMPTY_LEDGER_FILTER,
   LEDGER_COLUMNS, ledgerCsv, payTone,
 } from '../.test-build/money-ledger.js';
-import { totalsOf, groupByAdType, contractDetails, lineNet } from '../.test-build/ad-lines.js';
+import { totalsOf, groupByAdType, contractDetails, lineNet,
+  contractAdType, adTypeSummary, AD_TYPE_NEEDS_DETAIL } from '../.test-build/ad-lines.js';
 import { contractPlan } from '../.test-build/vendor-contracts.js';
 import { bookingRows } from '../.test-build/campaign-page.js';
 
@@ -25,7 +26,7 @@ const ok = (name, cond) => {
   if (cond) { pass++; } else { fail++; console.log(`FAIL ${name}`); }
 };
 
-/* ════════════════════════════════════════════════════════════════
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
    1. 'unpaid' is not 'paid'
 
    `s.includes('paid')` was true for 'unpaid' and 'not paid'. That alone
@@ -33,7 +34,7 @@ const ok = (name, cond) => {
    money-ledger's clampPaid() returns the FULL total whenever the state is
    'paid', so an unpaid campaign reported a zero balance and dropped out of
    the outstanding figure entirely.
-   ════════════════════════════════════════════════════════════════ */
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
 
 eq('unpaid is outstanding',
   clientPaymentState({ client_payment_status: 'unpaid' }).key, 'unpaid');
@@ -45,7 +46,7 @@ eq('  unpaid  with whitespace is outstanding',
   clientPaymentState({ client_payment_status: '  unpaid  ' }).key, 'unpaid');
 
 // The states the picker actually offers that nothing has taught the ledger
-// about. They must land in the SAFE bucket — chased, not silently settled.
+// about. They must land in the SAFE bucket \u2014 chased, not silently settled.
 for (const s of ['no_payment', 'refund', 'credit', 'adjustment']) {
   eq(`${s} is not treated as paid`,
     clientPaymentState({ client_payment_status: s }).key, 'unpaid');
@@ -77,13 +78,13 @@ eq('signed_attached is signed',
   contractState({ contract_status: 'signed_attached' }).key, 'signed');
 eq('nothing is no contract', contractState({ contract_status: null }).key, 'none');
 
-/* ════════════════════════════════════════════════════════════════
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
    2. The net is per ad, so quantity multiplies it
 
    One line, quantity 6, billed 1,500 per ad, vendor's fee 700 per ad.
    The client owes 9,000; the vendor is owed 4,200. The old code multiplied
    the price and summed the net flat, reporting a cost of 700.
-   ════════════════════════════════════════════════════════════════ */
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
 
 const sixAds = [{ ad_type: 'Home Ad', quantity: 6, unit_price: 1500, net_amount: 700 }];
 
@@ -101,7 +102,7 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   eq('booking row vendor cost', row.net, 4200);
 }
 
-// Quantity 1 is unchanged by the fix — the regression guard.
+// Quantity 1 is unchanged by the fix \u2014 the regression guard.
 {
   const one = [{ ad_type: 'Store Visit', quantity: 1, unit_price: 5000, net_amount: 3000 }];
   eq('quantity 1 price', totalsOf(one).amount, 5000);
@@ -126,14 +127,14 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   eq('and does not count as missing', totalsOf(free).netMissing, 0);
 }
 
-/* ════════════════════════════════════════════════════════════════
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
    3. A vendor contract states the VENDOR'S fee
 
    `AdLineTotals.amount` was documented as "what the vendor is owed" and was
    the client's price. Whoever wired it into the contract believed the
    comment. The contract for six ads at 1,500 costing 700 each went to the
    influencer reading SAR 9,000.
-   ════════════════════════════════════════════════════════════════ */
+   \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
 
 {
   const text = contractDetails(sixAds, 'Booking');
@@ -155,7 +156,7 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
 
 // A mixed group averages to a rate nobody agreed. 2 @ 1,000 + 1 @ 1,500 of
 // fee is 3,500 over 3 ads = 1,166.67, which multiplies back to 3,500.01.
-// The old code printed "SAR 1,167 each · SAR 3,500" in a signed document.
+// The old code printed "SAR 1,167 each \u00b7 SAR 3,500" in a signed document.
 {
   const mixed = [
     { ad_type: 'Home Ad', quantity: 2, unit_price: 2000, net_amount: 1000 },
@@ -163,7 +164,7 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   ];
   eq('group net adds up', groupByAdType(mixed)[0].net, 3500);
   const text = contractDetails(mixed, null);
-  ok('a mixed group shows the total only', text.includes('3 × Home Ad — SAR 3,500'));
+  ok('a mixed group shows the total only', text.includes('3 \u00d7 Home Ad \u2014 SAR 3,500'));
   ok('and invents no per-ad rate', !text.includes('each'));
 }
 
@@ -177,7 +178,7 @@ eq('lineNet multiplies by quantity', lineNet(sixAds[0]), 4200);
   ok('an even group keeps the rate', contractDetails(even, null).includes('SAR 1,000 each'));
 }
 
-/* ── contractPlan carries the fee, and null when there is none ───── */
+/* \u2500\u2500 contractPlan carries the fee, and null when there is none \u2500\u2500\u2500\u2500\u2500 */
 {
   const lines = [
     { id: 'l1', ad_type: 'Home Ad', quantity: 6, unit_price: 1500, net_amount: 700 },
@@ -405,6 +406,50 @@ const TODAY = '2026-08-01';
   const csv = ledgerCsv(rows, 'clients');
   ok('CSV header names Due', csv.split('\r\n')[0].includes('Due'));
   ok('CSV row carries the due date, marked overdue', csv.includes('2026-07-01 (overdue)'));
+}
+
+
+/* -- what the contract says the ad type is ----------------------------- */
+// Siraj: "ad type isnt automatic for some reason". Three bugs, all of which
+// produced a plausible string rather than a blank, which is why none of them
+// was visible from the screen.
+{
+  const line = (ad_type, quantity = 1) => ({ ad_type, quantity, unit_price: 100 });
+
+  // 1. What was actually booked wins.
+  eq('the lines are what the contract says',
+    contractAdType([line('Home Ad', 6), line('Store Visit', 6)], 'Reel'),
+    '6 \u00d7 Home Ad, 6 \u00d7 Store Visit');
+
+  // THE BUG. The gate used to be `lines.length`, so a booking whose lines
+  // carry a quantity and a price but no type - which is normal - threw away
+  // the type picked on the booking and printed groupByAdType's fallback.
+  eq('lines with no type do not outvote the one that was picked',
+    contractAdType([line('', 3)], 'Store Visit'), 'Store Visit');
+  eq('and the fallback word never reaches the contract',
+    contractAdType([line('', 3)], 'Store Visit').includes('Ad'), false);
+  // A line that DOES say what it is still wins, even beside blank ones.
+  eq('one typed line beats the blanks beside it',
+    contractAdType([line('', 3), line('Reel', 2)], 'Store Visit'), '2 \u00d7 Reel');
+
+  // 2. "Multi Service" is a sentinel, not a service. It must never print.
+  eq('the sentinel is replaced by the real list',
+    contractAdType([], AD_TYPE_NEEDS_DETAIL, 'Reel, Story'), 'Reel, Story');
+  eq('and never prints itself',
+    contractAdType([], AD_TYPE_NEEDS_DETAIL, 'Reel, Story').includes(AD_TYPE_NEEDS_DETAIL), false);
+  // With the sentinel and nothing to expand it to, blank beats a lie.
+  eq('a sentinel with no detail is blank, not the sentinel',
+    contractAdType([], AD_TYPE_NEEDS_DETAIL, ''), '');
+  eq('and so is a sentinel with only spaces',
+    contractAdType([], AD_TYPE_NEEDS_DETAIL, '   '), '');
+
+  // 3. The ordinary cases.
+  eq('no lines means the picked type', contractAdType([], 'Reel'), 'Reel');
+  eq('nothing at all is empty', contractAdType([], null, null), '');
+  eq('and null lines are the same as none', contractAdType(null, 'Reel'), 'Reel');
+  // The summary itself is unchanged for the typed case.
+  eq('it agrees with adTypeSummary when every line is typed',
+    contractAdType([line('Reel', 2)]), adTypeSummary([line('Reel', 2)]));
 }
 
 console.log(`${pass} passed, ${fail} failed`);
