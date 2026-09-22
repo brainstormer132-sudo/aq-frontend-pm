@@ -45,9 +45,19 @@ const NAV: NavItem[] = [
   // Marketing Triage \u2014 tasks waiting for priority/service-type/key-account.
   // Marketing/admin/owner only. The dashboard "Pending triage" stat card
   // also links here.
-  // Contracts nav removed 2026-05-16 \u2014 contract requests flow lives in the
-  // contract maker (/contracts/). The "Request contract" button on a task
-  // still posts here, just no dedicated view in the PM sidebar.
+  // Contract Requests, back in the sidebar Sep 2026. It was removed on
+  // 2026-05-16 because the flow lived in the contract maker at /contracts/,
+  // and that app is now retired - so for four months the "Request contract"
+  // button on a task posted into a queue with NO SCREEN IN THIS APP. The
+  // view was never deleted: ContractsView and lib/contracts.ts both survived
+  // with their tests, reachable by nothing.
+  //
+  // The roles are ContractsView's own MANAGE_ROLES, exactly. Everybody who
+  // can see this screen can act on it, which is the rule that stops a queue
+  // reading as broken to the people who cannot clear it - and a request
+  // carries the vendor's fee, so it stays out of the roles the Data screen
+  // already keeps money from.
+  { id: 'contracts', label: 'Contract Requests', icon: 'file', visibleTo: ['owner','admin','marketing','key_account'], group: 'Work' },
   // CRM lives ABOVE the raw Clients/Vendors data screens \u2014 it's the
   // primary surface for relationship management; the others stay around
   // for admin/data entry. Visible to anyone who works with clients/vendors.

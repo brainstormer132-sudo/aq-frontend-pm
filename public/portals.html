@@ -9,14 +9,15 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
     /*
-      Portal picker, for vendors and clients. Mirrors public/hub.html and
-      components/auth/SplitAuthLayout.tsx — same paper, same header, same
-      oversized transparent mark. Change one, change the others.
+      Portal picker, for vendors and clients. Mirrors
+      components/auth/SplitAuthLayout.tsx - same paper, same header, same
+      oversized transparent mark. Change one, change the other.
 
-      Two differences from /hub, both deliberate:
-        - No "Internal · Confidential" line. People outside AQ read this page.
-        - Warmer copy, and it says which account each portal is for, because
-          a vendor arriving here has no idea what "client portal" means.
+      It is the only landing page now. The staff chooser at /hub is gone:
+      it existed to ask which of two apps you wanted, and there is one app.
+      The copy is warmer than a sign-in page and says which account each
+      portal is for, because a vendor arriving here has no idea what
+      "client portal" means, and people outside AQ read this page.
 
       Static page with no session; both links land on pages that authenticate.
     */
@@ -195,7 +196,13 @@
         </a>
       </div>
 
-      <p class="note">Trouble signing in? Your account manager at AQ Creativity can send you a fresh invite link.</p>
+      <!-- The staff door. It used to be /hub, a second page whose only job
+           was to ask which of two apps you wanted; there is one app now, so
+           the question is gone and this is the signpost that replaced it.
+           Quiet on purpose - almost everybody reading this page is a vendor
+           or a client, and AQ's own people mostly arrive already signed in. -->
+      <p class="note">Trouble signing in? Your account manager at AQ Creativity can send you a fresh invite link.
+        <br />AQ team: <a href="/auth" style="color:var(--teal);text-decoration:none;border-bottom:1px solid var(--teal-soft)">sign in here</a>.</p>
     </main>
   </div>
 </body>

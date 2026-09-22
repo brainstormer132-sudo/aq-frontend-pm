@@ -6,7 +6,7 @@ import { SplitAuthLayout } from '@/components/auth/SplitAuthLayout';
 /**
  * Layout used by every portal auth page (vendor + client login, setup,
  * password reset). Defers the whole visual to SplitAuthLayout so the portals,
- * the PM login and /hub stay one surface.
+ * the PM login and the portals stay one surface.
  *
  * `title` is the portal's name and becomes the role line under the wordmark.
  * The headline is supplied here because portal forms — unlike /auth — don't

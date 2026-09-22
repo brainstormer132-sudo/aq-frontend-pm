@@ -15,7 +15,7 @@
  *    the wordmark in the page header carries the identity.
  *
  * Sizing and position are fixed here rather than passed in, because the whole
- * point is that /hub and both portals look like the same surface.
+ * point is that the PM login and both portals look like the same surface.
  */
 export function AQWatermark() {
   return (

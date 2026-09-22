@@ -111,7 +111,7 @@
           root.innerHTML = `
             <div class="no-invite">
               <p>${escapeHtml(message)}</p>
-              <a href="/hub">Back to Hub</a>
+              <a href="/portals">Back to the portals</a>
             </div>
           `;
         }
@@ -175,8 +175,13 @@
               btn.disabled = false;
               return;
             }
-            showMsg('Account created. Redirecting to login…', true);
-            setTimeout(() => { window.location.href = '/contracts/'; }, 900);
+            // Was '/contracts/' - the contract maker, retired Sep 2026, which
+            // sent every newly created vendor and client to a dead page. The
+            // invite already says which role it is for, so send them to the
+            // portal that role signs in to.
+            showMsg('Account created. Redirecting to sign in…', true);
+            const dest = (info.role === 'client') ? '/client/auth' : '/vendor/auth';
+            setTimeout(() => { window.location.href = dest; }, 900);
           } catch (err) {
             showMsg(err.message || String(err), false);
             btn.disabled = false;

@@ -11,8 +11,9 @@ import { AQWatermark } from './AQWatermark';
  * It is no longer a split screen despite the name — the name is kept so the
  * three call sites don't have to change. A light page on AQ's paper tone, the
  * mark drawn oversized and transparent behind it, and the form in a single
- * card. `public/hub.html` is the same design in static HTML; change one and
- * you should change the other.
+ * card. It was also the design of the static `public/hub.html`, which is
+ * gone - that page existed to ask which of two apps you wanted, and there is
+ * one app now.
  *
  * Props are unchanged apart from the optional `heading`:
  *   - subtitle : the role line under the wordmark ("Client portal")

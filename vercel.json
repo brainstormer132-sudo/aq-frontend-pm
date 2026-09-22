@@ -22,10 +22,6 @@
       "destination": "/portals.html"
     },
     {
-      "source": "/hub",
-      "destination": "/hub.html"
-    },
-    {
       "source": "/invite",
       "destination": "/invite.html"
     }
@@ -36,15 +32,6 @@
       "source": "/contracts/api/:path*",
       "headers": [
         { "key": "Cache-Control", "value": "no-store" }
-      ]
-    },
-    {
-      "source": "/contracts/:asset(.+\\.(?:js|css|svg|png|jpg|jpeg|webp|woff2?))",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
       ]
     }
   ]
