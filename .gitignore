@@ -42,3 +42,6 @@ _to_delete/
 
 # Asana import output - real client and vendor data, never committed.
 out/
+
+# Preview images delivered into the folder by the chat, not part of the app.
+Claude outputs/
