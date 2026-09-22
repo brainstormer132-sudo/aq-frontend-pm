@@ -275,6 +275,26 @@ export function unhandledCount(ws: MatterWarning[]): number {
 }
 
 /**
+ * A number with thousands separators and two decimals, without Intl.
+ *
+ * `(1234.5)` -> `1,234.50`. Negative amounts keep their sign in front of the
+ * digits, which is where a reader looks for it.
+ */
+export function groupThousands(n: number): string {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '0.00';
+  const neg = v < 0;
+  const fixed = Math.abs(v).toFixed(2);
+  const [whole, frac] = fixed.split('.');
+  let out = '';
+  for (let i = 0; i < whole.length; i += 1) {
+    if (i > 0 && (whole.length - i) % 3 === 0) out += ',';
+    out += whole[i];
+  }
+  return `${neg ? '-' : ''}${out}.${frac}`;
+}
+
+/**
  * One line for the warnings strip.
  *
  * Siraj's rule: name the slice with the number. "Overdue" alone invites the
@@ -291,7 +311,15 @@ export function warningsLine(ws: MatterWarning[], side: MatterSide): string {
   const who = side === 'client' ? 'client' : 'vendor';
   const n = open.length;
   if (n === 0) return `${ws.length} overdue, all with a matter open.`;
-  const money = total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Hand-formatted, not toLocaleString. This file is the rules module for
+  // Cases and its header claims purity; an Intl call makes the answer depend
+  // on the environment's locale data. lib/legal-signed.ts says the same thing
+  // in as many words: "this file has no locale and no clock".
+  //
+  // And it says SAR. The rows underneath each read "SAR 40,000.00" while this
+  // aggregate sat above them as a bare number - the same rule that made the
+  // slice explicit ("on completed campaigns") applies to the unit.
+  const money = `SAR ${groupThousands(total)}`;
   return `${n} ${who}${n === 1 ? '' : 's'} overdue on completed campaigns, ${money} outstanding`
     + (ws.length > n ? ` (${ws.length - n} already a matter)` : '');
 }

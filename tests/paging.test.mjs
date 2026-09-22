@@ -157,5 +157,100 @@ eq('and only the rollup is exempt', exempted, ALLOWED.size);
   }
 }
 
+
+/* \u2500\u2500 The other half: a read that never pages at all \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+ *
+ * Everything above checks reads that DO page. It has nothing to say about a
+ * read that takes one page and stops - and on 22 Sep that turned out to be
+ * six reads in hooks/use-legal.ts, none of which this suite could see.
+ *
+ * PostgREST caps a response at 1000 rows. It does not error and it does not
+ * say it truncated. So the failures are all of the quiet kind:
+ *
+ *   * a managed list of influencers stopped at 1000, and because the fill
+ *     screen VALIDATES against that list, a contract holding a perfectly
+ *     valid value past the boundary could never be issued - the only thing
+ *     on screen was "Fill every required field first" on a full form;
+ *   * every contract batch past the boundary reported "0 of 0 filled",
+ *     which is a wrong number that looks like a right one;
+ *   * a published template stopped appearing in the New-contract picker,
+ *     with nothing to say why.
+ *
+ * THE RULE: a read that spans the whole workspace - filtered on
+ * `workspace_id` and nothing narrower - goes through selectAllRows. A read
+ * narrowed to one parent row does not have to.
+ *
+ * The exceptions are tables that cannot grow past a page by their nature.
+ * Each is named with the reason, and a NEW unpaged workspace-wide read fails
+ * this suite until somebody either pages it or argues it into the list.
+ */
+const BOUNDED = new Map([
+  ['doc_template', 'contract templates: tens per workspace, one per kind of document'],
+  ['task_sources', 'a settings lookup - the sources a task can come from'],
+  ['task_platforms', 'a settings lookup - the platforms a booking can run on'],
+  ['client_categories', 'a settings lookup - the categories a client can have'],
+  ['workspace_members', 'bounded by the size of the team'],
+  ['workspace_invites', 'bounded by the size of the team'],
+]);
+
+{
+  // Narrowed to one parent row, or already limited: not a workspace-wide read.
+  const NARROW = /\.eq\(\s*['"](?!workspace_id)[a-z_]*id['"]|\.in\(|\.single\(|\.maybeSingle\(|\.limit\(|\.range\(/;
+  const FROM = /\.from\(\s*['"]([a-z_]+)['"]\s*\)/g;
+  const unpaged = [];
+  for (const root of ROOTS) {
+    for (const file of sources(root)) {
+      const src = readFileSync(file, 'utf8');
+      FROM.lastIndex = 0;
+      let m;
+      while ((m = FROM.exec(src))) {
+        const end = src.indexOf(';', m.index);
+        const stmt = src.slice(m.index, end < 0 ? m.index + 600 : end);
+        if (!/\.eq\(\s*['"]workspace_id['"]/.test(stmt)) continue;
+        if (NARROW.test(stmt)) continue;
+        // Inside a selectAllRows call? Its build function opens just before.
+        const before = src.slice(Math.max(0, m.index - 260), m.index);
+        if (/selectAllRows(?:Parallel)?\s*(?:<[^>]*>)?\s*\(/.test(before)) continue;
+        unpaged.push({ file, line: lineOf(src, m.index), table: m[1] });
+      }
+    }
+  }
+
+  // If this finds nothing the scan has broken - the lookup tables below are
+  // read this way on purpose and should always be here.
+  ok(`found unpaged workspace-wide reads to check (${unpaged.length})`, unpaged.length >= 4);
+
+  const rogue = [];
+  for (const u of unpaged) {
+    if (BOUNDED.has(u.table)) continue;
+    console.log(`  unpaged workspace-wide read : ${u.file}:${u.line}  (${u.table})`);
+    rogue.push(`${u.file}:${u.line} ${u.table}`);
+  }
+  eq('every workspace-wide read either pages or is a bounded lookup', rogue, []);
+
+  // The six that were fixed on 22 Sep, named, so a rename cannot quietly
+  // un-page them again.
+  {
+    const src = readFileSync('hooks/use-legal.ts', 'utf8');
+    for (const label of ['useManagedLists values', 'useContractBatches', 'useContractBatches counts',
+      'useBatchContracts', 'useLegalTemplates versions', 'usePublishedVersions',
+      'useLegalPlaceholders']) {
+      ok(`${label} is still a paged read`, src.includes(`'${label}'`));
+    }
+    // The count read is chunked as well as paged: a few hundred uuids in one
+    // in() is an 11KB URL, which comes back 414 and zeroes every count.
+    //
+    // Pinned to THIS call site, not to "the file contains a chunk loop" -
+    // there are two chunk(ids, 60) loops in this file and the first version
+    // of this assertion happily matched the other one while the batch counts
+    // went back to sending every uuid at once.
+    {
+      const at = src.indexOf(`'useContractBatches counts'`);
+      const loop = src.lastIndexOf('for (const part of chunk(ids, 60))', at);
+      ok('the batch counts are still chunked', at > 0 && loop > 0 && at - loop < 300);
+    }
+  }
+}
+
 console.log(`paging: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

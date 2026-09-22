@@ -126,11 +126,27 @@ export function parseAmount(raw: string | number): { riyals: number; halalas: nu
   return { riyals, halalas };
 }
 
+/** A whole number with thousands separators, without Intl. 1234 -> "1,234". */
+function groupThousands(n: number): string {
+  const v = Math.trunc(Math.abs(Number(n) || 0));
+  const digits = String(v);
+  let out = '';
+  for (let i = 0; i < digits.length; i += 1) {
+    if (i > 0 && (digits.length - i) % 3 === 0) out += ',';
+    out += digits[i];
+  }
+  return `${Number(n) < 0 ? '-' : ''}${out}`;
+}
+
 /** The digits, grouped, always with two decimals. "1250.5" -> "1,250.50" */
 export function amountDigits(raw: string | number): string {
   const a = parseAmount(raw);
   if (!a) return String(raw ?? '').trim();
-  return `${a.riyals.toLocaleString('en-US')}.${String(a.halalas).padStart(2, '0')}`;
+  // Hand-grouped, not toLocaleString. This file's header claims purity and an
+  // Intl call is not pure - it reads the environment's locale data. The digits
+  // on a contract must not depend on which machine printed it, which is the
+  // same reason generatedOn stopped using toLocaleDateString.
+  return `${groupThousands(a.riyals)}.${String(a.halalas).padStart(2, '0')}`;
 }
 
 /**

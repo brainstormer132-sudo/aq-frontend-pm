@@ -16,7 +16,7 @@ import {
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle, searchMatters,
   legalKpis, kpiBadge,
   isCollectionMatter, splitMatters, distinctParties,
-  matterDeleteWarning,
+  matterDeleteWarning, groupThousands,
 } from '../.test-build/legal-matters.js';
 
 let pass = 0, fail = 0;
@@ -213,7 +213,7 @@ eq('empty vendor line names the slice',
   const one = matterWarnings({ rows: [row({ id: 'T1', outstanding: 1500 })], side: 'client' });
   eq('one client is singular and says the slice',
     warningsLine(one, 'client'),
-    '1 client overdue on completed campaigns, 1,500.00 outstanding');
+    '1 client overdue on completed campaigns, SAR 1,500.00 outstanding');
 }
 {
   const two = matterWarnings({
@@ -222,7 +222,7 @@ eq('empty vendor line names the slice',
   });
   eq('two vendors is plural and totals them',
     warningsLine(two, 'vendor'),
-    '2 vendors overdue on completed campaigns, 2,000.50 outstanding');
+    '2 vendors overdue on completed campaigns, SAR 2,000.50 outstanding');
 }
 {
   const mixed = matterWarnings({
@@ -234,7 +234,7 @@ eq('empty vendor line names the slice',
   // tail, not in the number somebody is about to act on.
   eq('handled money is not in the total',
     warningsLine(mixed, 'client'),
-    '1 client overdue on completed campaigns, 1,000.00 outstanding (1 already a matter)');
+    '1 client overdue on completed campaigns, SAR 1,000.00 outstanding (1 already a matter)');
 }
 {
   const all = matterWarnings({
@@ -580,6 +580,27 @@ eq('plain is muted', kpiBadge('plain'), 'aq-badge-muted');
   eq('no party, no dangling "against"',
     matterDeleteWarning({ title: 'X' }).includes('against'), false);
 }
+
+
+// CHANGED 22 Sep: the aggregate names its unit.
+//
+// It read as a bare "1,500.00" while every row underneath it said
+// "SAR 40,000.00". The same rule that made the SLICE explicit in this
+// sentence - "on completed campaigns" rather than just "overdue" - applies
+// to the unit: a money figure says what it is measured in.
+//
+// The formatting is also hand-rolled now. This file is the rules module for
+// Cases and its header claims purity, and toLocaleString is an Intl call -
+// the same class of thing as the toLocaleDateString that renders "Sept"
+// under node and "Sep" in a browser.
+eq('thousands, with two decimals', groupThousands(1234.5), '1,234.50');
+eq('exactly a thousand gets its comma', groupThousands(1000), '1,000.00');
+eq('under a thousand gets none', groupThousands(999.994), '999.99');
+eq('millions get both', groupThousands(1234567.891), '1,234,567.89');
+eq('zero', groupThousands(0), '0.00');
+// The sign goes in front of the digits, which is where a reader looks.
+eq('a negative keeps its sign in front', groupThousands(-1234.5), '-1,234.50');
+eq('junk is not NaN on the screen', groupThousands('abc'), '0.00');
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

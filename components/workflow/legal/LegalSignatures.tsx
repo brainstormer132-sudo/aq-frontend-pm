@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useContracts, useExternalDocs, signedCopyUrl } from '@/hooks/use-legal';
 import { DOC_KINDS } from '@/lib/legal';
 import { signedTally, awaitingSignature } from '@/lib/legal-signed';
@@ -55,7 +55,13 @@ export function LegalSignatures({ workspaceId }: { workspaceId?: string }) {
   // Today as an ISO date, once, so every row on this render is judged against
   // the same day. Reading the clock per row is how a list sorted at midnight
   // ends up with two different todays in it.
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // Set in an effect, not read during render. A useMemo with an empty dep
+  // list still runs during the FIRST render, so this is a clock read on the
+  // server as well as the browser - and across midnight the two disagree and
+  // React reports a hydration mismatch. It decides the "N expired / N
+  // expiring soon" badges, so the mismatch is visible.
+  const [today, setToday] = useState('');
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
 
   const tally = useMemo(() => signedTally(contracts as any), [contracts]);
   const waiting = useMemo(() => awaitingSignature(contracts as any), [contracts]);
