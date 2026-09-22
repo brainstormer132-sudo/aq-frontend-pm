@@ -20,7 +20,7 @@ import {
 } from '../.test-build/legal-bulk.js';
 import {
   contractPrintHTML, contractsPrintHTML, contractSheetHtml, printReference,
-  bulkPrintTitle, FINGERPRINT_KEY, OPT_OFF_KEY,
+  bulkPrintTitle, printDocTitle, FINGERPRINT_KEY, OPT_OFF_KEY,
 } from '../.test-build/legal.js';
 import { supersedeLinks } from '../.test-build/legal-supersede.js';
 
@@ -59,12 +59,17 @@ const oneDoc = {
   dir: 'ltr',
   meta: { status: 'issued', reference: 'AQ-2026-0108' },
 };
+// The title the single path derives (printDocTitle: the contract's NUMBER
+// when it has one). Passed in explicitly so this stays an assertion about the
+// SHEET being shared, which is its job, and not about how each path names its
+// own <title>.
+const oneTitle = printDocTitle(oneDoc.meta.reference, oneDoc.title);
 eq('a batch of one is the single document, byte for byte',
-  contractsPrintHTML([oneDoc], oneDoc.title), contractPrintHTML(oneDoc));
+  contractsPrintHTML([oneDoc], oneTitle), contractPrintHTML(oneDoc));
 
 const rtlDoc = { ...oneDoc, dir: 'rtl' };
 eq('and the same for an Arabic one, whose whole layout turns round',
-  contractsPrintHTML([rtlDoc], rtlDoc.title), contractPrintHTML(rtlDoc));
+  contractsPrintHTML([rtlDoc], oneTitle), contractPrintHTML(rtlDoc));
 
 ok('a mixed batch lays out left to right',
   contractsPrintHTML([rtlDoc, oneDoc]).includes('<html lang="en" dir="ltr">'));

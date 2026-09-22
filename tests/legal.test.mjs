@@ -5,6 +5,7 @@ import {
   hasRTLChars, blockAllText, detectDir,
   parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
   fillPlaceholdersHtml, fingerprintCaption,
+  printDocTitle,
   DEPTS, deptLabel, validateListValue, sortListValues,
   FIELD_TYPES, fieldTypeLabel, validateFieldDef, describeField,
   CONTRACT_STATUSES, contractStatusLabel, contractStatusBadge, contractEditable,
@@ -268,7 +269,9 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
     dir: 'ltr', meta: { org: 'AQ Creativity', status: 'Issued', reference: 'Ref: abc12345', generatedOn: '2026-09-17' },
   });
   ok('is a full html doc', html.startsWith('<!doctype html>') && html.includes('</html>'));
-  ok('title in <title>', html.includes('<title>Rawad deal</title>'));
+  // That doc carries a reference, so the print document is named after it
+  // rather than after the task - see printDocTitle below.
+  ok('the reference is the document name', html.includes('<title>Ref: abc12345</title>'));
   ok('ltr lang en', html.includes('lang="en"') && html.includes('dir="ltr"'));
   // Every filled VALUE is wrapped in <bdi>. Siraj's first test printed the
   // handle "@test" as "test@": an at-sign is bidi-neutral, so it floated to
@@ -472,6 +475,36 @@ eq('formatFingerprint empty-safe', formatFingerprint(undefined), '');
   });
   // Once, at the end of the document - not on every page. It is a check
   // somebody runs, not part of the agreement.
+  /* -- what the print document calls itself ------------------------- */
+  //
+  // Two jobs, both on somebody else's screen: Chrome prints it in the page
+  // margin beside the date, and "Save as PDF" suggests it as the filename.
+  // The header itself is the browser's and no CSS removes it - but what it
+  // SAYS is ours, and a contract's number beats "test final - 1" at both.
+  eq('the contract number wins', printDocTitle('AQ-2026-0007', 'test final - 1'), 'AQ-2026-0007');
+  eq('the title is the fallback, not the default', printDocTitle('', 'test final - 1'), 'test final - 1');
+  eq('and blank space is not a number', printDocTitle('   ', 'test final - 1'), 'test final - 1');
+  eq('with neither, it still has a name', printDocTitle('', ''), 'Contract');
+  eq('and nothing at all is the same', printDocTitle(null, null), 'Contract');
+  {
+    // End to end: the <title> of a numbered contract is its number, and the
+    // document body is untouched by any of this.
+    const numbered = contractPrintHTML({
+      title: 'test final - 1', dir: 'ltr',
+      blocks: [{ block_type: 'p', content: { text: 'body text' } }],
+      values: {}, meta: { reference: 'AQ-2026-0007' },
+    });
+    ok('the print document is titled by its number', numbered.includes('<title>AQ-2026-0007</title>'));
+    ok('and the task name is not in the head', !numbered.includes('<title>test final - 1</title>'));
+    ok('while the body is what it always was', numbered.includes('body text'));
+    const unnumbered = contractPrintHTML({
+      title: 'test final - 1', dir: 'ltr',
+      blocks: [{ block_type: 'p', content: { text: 'body text' } }],
+      values: {}, meta: {},
+    });
+    ok('a draft with no number keeps its title', unnumbered.includes('<title>test final - 1</title>'));
+  }
+
   ok('the fingerprint prints once at the end', html.includes('>ABCD 1234<'));
   // Siraj, at the last page: "and what is this it looks so weird". A naked
   // 64-character hash on a signed agreement reads as a defect, so it now

@@ -1816,11 +1816,45 @@ ${sheets.join('\n')}
 }
 
 /**
+ * What the print document calls itself: the contract's NUMBER when it has
+ * one, and its title only when it does not.
+ *
+ * This string does two jobs, and both of them are somebody else's screen:
+ *
+ *   1. Chrome prints it at the top right of every page, in the margin, beside
+ *      the date. Siraj has asked four times to be rid of that header - it is
+ *      the browser's, drawn outside the document, and no CSS in the document
+ *      removes it (tested: `@page { margin: 0 }` does not work and disturbs
+ *      the layout). The print dialog's "Headers and footers" checkbox removes
+ *      it, and a server-rendered PDF would never have it. Neither is this.
+ *   2. It is what "Save as PDF" suggests as the FILENAME.
+ *
+ * So while the header is out of our hands, what it SAYS is not - and
+ * "AQ-2026-0007" beats "test final - 1" in both jobs. A filed contract named
+ * after its number can be found again; one named after whatever the task was
+ * called that afternoon cannot.
+ *
+ * Not blanked, which would drop the name from the header entirely: that also
+ * empties the suggested filename, and an untitled PDF is a worse trade than
+ * a header saying the contract number. Pure.
+ */
+export function printDocTitle(
+  reference?: string | null, title?: string | null,
+): string {
+  const ref = String(reference ?? '').trim();
+  if (ref) return ref;
+  const t = String(title ?? '').trim();
+  return t || 'Contract';
+}
+
+/**
  * One filled contract as a self-contained, print-ready document - what the
  * fill screen's Print / Save as PDF opens.
  */
 export function contractPrintHTML(args: PrintDoc): string {
-  return printDocumentHtml(args.title, args.dir, [contractSheetHtml(args)]);
+  return printDocumentHtml(
+    printDocTitle(args.meta?.reference, args.title), args.dir, [contractSheetHtml(args)],
+  );
 }
 
 /** What a batch print calls itself: the browser puts it on the saved PDF. */
