@@ -232,9 +232,17 @@ export function letterheadCss(): string {
   return `
   @page { size: A4; margin: 14mm 25.4mm 10mm 25.4mm; }
   .page { width: 100%; border-collapse: collapse; }
-  .page > thead td, .page > tfoot td, .page > tbody td { padding: 0; border: 0; }
-  .page > thead td { padding-bottom: 9mm; }
-  .page > tfoot td { padding-top: 9mm; }
+  /* SCOPED TO THE PAGE'S OWN CELLS, and the full child chain matters.
+     ".page > tbody td" looks scoped but the child combinator sits between
+     .page and tbody - the td part is a plain descendant, so it matched EVERY
+     td inside the page, including the contract's own outputs table. At
+     (0,1,2) it also outscored ".doc-table td" at (0,1,1), so the table's data
+     row printed with no cell borders at all while the header row - matched by
+     th, which this rule never names - kept its boxes. Siraj: "this part
+     doesnt have a box to put in the data". */
+  .page > thead > tr > td, .page > tfoot > tr > td, .page > tbody > tr > td { padding: 0; border: 0; }
+  .page > thead > tr > td { padding-bottom: 9mm; }
+  .page > tfoot > tr > td { padding-top: 9mm; }
 
   .lh-mark { display: block; color: #111; }
   .lh-head { text-align: right; }

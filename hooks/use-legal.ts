@@ -142,6 +142,11 @@ export interface DocVersionLite {
  * 098) rejects any write to a published/archived version's blocks, so the UI
  * disables editing off `editable` and offers `startNewDraft` instead.
  */
+/** Every column the editor reads. One list, so a select and an insert's
+ *  returning clause cannot come back with different shapes. */
+const BLOCK_COLS = 'id, version_id, workspace_id, position, block_type, content, '
+  + 'optional, optional_group, optional_label, condition, clause_id';
+
 export function useDocEditor(workspaceId: string | null, templateId: string | null) {
   const [name, setName] = useState('');
   const [docKind, setDocKind] = useState<DocKind | null>(null);
@@ -168,7 +173,7 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
     setVersion(newest);
     if (!newest) { setBlocks([]); setLoading(false); return; }
     const { data: blks, error: e2 } = await c.from('doc_template_block')
-      .select('id, version_id, workspace_id, position, block_type, content, optional, optional_group, optional_label, condition, clause_id')
+      .select(BLOCK_COLS)
       .eq('version_id', newest.id).order('position');
     if (e2) { setError(e2.message ?? String(e2)); setLoading(false); return; }
     setBlocks(((blks ?? []) as any[]) as TemplateBlock[]);
@@ -220,12 +225,17 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
     if (e) throw e;
   });
 
-  /** Move a block up/down and persist the whole list's positions in one upsert. */
-  const moveBlock = (id: string, dir: -1 | 1) => run(async () => {
-    guard();
-    const idx = blocks.findIndex((b) => b.id === id);
-    const reordered = withPositions(moveItem(blocks, idx, dir));
-    if (reordered === blocks) return; // no-op at an edge
+  /**
+   * Persist an ARBITRARY new order in one upsert.
+   *
+   * Extracted from moveBlock because the document editor moves a whole
+   * section - nine blocks past nine others - which is one decision and has to
+   * be one write. The deferrable unique on (version_id, position) is what lets
+   * the whole list land in a single statement without colliding halfway
+   * through; see 098.
+   */
+  const persistOrder = async (next: TemplateBlock[]) => {
+    const reordered = withPositions(next);
     setBlocks(reordered);
     const rows = reordered.map((b) => ({
       id: b.id, version_id: b.version_id, workspace_id: b.workspace_id,
@@ -233,6 +243,45 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
     }));
     const { error: e } = await legal().from('doc_template_block').upsert(rows, { onConflict: 'id' });
     if (e) { await load(); throw e; }
+  };
+
+  /** Reorder to exactly this list. A caller that got back the same array
+   *  reference from a refused move writes nothing. */
+  const reorder = (next: TemplateBlock[]) => run(async () => {
+    guard();
+    if (next === blocks) return;
+    await persistOrder(next);
+  });
+
+  /** Move a block up/down and persist the whole list's positions in one upsert. */
+  const moveBlock = (id: string, dir: -1 | 1) => run(async () => {
+    guard();
+    const idx = blocks.findIndex((b) => b.id === id);
+    const reordered = moveItem(blocks, idx, dir);
+    if (reordered === blocks) return; // no-op at an edge
+    await persistOrder(reordered);
+  });
+
+  /**
+   * Add a line at a POSITION rather than at the end.
+   *
+   * The old editor could only append, so building a document meant adding
+   * forty-two blocks and then walking each one up into place. This inserts
+   * where the "+" was pressed: one write to create the row (which comes back
+   * whole, so nothing is guessed about its shape), then one reorder.
+   */
+  const addBlockAt = (type: EditorBlockType, index: number) => run(async () => {
+    guard();
+    const { data, error: e } = await legal().from('doc_template_block').insert({
+      version_id: version!.id, workspace_id: workspaceId,
+      position: nextPosition(blocks), block_type: type, content: defaultBlockContent(type),
+    }).select(BLOCK_COLS).single();
+    if (e) throw e;
+    const row = data as unknown as TemplateBlock;
+    const at = Math.max(0, Math.min(Math.trunc(index), blocks.length));
+    const next = blocks.slice();
+    next.splice(at, 0, row);
+    await persistOrder(next);
   });
 
   /** Publish the draft: freeze it and stamp published_at (the CHECK requires it). */
@@ -268,7 +317,8 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
 
   return {
     name, docKind, version, blocks, loading, error, busy, editable,
-    reload: load, addBlock, saveBlock, deleteBlock, moveBlock, setBlockOptional, publish, startNewDraft,
+    reload: load, addBlock, addBlockAt, saveBlock, deleteBlock, moveBlock, reorder,
+    setBlockOptional, publish, startNewDraft,
   };
 }
 

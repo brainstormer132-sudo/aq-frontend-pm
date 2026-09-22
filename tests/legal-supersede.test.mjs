@@ -67,7 +67,8 @@ eq('the canonical is the same whatever the supersede lines say',
 ok('the printed page does change', plain !== marked);
 ok('and the words that changed are the notice, not the agreement',
   marked.includes('SUPERSEDED - replaced by AQ-2026-0009.')
-  && marked.includes('The fee is 12,500 SAR.') && plain.includes('The fee is 12,500 SAR.'));
+  && marked.includes('The fee is <bdi>12,500 SAR</bdi>.')
+  && plain.includes('The fee is <bdi>12,500 SAR</bdi>.'));
 
 /* -- 2. a replaced copy cannot print looking current ---------------- */
 

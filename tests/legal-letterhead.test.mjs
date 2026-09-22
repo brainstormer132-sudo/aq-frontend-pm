@@ -127,8 +127,19 @@ eq('every default is filled in',
   // page. The repeating thead/tfoot is what replaced it, and this assertion
   // is what stops somebody reaching for the obvious answer again.
   ok('the letterhead does not use position: fixed', !css.includes('position: fixed'));
-  ok('the repeating table is styled', css.includes('.page > thead td')
-    && css.includes('.page > tfoot td'));
+  ok('the repeating table is styled', css.includes('.page > thead > tr > td')
+    && css.includes('.page > tfoot > tr > td'));
+  // The page-cell reset must name the WHOLE child chain. Written as
+  // ".page > tbody td" the child combinator sits between .page and tbody and
+  // the td is a plain descendant, so it stripped the borders off the
+  // contract's own outputs table - which at (0,1,2) it outscored. The data
+  // row printed with no cell boxes at all and the header kept its own,
+  // because the rule never names th. Siraj found it on a real contract.
+  // Comments stripped first: the fix's own comment quotes the broken selector
+  // so it can never be reintroduced by accident, and a naive test on the raw
+  // stylesheet matches that prose instead of a rule.
+  ok('the page-cell reset cannot reach a nested table',
+    !/\.page > t(head|body|foot) td/.test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
   ok('the thead leaves the body room', css.includes('padding-bottom'));
   ok('and the tfoot does too', css.includes('padding-top'));
 }

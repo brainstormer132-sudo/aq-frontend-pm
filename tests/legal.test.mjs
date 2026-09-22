@@ -18,6 +18,7 @@ import {
   optionalGroups, optionalGroupOn, toggleOptionalGroup,
   isArchivedTemplate, splitTemplates, withoutArchived, archivedNote,
   archivedToggleLabel, archiveConfirm,
+  stripBulletMarker, shortContractId,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -264,9 +265,20 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   ok('is a full html doc', html.startsWith('<!doctype html>') && html.includes('</html>'));
   ok('title in <title>', html.includes('<title>Rawad deal</title>'));
   ok('ltr lang en', html.includes('lang="en"') && html.includes('dir="ltr"'));
-  ok('fills paragraph placeholder', html.includes('This agreement is with Rawad Media.'));
-  ok('fills kv value', html.includes('12,500 SAR'));
-  ok('fills bullet placeholder', html.includes('&bull; Term 12m'));
+  // Every filled VALUE is wrapped in <bdi>. Siraj's first test printed the
+  // handle "@test" as "test@": an at-sign is bidi-neutral, so it floated to
+  // the end of the run inside Arabic wording. <bdi> isolates each value so it
+  // keeps its own direction whatever surrounds it.
+  ok('fills paragraph placeholder',
+    html.includes('This agreement is with <bdi>Rawad Media</bdi>.'));
+  // Only the SUBSTITUTED value is isolated - the literal " SAR" beside it is
+  // the template's own wording and belongs to the line's direction.
+  ok('fills kv value', html.includes('<bdi>12,500</bdi> SAR'));
+  ok('fills bullet placeholder', html.includes('&bull; Term <bdi>12m</bdi>'));
+  ok('a latin value inside the wording is isolated, so an @ leads',
+    contractPrintHTML({ title: 't', dir: 'rtl', values: { h: '@test' },
+      blocks: [{ block_type: 'p', content: { text: '\u0627\u0644\u062d\u0633\u0627\u0628 {{ h }}' } }],
+    }).includes('<bdi>@test</bdi>'));
   ok('title block is centered h1', html.includes('<h1 class="doc-title">Vendor Agreement</h1>'));
   // The letterhead replaced the "AQ Creativity" text block. It is the company
   // strip now, on every page, and its own contents are asserted in
@@ -280,8 +292,47 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   // An ISSUED contract says nothing about its status on its face. Printing
   // "Status: Issued" on a document a vendor signs is not what the paper does.
   ok('an issued contract is not stamped with its status', !html.includes('Status: Issued'));
-  ok('reference prints where the id sits on the paper', html.includes('Ref: abc12345')
-    && html.includes('class="doc-ref"'));
+  // Siraj: "I just need a status refrence number and contract id and i dont
+  // want id to look like that just pasted in". One labelled strip, not a bare
+  // token floating above the title.
+  ok('the reference prints in the meta strip', html.includes('Ref: abc12345')
+    && html.includes('class="doc-meta"'));
+  ok('and it is labelled rather than bare', html.includes('Contract no'));
+  {
+    const m = contractPrintHTML({
+      title: 't', dir: 'ltr', values: {}, blocks: [{ block_type: 'p', content: { text: 'x' } }],
+      meta: { reference: 'AQ-2026-0009', contractId: '9ae8d2ba-1111', status: 'draft' },
+    });
+    ok('the contract id is labelled too', m.includes('Contract ID') && m.includes('9ae8d2ba-1111'));
+    // The strip is OUR chrome, in English, sitting on an Arabic page. Without
+    // its own direction "Contract no." printed as ".CONTRACT NO" with each
+    // value ahead of its label. Found by rendering the page and looking.
+    ok('the strip carries its own direction', m.includes('class="doc-meta" dir="ltr"'));
+    ok('a draft says so in the strip', m.includes('Status') && m.includes('DRAFT'));
+    ok('and each value is isolated', m.includes('<bdi class="doc-meta-v">AQ-2026-0009</bdi>'));
+  }
+  // A uuid is SHORTENED on the paper. Siraj: "i dont want id to look like that
+  // just pasted in" - and thirty-six characters across the top of a contract is
+  // a database column that escaped, not a reference anybody quotes. Found by
+  // rendering the real template and looking at page one.
+  {
+    const u = '9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01';
+    const m = contractPrintHTML({
+      title: 't', dir: 'rtl', values: {}, blocks: [{ block_type: 'p', content: { text: 'x' } }],
+      meta: { reference: 'AQ-2026-0009', contractId: u },
+    });
+    ok('the long form does not reach the paper', !m.includes(u));
+    ok('the short form does', m.includes('<bdi class="doc-meta-v">9AE8D2BA</bdi>'));
+  }
+  eq('eight hex, upper case', shortContractId('9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01'), '9AE8D2BA');
+  // Some other scheme is left exactly alone rather than sliced at eight.
+  eq('a non-uuid id prints as it is', shortContractId('AQ/2026/0009'), 'AQ/2026/0009');
+  eq('and nothing stays nothing', shortContractId(null), '');
+  // Absent is left out, not printed blank: a draft has no number yet, and an
+  // empty labelled row is worse than no row.
+  ok('nothing known means no strip at all',
+    !contractPrintHTML({ title: 't', dir: 'ltr', values: {},
+      blocks: [{ block_type: 'p', content: { text: 'x' } }] }).includes('class="doc-meta"'));
 }
 {
   const html = contractPrintHTML({
@@ -290,7 +341,72 @@ eq('escapeHtml null-safe', escapeHtml(undefined), '');
   });
   ok('rtl lang ar', html.includes('lang="ar"') && html.includes('dir="rtl"'));
   ok('escapes injected value', html.includes('&lt;script&gt;') && !html.includes('<script>alert'));
-  ok('unfilled placeholder stays literal', contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: '{{ gap }}' } }], values: {}, dir: 'ltr' }).includes('{{ gap }}'));
+  // CHANGED 22 Sep. An unfilled field used to print its raw {{ braces }} so a
+  // gap would be obvious - and Siraj's first real test printed `{{ id }}` in
+  // the body of a contract, above the title. A gap still has to be obvious,
+  // so it prints as a ruled blank carrying the field's name in its tooltip:
+  // that reads as "nobody filled this in" rather than as a broken app.
+  {
+    // A gap INSIDE a sentence is a real blank somebody has to fill, so it
+    // prints - as a ruled space naming the field, never as raw braces.
+    const gap = contractPrintHTML({ title: 't', dir: 'ltr', values: {},
+      blocks: [{ block_type: 'p', content: { text: 'Paid {{ amount }} on the day.' } }] });
+    ok('an unfilled field never prints raw braces', !gap.includes('{{ amount }}'));
+    ok('it prints a ruled blank instead', gap.includes('class="doc-gap"'));
+    ok('and still names the field it is waiting for', gap.includes('title="amount"'));
+    ok('the rest of the sentence survives', gap.includes('Paid ') && gap.includes(' on the day.'));
+    ok('a field holding only spaces is still a gap',
+      contractPrintHTML({ title: 't', dir: 'ltr', values: { amount: '   ' },
+        blocks: [{ block_type: 'p', content: { text: 'Paid {{ amount }} on the day.' } }] })
+        .includes('class="doc-gap"'));
+
+    // But a line that is ONE unfilled field and nothing else prints nothing.
+    // The UGC template opens with a bare {{ id }} block, and once the number
+    // moved into the strip at the top, a lone ruled blank sat under the
+    // letterhead reading as a mistake. Found by rendering the page.
+    const alone = contractPrintHTML({ title: 't', dir: 'ltr', values: {},
+      blocks: [{ block_type: 'p', content: { text: '{{ id }}' } }] });
+    // Look at the SHEET, not the whole document: printCss() defines .doc-gap,
+    // so a naive includes() on the html can never be false. Cost one failing
+    // assertion to notice.
+    const sheetOf = (h) => h.slice(h.indexOf('<div class="sheet">'), h.indexOf('</table>'));
+    ok('a line that is only an empty field prints nothing',
+      !sheetOf(alone).includes('doc-gap'));
+    ok('and leaves no empty paragraph behind', !sheetOf(alone).includes('class="doc-p"'));
+    ok('the guard is on the body, not the stylesheet', alone.includes('.doc-gap {'));
+    // Filled, it is ordinary content and prints.
+    ok('the same line prints once it has a value',
+      contractPrintHTML({ title: 't', dir: 'ltr', values: { id: 'AQ-9' },
+        blocks: [{ block_type: 'p', content: { text: '{{ id }}' } }] }).includes('<bdi>AQ-9</bdi>'));
+  }
+}
+/* -- one bullet per bullet -------------------------------------------- */
+// The UGC wording was written in Word, where the marker belongs to the
+// paragraph style, and several clauses were pasted in carrying a literal
+// leading hyphen. The renderer adds its own marker, so the line printed with
+// two - `- -\u0627\u0644\u0627\u0644\u062a\u0632\u0627\u0645`. Found by rendering the real seeded
+// template and looking at page three, not by reading the seed.
+{
+  const li = (t) => contractPrintHTML({ title: 't', dir: 'rtl', values: {},
+    blocks: [{ block_type: 'li', content: { text: t } }] });
+  ok('a hyphen the author typed does not survive beside our bullet',
+    li('- first').includes('&bull; first'));
+  ok('nor does one with no space after it', li('-first').includes('&bull; first'));
+  ok('nor a bullet character', li('\u2022 first').includes('&bull; first'));
+  ok('nor an en dash', li('\u2013 first').includes('&bull; first'));
+  // ONE marker, and only from the front. A hyphen in the middle of a clause is
+  // the author's - "24-hour", "\u0645\u0627-\u0642\u0628\u0644" - and moving it would change the wording.
+  ok('a hyphen inside the line is left alone', li('- a 24-hour window')
+    .includes('&bull; a 24-hour window'));
+  ok('and only one marker is taken', li('-- twice').includes('&bull; - twice'));
+  eq('nothing to strip, nothing changes', stripBulletMarker('plain'), 'plain');
+  eq('and an empty line stays empty', stripBulletMarker(''), '');
+  // The strip happens BEFORE the fields are filled, so a value that begins
+  // with a hyphen is never eaten out of the middle of a sentence.
+  ok('a filled value keeps its own leading hyphen',
+    contractPrintHTML({ title: 't', dir: 'ltr', values: { n: '-5' },
+      blocks: [{ block_type: 'li', content: { text: '- delta {{ n }}' } }] })
+      .includes('&bull; delta <bdi>-5</bdi>'));
 }
 
 // ---- contract fingerprint ----
@@ -432,7 +548,8 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     values: { [tableKey('t1')]: serializeTableRows([{ platform: 'snapchat', price: '5000' }]) },
   });
   ok('print has the table headers', html.includes('<th>Platform</th>') && html.includes('<th>Price</th>'));
-  ok('print has the filled row', html.includes('<td>snapchat</td>') && html.includes('<td>5000</td>'));
+  ok('print has the filled row',
+    html.includes('<td><bdi>snapchat</bdi></td>') && html.includes('<td><bdi>5000</bdi></td>'));
   ok('empty table prints a no-rows note', contractPrintHTML({ title: 'c', blocks: [tbl], dir: 'ltr', values: {} }).includes('(no rows)'));
 }
 {
@@ -476,7 +593,7 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     blocks: [S('First party: {{ signatory }}', 'Second party:')],
   });
   ok('sig renders in print', html.includes('class="sig-row"'));
-  ok('sig fills its placeholders', html.includes('First party: Ahmed'));
+  ok('sig fills its placeholders', html.includes('First party: <bdi>Ahmed</bdi>'));
   ok('sig renders both sides', html.includes('Second party:'));
   ok('sig draws a rule to sign on', html.includes('class="sig-rule"'));
   ok('an empty sig block renders nothing',

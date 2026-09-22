@@ -29,7 +29,7 @@ interface NavItem {
 // Tasks, so All Tasks is visible to sales too (already their default landing).
 const NAV: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard',  icon: 'home',     visibleTo: [], group: 'Overview' },
-  // Personal Inbox — searchable list of notifications + mentions for the
+  // Personal Inbox \u2014 searchable list of notifications + mentions for the
   // current user. Replaces the old topbar bell. Visible to everyone; the
   // marketing-triage queue (different concept) is reached via the dashboard
   // "Pending triage" stat card.
@@ -42,34 +42,33 @@ const NAV: NavItem[] = [
   // two lists of the same rows meant two places to look. All Tasks now has an
   // "Only mine" option in the member filter, and the CRM follow-ups it used to
   // carry moved to the Dashboard.
-  // Marketing Triage — tasks waiting for priority/service-type/key-account.
+  // Marketing Triage \u2014 tasks waiting for priority/service-type/key-account.
   // Marketing/admin/owner only. The dashboard "Pending triage" stat card
   // also links here.
-  // Contracts nav removed 2026-05-16 — contract requests flow lives in the
+  // Contracts nav removed 2026-05-16 \u2014 contract requests flow lives in the
   // contract maker (/contracts/). The "Request contract" button on a task
   // still posts here, just no dedicated view in the PM sidebar.
-  // CRM lives ABOVE the raw Clients/Vendors data screens — it's the
+  // CRM lives ABOVE the raw Clients/Vendors data screens \u2014 it's the
   // primary surface for relationship management; the others stay around
   // for admin/data entry. Visible to anyone who works with clients/vendors.
   { id: 'crm',             label: 'CRM',             icon: 'users',     visibleTo: ['owner','admin','marketing','sales','key_account'], group: 'Contacts' },
   { id: 'clients',         label: 'Clients',         icon: 'building',  visibleTo: ['owner','admin','marketing','sales'], group: 'Contacts' },
   { id: 'vendors',         label: 'Vendors',         icon: 'briefcase', visibleTo: ['owner','admin','marketing'], group: 'Contacts' },
-  // Tracking Sheets — every campaign flagged with a tracking sheet (chosen at
+  // Tracking Sheets \u2014 every campaign flagged with a tracking sheet (chosen at
   // triage via the "Tracking Sheet" subtask). Opens the ad/vendor grid.
   { id: 'tracking',        label: 'Tracking Sheets', icon: 'grid',      visibleTo: ['owner','admin','marketing','sales','key_account','operations'], group: 'Delivery' },
-  // Vendor Performance — the ad lines rolled up per vendor: who posts on time,
+  // Vendor Performance \u2014 the ad lines rolled up per vendor: who posts on time,
   // who is missing proof, what is overdue. A delivery read, not a money one.
   { id: 'vendor-performance', label: 'Vendor Performance', icon: 'chart', visibleTo: ['owner','admin','marketing'], group: 'Delivery' },
-  // Data — one search box over every client and vendor, and the same panels
+  // Data \u2014 one search box over every client and vendor, and the same panels
   // narrowed to whoever is picked. It shows net_amount and aq_gross, which
   // are AQ's margin, so it is NOT visible to everyone: marketing and
   // operations have no reason to see what the agency makes on a job.
   { id: 'data',            label: 'Data',            icon: 'chart',     visibleTo: ['owner','admin','sales','key_account'], group: 'Money' },
   // Finance -> quotations (generate/re-quote via Zoho). Owner/admin/finance.
   { id: 'finance',         label: 'Finance',         icon: 'chart',     visibleTo: ['owner','admin','finance'], group: 'Money' },
-  { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [], group: 'Admin' },
-  { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'], group: 'Admin' },
-
+  // Legal sits above Admin: it is somebody's whole job, and Settings is a
+  // place you visit twice a year. Siraj: "switch around settings and legal".
   { id: 'legal-matters',    label: 'Tasks',      icon: 'grid',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   // Cases - the Registry. Derived warnings from the money the app already
   // knows about, and the matters somebody raised from them.
@@ -77,12 +76,15 @@ const NAV: NavItem[] = [
   { id: 'legal-documents',  label: 'Documents',  icon: 'file',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-register',   label: 'Register',   icon: 'list',  visibleTo: ['owner','admin','legal'], group: 'Legal' },
   { id: 'legal-signatures', label: 'Signatures', icon: 'check', visibleTo: ['owner','admin','legal'], group: 'Legal' },
+
+  { id: 'team',            label: 'Team',            icon: 'users',     visibleTo: [], group: 'Admin' },
+  { id: 'settings',        label: 'Settings',        icon: 'settings',  visibleTo: ['owner','admin'], group: 'Admin' },
 ];
 
 /** Two letters for the collapsed footer. Falls back to a dot for a blank name. */
 function initials(name: string): string {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '·';
+  if (!parts.length) return '\u00b7';
   return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
 }
 
@@ -116,7 +118,7 @@ export function WorkflowSidebar({
   }
 
   // Starts expanded and corrects itself after mount rather than reading
-  // localStorage during render — the server has no localStorage, and a
+  // localStorage during render \u2014 the server has no localStorage, and a
   // mismatch between the two renders is a hydration error.
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
@@ -167,7 +169,7 @@ export function WorkflowSidebar({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
-          {/* Drawn, not fetched — see AQMark. The old <img src="/aq-logo.png">
+          {/* Drawn, not fetched \u2014 see AQMark. The old <img src="/aq-logo.png">
               404'd on every load and its onError fallback quietly printed the
               letters "AQ", which is why nobody noticed the logo was missing. */}
           <AQMark size={24} />
@@ -269,7 +271,7 @@ export function WorkflowSidebar({
               </span>
               {!collapsed && <span style={{ flex: 1 }}>{n.label}</span>}
               {/* pendingCount is the marketing TRIAGE backlog, so it belongs on
-                  Marketing Inbox — it used to sit on the personal Inbox, where
+                  Marketing Inbox \u2014 it used to sit on the personal Inbox, where
                   every role saw a number that had nothing to do with them. */}
               {n.id === 'marketing-triage' && pendingCount && pendingCount > 0 ? (
                 collapsed ? (
@@ -308,7 +310,7 @@ export function WorkflowSidebar({
       }}>
         {collapsed ? (
           <div
-            title={`${userName} · ${roleLabel(role)}`}
+            title={`${userName} \u00b7 ${roleLabel(role)}`}
             style={{
               alignSelf: 'center', width: 32, height: 32, borderRadius: 9,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -363,7 +365,7 @@ export function WorkflowSidebar({
             fontFamily: 'inherit',
             fontSize: 13,
           }}
-        >{collapsed ? '⏻' : 'Sign out'}</button>
+        >{collapsed ? '\u23fb' : 'Sign out'}</button>
       </div>
     </aside>
   );

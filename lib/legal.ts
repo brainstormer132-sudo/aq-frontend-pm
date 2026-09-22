@@ -1,6 +1,8 @@
 // Pure helpers for the legal document system. No React, no Supabase, no
 // argless Date - compiled and exercised by tests/legal.test.mjs.
 
+import { amountInWords, isAmountKey } from './legal-amount';
+
 export type DocKind = 'vendor_contract' | 'client_contract' | 'nda'
   | 'letter' | 'model' | 'other';
 export type VersionStatus = 'draft' | 'published' | 'archived';
@@ -1129,10 +1131,91 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Fill a line's {{ fields }} and escape it, in ONE pass.
+ *
+ * Why not escapeHtml(fillPlaceholders(...)): because an UNFILLED field has to
+ * come out as a printed blank, and that is markup. Siraj's first test printed
+ * `{{ id }}` in the body of a contract - the raw braces, on the page, above
+ * the title. A gap still has to be obvious (that was the reason the braces
+ * were there) so it prints as a ruled blank carrying the field's name in its
+ * tooltip, which reads as "nobody filled this in" rather than as a bug.
+ *
+ * Every VALUE is wrapped in <bdi>. A Latin value inside Arabic wording is
+ * bidi-neutral at its edges, which is why `@test` printed as `test@` on his
+ * test: the at-sign floated to the end of the run. <bdi> isolates each value
+ * so it keeps its own direction whatever surrounds it.
+ */
+export function fillPlaceholdersHtml(text: string, values: Record<string, string>): string {
+  const s = String(text ?? '');
+  const re = new RegExp(PLACEHOLDER_G.source, 'g');
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    out += escapeHtml(s.slice(last, m.index));
+    const k = m[1];
+    const has = Object.prototype.hasOwnProperty.call(values ?? {}, k)
+      && String(values[k] ?? '').trim() !== '';
+    // A money field prints as the figure in brackets, the same amount in
+    // words in brackets, then the currency. Siraj: "the (500) needs brackets
+    // and then after also in brakets (five hundred) and then riyal". The
+    // convention is older than this app: a figure can be altered with a pen
+    // and the words beside it cannot.
+    const shown = has && isAmountKey(k)
+      ? amountInWords(String(values[k]))
+      : String(values[k] ?? '');
+    out += has
+      ? `<bdi>${escapeHtml(shown)}</bdi>`
+      : `<span class="doc-gap" title="${escapeHtml(k)}"></span>`;
+    last = m.index + m[0].length;
+  }
+  out += escapeHtml(s.slice(last));
+  return out;
+}
+
+/**
+ * A bullet's text without the bullet somebody already typed.
+ *
+ * The UGC wording was written in Word, where the list marker is part of the
+ * paragraph style, and several clauses were pasted in carrying a literal
+ * leading hyphen. Printed through a renderer that adds its own marker, the
+ * line came out `- -\u0627\u0644\u0627\u0644\u062a\u0632\u0627\u0645` - two markers, one of which nobody
+ * chose. Strip ONE leading marker, and only from the front.
+ *
+ * Not a general tidy-up: a hyphen anywhere else in the line is the author's
+ * and is left exactly where it is.
+ */
+export function stripBulletMarker(text: string): string {
+  return String(text ?? '').replace(/^[\s\u00a0]*[-\u2010-\u2015\u2022\u00b7*][\s\u00a0]*/, '');
+}
+
+/**
+ * The contract's id, short enough to read out loud.
+ *
+ * Siraj: "i dont want id to look like that just pasted in". A 36-character
+ * uuid across the top of a contract is not a reference anybody uses; it is a
+ * database column that escaped onto the paper. The first eight hex characters
+ * are what git uses for a commit and what a person can quote over a phone,
+ * and the contract NUMBER above it is the real external reference anyway.
+ *
+ * Anything that is not a uuid is returned trimmed and untouched - a contract
+ * whose id is some other scheme still prints it.
+ */
+export function shortContractId(id: string | null | undefined): string {
+  const s = String(id ?? '').trim();
+  const m = /^([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-/.exec(s);
+  return m ? m[1].toUpperCase() : s;
+}
+
 export interface PrintMeta {
   org?: string;
   status?: string;
   reference?: string;
+  /** The contract row's id. Siraj: "I just need a status refrence number and
+   *  contract id" - three labelled things in one strip, not a bare token
+   *  floating above the title. */
+  contractId?: string;
   generatedOn?: string;
   fingerprint?: string;
   /** The company letterhead. Omitted means AQ's own - see legal-letterhead. */
@@ -1192,8 +1275,8 @@ export function contractSheetHtml(args: PrintDoc): string {
   const body = blocks.map((b) => {
     if (b.block_type === 'kv') {
       const kv = blockKV(b);
-      return `<div class="kv"><span class="kv-l">${escapeHtml(fillPlaceholders(kv.label, values))}:</span> `
-        + `<span class="kv-v">${escapeHtml(fillPlaceholders(kv.value, values))}</span></div>`;
+      return `<div class="kv"><span class="kv-l">${fillPlaceholdersHtml(kv.label, values)}:</span> `
+        + `<span class="kv-v">${fillPlaceholdersHtml(kv.value, values)}</span></div>`;
     }
     if (b.block_type === 'sig') {
       // Two signing lines with a rule to sign on. Deliberately NOT in
@@ -1203,7 +1286,7 @@ export function contractSheetHtml(args: PrintDoc): string {
       // line ever carries a {{ merge field }}.
       const sig = blockSig(b);
       const side = (s: string) => `<div class="sig-col"><div class="sig-name">`
-        + `${escapeHtml(fillPlaceholders(s, values))}</div><div class="sig-rule"></div></div>`;
+        + `${fillPlaceholdersHtml(s, values)}</div><div class="sig-rule"></div></div>`;
       if (!sig.right && !sig.left) return '';
       return `<div class="sig-row">${side(sig.right)}${side(sig.left)}</div>`;
     }
@@ -1213,19 +1296,50 @@ export function contractSheetHtml(args: PrintDoc): string {
       const rows = tableRowsFor(b, values);
       const head = cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join('');
       const bodyRows = rows.length
-        ? rows.map((r) => `<tr>${cols.map((c) => `<td>${escapeHtml(r[c.key] ?? '')}</td>`).join('')}</tr>`).join('')
+        ? rows.map((r) => `<tr>${cols.map((c) => `<td><bdi>${escapeHtml(r[c.key] ?? '')}</bdi></td>`).join('')}</tr>`).join('')
         : `<tr><td colspan="${cols.length}" class="doc-table-empty">(no rows)</td></tr>`;
       return `<table class="doc-table"><thead><tr>${head}</tr></thead><tbody>${bodyRows}</tbody></table>`;
     }
-    const text = escapeHtml(fillPlaceholders(blockText(b), values));
+    const raw = blockText(b);
+    const text = fillPlaceholdersHtml(raw, values);
+    // A whole line that is one unfilled field and nothing else prints nothing.
+    // The UGC template opens with a bare `{{ id }}` block, and once the number
+    // moved into the strip at the top a lone ruled blank sat under the
+    // letterhead reading as a mistake. A gap INSIDE a sentence still prints:
+    // that one is a real blank somebody has to fill.
+    if (/^\s*\{\{\s*[A-Za-z0-9_]+\s*\}\}\s*$/.test(raw) && text.includes('doc-gap')) return '';
     switch (b.block_type) {
       case 'title': return `<h1 class="doc-title">${text}</h1>`;
       case 'h': return `<h2 class="doc-h">${text}</h2>`;
-      case 'li': return `<div class="doc-li">&bull; ${text}</div>`;
+      case 'li': return `<div class="doc-li">&bull; ${fillPlaceholdersHtml(stripBulletMarker(raw), values)}</div>`;
       case 'p': return `<p class="doc-p">${text}</p>`;
       default: return text ? `<p class="doc-p">${text}</p>` : '';
     }
-  }).filter(Boolean).join('\n  ');
+  }).filter(Boolean);
+
+  /**
+   * Siraj: "there is no boxes input is just pasted randomly".
+   *
+   * A run of detail lines - the bank block is four of them - printed as four
+   * loose "label: value" lines with nothing holding them together, so the
+   * account number looked like a stray sentence. A run of two or more is now
+   * ONE bordered block, which is what it is on the paper he sent. A single
+   * detail line on its own is left alone: a box round one line is a box round
+   * nothing.
+   */
+  const boxed: string[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length >= 2) boxed.push(`<div class="kv-box">${run.join('')}</div>`);
+    else boxed.push(...run);
+    run = [];
+  };
+  for (const piece of body) {
+    if (piece.startsWith('<div class="kv">')) run.push(piece);
+    else { flush(); boxed.push(piece); }
+  }
+  flush();
+  const bodyHtml = boxed.join('\n  ');
 
   const ref = meta.reference ? escapeHtml(meta.reference) : '';
   const fp = meta.fingerprint ? escapeHtml(meta.fingerprint) : '';
@@ -1249,6 +1363,31 @@ export function contractSheetHtml(args: PrintDoc): string {
   // agreement: a draft says so, an issued contract says nothing.
   const draft = String(meta.status ?? '').toLowerCase() === 'draft';
 
+  /**
+   * The three things at the top, labelled.
+   *
+   * Siraj: "I just need a status refrence number and contract id and i dont
+   * want id to look like that just pasted in". The old header was a bare
+   * `Ref: 9ae8d2ba` floating above a raw `{{ id }}` from the template, with
+   * a hand's width of nothing between them - which is exactly what "just
+   * pasted in" describes.
+   *
+   * It is one strip with a rule under it, each value labelled and each one
+   * <bdi>-isolated so a Latin id keeps its direction inside an Arabic page.
+   * Anything absent is left out rather than printed empty: a draft has no
+   * number yet, and a blank labelled row is worse than no row.
+   */
+  const cid = shortContractId(meta.contractId);
+  const metaRows = [
+    ref ? `<span class="doc-meta-i"><span class="doc-meta-l">Contract no</span>`
+      + `<bdi class="doc-meta-v">${ref}</bdi></span>` : '',
+    cid ? `<span class="doc-meta-i"><span class="doc-meta-l">Contract ID</span>`
+      + `<bdi class="doc-meta-v">${escapeHtml(cid)}</bdi></span>` : '',
+    draft ? `<span class="doc-meta-i"><span class="doc-meta-l">Status</span>`
+      + `<span class="doc-meta-v doc-draft">DRAFT</span></span>` : '',
+  ].filter(Boolean).join('');
+  const metaStrip = metaRows ? `<div class="doc-meta" dir="ltr">${metaRows}</div>` : '';
+
   // lang and dir ride on the TABLE, not only on <html>. A batch can hold an
   // Arabic contract and an English one, and each has to set its own direction
   // or the second one prints right-aligned inside the first one's document.
@@ -1257,10 +1396,10 @@ export function contractSheetHtml(args: PrintDoc): string {
   <tfoot><tr><td>${letterheadFooterHtml(lh)}</td></tr></tfoot>
   <tbody><tr><td>
 <div class="sheet">
-  ${ref || draft ? `<div class="doc-ref">${ref}${draft ? `${ref ? ' ' : ''}<span class="doc-draft">DRAFT</span>` : ''}</div>` : ''}
+  ${metaStrip}
   ${replacedBy ? `<div class="doc-replaced">${replacedBy}</div>` : ''}
   ${replaces ? `<div class="doc-replaces">${replaces}</div>` : ''}
-  ${body}
+  ${bodyHtml}
   ${fp ? `<div class="doc-fp">SHA-256: ${fp}</div>` : ''}
 </div>
   </td></tr></tbody>
@@ -1271,10 +1410,24 @@ export function contractSheetHtml(args: PrintDoc): string {
 export function printCss(): string {
   return `  * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif; color: #1a1a1a; line-height: 1.75; font-size: 12pt; }
+  /* Sakkal Majalla first - Siraj: "thats not the font i use the one i use is
+     Sakkal Majalla which is cleaner". It ships with Windows, so it resolves on
+     the machine these are printed from; the rest of the stack is the fallback
+     for a Mac or a server render, in descending order of how close they look. */
+  body { font-family: 'Sakkal Majalla', 'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif;
+    color: #1a1a1a; line-height: 1.9; font-size: 12.5pt; }
   .sheet { max-width: 800px; margin: 0 auto; padding: 24px 32px; }
-  .doc-ref { font-size: 10pt; color: #444; direction: ltr; text-align: start; margin-bottom: 6mm; }
-  .doc-draft { font-size: 9pt; font-weight: 800; letter-spacing: .18em; color: #b3261e; }
+  /* The three labelled things at the top, on one rule. */
+  .doc-meta { display: flex; flex-wrap: wrap; gap: 1mm 26px; align-items: baseline;
+    border-bottom: 0.5pt solid #dcdcdc; padding-bottom: 2.5mm; margin-bottom: 7mm; }
+  .doc-meta-i { display: inline-flex; align-items: baseline; gap: 6px; }
+  .doc-meta-l { font-size: 7.5pt; letter-spacing: .09em; text-transform: uppercase; color: #8a8a8a; }
+  .doc-meta-v { font-size: 10pt; font-weight: 700; color: #222; direction: ltr; }
+  .doc-draft { font-weight: 800; letter-spacing: .16em; color: #b3261e; }
+  /* An unfilled field. A ruled blank says "nobody filled this in"; the raw
+     {{ braces }} it replaces said "this app is broken". */
+  .doc-gap { display: inline-block; min-width: 26mm; border-bottom: 0.75pt dotted #9a9a9a;
+    vertical-align: baseline; }
   /* A superseded copy has to be unmistakable at arm's length, because the one
      moment it matters is somebody picking it off a printer. Bordered as well
      as coloured: the office printer is black and white. */
@@ -1282,15 +1435,39 @@ export function printCss(): string {
     border: 1.5pt solid #b3261e; padding: 2mm 3mm; margin-bottom: 6mm; text-align: center;
     direction: ltr; }
   .doc-replaces { font-size: 9.5pt; color: #444; margin-bottom: 6mm; direction: ltr; text-align: start; }
-  .doc-title { font-size: 18pt; font-weight: 800; text-align: center; margin: 8px 0 20px; }
-  .doc-h { font-size: 13pt; font-weight: 700; margin: 18px 0 6px; }
-  .doc-p { margin: 8px 0; text-align: justify; }
-  .doc-li { margin: 4px 0; padding-inline-start: 8px; }
-  .kv { margin: 6px 0; }
+  /* The rhythm. Siraj: "add spaces just like I have and make it look
+     presentable" - the old sheet ran every paragraph at the same 8px and the
+     page read as one undifferentiated block. A heading now owns the space
+     above it, paragraphs breathe, and a section cannot be orphaned from its
+     first line at a page break. */
+  .doc-title { font-size: 19pt; font-weight: 800; text-align: center; margin: 2mm 0 9mm; }
+  .doc-h { font-size: 13.5pt; font-weight: 700; margin: 8mm 0 2.5mm;
+    page-break-after: avoid; break-after: avoid; }
+  /* NOT justified. Siraj: "its too blocky its not smooth and the wording
+     still looks weird". Arabic justifies by stretching the spaces between
+     words - there is no hyphenation to take up the slack - so a justified
+     column comes out with rivers of white running down it and every line a
+     different rhythm. Ragged-end is how the Word original reads and it is
+     what "smooth" means here. */
+  .doc-p { margin: 0 0 3.5mm; text-align: start; }
+  .doc-li { margin: 0 0 2mm; padding-inline-start: 10px; }
+  /* A run of detail lines is one block, not four loose sentences. */
+  .kv-box { border: 0.5pt solid #d6d6d6; border-radius: 1.5mm; padding: 3.5mm 4.5mm;
+    margin: 0 0 4.5mm; page-break-inside: avoid; break-inside: avoid; }
+  .kv { margin: 0 0 2mm; line-height: 1.85; }
+  .kv:last-child { margin-bottom: 0; }
   .kv-l { font-weight: 700; }
-  .doc-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10.5pt; }
-  .doc-table th, .doc-table td { border: 1px solid #999; padding: 4px 6px; text-align: start; vertical-align: top; }
-  .doc-table th { background: #f0f0f0; font-weight: 700; }
+  /* Room to breathe. Siraj: "there is no spacing between lines and the words
+     look weird" - 4px of padding on a 12.5pt Arabic face is a cell the text
+     touches the walls of. The !important on the borders is deliberate: the
+     letterhead's own page-cell reset is a descendant selector that outscores
+     this one, and scoping that rule was the real fix (see legal-letterhead),
+     but a table inside a table is exactly where a future reset will collide
+     again and the contract's grid is not the thing that should lose. */
+  .doc-table { width: 100%; border-collapse: collapse; margin: 4mm 0 5mm; font-size: 11pt; }
+  .doc-table th, .doc-table td { border: 0.5pt solid #bfbfbf !important; padding: 2.6mm 3mm;
+    text-align: start; vertical-align: middle; line-height: 1.7; }
+  .doc-table th { background: #f7f7f7; font-weight: 700; }
   .doc-table-empty { color: #888; text-align: center; }
   .sig-row { display: flex; justify-content: space-between; gap: 48px; margin: 34px 0 8px; page-break-inside: avoid; }
   .sig-col { flex: 1; min-width: 0; }
