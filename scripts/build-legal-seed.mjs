@@ -86,25 +86,42 @@ if (actual !== mod.sha256) {
  * `required: true` set. Arabic labels are \u escapes so this file stays
  * ASCII and survives a console paste.
  */
+/**
+ * The field registry.
+ *
+ * `type` is what the fill screen draws: 'list' gives a picker, everything
+ * else gives a box. platform_smart and ad_types are PICKERS - they point at
+ * the managed lists 'platforms' (11 values) and 'ad_types' (21), whose values
+ * are the Arabic that goes on the contract and whose labels are the English
+ * somebody picks by. Both said 'text' here until 22 Sep, and because
+ * _seed_field updates field_type on conflict, EVERY RUN OF THIS SEED RESET
+ * THEM - which is almost certainly how they came to be text boxes on a screen
+ * whose lists were complete and correctly linked. See migration 121.
+ *
+ * `ar` is the label, and it is English now. Siraj: "make it all in english so
+ * its easier to understand". Safe, and checked rather than assumed: PrintDoc
+ * is handed blocks, values, dir and meta - no placeholders at all - so a
+ * label cannot reach the printed contract. The Arabic on the document comes
+ * from the template blocks.
+ */
 const FIELDS = [
-  { key: 'id',             type: 'text', req: false, ar: '\u0631\u0642\u0645 \u0627\u0644\u0639\u0642\u062f' },
-  { key: 'date',           type: 'date', req: false, ar: '\u0627\u0644\u062a\u0627\u0631\u064a\u062e' },
-  { key: 'day',            type: 'text', req: false, ar: '\u0627\u0644\u064a\u0648\u0645' },
-  { key: 'license_name',   type: 'text', req: true,  ar: '\u0627\u0633\u0645 \u0627\u0644\u0637\u0631\u0641 \u0627\u0644\u062b\u0627\u0646\u064a' },
-  { key: 'license_number', type: 'text', req: true,  ar: '\u0631\u0642\u0645 \u0627\u0644\u062a\u0631\u062e\u064a\u0635 \u0627\u0644\u0625\u0639\u0644\u0627\u0645\u064a' },
-  { key: 'brand_name',     type: 'text', req: true,  ar: '\u0627\u0644\u0645\u0646\u062a\u062c\u0627\u062a \u0627\u0644\u062a\u064a \u064a\u062a\u0645 \u062a\u0631\u0648\u064a\u062c\u0647\u0627' },
-  { key: 'name_2',         type: 'text', req: true,  ar: '\u0627\u0644\u0645\u0624\u062b\u0631' },
-  { key: 'platform_smart', type: 'text', req: true,  ar: '\u0627\u0644\u0645\u0646\u0635\u0629' },
-  { key: 'channel_name',   type: 'text', req: true,  ar: '\u062d\u0633\u0627\u0628\u0647 \u0641\u064a \u0627\u0644\u0645\u0646\u0635\u0629' },
-  { key: 'ad_types',       type: 'text', req: true,  ar: '\u0646\u0648\u0639 \u0627\u0644\u0625\u0639\u0644\u0627\u0646' },
-  { key: 'Amount_full',    type: 'text', req: true,  ar: '\u0627\u0644\u0645\u0628\u0644\u063a' },
-  { key: 'duration',       type: 'text', req: true,  ar: '\u0627\u0644\u0645\u062f\u0629 \u0628\u0627\u0644\u0623\u064a\u0627\u0645' },
-  { key: 'bank_name',      type: 'text', req: true,  ar: '\u0627\u0633\u0645 \u0627\u0644\u0628\u0646\u0643' },
-  { key: 'account_name',   type: 'text', req: true,  ar: '\u0627\u0633\u0645 \u0627\u0644\u062d\u0633\u0627\u0628' },
-  { key: 'account_number', type: 'text', req: true,  ar: '\u0631\u0642\u0645 \u0627\u0644\u062d\u0633\u0627\u0628' },
-  { key: 'iban',           type: 'text', req: true,  ar: '\u0631\u0642\u0645 \u0627\u0644\u0627\u064a\u0628\u0627\u0646' },
+  { key: 'id',             type: 'text', req: false, ar: 'Contract number' },
+  { key: 'date',           type: 'date', req: false, ar: 'Date' },
+  { key: 'day',            type: 'text', req: false, ar: 'Day' },
+  { key: 'license_name',   type: 'text', req: true,  ar: 'Second party name' },
+  { key: 'license_number', type: 'text', req: true,  ar: 'Media licence number' },
+  { key: 'brand_name',     type: 'text', req: true,  ar: 'Products promoted' },
+  { key: 'name_2',         type: 'text', req: true,  ar: 'Influencer' },
+  { key: 'platform_smart', type: 'list', req: true,  ar: 'Platform' },
+  { key: 'channel_name',   type: 'text', req: true,  ar: 'Account on the platform' },
+  { key: 'ad_types',       type: 'list', req: true,  ar: 'Ad type' },
+  { key: 'Amount_full',    type: 'text', req: true,  ar: 'Amount' },
+  { key: 'duration',       type: 'text', req: true,  ar: 'Duration (days)' },
+  { key: 'bank_name',      type: 'text', req: true,  ar: 'Bank name' },
+  { key: 'account_name',   type: 'text', req: true,  ar: 'Account name' },
+  { key: 'account_number', type: 'text', req: true,  ar: 'Account number' },
+  { key: 'iban',           type: 'text', req: true,  ar: 'IBAN' },
 ];
-
 // ---- which sections may be removed ----------------------------------------
 //
 // One switch per NUMBERED SECTION of the contract, because that is the unit a
@@ -301,9 +318,26 @@ create or replace function legal._seed_field(
   insert into legal.placeholder
     (workspace_id, key, label, source, data_type, field_type, required,
      default_value, num_min, num_max, list_id, owner_dept, alert_days)
-  values (p_ws, p_key, p_label, '', 'text', p_type, p_req, '', null, null, null, 'legal', null)
+  values (p_ws, p_key, p_label, '', 'text',
+          -- A field can only be a PICKER if it has a list to pick from. On a
+          -- fresh workspace the managed lists do not exist yet, and a 'list'
+          -- field with no list_id draws an empty dropdown with no way to type
+          -- a value - worse than the box it replaced. So a new row starts as
+          -- text and becomes a picker once somebody links it.
+          case when p_type = 'list' then 'text' else p_type end,
+          p_req, '', null, null, null, 'legal', null)
   on conflict (workspace_id, key) do update
-    set label = excluded.label, field_type = excluded.field_type, required = excluded.required;
+    -- p_type, NOT excluded.field_type. EXCLUDED mirrors the VALUES row above,
+    -- which has already downgraded 'list' to 'text' - so a test of
+    -- excluded.field_type = 'list' can never be true, and this branch would
+    -- write 'text' over a field that HAS a list. That is the original bug,
+    -- reintroduced by the fix for it. Caught by executing the upsert against
+    -- a real row rather than reading it.
+    set label = excluded.label,
+        field_type = case
+          when p_type = 'list' and placeholder.list_id is null then 'text'
+          else p_type end,
+        required = excluded.required;
 $fn$;
 
 do $seed$

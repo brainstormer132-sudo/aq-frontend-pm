@@ -22,9 +22,26 @@ create or replace function legal._seed_field(
   insert into legal.placeholder
     (workspace_id, key, label, source, data_type, field_type, required,
      default_value, num_min, num_max, list_id, owner_dept, alert_days)
-  values (p_ws, p_key, p_label, '', 'text', p_type, p_req, '', null, null, null, 'legal', null)
+  values (p_ws, p_key, p_label, '', 'text',
+          -- A field can only be a PICKER if it has a list to pick from. On a
+          -- fresh workspace the managed lists do not exist yet, and a 'list'
+          -- field with no list_id draws an empty dropdown with no way to type
+          -- a value - worse than the box it replaced. So a new row starts as
+          -- text and becomes a picker once somebody links it.
+          case when p_type = 'list' then 'text' else p_type end,
+          p_req, '', null, null, null, 'legal', null)
   on conflict (workspace_id, key) do update
-    set label = excluded.label, field_type = excluded.field_type, required = excluded.required;
+    -- p_type, NOT excluded.field_type. EXCLUDED mirrors the VALUES row above,
+    -- which has already downgraded 'list' to 'text' - so a test of
+    -- excluded.field_type = 'list' can never be true, and this branch would
+    -- write 'text' over a field that HAS a list. That is the original bug,
+    -- reintroduced by the fix for it. Caught by executing the upsert against
+    -- a real row rather than reading it.
+    set label = excluded.label,
+        field_type = case
+          when p_type = 'list' and placeholder.list_id is null then 'text'
+          else p_type end,
+        required = excluded.required;
 $fn$;
 
 do $seed$
@@ -40,22 +57,22 @@ begin
   end if;
 
   -- 1. the field registry --------------------------------------
-  perform legal._seed_field(v_ws, 'id', 'رقم العقد', 'text', false);
-  perform legal._seed_field(v_ws, 'date', 'التاريخ', 'date', false);
-  perform legal._seed_field(v_ws, 'day', 'اليوم', 'text', false);
-  perform legal._seed_field(v_ws, 'license_name', 'اسم الطرف الثاني', 'text', true);
-  perform legal._seed_field(v_ws, 'license_number', 'رقم الترخيص الإعلامي', 'text', true);
-  perform legal._seed_field(v_ws, 'brand_name', 'المنتجات التي يتم ترويجها', 'text', true);
-  perform legal._seed_field(v_ws, 'name_2', 'المؤثر', 'text', true);
-  perform legal._seed_field(v_ws, 'platform_smart', 'المنصة', 'text', true);
-  perform legal._seed_field(v_ws, 'channel_name', 'حسابه في المنصة', 'text', true);
-  perform legal._seed_field(v_ws, 'ad_types', 'نوع الإعلان', 'text', true);
-  perform legal._seed_field(v_ws, 'Amount_full', 'المبلغ', 'text', true);
-  perform legal._seed_field(v_ws, 'duration', 'المدة بالأيام', 'text', true);
-  perform legal._seed_field(v_ws, 'bank_name', 'اسم البنك', 'text', true);
-  perform legal._seed_field(v_ws, 'account_name', 'اسم الحساب', 'text', true);
-  perform legal._seed_field(v_ws, 'account_number', 'رقم الحساب', 'text', true);
-  perform legal._seed_field(v_ws, 'iban', 'رقم الايبان', 'text', true);
+  perform legal._seed_field(v_ws, 'id', 'Contract number', 'text', false);
+  perform legal._seed_field(v_ws, 'date', 'Date', 'date', false);
+  perform legal._seed_field(v_ws, 'day', 'Day', 'text', false);
+  perform legal._seed_field(v_ws, 'license_name', 'Second party name', 'text', true);
+  perform legal._seed_field(v_ws, 'license_number', 'Media licence number', 'text', true);
+  perform legal._seed_field(v_ws, 'brand_name', 'Products promoted', 'text', true);
+  perform legal._seed_field(v_ws, 'name_2', 'Influencer', 'text', true);
+  perform legal._seed_field(v_ws, 'platform_smart', 'Platform', 'list', true);
+  perform legal._seed_field(v_ws, 'channel_name', 'Account on the platform', 'text', true);
+  perform legal._seed_field(v_ws, 'ad_types', 'Ad type', 'list', true);
+  perform legal._seed_field(v_ws, 'Amount_full', 'Amount', 'text', true);
+  perform legal._seed_field(v_ws, 'duration', 'Duration (days)', 'text', true);
+  perform legal._seed_field(v_ws, 'bank_name', 'Bank name', 'text', true);
+  perform legal._seed_field(v_ws, 'account_name', 'Account name', 'text', true);
+  perform legal._seed_field(v_ws, 'account_number', 'Account number', 'text', true);
+  perform legal._seed_field(v_ws, 'iban', 'IBAN', 'text', true);
 
   -- 2. the template and its one published version ---------------
   select id into v_tpl from legal.doc_template
