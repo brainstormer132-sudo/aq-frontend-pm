@@ -662,6 +662,19 @@ export interface ContractBatchLite extends ContractBatch {
   /** Contracts with nobody assigned yet - the work still to do. */
   unassigned: number;
   issued: number;
+  /**
+   * Whether the three numbers above were actually counted.
+   *
+   * They come from one RPC (legal.batch_counts, migration 122). When that
+   * call fails - the migration not run yet, a permission change, a dropped
+   * request - the counts are all zero, and zero is a NUMBER. A task holding
+   * ten contracts then reads "no contracts yet", which is a wrong number that
+   * looks like a right one, on the screen whose job is to say how much work
+   * is left.
+   *
+   * Absent or true means counted. Only an explicit false says otherwise.
+   */
+  counted?: boolean;
 }
 
 /**
@@ -748,7 +761,12 @@ export function recoveryUrgent(daysLeft: number): boolean {
  * task is the part that is not finished. All assigned and none issued is
  * "ready to issue"; all issued is done. Pure.
  */
-export function batchProgress(b: Pick<ContractBatchLite, 'total' | 'unassigned' | 'issued'>): string {
+export function batchProgress(
+  b: Pick<ContractBatchLite, 'total' | 'unassigned' | 'issued'> & { counted?: boolean },
+): string {
+  // Not counted is not the same as counted zero. Said out loud, because the
+  // alternative is a task with ten contracts reading "no contracts yet".
+  if (b.counted === false) return 'could not count the contracts - reload';
   const n = Math.max(0, b.total | 0);
   const un = Math.max(0, b.unassigned | 0);
   const iss = Math.max(0, b.issued | 0);

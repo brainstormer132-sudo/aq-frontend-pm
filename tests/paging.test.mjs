@@ -250,6 +250,20 @@ const BOUNDED = new Map([
     // count-every-contract read back, this fails and says why.
     ok('the batch counts come from the database, not from reading every contract',
       src.includes(`rpc('batch_counts'`) && !src.includes(`'useContractBatches counts'`));
+
+    // AND A FAILED COUNT IS NOT REPORTED AS ZERO.
+    //
+    // One RPC now carries all three numbers, so one failed call makes every
+    // task read "no contracts yet" - zero being a number - on the screen
+    // whose job is to say how much work is left. batchProgress refuses to
+    // report numbers it was told are unverified, but only if the hook tells
+    // it: `counted` has to be derived from the error, not hard-coded true.
+    //
+    // Pinned in source because this is wiring, not a rule - there is nothing
+    // pure to call. `const counted = true` would pass every other assertion
+    // in the repo.
+    ok('a failed count is flagged rather than rendered as zero',
+      /const counted = !\s*eC\b/.test(src) && src.includes('counted,'));
   }
 }
 

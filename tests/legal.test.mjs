@@ -869,6 +869,29 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
 {
   eq('an empty task says so', batchProgress({ total: 0, unassigned: 0, issued: 0 }),
     'no contracts yet');
+
+  /* -- NOT COUNTED IS NOT COUNTED ZERO ------------------------------- */
+  //
+  // The three numbers come from one RPC (legal.batch_counts, migration 122).
+  // When that call fails they are all zero - and zero is a NUMBER, so a task
+  // holding ten contracts renders "no contracts yet" on the screen whose
+  // entire job is to say how much work is left. That is the wrong number that
+  // looks like a right one, which is the failure this whole screen has been
+  // fixed for twice already.
+  eq('a failed count says so instead of saying zero',
+    batchProgress({ total: 0, unassigned: 0, issued: 0, counted: false }),
+    'could not count the contracts - reload');
+  // And it says so even when stale numbers are still in the row, because the
+  // numbers are exactly what cannot be trusted.
+  eq('and it does not report numbers it could not verify',
+    batchProgress({ total: 12, unassigned: 5, issued: 3, counted: false }),
+    'could not count the contracts - reload');
+  // Only an explicit false. Absent means counted - every caller that has
+  // never heard of this flag keeps working.
+  eq('absent means counted', batchProgress({ total: 12, unassigned: 5, issued: 0 }),
+    '12 contracts - 5 still need a vendor');
+  eq('and true means counted', batchProgress({ total: 0, unassigned: 0, issued: 0, counted: true }),
+    'no contracts yet');
   eq('the unfilled ones lead', batchProgress({ total: 12, unassigned: 5, issued: 0 }),
     '12 contracts - 5 still need a vendor');
   eq('even when some are issued', batchProgress({ total: 12, unassigned: 5, issued: 3 }),

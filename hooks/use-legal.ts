@@ -695,6 +695,10 @@ export function useContractBatches(workspaceId: string | null) {
     const { data: cnt, error: eC } = await legal().rpc('batch_counts', {
       p_workspace_id: workspaceId,
     });
+    // Whether the numbers below are numbers at all. A failed call leaves the
+    // map empty and every task would render "no contracts yet" - zero being a
+    // number - on the screen that exists to say how much work is left.
+    const counted = !eC;
     if (eC) setError(eC.message ?? String(eC));
     for (const row of ((cnt ?? []) as any[])) {
       counts.set(String(row.batch_id), {
@@ -706,6 +710,7 @@ export function useContractBatches(workspaceId: string | null) {
     setBatches((bs as any[]).map((b) => ({
       ...(b as ContractBatch),
       shared: (b.shared ?? {}) as Record<string, string>,
+      counted,
       ...(counts.get(b.id) ?? { total: 0, unassigned: 0, issued: 0 }),
     })));
     setLoading(false);
