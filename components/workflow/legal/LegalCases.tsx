@@ -146,27 +146,56 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
    * bookings. Measured at 2.2ms a keystroke against 0.2ms for the filter
    * alone - small on its own, and pure waste on a screen he called slow.
    */
-  const base = useMemo(() => {
-    const ledger = side === 'client'
-      ? clientLedger({
-        parents: scoped.parents, subtasks: scoped.allSubtasks,
-        clientName: clientNames, clientTerms, today: today ?? undefined,
-      })
-      : vendorLedger({
-        subtasks: scoped.subtasks, parents: scoped.parents,
-        vendorName: vendorNames, today: today ?? undefined,
-      });
-    // Only this side's matters can suppress this side's warnings: the key is
-    // `client:<task>` or `vendor:<task>`, so a vendor matter never hides a
-    // client warning even when both are about the same campaign.
-    const handled = new Set(matters
-      .filter((m) => m.party_type === side)
-      .map((m) => m.source_key).filter(Boolean) as string[]);
-    return {
-      side,
-      warnings: matterWarnings({ rows: ledger, side, party: partyIds, handled }),
-    };
-  }, [side, scoped, clientNames, vendorNames, clientTerms, today, matters, partyIds]);
+  /**
+   * BOTH ledgers, built ONCE.
+   *
+   * This used to be built here for the side on screen and built again inside
+   * the KPI memo for both sides - three full passes over four thousand
+   * bookings per render, and both memos listed `matters`, so raising a single
+   * matter re-ran all three.
+   *
+   * Worse than the cost: they were two independent answers to "which
+   * campaigns are overdue", and they had ALREADY DRIFTED. This one passed
+   * `party: partyIds`; the KPI one did not. That argument only fills the
+   * warning's clientId and vendorId - it cannot change which rows become
+   * warnings, which is why the numbers still agreed - but nothing was keeping
+   * them equal, and the two numbers it feeds sit on the same screen: the KPI
+   * "Overdue, nobody on it" and the line "N clients overdue on completed
+   * campaigns".
+   *
+   * `partyIds` is not side-specific: it is one map over every row carrying
+   * both ids, which is what its own comment above says it is for. So both
+   * sides get it, and the two call sites are now the same call.
+   */
+  const ledgers = useMemo(() => ({
+    client: clientLedger({
+      parents: scoped.parents, subtasks: scoped.allSubtasks,
+      clientName: clientNames, clientTerms, today: today ?? undefined,
+    }),
+    vendor: vendorLedger({
+      subtasks: scoped.subtasks, parents: scoped.parents,
+      vendorName: vendorNames, today: today ?? undefined,
+    }),
+  }), [scoped, clientNames, vendorNames, clientTerms, today]);
+
+  const warningsBySide = useMemo(() => {
+    const out = {} as Record<MatterSide, MatterWarning[]>;
+    for (const sd of ['client', 'vendor'] as MatterSide[]) {
+      // Only this side's matters can suppress this side's warnings: the key is
+      // `client:<task>` or `vendor:<task>`, so a vendor matter never hides a
+      // client warning even when both are about the same campaign.
+      const handled = new Set(matters
+        .filter((m) => m.party_type === sd)
+        .map((m) => m.source_key).filter(Boolean) as string[]);
+      out[sd] = matterWarnings({ rows: ledgers[sd], side: sd, party: partyIds, handled });
+    }
+    return out;
+  }, [ledgers, matters, partyIds]);
+
+  const base = useMemo(
+    () => ({ side, warnings: warningsBySide[side] }),
+    [side, warningsBySide],
+  );
 
   /**
    * The warnings half. Still ONE object, so the header and the rows under it
@@ -217,22 +246,14 @@ export function LegalCases({ workspaceId }: { workspaceId?: string }) {
    * number that changes when you press a tab is a number nobody trusts.
    */
   const kpis = useMemo(() => {
-    const unhandled = (['client', 'vendor'] as MatterSide[]).reduce((n, sd) => {
-      const mine = matters.filter((m) => m.party_type === sd);
-      const handled = new Set(mine.map((m) => m.source_key).filter(Boolean) as string[]);
-      const ledger = sd === 'client'
-        ? clientLedger({
-          parents: scoped.parents, subtasks: scoped.allSubtasks,
-          clientName: clientNames, clientTerms, today: today ?? undefined,
-        })
-        : vendorLedger({
-          subtasks: scoped.subtasks, parents: scoped.parents,
-          vendorName: vendorNames, today: today ?? undefined,
-        });
-      return n + unhandledCount(matterWarnings({ rows: ledger, side: sd, handled }));
-    }, 0);
+    // Both sides, from the SAME warnings the rows are drawn from. "Open
+    // disputes: 2" has to mean two disputes, not two on the tab you happen to
+    // be looking at - a number that changes when you press a tab is a number
+    // nobody trusts - and now it also cannot disagree with the list below it.
+    const unhandled = unhandledCount(warningsBySide.client)
+      + unhandledCount(warningsBySide.vendor);
     return legalKpis({ contracts: statuses, matters, unhandled });
-  }, [statuses, matters, scoped, clientNames, vendorNames, clientTerms, today]);
+  }, [statuses, matters, warningsBySide]);
 
   const openWarnings = view.warnings.filter((w) => !w.handled);
   const shown = showAll ? openWarnings : openWarnings.slice(0, SHOW_WARNINGS);

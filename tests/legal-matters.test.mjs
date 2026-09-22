@@ -602,5 +602,35 @@ eq('zero', groupThousands(0), '0.00');
 eq('a negative keeps its sign in front', groupThousands(-1234.5), '-1,234.50');
 eq('junk is not NaN on the screen', groupThousands('abc'), '0.00');
 
+
+/* -- `party` decorates a warning, it never selects one ------------------ */
+// This is the property that let LegalCases collapse three ledger passes into
+// one. Two call sites derived the same warnings and had already drifted -
+// one passed `party`, the other did not - and unifying them was only safe
+// because `party` cannot change WHICH rows become warnings, just the ids
+// carried on them. Verified by reading matterWarnings, and pinned here so
+// the next person does not have to re-read it.
+{
+  const rows = [
+    row({ id: 'a', daysLate: 9, outstanding: 500 }),
+    row({ id: 'b', daysLate: 2, outstanding: 250 }),
+    row({ id: 'c', outstanding: 0 }),
+  ];
+  const without = matterWarnings({ rows, side: 'client' });
+  const party = new Map([['a', { clientId: 'C1', vendorId: null }]]);
+  const withParty = matterWarnings({ rows, side: 'client', party });
+
+  eq('the same rows are warnings either way',
+    withParty.map((w) => w.sourceKey), without.map((w) => w.sourceKey));
+  eq('and in the same order',
+    withParty.map((w) => w.daysLate), without.map((w) => w.daysLate));
+  eq('the count cannot move', withParty.length, without.length);
+  // What it DOES do: hang the record's ids on the warning so raising a matter
+  // links to the real client or vendor rather than only carrying a name.
+  eq('it fills the id it knows', withParty[0].clientId, 'C1');
+  eq('and leaves the ones it does not', withParty[1].clientId, null);
+  eq('without it, no ids at all', without[0].clientId, null);
+}
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
