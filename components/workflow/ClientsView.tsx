@@ -34,6 +34,7 @@ import {
 } from '@/lib/contract-api';
 import { createClient as createSupabase } from '@/lib/supabase-browser';
 import { AdminCreatePortalModal } from '@/components/workflow/AdminCreatePortalModal';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 const supabase = createSupabase();
 
@@ -968,6 +969,8 @@ function ClientDocs({ clientId, canEdit }: { clientId: string; canEdit: boolean 
 function ClientSlotUploader({ clientId, slot, title, canEdit }: {
   clientId: string; slot: string; title: string; canEdit: boolean;
 }) {
+  // The app's own dialog, in place of window.confirm().
+  const { ask, dialog } = useConfirm();
   const { files, refetch } = useClientFiles(clientId);
   const [uploading, setUploading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -1010,7 +1013,10 @@ function ClientSlotUploader({ clientId, slot, title, canEdit }: {
   };
 
   const onDelete = async (file: ClientFileRow) => {
-    if (!window.confirm(`Delete "${file.file_name}"? This cannot be undone.`)) return;
+    if (!await ask({
+      message: `Delete "${file.file_name}"? This cannot be undone.`,
+      confirmLabel: 'Delete the file', tone: 'danger',
+    })) return;
     setBusyId(file.id); setErr('');
     try { await deleteClientFile(file); await refetch(); }
     catch (ex: any) { setErr(ex?.message ?? String(ex)); }
@@ -1063,6 +1069,7 @@ function ClientSlotUploader({ clientId, slot, title, canEdit }: {
         </div>
       )}
       {err && <div style={{ fontSize: 11, color: 'var(--aq-red)', marginTop: 6 }}>{err}</div>}
+      {dialog}
     </div>
   );
 }

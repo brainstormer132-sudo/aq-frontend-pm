@@ -7,6 +7,7 @@ import {
   type CrmTask,
 } from '@/hooks/use-workflow';
 import { CrmTaskEditor } from './CrmTaskEditor';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 /**
  * CRM Tasks view — calendar-style follow-up list.
@@ -66,24 +67,27 @@ export function CrmTasksView({
 
   const buckets = useMemo(() => groupTasks(filtered), [filtered]);
 
+  // The app's own dialogs, in place of confirm() and alert().
+  const { ask, tell, dialog } = useConfirm();
+
   const handleComplete = async (t: CrmTask) => {
     try {
       if (t.completed_at) await uncompleteCrmTask(t.id);
       else                await completeCrmTask(t.id, currentUserId);
       await refetch();
     } catch (e: any) {
-      alert(e?.message ?? String(e));
+      await tell(`Could not change that follow-up. ${e?.message ?? String(e)}`);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this task?')) return;
+    if (!await ask({ message: 'Delete this follow-up? This cannot be undone.', tone: 'danger' })) return;
     try {
       await deleteCrmTask(id);
       setEditing(null);
       await refetch();
     } catch (e: any) {
-      alert(e?.message ?? String(e));
+      await tell(`Could not delete that follow-up. ${e?.message ?? String(e)}`);
     }
   };
 
@@ -183,6 +187,7 @@ export function CrmTasksView({
           onDelete={editing ? () => handleDelete(editing.id) : undefined}
         />
       )}
+      {dialog}
     </div>
   );
 }

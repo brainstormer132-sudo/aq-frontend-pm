@@ -7,6 +7,7 @@ import {
   DEAL_STAGES, type CrmDeal, type DealStage,
 } from '@/hooks/use-workflow';
 import { DealEditor } from './DealEditor';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 /**
  * Sales pipeline kanban.
@@ -28,6 +29,8 @@ export function DealsKanban({
   /** Won a deal → hand it to the New Task form, prefilled. */
   onStartCampaign?: (deal: CrmDeal) => void;
 }) {
+  // The app's own dialogs, in place of confirm() and alert().
+  const { ask, tell, dialog } = useConfirm();
   const { items: deals, loading, refetch } = useCrmDeals(workspaceId);
   const { clients } = useClients();
   const { vendors } = useLegacyVendors();
@@ -105,16 +108,17 @@ export function DealsKanban({
       // can be dragged out of Won and back, so nothing else stops a double.
       const alreadyCampaign = stage === 'won' && deal.target_type === 'client'
         && await campaignExistsForDeal(deal.id).catch(() => false);
-      if (alreadyCampaign) alert('A campaign was already started from this deal.');
+      if (alreadyCampaign) await tell('A campaign was already started from this deal. One sale, one campaign.');
       if (stage === 'won' && onStartCampaign && deal.target_type === 'client' && !alreadyCampaign) {
-        const go = window.confirm(
-          `Deal won: ${deal.name}.\n\nStart a campaign from it? The New Task form opens with the client, name and value already filled in — nothing is created until you submit it.`,
-        );
+        const go = await ask({
+          message: `Start a campaign from "${deal.name}"? The New Task form opens with the client, name and value already filled in - nothing is created until you submit it.`,
+          confirmLabel: 'Open the New Task form',
+        });
         if (go) onStartCampaign(deal);
       }
     } catch (e) {
       console.error('moveCrmDealStage', e);
-      alert('Could not move deal — see console.');
+      await tell('Could not move that deal. The details are in the browser console.');
     }
   };
 
@@ -124,13 +128,13 @@ export function DealsKanban({
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this deal? This cannot be undone.')) return;
+    if (!await ask({ message: 'Delete this deal? This cannot be undone.', tone: 'danger' })) return;
     try {
       await deleteCrmDeal(id);
       setEditing(null);
       await refetch();
     } catch (e: any) {
-      alert('Delete failed: ' + (e?.message ?? e));
+      await tell(`Could not delete that deal. ${e?.message ?? e}`);
     }
   };
 
@@ -266,6 +270,7 @@ export function DealsKanban({
           onDelete={editing ? () => handleDelete(editing.id) : undefined}
         />
       )}
+      {dialog}
     </div>
   );
 }

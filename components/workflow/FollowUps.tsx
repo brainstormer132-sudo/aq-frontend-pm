@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useCrmTasks, completeCrmTask, type CrmTask } from '@/hooks/use-workflow';
 import { followUpUrgency } from '@/lib/crm-sync';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 /**
  * CRM follow-ups assigned to you.
@@ -43,6 +44,9 @@ export function FollowUps({
   const open = useMemo(() => (items || []).filter((t) => !t.completed_at), [items]);
   if (loading || !open.length) return null;
 
+  // The app's own dialog, in place of alert().
+  const { tell, dialog } = useConfirm();
+
   const tone = (t: CrmTask) => {
     const u = today ? followUpUrgency(t.due_at, today, t.completed_at) : 'none';
     if (u === 'overdue') return { label: 'Overdue', bg: 'var(--aq-red-bg)', fg: 'var(--aq-red)' };
@@ -53,7 +57,10 @@ export function FollowUps({
   const done = async (t: CrmTask) => {
     setBusyId(t.id);
     try { await completeCrmTask(t.id, userId); await refetch(); }
-    catch (e) { console.error('completeCrmTask', e); alert('Could not complete that follow-up — see console.'); }
+    catch (e) {
+      console.error('completeCrmTask', e);
+      await tell('Could not complete that follow-up. The details are in the browser console.');
+    }
     finally { setBusyId(null); }
   };
 
@@ -98,7 +105,9 @@ export function FollowUps({
       </ul>
   );
 
-  if (bare) return rows;
+  // Two exits, and the dialog has to be reachable from both - the bare
+  // variant is a bare <ul> on somebody else's card.
+  if (bare) return <>{rows}{dialog}</>;
 
   return (
     <div className="aq-card animate-fade-in" style={{ padding: 20 }}>
@@ -109,6 +118,7 @@ export function FollowUps({
         </p>
       </header>
       {rows}
+      {dialog}
     </div>
   );
 }

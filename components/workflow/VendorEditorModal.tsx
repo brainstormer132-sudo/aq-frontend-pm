@@ -50,6 +50,7 @@ import {
   type VendorOrg,
   type VendorRegistrationInput,
 } from '@/hooks/use-workflow';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 // ────────────────────────────────────────────────────────────────────
 // Types
@@ -762,6 +763,8 @@ function SlotFileUploader({
   title: string;
   canEdit: boolean;
 }) {
+  // The app's own dialog, in place of window.confirm().
+  const { ask, dialog } = useConfirm();
   const { files, refetch } = useVendorFiles(vendorId);
   const [uploading, setUploading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -815,7 +818,10 @@ function SlotFileUploader({
   };
 
   const onDelete = async (file: VendorFileRow) => {
-    if (!window.confirm(`Delete "${file.file_name}"? This cannot be undone.`)) return;
+    if (!await ask({
+      message: `Delete "${file.file_name}"? This cannot be undone.`,
+      confirmLabel: 'Delete the file', tone: 'danger',
+    })) return;
     setBusyId(file.id);
     setError('');
     try {
@@ -905,6 +911,7 @@ function SlotFileUploader({
           </ul>
         )}
       </div>
+      {dialog}
     </div>
   );
 }
