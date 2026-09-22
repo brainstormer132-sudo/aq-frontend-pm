@@ -278,28 +278,49 @@ begin
       when check_violation then null;
     end;
 
-    -- THE ONE THAT MATTERS. Call it the way PostgREST does, with no JWT, so
-    -- auth.uid() is null. Under a "both or neither" check this threw and the
-    -- task was never deleted; the probe is here so it can never come back.
-    if legal.soft_delete_batch(b) <> 1 then
-      raise exception 'legal: soft_delete_batch did not delete the task';
-    end if;
+    -- THE ONE THAT MATTERS: a deletion with NO IDENTIFIABLE ACTOR must be
+    -- accepted. That is what soft_delete_batch writes whenever auth.uid() is
+    -- null - no JWT on the request, a service-role call, a backend job - and
+    -- under a "both or neither" check it threw instead, so the task was never
+    -- deleted at all.
+    --
+    -- Written as the UPDATE rather than the RPC on purpose. This file is
+    -- applied with psql, as a superuser, with no JWT: auth.uid() is null, so
+    -- public.has_role() is FALSE and every one of the four functions correctly
+    -- refuses. Probing them here would only ever prove that the role gate
+    -- works, and the first version of this block did exactly that - it died
+    -- on its own "not allowed to delete this task".
+    update legal.contract_batch
+       set deleted_at = now(), deleted_by = null where id = b;
     if (select deleted_at from legal.contract_batch where id = b) is null then
-      raise exception 'legal: soft_delete_batch left deleted_at null';
+      raise exception 'legal: a deletion with no named actor was not recorded';
     end if;
-    -- Deleting it again is a no-op, not a second delete.
-    if legal.soft_delete_batch(b) <> 0 then
-      raise exception 'legal: soft_delete_batch deleted an already-deleted task';
+
+    -- Clearing it is symmetrical.
+    update legal.contract_batch
+       set deleted_at = null, deleted_by = null where id = b;
+    if (select deleted_at from legal.contract_batch where id = b) is not null then
+      raise exception 'legal: restoring did not clear deleted_at';
     end if;
-    -- And it comes back.
-    if legal.restore_batch(b) <> 1 then
-      raise exception 'legal: restore_batch did not bring the task back';
-    end if;
-    if (select deleted_by from legal.contract_batch where id = b) is not null then
-      raise exception 'legal: restore_batch left deleted_by behind';
-    end if;
-    if legal.restore_batch(b) <> 0 then
-      raise exception 'legal: restore_batch restored a live task';
+
+    -- The round trip through the functions is probed only when this session
+    -- actually holds the role - which it will not under psql, and will under
+    -- a signed-in client. Skipped loudly rather than silently.
+    if public.has_role(ws, array['owner','admin','legal']) then
+      if legal.soft_delete_batch(b) <> 1 then
+        raise exception 'legal: soft_delete_batch did not delete the task';
+      end if;
+      if legal.soft_delete_batch(b) <> 0 then
+        raise exception 'legal: soft_delete_batch deleted an already-deleted task';
+      end if;
+      if legal.restore_batch(b) <> 1 then
+        raise exception 'legal: restore_batch did not bring the task back';
+      end if;
+      if legal.restore_batch(b) <> 0 then
+        raise exception 'legal: restore_batch restored a live task';
+      end if;
+    else
+      raise notice 'legal: no role on this session (psql has no JWT) - the RPC round trip is not probed here';
     end if;
 
     -- The window is the PM one, not a second copy of it.
@@ -307,8 +328,10 @@ begin
       raise exception 'legal: task_recovery_days() is not a usable window';
     end if;
 
-    -- A purge must never take a row that is still inside the window.
-    perform legal.soft_delete_batch(b);
+    -- A purge must never take a row that is still inside the window. Set the
+    -- columns directly, for the same reason as above.
+    update legal.contract_batch
+       set deleted_at = now(), deleted_by = null where id = b;
     select legal.purge_deleted_batches() into n;
     if not exists (select 1 from legal.contract_batch where id = b) then
       raise exception 'legal: purge removed a task that was still inside its window';
