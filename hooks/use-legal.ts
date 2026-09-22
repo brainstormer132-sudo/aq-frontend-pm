@@ -27,6 +27,7 @@ import type { SupersedeContract, SupersedeLinks } from '@/lib/legal-supersede';
 import {
   SIGNED_BUCKET, validateSignedFile, signedStoragePath, cannotFileSigned,
 } from '@/lib/legal-signed';
+import { normaliseReason, reasonError } from '@/lib/legal-review';
 import type { ExternalDoc } from '@/lib/legal-external';
 import {
   validateExternalDoc, validateExternalFile, externalStoragePath,
@@ -1770,4 +1771,149 @@ export function useExternalDocs(workspaceId: string | null) {
   }, [load]);
 
   return { docs, loading, error, reload: load, file, remove };
+}
+
+/* ===================================================================
+   SIGNED COPIES SENT BACK FROM OUTSIDE (migration 084)
+   =================================================================== */
+
+/** The bucket aq-backend writes a portal upload into. Not legal-signed:
+ *  these arrived through the contract app, which owns that bucket. */
+const CONTRACT_BUCKET = 'contracts';
+
+/**
+ * A link to look at a signed copy somebody sent back, or null.
+ *
+ * NULL IS A REAL ANSWER HERE, not just a failure. The `contracts` bucket
+ * belongs to the contract app and its own migration created it service-role
+ * only, so an ordinary signed-in session may have no read on it at all. The
+ * screen has to be able to say "the decision is recorded here, the file is
+ * not reachable from here" rather than showing a broken Open button.
+ */
+export async function reviewFileUrl(path: string, fileName?: string | null): Promise<string | null> {
+  const p = String(path ?? '').trim();
+  if (!p) return null;
+  const { data } = await (createClient() as unknown as SupabaseClient)
+    .storage.from(CONTRACT_BUCKET)
+    .createSignedUrl(p, 60, fileName ? { download: fileName } : undefined);
+  return data?.signedUrl ?? null;
+}
+
+/**
+ * Every signed copy a vendor or client has sent back, and where its review
+ * stands.
+ *
+ * -- WHY THERE IS NO WORKSPACE FILTER -------------------------------
+ *
+ * contract_signatures.workspace_id is nullable ON PURPOSE (084): `vendors`
+ * carries no workspace and neither does generated_contracts, so a vendor
+ * upload usually has none to record. Its select policy is `is_staff() or
+ * uploaded_by = auth.uid()` - deliberately not workspace-scoped - and every
+ * one of these rows belongs to the one company using this app.
+ *
+ * Filtering by workspace here would therefore hide exactly the uploads that
+ * need reviewing, and the screen would read "nothing waiting" while people
+ * outside waited. The workspace id is passed in only to name the register
+ * the titles are looked up in.
+ *
+ * -- WHY THREE READS ------------------------------------------------
+ *
+ * The row carries an auth user id and a contract REFERENCE, neither of which
+ * is worth showing anybody. The email comes from external_users and the
+ * contract's name from legal.external_doc, where migration 123 filed all 644
+ * of the contract app's documents keyed on that same reference. Both are
+ * chunked and both are best-effort: a missing name shows the reference, and
+ * a missing email shows nothing. Neither is allowed to fail the queue - a
+ * review screen that will not open because a lookup table is unreadable is
+ * worse than one with a blank column.
+ */
+export function useSignedReviews(workspaceId: string | null) {
+  const [uploads, setUploads] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    const sb = createClient() as unknown as SupabaseClient;
+
+    // PAGED. One row per upload ATTEMPT, forever - rejected ones are kept as
+    // the record of what was sent and why it came back - so this is a table
+    // that only grows and crosses 1000 on its own.
+    const rows = await selectAllRows<any>('useSignedReviews', () => sb.from('contract_signatures')
+      .select('id, contract_id, workspace_id, uploaded_by, uploader_role, storage_path,'
+        + ' original_filename, content_type, byte_size, status, rejection_reason,'
+        + ' reviewed_by, reviewed_at, created_at')
+      .order('created_at', { ascending: false })
+      .order('id'), (m) => setError(m));
+
+    // Who sent it. Best-effort: no email is a blank, not an error.
+    const userIds = Array.from(new Set(rows.map((r) => String(r.uploaded_by ?? '')).filter(Boolean)));
+    const emailBy = new Map<string, string>();
+    for (const part of chunk(userIds, 60)) {
+      const { data } = await sb.from('external_users')
+        .select('auth_user_id, email').in('auth_user_id', part);
+      for (const u of (data ?? []) as any[]) {
+        if (u?.auth_user_id) emailBy.set(String(u.auth_user_id), String(u.email ?? ''));
+      }
+    }
+
+    // What the contract is called. 123 filed the contract app's documents in
+    // the register under `reference`, so this is the same number.
+    const refs = Array.from(new Set(rows.map((r) => String(r.contract_id ?? '').trim()).filter(Boolean)));
+    const titleBy = new Map<string, string>();
+    const pathBy = new Map<string, string>();
+    if (workspaceId) {
+      for (const part of chunk(refs, 60)) {
+        const { data } = await legal().from('external_doc')
+          .select('reference, title, file_path')
+          .eq('workspace_id', workspaceId).in('reference', part);
+        for (const d of (data ?? []) as any[]) {
+          const k = String(d?.reference ?? '').trim();
+          if (!k) continue;
+          titleBy.set(k, String(d.title ?? ''));
+          if (d.file_path) pathBy.set(k, String(d.file_path));
+        }
+      }
+    }
+
+    setUploads(rows.map((r) => ({
+      ...r,
+      uploader_email: emailBy.get(String(r.uploaded_by ?? '')) ?? null,
+      contract_title: titleBy.get(String(r.contract_id ?? '').trim()) ?? null,
+      // The UNSIGNED original, in the register. Comparing what went out with
+      // what came back is most of what reviewing one of these actually is.
+      original_path: pathBy.get(String(r.contract_id ?? '').trim()) ?? null,
+    })));
+    setLoading(false);
+  }, [workspaceId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  /**
+   * Accept, or reject with a reason. Both go through the RPCs in 084, which
+   * are the only RLS-checked path a status can take out of `pending` - they
+   * are SECURITY DEFINER and refuse a caller who is not staff, so a vendor
+   * cannot screen their own document even if they reach the row.
+   *
+   * The reason is normalised HERE rather than in the component, so every
+   * caller stores it the same way; the database only insists it is non-blank.
+   */
+  const accept = useCallback(async (id: string) => {
+    const { error: e } = await (createClient() as unknown as SupabaseClient)
+      .rpc('accept_signed_contract', { p_id: id });
+    if (e) throw new Error(e.message ?? String(e));
+    await load();
+  }, [load]);
+
+  const reject = useCallback(async (id: string, reason: string) => {
+    const clean = normaliseReason(reason);
+    const bad = reasonError(clean);
+    if (bad) throw new Error(bad);
+    const { error: e } = await (createClient() as unknown as SupabaseClient)
+      .rpc('reject_signed_contract', { p_id: id, p_reason: clean });
+    if (e) throw new Error(e.message ?? String(e));
+    await load();
+  }, [load]);
+
+  return { uploads, loading, error, reload: load, accept, reject };
 }

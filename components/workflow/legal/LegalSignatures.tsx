@@ -1,9 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useContracts, useExternalDocs, signedCopyUrl } from '@/hooks/use-legal';
+import {
+  useContracts, useExternalDocs, useSignedReviews, signedCopyUrl, reviewFileUrl,
+} from '@/hooks/use-legal';
 import { DOC_KINDS } from '@/lib/legal';
 import { signedTally, awaitingSignature } from '@/lib/legal-signed';
+import {
+  reviewState, reviewLabel, reviewBadge, uploaderLabel,
+  cannotAccept, cannotReject, reasonError, normaliseReason, reviewNote,
+  reviewTally, pendingReview, decidedReview, filterReview, queueSummary,
+  REJECT_REASONS, REASON_MAX,
+} from '@/lib/legal-review';
 import {
   externalState, externalBadge, externalLabel, externalNote,
   filterExternal, sortExternal, externalTally, validateExternalDoc,
@@ -102,6 +110,10 @@ export function LegalSignatures({ workspaceId }: { workspaceId?: string }) {
 
       {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{err}</div>}
       {ext.error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{ext.error}</div>}
+
+      {/* -- sent back from outside, awaiting a decision --------------- */}
+      <SentBack workspaceId={workspaceId} />
+
 
       {/* -- out for signature ---------------------------------------- */}
       <section className="aq-card" style={{ padding: 18 }}>
@@ -355,6 +367,285 @@ function FileAgreement({ onCancel, onFile }: {
               }} />
           </label>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The signed copies vendors and clients have sent back, and the decision on
+ * each.
+ *
+ * Siraj: "add to the signiture a reject and accept based if a vendor or
+ * client uploaded a contract signed and if rejected states why".
+ *
+ * -- WHY THIS IS A THIRD LIST AND NOT PART OF THE FIRST --------------
+ *
+ * "Waiting to come back" above is about contracts THIS app issued and has
+ * heard nothing about. This is the opposite end: something has come back and
+ * nobody here has looked at it. They are different jobs - one is chasing,
+ * one is reviewing - and putting them in one list would mean the twenty
+ * contracts nobody has to do anything about hid the two that need a decision
+ * today.
+ *
+ * -- THE REASON IS THE POINT OF THE REJECTION ------------------------
+ *
+ * "Rejected" on its own sends somebody back to the beginning with no idea
+ * what to change, and they upload the same file again. So the reason is
+ * required, has a floor under it, and is what the sender reads in their
+ * portal. The one-tap reasons are what make that floor painless - they are
+ * what people actually mean, and without them a minimum length is a rule
+ * that only ever bites the person trying to do the right thing.
+ */
+function SentBack({ workspaceId }: { workspaceId?: string }) {
+  const { uploads, loading, error, accept, reject } = useSignedReviews(workspaceId ?? null);
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState('');
+  const [rejecting, setRejecting] = useState('');
+  const [rowErr, setRowErr] = useState<{ id: string; msg: string } | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // ONE memo, and the subtree is keyed on which list is showing - the rule
+  // this app learned from the ledger. Every number and every row on screen
+  // comes from this one derivation, so the heading cannot disagree with what
+  // is under it.
+  const view = useMemo(() => {
+    const tally = reviewTally(uploads as any);
+    const queue = pendingReview(uploads as any);
+    const history = filterReview(decidedReview(uploads as any), q);
+    return { tally, queue, history, summary: queueSummary(uploads as any) };
+  }, [uploads, q]);
+
+  const fmt = (v: any) => (v ? new Date(v).toLocaleDateString() : '');
+
+  const open = async (u: any) => {
+    setRowErr(null);
+    const url = await reviewFileUrl(String(u.storage_path ?? ''), u.original_filename);
+    if (url) { window.open(url, '_blank'); return; }
+    // Not a shrug. The contract app's bucket is service-role only, so this
+    // is the expected answer there and the sentence has to say what to do.
+    setRowErr({ id: u.id, msg: 'This app cannot open that file - it is in the contract app\u2019s'
+      + ' storage, which only the backend can read. The decision below still records here.' });
+  };
+
+  const decide = async (u: any, fn: () => Promise<void>) => {
+    setBusy(u.id); setRowErr(null);
+    try { await fn(); setRejecting(''); }
+    catch (e: any) { setRowErr({ id: u.id, msg: e?.message ?? 'That did not go through.' }); }
+    finally { setBusy(''); }
+  };
+
+  const rowNote = (u: any) => reviewNote(u as any, {
+    sent: fmt(u.created_at), decided: fmt(u.reviewed_at),
+  });
+
+  return (
+    <section className="aq-card" style={{ padding: 18 }}>
+      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Sent back for review</h3>
+      <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginBottom: 12 }}>
+        {loading ? 'Looking\u2026' : view.summary}
+        {' '}Accepting one files it as the signed copy. Rejecting sends it back with your
+        reason, which is what they read in their portal.
+      </p>
+
+      {error && (
+        <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10, marginBottom: 10 }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <AqDrawingBlock label={'Loading signed copies\u2026'} />
+      ) : view.queue.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--aq-text-secondary)' }}>
+          {view.tally.accepted + view.tally.rejected
+            ? 'Everything that came back has been looked at.'
+            : 'Nobody has sent a signed copy back yet.'}
+        </p>
+      ) : (
+        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
+          {view.queue.slice(0, SHOW_MAX).map((u: any, i: number) => (
+            <li key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              padding: '10px 2px', borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)' }}>
+              <span style={{ flex: 1, minWidth: 180 }}>
+                <span dir="auto" style={{ fontSize: 13.5, fontWeight: 600, display: 'block' }}>
+                  {u.contract_title || u.contract_id || '(no contract)'}
+                </span>
+                <span dir="auto" style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                  {u.contract_title && u.contract_id
+                    ? <><code style={{ direction: 'ltr' }}>{u.contract_id}</code>{' \u00b7 '}</>
+                    : null}
+                  {rowNote(u)}
+                </span>
+              </span>
+              <span className={`aq-badge ${reviewBadge(reviewState(u as any))}`}>
+                {reviewLabel(reviewState(u as any))}
+              </span>
+              <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+                onClick={() => open(u)}>Open</button>
+              <button className="aq-btn aq-btn-primary" style={{ padding: '4px 12px' }}
+                disabled={!!busy || !!cannotAccept(u as any)}
+                title={cannotAccept(u as any) ?? 'File this as the signed copy'}
+                onClick={() => decide(u, () => accept(u.id))}>
+                {busy === u.id ? '\u2026' : 'Accept'}
+              </button>
+              <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 12px' }}
+                disabled={!!busy || !!cannotReject(u as any)}
+                title={cannotReject(u as any) ?? 'Send it back with a reason'}
+                onClick={() => { setRowErr(null); setRejecting(rejecting === u.id ? '' : u.id); }}>
+                Reject
+              </button>
+              {rowErr && rowErr.id === u.id && (
+                <div className="aq-badge aq-badge-warning"
+                  style={{ flexBasis: '100%', display: 'block', padding: 8, marginTop: 2 }}>
+                  {rowErr.msg}
+                </div>
+              )}
+              {rejecting === u.id && (
+                <div style={{ flexBasis: '100%' }}>
+                  <RejectPanel who={uploaderLabel(u.uploader_role)} busy={busy === u.id}
+                    onCancel={() => setRejecting('')}
+                    onSend={(reason) => decide(u, () => reject(u.id, reason))} />
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {view.queue.length > SHOW_MAX && (
+        <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 10 }}>
+          Showing the oldest {SHOW_MAX} of {view.queue.length}.
+        </p>
+      )}
+
+      {/* The history is behind a click. It only grows - a rejected attempt is
+          kept forever as the record of what was sent and why it came back -
+          so it is the part of this screen that gets long, and it is never
+          the reason somebody opened the page. */}
+      {(view.tally.accepted + view.tally.rejected) > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid var(--aq-border-light)', paddingTop: 12 }}>
+          <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 0', fontSize: 12.5 }}
+            onClick={() => setShowHistory((v) => !v)}>
+            {showHistory ? '\u25be' : '\u25b8'} {view.tally.accepted} accepted, {view.tally.rejected} sent back
+          </button>
+          {showHistory && (
+            <div style={{ marginTop: 10 }}>
+              <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Search by contract, sender, file or reason"
+                style={{ width: '100%', marginBottom: 10 }} />
+              {view.history.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'var(--aq-text-secondary)' }}>Nothing matches that.</p>
+              ) : (
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
+                  {view.history.slice(0, SHOW_MAX).map((u: any, i: number) => (
+                    <li key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      padding: '8px 2px', borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)' }}>
+                      <span style={{ flex: 1, minWidth: 180 }}>
+                        <span dir="auto" style={{ fontSize: 13, fontWeight: 600, display: 'block' }}>
+                          {u.contract_title || u.contract_id || '(no contract)'}
+                        </span>
+                        <span dir="auto" style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                          {rowNote(u)}
+                        </span>
+                        {u.rejection_reason && (
+                          <span dir="auto" style={{ fontSize: 12, color: 'var(--aq-text-secondary)',
+                            display: 'block', marginTop: 2 }}>
+                            {'\u201c'}{u.rejection_reason}{'\u201d'}
+                          </span>
+                        )}
+                      </span>
+                      <span className={`aq-badge ${reviewBadge(reviewState(u as any))}`}>
+                        {reviewLabel(reviewState(u as any))}
+                      </span>
+                      <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+                        onClick={() => open(u)}>Open</button>
+                      {/* An acceptance CAN be undone, with a reason, because
+                          accepting is what marks a contract signed and "we
+                          accepted the wrong scan" has to have a way out. */}
+                      {reviewState(u as any) === 'accepted' && (
+                        <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+                          disabled={!!busy}
+                          title="Take it back and tell them why"
+                          onClick={() => { setRowErr(null); setRejecting(rejecting === u.id ? '' : u.id); }}>
+                          Send it back
+                        </button>
+                      )}
+                      {rowErr && rowErr.id === u.id && (
+                        <div className="aq-badge aq-badge-warning"
+                          style={{ flexBasis: '100%', display: 'block', padding: 8, marginTop: 2 }}>
+                          {rowErr.msg}
+                        </div>
+                      )}
+                      {rejecting === u.id && (
+                        <div style={{ flexBasis: '100%' }}>
+                          <RejectPanel who={uploaderLabel(u.uploader_role)} busy={busy === u.id}
+                            onCancel={() => setRejecting('')}
+                            onSend={(reason) => decide(u, () => reject(u.id, reason))} />
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {view.history.length > SHOW_MAX && (
+                <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 10 }}>
+                  Showing {SHOW_MAX} of {view.history.length}. Search to narrow it.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Why it is going back.
+ *
+ * The one-tap reasons come first and the box comes second, because the
+ * common case is one of six sentences and typing it out every time is how a
+ * required field turns into "asdf". Tapping one fills the box rather than
+ * submitting, so it can still be edited - "The scan is unreadable - page 3
+ * especially" is a better reason than either half.
+ */
+function RejectPanel({ who, busy, onCancel, onSend }: {
+  who: string; busy: boolean;
+  onCancel: () => void;
+  onSend: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const bad = reasonError(reason);
+  const clean = normaliseReason(reason);
+
+  return (
+    <div style={{ background: 'var(--aq-bg-sunken)', borderRadius: 'var(--aq-radius)',
+      padding: 12, marginTop: 8 }}>
+      <p style={{ fontSize: 12.5, color: 'var(--aq-text-secondary)', marginBottom: 8 }}>
+        What should {who} fix? They read this.
+      </p>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        {REJECT_REASONS.map((r) => (
+          <button key={r} type="button" className="aq-btn aq-btn-ghost"
+            style={{ padding: '3px 9px', fontSize: 11.5 }}
+            onClick={() => setReason(r)}>{r}</button>
+        ))}
+      </div>
+      <textarea dir="auto" className="aq-input" rows={2} value={reason} autoFocus
+        maxLength={REASON_MAX + 50}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Or say it in your own words"
+        style={{ width: '100%', resize: 'vertical' }} />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 11.5,
+          color: reason.trim() && bad ? 'var(--aq-error)' : 'var(--aq-text-muted)' }}>
+          {reason.trim() && bad ? bad : 'They see this in their portal, next to the upload.'}
+        </span>
+        <button className="aq-btn aq-btn-ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+        <button className="aq-btn aq-btn-primary" disabled={busy || !!bad}
+          onClick={() => onSend(clean)}>
+          {busy ? 'Sending\u2026' : 'Send it back'}
+        </button>
       </div>
     </div>
   );
