@@ -4,6 +4,7 @@ import {
   blockText, blockKV, blockSig, moveItem, withPositions, nextPosition, canPublish,
   hasRTLChars, blockAllText, detectDir,
   parsePlaceholderKeys, usedPlaceholderKeys, unknownPlaceholders, validatePlaceholderKey, fillPlaceholders,
+  fillPlaceholdersHtml, fingerprintCaption,
   DEPTS, deptLabel, validateListValue, sortListValues,
   FIELD_TYPES, fieldTypeLabel, validateFieldDef, describeField,
   CONTRACT_STATUSES, contractStatusLabel, contractStatusBadge, contractEditable,
@@ -23,6 +24,7 @@ import {
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
   cappedList, LIST_SHOW_MAX,
 } from '../.test-build/legal.js';
+import { amountInWords } from '../.test-build/legal-amount.js';
 
 let pass = 0, fail = 0;
 const eq = (name, got, want) => {
@@ -470,8 +472,16 @@ eq('formatFingerprint empty-safe', formatFingerprint(undefined), '');
   });
   // Once, at the end of the document - not on every page. It is a check
   // somebody runs, not part of the agreement.
-  ok('the fingerprint prints once at the end', html.includes('SHA-256: ABCD 1234'));
-  ok('no fingerprint line when absent', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr' }).includes('SHA-256:'));
+  ok('the fingerprint prints once at the end', html.includes('>ABCD 1234<'));
+  // Siraj, at the last page: "and what is this it looks so weird". A naked
+  // 64-character hash on a signed agreement reads as a defect, so it now
+  // carries a caption saying what it is, in the document's own language.
+  ok('and says what it is', html.includes(fingerprintCaption('ltr')));
+  ok('the caption is in both languages, the document\u2019s first',
+    fingerprintCaption('rtl').indexOf('\u0628\u0635\u0645\u0629') === 0
+    && fingerprintCaption('rtl').includes('SHA-256')
+    && fingerprintCaption('ltr').indexOf('Document') === 0);
+  ok('no fingerprint line when absent', !contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }], values: {}, dir: 'ltr' }).includes('class="doc-fp-hash"'));
   {
     // A draft says so. Nothing else does.
     const d = contractPrintHTML({ title: 't', blocks: [{ block_type: 'p', content: { text: 'x' } }],
@@ -723,6 +733,50 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   eq('empty text is no segments', fillSegments('', {}), []);
   eq('a field at the very start makes no empty leading text',
     fillSegments('{{ a }} tail', { a: 'x' }).length, 2);
+  /* -- money reads the same on screen as on the paper --------------- */
+  //
+  // Siraj, at the preview: "show the full how it will look like not just the
+  // number". It showed 500; the contract says "(500.00) (khamsumia) riyal".
+  // fillPlaceholders (the PRINT) has applied the amount rule since it was
+  // written and fillSegments (the PREVIEW) never did, so the one screen whose
+  // job is to show what will print was the one screen showing something else.
+  //
+  // Asserted against fillPlaceholders, not against a hand-typed string: the
+  // two must agree whatever the rule becomes.
+  {
+    const line = 'Fee {{ Amount_full }} only.';
+    const vals = { Amount_full: '500' };
+    const seg = fillSegments(line, vals).find((x) => x.t === 'field');
+    eq('the preview spells the amount out', seg.v, amountInWords('500'));
+    ok('which is not just the number', seg.v !== '500' && seg.v.includes('500'));
+    // Both paths, side by side. The print wraps values in <bdi>; strip the
+    // tags and the words must be identical.
+    const printed = fillPlaceholdersHtml(line, vals).replace(/<[^>]*>/g, '');
+    const preview = fillSegments(line, vals).map((x) => x.v).join('');
+    eq('preview and print say the same thing', preview, printed);
+  }
+  {
+    // Only money. An ordinary field is still printed exactly as typed - a
+    // licence number is not an amount and must never grow brackets.
+    const seg = fillSegments('No {{ license_number }}.', { license_number: '500' })
+      .find((x) => x.t === 'field');
+    eq('an ordinary field is untouched', seg.v, '500');
+  }
+  {
+    // An empty amount is still a gap, not "(0)". The transform runs on the
+    // value, and an empty value never reaches it.
+    const seg = fillSegments('Fee {{ Amount_full }}.', { Amount_full: '' },
+      { missingWord: 'MISSING' }).find((x) => x.t === 'field');
+    eq('an empty amount is a gap', seg.v, 'MISSING');
+    ok('and is marked missing', seg.missing === true);
+  }
+  {
+    // Not a number: legal-amount returns it unchanged, and so must this.
+    const seg = fillSegments('Fee {{ Amount_full }}.', { Amount_full: 'to be agreed' })
+      .find((x) => x.t === 'field');
+    eq('a non-numeric amount is left alone', seg.v, 'to be agreed');
+  }
+
   // Re-reading the same line must not depend on a shared regex's lastIndex.
   eq('a second call over the same text is identical',
     JSON.stringify(fillSegments(T, { license_name: 'Sara' })),
@@ -809,8 +863,8 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
 // Before 114 that was nine checkboxes, each labelled with ninety characters of
 // its own text.
 {
-  const blk = (id, opt, group, label, text) => ({
-    id, version_id: 'v', workspace_id: 'w', position: 1, block_type: 'p',
+  const blk = (id, opt, group, label, text, type) => ({
+    id, version_id: 'v', workspace_id: 'w', position: 1, block_type: type ?? 'p',
     content: { text: text ?? id }, optional: opt,
     optional_group: group ?? null, optional_label: label ?? null,
   });
@@ -869,6 +923,50 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   // braces for a row written before it existed.
   eq('a blank group name is not a group',
     optionalGroups([blk('z', true, '   ')]).map((g) => g.key), ['z']);
+
+  // ---- only a CLAUSE gets its own switch ----------------------------
+  //
+  // Siraj, at the preview with a tick beside every line: "and only clauses
+  // not bank and other info". An ungrouped optional block is its own switch
+  // only when it is prose. "Account name: Rowad Al-Tatheer" is a row of DATA
+  // inside a clause, and a tick beside it turns the document into a form.
+  {
+    const doc2 = [
+      blk('p1', true),                          // a standalone paragraph
+      blk('li1', true, null, null, null, 'li'), // a standalone bullet
+      blk('kv1', true, null, null, null, 'kv'), // "Account name: ..."
+      blk('tb1', true, null, null, null, 'table'),
+      blk('sg1', true, null, null, null, 'sig'),
+      blk('h1', true, null, null, null, 'h'),   // a bare optional heading
+    ];
+    eq('prose is a clause, a data row is not',
+      optionalGroups(doc2).map((g) => g.key), ['p1', 'li1']);
+
+    // A SECTION is untouched: blocks sharing a group are one switch whatever
+    // they are made of, which is how the bank rows inside section five are
+    // still covered - by their section, once, at its heading.
+    const section = [
+      blk('h5', true, 'bank', 'Fifth: payment', null, 'h'),
+      blk('p5', true, 'bank'),
+      blk('kv5', true, 'bank', null, null, 'kv'),
+    ];
+    const gs2 = optionalGroups(section);
+    eq('a section is one switch', gs2.map((g) => g.key), ['bank']);
+    eq('and it still carries every block, data rows included',
+      gs2[0].ids, ['h5', 'p5', 'kv5']);
+    eq('labelled by its heading', gs2[0].label, 'Fifth: payment');
+
+    // THE WAY BACK. A data row that is already switched off keeps its switch,
+    // or a release would have deleted a clause with no way to restore it.
+    eq('a data row already switched off keeps its switch',
+      optionalGroups(doc2, ['kv1']).map((g) => g.key), ['p1', 'li1', 'kv1']);
+    eq('and its order is still the document\u2019s',
+      optionalGroups(doc2, ['kv1', 'sg1']).map((g) => g.key),
+      ['p1', 'li1', 'kv1', 'sg1']);
+    // Off-ids naming blocks that are not optional change nothing.
+    eq('a stale off-id conjures no switch',
+      optionalGroups(doc2, ['ghost']).map((g) => g.key), ['p1', 'li1']);
+  }
 
   // ---- reading the choice back --------------------------------------
   //

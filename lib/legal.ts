@@ -497,13 +497,27 @@ export function fillSegments(
   while ((m = re.exec(src)) !== null) {
     if (m.index > last) out.push({ t: 'text', v: src.slice(last, m.index) });
     const key = m[1];
-    const value = String(values[key] ?? '');
-    const isPending = value === '' && pending.has(key);
+    const raw = String(values[key] ?? '');
+    const isPending = raw === '' && pending.has(key);
+    // A MONEY FIELD READS THE SAME HERE AS ON THE PAPER.
+    //
+    // Siraj, at the preview: "show the full how it will look like not just
+    // the number". It showed 500. The contract says
+    // "(500.00) (khamsumia) riyal saudi" - the figure, the same amount in
+    // words, then the currency - because a figure can be altered with a pen
+    // and the words beside it cannot.
+    //
+    // fillPlaceholders (the print) has applied that since the amount rule
+    // was written; this function, which draws the PREVIEW, never did. So the
+    // one screen whose job is to show what will print was the one screen
+    // showing something else. Asserted against fillPlaceholders now, not
+    // described.
+    const value = raw && isAmountKey(key) ? amountInWords(raw) : raw;
     out.push({
       t: 'field',
       key,
       v: value || (isPending ? pendingWord : missingWord),
-      missing: value === '' && !isPending,
+      missing: raw === '' && !isPending,
       pending: isPending,
     });
     last = re.lastIndex;
@@ -925,13 +939,38 @@ export interface OptionalGroup {
   firstId: string;
 }
 
-export function optionalGroups(blocks: TemplateBlock[]): OptionalGroup[] {
+/**
+ * The block types that can stand alone as a clause: prose.
+ *
+ * Siraj, at the preview with a tick beside every line: "and only clauses not
+ * bank and other info". A `kv` block is "Account name: Rowad Al-Tatheer" - a
+ * row of DATA inside a clause, not a clause. So are a table, a signature
+ * line, the document title and a bare heading. None of them is a thing you
+ * decide to include or leave out on its own, and a tick beside each one turns
+ * the document into a form.
+ *
+ * A SECTION is unaffected: blocks sharing an optional_group are one switch
+ * whatever they are made of, which is how the bank rows inside section five
+ * are still covered - by their section, once, at its heading.
+ */
+const CLAUSE_BLOCK_TYPES = new Set(['p', 'li']);
+
+function standsAloneAsClause(b: TemplateBlock): boolean {
+  return CLAUSE_BLOCK_TYPES.has(String(b.block_type ?? ''));
+}
+
+export function optionalGroups(blocks: TemplateBlock[], offIds: string[] = []): OptionalGroup[] {
   const out: OptionalGroup[] = [];
   const byKey = new Map<string, OptionalGroup>();
+  const off = new Set(offIds);
   for (const b of blocks) {
     if (!isOptionalBlock(b)) continue;
     const g = String(b.optional_group ?? '').trim();
     if (!g) {
+      // ...unless it is already switched off, in which case it keeps its
+      // switch. A block with no switch and no way back is a clause deleted
+      // by a release, which is not a thing a release gets to do.
+      if (!standsAloneAsClause(b) && !off.has(b.id)) continue;
       out.push({ key: b.id, label: '', ids: [b.id], firstId: b.id });
       continue;
     }
@@ -1602,10 +1641,31 @@ export function contractSheetHtml(args: PrintDoc): string {
   ${replacedBy ? `<div class="doc-replaced">${replacedBy}</div>` : ''}
   ${replaces ? `<div class="doc-replaces">${replaces}</div>` : ''}
   ${bodyHtml}
-  ${fp ? `<div class="doc-fp">SHA-256: ${fp}</div>` : ''}
+  ${fp ? `<div class="doc-fp"><div class="doc-fp-label">${escapeHtml(fingerprintCaption(dir))}</div><div class="doc-fp-hash">${fp}</div></div>` : ''}
 </div>
   </td></tr></tbody>
 </table>`;
+}
+
+/**
+ * What the hash at the foot of a contract says it is.
+ *
+ * Siraj, at the last page: "and what is this it looks so weird". It was a
+ * naked 64-character hash sitting in the middle of an otherwise empty page
+ * with nothing to say what it was for. It is the integrity seal - it is what
+ * lets a contract prove it is the document that was issued - but a reader
+ * cannot know that from the string, and an unexplained machine code on a
+ * signed agreement reads as a defect.
+ *
+ * So it gets a caption, in the document's own language, and a rule above it
+ * so it reads as a footnote rather than as a line of the contract. Pure.
+ */
+export function fingerprintCaption(dir: Dir): string {
+  const ar = '\u0628\u0635\u0645\u0629 \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0645\u0633\u062a\u0646\u062f';
+  const en = 'Document verification seal (SHA-256)';
+  // Both, always - the contract is Arabic and the people filing it are not
+  // all Arabic readers - but the document's own language leads.
+  return dir === 'rtl' ? `${ar} \u2014 ${en}` : `${en} \u2014 ${ar}`;
 }
 
 /** The stylesheet every printed contract shares, batch or not. */
@@ -1712,7 +1772,9 @@ export function printCss(): string {
   .sig-col { flex: 1; min-width: 0; }
   .sig-name { font-weight: 700; margin-bottom: 26px; }
   .sig-rule { border-top: 1px solid #333; }
-  .doc-fp { margin-top: 10mm; font-family: 'Courier New', monospace; font-size: 7pt; color: #777; word-break: break-all; direction: ltr; text-align: left; }
+  .doc-fp { margin-top: 12mm; padding-top: 2.5mm; border-top: 0.5pt solid #dddddd; }
+  .doc-fp-label { font-size: 6.5pt; color: #999999; letter-spacing: 0.02em; }
+  .doc-fp-hash { margin-top: 1mm; font-family: 'Courier New', monospace; font-size: 6.5pt; color: #999999; word-break: break-all; direction: ltr; text-align: left; }
   @media print {
     .sheet { max-width: none; padding: 0; }
   }

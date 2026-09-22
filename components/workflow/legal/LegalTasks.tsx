@@ -8,12 +8,12 @@ import {
 } from '@/hooks/use-legal';
 import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
-import { ContractFill, MultiChoice } from '@/components/workflow/legal/ContractFill';
+import { ContractFill, MultiChoice, PreviewBody } from '@/components/workflow/legal/ContractFill';
 import {
   batchProgress, contractStatusLabel, contractStatusBadge, sortListValues, taskReference,
   recoveryLabel, recoveryUrgent, cappedList, LIST_SHOW_MAX,
-  optionalGroups, optionalGroupOn, toggleOptionalGroup, serializeOffIds, parseOffIds,
-  clauseChoiceSummary, blockAllText, OPT_OFF_KEY,
+  optionalGroups, toggleOptionalGroup, serializeOffIds, parseOffIds,
+  clauseChoiceSummary, detectDir, OPT_OFF_KEY,
 } from '@/lib/legal';
 import {
   startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
@@ -332,8 +332,9 @@ function NewTaskForm({
   // meant is how a task gets raised on the wrong document.
   const versionId = vendorVersions.length === 1 ? vendorVersions[0].version_id : null;
   const tpl = useVersionBlocks(workspaceId, versionId);
-  const optGroups = useMemo(() => optionalGroups(tpl.blocks), [tpl.blocks]);
   const [offIds, setOffIds] = useState<string[]>([]);
+  const optGroups = useMemo(() => optionalGroups(tpl.blocks, offIds), [tpl.blocks, offIds]);
+  const dir = useMemo(() => detectDir(tpl.blocks), [tpl.blocks]);
   // A version change resets the ticks rather than carrying ids across: the
   // old ids name blocks in a document this task is not being raised on.
   useEffect(() => { setOffIds([]); }, [versionId]);
@@ -350,23 +351,36 @@ function NewTaskForm({
   const chosenAdTypes = parsePlatforms(adType);
 
   const n = Number(count);
-  const submit = async () => {
-    setErr('');
-    if (!title.trim()) { setErr('Give the task a name.'); return; }
-    if (!Number.isFinite(n) || n < 1 || n > 200) { setErr('How many vendors? Between 1 and 200.'); return; }
-    const money = moneyText(price);
+  /**
+   * The terms, as contract field values.
+   *
+   * ONE memo, two readers: what the preview fills in and what the task is
+   * created with are the same object, so the contract on screen cannot come
+   * to differ from the contract that gets made. That is the whole reason it
+   * is lifted out of submit() rather than built twice.
+   */
+  const previewValues = useMemo((): Record<string, string> => {
     // The date and the weekday are set together, always - the contract's
     // opening sentence names both.
     const dated = datedValues({}, date);
-    const shared: Record<string, string> = {
+    return {
       [UGC_BRAND_KEY]: brand.trim(),
       [UGC_DATE_KEY]: dated[UGC_DATE_KEY] ?? '',
       [UGC_DAY_KEY]: dated[UGC_DAY_KEY] ?? '',
       duration: duration.trim(),
       // The number alone - the contract's own sentence supplies the rest.
-      Amount_full: money,
+      Amount_full: moneyText(price),
       [UGC_AD_TYPE_KEY]: adType,
       [UGC_PLATFORM_KEY]: platform,
+    };
+  }, [brand, date, duration, price, adType, platform]);
+
+  const submit = async () => {
+    setErr('');
+    if (!title.trim()) { setErr('Give the task a name.'); return; }
+    if (!Number.isFinite(n) || n < 1 || n > 200) { setErr('How many vendors? Between 1 and 200.'); return; }
+    const shared: Record<string, string> = {
+      ...previewValues,
       // Empty means every clause is in, and 112 skips empty shared values, so
       // "all included" writes no row at all - which is exactly what no row
       // has always meant.
@@ -384,149 +398,151 @@ function NewTaskForm({
         edited on its own afterwards - one influencer on a different price does not change the rest.
       </div>
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <label style={{ flex: '2 1 240px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Task name</div>
-          <input dir="auto" className="aq-input" value={title} onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Rabea tea - autumn" style={{ width: '100%' }} />
-        </label>
-        <label style={{ flex: '1 1 120px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>How many vendors</div>
-          <input type="number" min={1} max={200} className="aq-input" value={count}
-            onChange={(e) => setCount(e.target.value)} style={{ width: '100%' }} />
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
-            Rows now, names later. You can add more at any time.
-          </div>
-        </label>
-      </div>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 220px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Client</div>
-          <SearchablePicker
-            options={(clients as any[]).map((c) => ({ value: String(c.id), label: String(c.company_name ?? '') }))}
-            value={clientId}
-            onChange={(v) => { setClientId(v); setBrand(''); }}
-            placeholder={'Search clients\u2026'}
-          />
+      {/* Left: the terms, in a column narrow enough to read. Siraj:
+          "shrink the data to the left to make it more presentable and
+          easier to work with". The rows inside already wrap, so a
+          narrower column pairs them up instead of stretching two fields
+          across a 1900px screen. */}
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 400px', minWidth: 0, maxWidth: 620,
+          display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <label style={{ flex: '2 1 240px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Task name</div>
+            <input dir="auto" className="aq-input" value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Rabea tea - autumn" style={{ width: '100%' }} />
+          </label>
+          <label style={{ flex: '1 1 120px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>How many vendors</div>
+            <input type="number" min={1} max={200} className="aq-input" value={count}
+              onChange={(e) => setCount(e.target.value)} style={{ width: '100%' }} />
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
+              Rows now, names later. You can add more at any time.
+            </div>
+          </label>
         </div>
-        <div style={{ flex: '1 1 220px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Brand</div>
-          {clientId && brands.length ? (
+
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 220px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Client</div>
             <SearchablePicker
-              options={brands.map((b) => ({ value: b.brand_name, label: b.brand_name }))}
-              value={brand || null}
-              onChange={(v) => setBrand(v ?? '')}
-              placeholder={'Search their brands\u2026'}
+              options={(clients as any[]).map((c) => ({ value: String(c.id), label: String(c.company_name ?? '') }))}
+              value={clientId}
+              onChange={(v) => { setClientId(v); setBrand(''); }}
+              placeholder={'Search clients\u2026'}
             />
-          ) : (
-            <input dir="auto" className="aq-input" value={brand} onChange={(e) => setBrand(e.target.value)}
-              placeholder={clientId ? 'That client has no brands on file - type it' : 'Choose a client, or type the brand'}
+          </div>
+          <div style={{ flex: '1 1 220px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Brand</div>
+            {clientId && brands.length ? (
+              <SearchablePicker
+                options={brands.map((b) => ({ value: b.brand_name, label: b.brand_name }))}
+                value={brand || null}
+                onChange={(v) => setBrand(v ?? '')}
+                placeholder={'Search their brands\u2026'}
+              />
+            ) : (
+              <input dir="auto" className="aq-input" value={brand} onChange={(e) => setBrand(e.target.value)}
+                placeholder={clientId ? 'That client has no brands on file - type it' : 'Choose a client, or type the brand'}
+                style={{ width: '100%' }} />
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <label style={{ flex: '1 1 160px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Date</div>
+            <input type="date" className="aq-input" value={date} onChange={(e) => setDate(e.target.value)}
               style={{ width: '100%' }} />
-          )}
+            <div dir="auto" style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
+              {arabicWeekday(date) || '-'}
+            </div>
+          </label>
+          <label style={{ flex: '1 1 140px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Duration (days)</div>
+            <input type="number" min={1} className="aq-input" value={duration}
+              onChange={(e) => setDuration(e.target.value)} style={{ width: '100%' }} />
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
+              Asked once, for the whole task.
+            </div>
+          </label>
+          <label style={{ flex: '1 1 160px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Price per vendor</div>
+            <input type="number" min={0} step="0.01" className="aq-input" value={price}
+              onChange={(e) => setPrice(e.target.value)} style={{ width: '100%' }} />
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
+              {moneyText(price) || 'The vendor\u2019s fee, not the client price.'}
+            </div>
+          </label>
         </div>
-      </div>
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <label style={{ flex: '1 1 160px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Date</div>
-          <input type="date" className="aq-input" value={date} onChange={(e) => setDate(e.target.value)}
-            style={{ width: '100%' }} />
-          <div dir="auto" style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
-            {arabicWeekday(date) || '-'}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ flex: '2 1 320px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Platform</div>
+            {/* The same control the fill screen uses, so what is ticked here and
+                what is ticked on a contract cannot come to mean different things.
+                Tick more than one and every contract in the task asks for a
+                handle per platform. */}
+            <MultiChoice value={platform} options={platformOptions} editable onChange={setPlatform} />
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+              {chosenPlatforms.length > 1
+                ? `${chosenPlatforms.length} platforms - each contract will ask for ${chosenPlatforms.length} handles.`
+                : 'Tick more than one if the same ad runs on several.'}
+            </div>
           </div>
-        </label>
-        <label style={{ flex: '1 1 140px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Duration (days)</div>
-          <input type="number" min={1} className="aq-input" value={duration}
-            onChange={(e) => setDuration(e.target.value)} style={{ width: '100%' }} />
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
-            Asked once, for the whole task.
-          </div>
-        </label>
-        <label style={{ flex: '1 1 160px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Price per vendor</div>
-          <input type="number" min={0} step="0.01" className="aq-input" value={price}
-            onChange={(e) => setPrice(e.target.value)} style={{ width: '100%' }} />
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 3 }}>
-            {moneyText(price) || 'The vendor\u2019s fee, not the client price.'}
-          </div>
-        </label>
-      </div>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: '2 1 320px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Platform</div>
-          {/* The same control the fill screen uses, so what is ticked here and
-              what is ticked on a contract cannot come to mean different things.
-              Tick more than one and every contract in the task asks for a
-              handle per platform. */}
-          <MultiChoice value={platform} options={platformOptions} editable onChange={setPlatform} />
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-            {chosenPlatforms.length > 1
-              ? `${chosenPlatforms.length} platforms - each contract will ask for ${chosenPlatforms.length} handles.`
-              : 'Tick more than one if the same ad runs on several.'}
-          </div>
-        </div>
-        <div style={{ flex: '2 1 320px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Ad type</div>
-          {/* Tick as many as the job is. One vendor doing a reel and three
-              stories is one contract naming both. */}
-          <MultiChoice value={adType} options={adOptions} editable onChange={setAdType} />
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
-            {chosenAdTypes.length > 1
-              ? `${chosenAdTypes.length} ad types on every contract in this task.`
-              : 'Tick more than one if the vendor is doing several.'}
+          <div style={{ flex: '2 1 320px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Ad type</div>
+            {/* Tick as many as the job is. One vendor doing a reel and three
+                stories is one contract naming both. */}
+            <MultiChoice value={adType} options={adOptions} editable onChange={setAdType} />
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 4 }}>
+              {chosenAdTypes.length > 1
+                ? `${chosenAdTypes.length} ad types on every contract in this task.`
+                : 'Tick more than one if the vendor is doing several.'}
+            </div>
           </div>
         </div>
-      </div>
 
-      {optGroups.length > 0 && (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Optional clauses</div>
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginBottom: 6 }}>
-            Ticked clauses go into every contract this task makes. Untick one here and
-            you do not have to untick it again on each vendor - and a single contract can
-            still be changed on its own afterwards.
-          </div>
-          <div className="aq-card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {optGroups.map((g) => {
-              const included = optionalGroupOn(g, offIds);
-              // A section shows its heading; a lone clause shows its own first
-              // ninety characters. Same fallback the fill screen uses, so the
-              // two lists cannot come to read differently.
-              const first = tpl.blocks.find((b) => b.id === g.firstId);
-              const text = g.label
-                || (first ? blockAllText(first).slice(0, 90) : '')
-                || '(empty clause)';
-              return (
-                <label key={g.key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
-                  opacity: included ? 1 : 0.55, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={included} style={{ marginTop: 3 }}
-                    onChange={() => setOffIds(toggleOptionalGroup(g, offIds, !included))} />
-                  <span dir="auto" style={{ fontSize: 12.5, minWidth: 0 }}>
-                    {text}
-                    {g.ids.length > 1 && (
-                      <span style={{ color: 'var(--aq-text-muted)' }}> {'\u00b7'} {g.ids.length} blocks</span>
-                    )}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 6 }}>
-            {clauseChoiceSummary(optGroups, offIds)}
-          </div>
+        {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{err}</div>}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="aq-btn aq-btn-primary" disabled={busy} onClick={() => { void submit(); }}>
+            {busy ? 'Creating\u2026' : `Create ${Number.isFinite(n) && n > 0 ? Math.round(n) : ''} contract${n === 1 ? '' : 's'}`}
+          </button>
+          <button className="aq-btn aq-btn-ghost" disabled={busy} onClick={onCancel}>Cancel</button>
         </div>
-      )}
+        </div>
 
-      {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{err}</div>}
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button className="aq-btn aq-btn-primary" disabled={busy} onClick={() => { void submit(); }}>
-          {busy ? 'Creating\u2026' : `Create ${Number.isFinite(n) && n > 0 ? Math.round(n) : ''} contract${n === 1 ? '' : 's'}`}
-        </button>
-        <button className="aq-btn aq-btn-ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+        {/* Right: the contract itself, with the clause ticks in it. Siraj:
+            "quickly change clauses with a preview to the right". Same
+            component the fill screen draws, so what is ticked here and what
+            is ticked on a contract cannot come to look like two things. It
+            fills in as the terms are typed - brand, date, price, platform -
+            because a preview of a blank contract is a picture of nothing. */}
+        {tpl.blocks.length > 0 && (
+          <div style={{ flex: '1 1 360px', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em',
+                textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>The contract</span>
+              <span style={{ fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+                {clauseChoiceSummary(optGroups, offIds)}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginBottom: 8 }}>
+              Untick a clause here and it is left out of every contract this task makes -
+              you do not have to untick it again on each vendor. A single contract can still
+              be changed on its own afterwards.
+            </div>
+            {/* Bounded and scrolled: forty-three blocks is a long page, and a
+                form you have to scroll past a whole contract to submit is
+                worse than no preview. */}
+            <div className="aq-card" style={{ padding: 18, maxHeight: '72vh', overflow: 'auto' }} dir={dir}>
+              <PreviewBody blocks={tpl.blocks} values={previewValues}
+                groups={optGroups} offIds={offIds} editable
+                onToggle={(g, on) => setOffIds(toggleOptionalGroup(g, offIds, on))} />
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

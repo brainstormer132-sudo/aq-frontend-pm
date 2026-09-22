@@ -145,9 +145,9 @@ eq('a draft carries its status through, so the page says DRAFT',
 ok('a draft prints the word', contractsPrintHTML([built.docs[1]]).includes('>DRAFT<'));
 ok('an issued one does not', !contractsPrintHTML([built.docs[0]]).includes('>DRAFT<'));
 ok('the fingerprint is stamped on the one that has one',
-  contractsPrintHTML([built.docs[0]]).includes('SHA-256:'));
+  contractsPrintHTML([built.docs[0]]).includes('class="doc-fp-hash"'));
 ok('and not invented for the one that does not',
-  !contractsPrintHTML([built.docs[1]]).includes('SHA-256:'));
+  !contractsPrintHTML([built.docs[1]]).includes('class="doc-fp-hash"'));
 
 /* -- 5. a contract with nothing to print is left out, and said ------- */
 //

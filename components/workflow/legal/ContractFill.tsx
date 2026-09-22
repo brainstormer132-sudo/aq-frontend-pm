@@ -114,7 +114,10 @@ export function ContractFill({
   // (114) collapse into a single switch carrying all their ids. An optional
   // block with no group is still its own switch, which is what it was before
   // groups existed.
-  const optGroups = useMemo(() => optionalGroups(blocks), [blocks]);
+  // The off-list rides along so a data row that is already switched off
+  // keeps its switch - see optionalGroups. Otherwise there would be no way
+  // to put it back.
+  const optGroups = useMemo(() => optionalGroups(blocks, offIds), [blocks, offIds]);
   // Only the add-rows tables get a TableFill above the form. A one-row table
   // (a vendor contract's outputs table) has no rows to add: its four cells are
   // ordinary fields and appear in the Fields card like any other.
@@ -1255,7 +1258,12 @@ function Seg({ s }: { s: FillSegment }) {
     padding: '0 3px', borderRadius: 3 }}>{s.v}</span>;
 }
 
-function PreviewBody({
+/**
+ * The document as the screen draws it, with a tick beside each optional
+ * clause. Exported because the New-task form shows the same thing before a
+ * single contract exists - one component, so the two cannot drift.
+ */
+export function PreviewBody({
   blocks, values, groups, offIds, editable, onToggle,
 }: {
   blocks: TemplateBlock[];
@@ -1315,19 +1323,35 @@ function ClauseSwitch({
   onToggle?: (g: OptionalGroup, on: boolean) => void; stub?: boolean;
 }) {
   const live = editable && !!onToggle;
+  // Siraj: "the buttons look weird just a checkmark next to the line works".
+  // A browser checkbox is a chunky blue OS control; twenty of them down a
+  // contract make it a form. This is a 15px square that shows a tick when the
+  // clause is in and nothing when it is not - small enough to read as a mark
+  // in the margin, big enough to hit.
   return (
-    <label dir="auto" style={{
-      display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 11.5,
-      color: 'var(--aq-text-muted)', cursor: live ? 'pointer' : 'default',
-      ...(stub ? { fontStyle: 'italic' } : null),
-    }}>
-      <input type="checkbox" checked={on} disabled={!live}
-        onChange={() => onToggle?.(group, !on)} style={{ alignSelf: 'center' }} />
-      <span style={{ minWidth: 0 }}>
+    <button type="button" role="switch" aria-checked={on} disabled={!live}
+      onClick={() => onToggle?.(group, !on)}
+      title={on ? 'In the contract - click to leave it out' : 'Left out - click to put it back'}
+      style={{
+        display: 'flex', gap: 7, alignItems: 'center', width: '100%',
+        background: 'none', border: 'none', padding: 0, font: 'inherit',
+        textAlign: 'start', cursor: live ? 'pointer' : 'default',
+      }}>
+      <span aria-hidden style={{
+        flex: '0 0 auto', width: 15, height: 15, borderRadius: 3, lineHeight: '13px',
+        fontSize: 11, fontWeight: 700, textAlign: 'center',
+        border: `1px solid ${on ? 'var(--aq-ink-btn, #141414)' : 'var(--aq-border)'}`,
+        background: on ? 'var(--aq-ink-btn, #141414)' : 'transparent',
+        color: on ? 'var(--aq-ink-btn-text, #fff)' : 'transparent',
+      }}>{'\u2713'}</span>
+      <span dir="auto" style={{
+        minWidth: 0, fontSize: 11.5, color: 'var(--aq-text-muted)',
+        ...(stub ? { fontStyle: 'italic' } : null),
+      }}>
         {text}
         {stub ? ' \u2014 not included' : ''}
       </span>
-    </label>
+    </button>
   );
 }
 
