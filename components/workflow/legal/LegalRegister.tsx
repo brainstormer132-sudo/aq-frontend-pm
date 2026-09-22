@@ -12,7 +12,7 @@ import {
 import { signedTally, hasSignedCopy } from '@/lib/legal-signed';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import {
-  startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
+  startPending, cancelPending, tickPending, flushPending, removedLabel,
   type Pending,
 } from '@/lib/pending-removal';
 import { UndoBar } from '@/components/workflow/campaign/ui';
@@ -92,7 +92,10 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   };
   useEffect(() => () => { onUnmount.current(); }, []);
 
-  const hiddenIds = pendingIds(pending);
+  // The ids in their undo window, as a STABLE string. `pending` gets a new
+  // array every second as the countdown ticks, so using it directly as a memo
+  // dep would rebuild the whole view once a second.
+  const pendingKey = pending.map((p) => p.id).sort().join(',');
 
   // One memo for the view, everything else derived from it. Two memos that
   // each filter would be two answers to "which contracts are we looking at",
@@ -111,15 +114,29 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   const tally = useMemo(() => signedTally(contracts as any), [contracts]);
 
   const view = useMemo(() => {
-    const rows = filterContracts(contracts, q, status);
+    // A contract in its undo window is out of the view ENTIRELY, not just out
+    // of the rendered slice. Filtering only the slice - which is what this did
+    // when the undo window was added - left `view.rows` still holding it, so
+    // "Select all 40" counted and selected a draft that was seconds from
+    // deletion, Print would have fetched and printed it, "showing the first
+    // 200 of N" was off by however many were pending, and deleting one row
+    // left 199 on screen instead of pulling row 201 up.
+    const gone = new Set(pendingKey ? pendingKey.split(',') : []);
+    const live = gone.size ? contracts.filter((c: any) => !gone.has(c.id)) : contracts;
+    const rows = filterContracts(live, q, status);
     return { rows, shown: rows.slice(0, SHOW_MAX), hidden: Math.max(0, rows.length - SHOW_MAX) };
-  }, [contracts, q, status]);
+  }, [contracts, q, status, pendingKey]);
 
   const picked = useMemo(() => selectedInOrder(view.rows, sel), [view.rows, sel]);
 
   if (openId) {
     return (
-      <ContractFill workspaceId={workspaceId} contractId={openId}
+      // key={openId}: raising a correction swaps contractId on the SAME
+      // mounted ContractFill, so its own state came with it - the correction
+      // reason just typed, a signing date meant for the previous contract, a
+      // "Saved." banner, and a dateStamped flag that stopped the new draft
+      // being dated at all. Keying it remounts instead.
+      <ContractFill key={openId} workspaceId={workspaceId} contractId={openId}
         onBack={() => setOpenId(null)} onOpen={(id) => setOpenId(id)} />
     );
   }
@@ -288,7 +305,7 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
           ))}
 
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {view.shown.filter((c) => !hiddenIds.has(c.id)).map((c, i) => (
+            {view.shown.map((c, i) => (
               <li key={c.id} style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
                 borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',

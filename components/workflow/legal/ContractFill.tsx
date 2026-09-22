@@ -217,8 +217,22 @@ export function ContractFill({
   }, [loading, contract, editable, usesDate, dateStamped, riyadhToday]);
 
   // Date alerts: a tracked date that is expired blocks Issue; expiring-soon warns.
-  const today = new Date().toISOString().slice(0, 10);
-  const dateAlerts = useMemo(() => contractDateAlerts(fields, values, today), [fields, values, today]);
+  //
+  // `today` is set in an effect, not read during render. Two reasons, and
+  // LegalCases already fixed the same thing for the same ones:
+  //
+  //   * Read during render it is a FRESH STRING every time, so it never
+  //     matches the memo's dep and contractDateAlerts re-ran on every
+  //     keystroke in the form. The memo was decoration.
+  //   * Next.js renders this on the server too, so across a midnight
+  //     boundary the server's day and the browser's day differ and React
+  //     reports a hydration mismatch.
+  const [today, setToday] = useState('');
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+  const dateAlerts = useMemo(
+    () => (today ? contractDateAlerts(fields, values, today) : []),
+    [fields, values, today],
+  );
   const blocked = hasBlockingAlert(dateAlerts);
 
   const [banner, setBanner] = useState('');
@@ -355,7 +369,12 @@ export function ContractFill({
         // anybody holding the paper. printReference is the one answer, and
         // the batch print uses it too.
         reference: printReference(contract),
-        generatedOn: new Date().toLocaleDateString(),
+        // ISO, not toLocaleDateString(). With no locale argument that call
+        // takes whatever the operator's browser is set to, so the SAME
+        // contract printed from two machines carried 9/22/2026 and
+        // 22/09/2026. A date on a legal document does not depend on who
+        // pressed print.
+        generatedOn: new Date().toISOString().slice(0, 10),
         fingerprint: fingerprint ? formatFingerprint(fingerprint) : undefined,
         // A reprint of a replaced contract says so, loudly. The one moment
         // this matters is somebody pulling an old copy off the printer and

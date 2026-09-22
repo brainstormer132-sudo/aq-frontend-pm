@@ -491,7 +491,7 @@ function TaskDetail({
       ) : (
         <section className="aq-card" style={{ padding: 18 }}>
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {rows.map((c, i) => {
+            {cappedList(rows, LIST_SHOW_MAX).shown.map((c, i) => {
               const who = c.vendor_id != null ? (vendorName.get(String(c.vendor_id)) || `Vendor ${c.vendor_id}`) : '';
               return (
                 <li key={c.id} style={{
@@ -521,6 +521,19 @@ function TaskDetail({
               );
             })}
           </ul>
+          {/* "Add more vendors" takes 200 at a time and nothing caps how often
+              it is repeated, so a task can hold more contracts than one page.
+              This was the only list left in the feature with neither a cap nor
+              a counted line - on the screen whose whole job is "which of these
+              still has no vendor". */}
+          {cappedList(rows, LIST_SHOW_MAX).hidden > 0 && (
+            <p style={{
+              fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 12, paddingTop: 12,
+              borderTop: '1px solid var(--aq-border-light)',
+            }}>
+              Showing the first {LIST_SHOW_MAX} of {rows.length}, oldest first.
+            </p>
+          )}
         </section>
       )}
 

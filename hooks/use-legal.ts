@@ -71,11 +71,14 @@ export function useLegalTemplates(workspaceId: string | null) {
       .select('id, doc_kind, name, description, updated_at, archived_at')
       .eq('workspace_id', workspaceId);
     if (e1) { setError(e1.message ?? String(e1)); setTemplates([]); setLoading(false); return; }
-    const { data: vers } = await legal().from('doc_template_version')
+    // PAGED: versions only ever accumulate - one per publish, forever - so
+    // this is the read that crosses 1000 first. Truncated, a template loses
+    // its version badge and reads as though it has none.
+    const vers = await selectAllRows<any>('useLegalTemplates versions', () => legal().from('doc_template_version')
       .select('template_id, version, status')
-      .eq('workspace_id', workspaceId);
+      .eq('workspace_id', workspaceId).order('id'));
     const byTpl = new Map<string, { version: number; status: VersionStatus }>();
-    for (const v of (vers ?? []) as any[]) {
+    for (const v of vers as any[]) {
       const cur = byTpl.get(v.template_id);
       if (!cur || v.version > cur.version) byTpl.set(v.template_id, { version: v.version, status: v.status });
     }
@@ -335,10 +338,9 @@ export function useLegalPlaceholders(workspaceId: string | null) {
   const load = useCallback(async () => {
     if (!workspaceId) { setPlaceholders([]); setLoading(false); return; }
     setLoading(true); setError('');
-    const { data, error: e } = await legal().from('placeholder')
+    const data = await selectAllRows<any>('useLegalPlaceholders', () => legal().from('placeholder')
       .select('id, key, label, field_type, required, default_value, num_min, num_max, list_id, owner_dept, alert_days, allow_other')
-      .eq('workspace_id', workspaceId).order('key');
-    if (e) { setError(e.message ?? String(e)); setPlaceholders([]); setLoading(false); return; }
+      .eq('workspace_id', workspaceId).order('key').order('id'), setError);
     setPlaceholders(((data ?? []) as any[]).map((r) => ({
       id: r.id, key: r.key, label: r.label, field_type: r.field_type, required: !!r.required,
       default_value: r.default_value ?? '', num_min: r.num_min, num_max: r.num_max,
@@ -395,14 +397,25 @@ export function useManagedLists(workspaceId: string | null) {
     if (!workspaceId) { setLists([]); setValuesByList({}); setLoading(false); return; }
     setLoading(true); setError('');
     const c = legal();
-    const { data: ls, error: e1 } = await c.from('managed_list')
-      .select('id, key, name, owner_dept').eq('workspace_id', workspaceId).order('name');
-    if (e1) { setError(e1.message ?? String(e1)); setLists([]); setLoading(false); return; }
-    setLists(((ls ?? []) as any[]).map((r) => ({ id: r.id, key: r.key, name: r.name, owner_dept: r.owner_dept })));
-    const { data: vs } = await c.from('managed_list_value')
-      .select('id, list_id, value, label, position, active').eq('workspace_id', workspaceId).order('position');
+    const ls = await selectAllRows<any>('useManagedLists', () => c.from('managed_list')
+      .select('id, key, name, owner_dept')
+      .eq('workspace_id', workspaceId).order('name').order('id'), setError);
+    setLists((ls as any[]).map((r) => ({ id: r.id, key: r.key, name: r.name, owner_dept: r.owner_dept })));
+    // PAGED. This is the table in the legal schema that genuinely holds
+    // thousands of rows - a managed list of vendors or influencers is exactly
+    // what it is for - and PostgREST stops at 1000 without saying so.
+    //
+    // The consequence was not a short dropdown. ContractFill builds its
+    // validation sets from these values, and contractReady REJECTS a value
+    // that is not in the list. So a contract holding a perfectly valid value
+    // that happened to sort past row 1000 failed validation, Issue stayed
+    // disabled, and the only explanation on screen was "Fill every required
+    // field first" on a form where every field was filled.
+    const vs = await selectAllRows<any>('useManagedLists values', () => c.from('managed_list_value')
+      .select('id, list_id, value, label, position, active')
+      .eq('workspace_id', workspaceId).order('position').order('id'));
     const grouped: Record<string, ManagedListValue[]> = {};
-    for (const v of (vs ?? []) as any[]) (grouped[v.list_id] ??= []).push({
+    for (const v of vs as any[]) (grouped[v.list_id] ??= []).push({
       id: v.id, list_id: v.list_id, value: v.value, label: v.label, position: v.position, active: v.active,
     });
     setValuesByList(grouped);
@@ -492,9 +505,12 @@ export function usePublishedVersions(workspaceId: string | null) {
     if (!workspaceId) { setVersions([]); setLoading(false); return; }
     setLoading(true); setError('');
     const c = legal();
-    const { data: vers, error: e1 } = await c.from('doc_template_version')
-      .select('id, template_id, version, status').eq('workspace_id', workspaceId).eq('status', 'published');
-    if (e1) { setError(e1.message ?? String(e1)); setVersions([]); setLoading(false); return; }
+    // PAGED, same growth. Truncated, a template simply stops appearing in
+    // the New-contract picker: it exists, it is published, and it cannot be
+    // chosen, with nothing on screen to say why.
+    const vers = await selectAllRows<any>('usePublishedVersions', () => c.from('doc_template_version')
+      .select('id, template_id, version, status')
+      .eq('workspace_id', workspaceId).eq('status', 'published').order('id'), setError);
     const { data: tpls } = await c.from('doc_template')
       .select('id, name, doc_kind, archived_at').eq('workspace_id', workspaceId);
     const byId = new Map(((tpls ?? []) as any[]).map((t) => [t.id, t]));
@@ -620,16 +636,29 @@ export function useContractBatches(workspaceId: string | null) {
     if (!workspaceId) { setBatches([]); setLoading(false); return; }
     setLoading(true); setError('');
     const c = legal();
-    const { data: bs, error: e1 } = await c.from('contract_batch')
+    // PAGED, and CHUNKED. Three failures were stacked here.
+    //
+    // The batch list was unpaged; the id array built from it was unpaged;
+    // and the contract read that counts per batch was neither paged nor
+    // chunked. With a few thousand contracts the counts were built from the
+    // first 1000 rows only, so every batch past that boundary reported
+    // "0 of 0 filled" and lost its "N to fill" badge - a wrong number that
+    // looks like a right one. And a few hundred uuids in one `in()` is an
+    // 11KB URL, which comes back as a 414 and zeroes every count at once.
+    //
+    // 60 per chunk, the same as loadContractPrintDocs.
+    const bs = await selectAllRows<any>('useContractBatches', () => c.from('contract_batch')
       .select('id, workspace_id, title, shared, version_id, created_at')
-      .eq('workspace_id', workspaceId).order('created_at', { ascending: false });
-    if (e1) { setError(e1.message ?? String(e1)); setBatches([]); setLoading(false); return; }
-    const ids = ((bs ?? []) as any[]).map((b) => b.id);
+      .eq('workspace_id', workspaceId).order('created_at', { ascending: false }).order('id'), setError);
+    const ids = (bs as any[]).map((b) => b.id);
     const counts = new Map<string, { total: number; unassigned: number; issued: number }>();
     if (ids.length) {
-      const { data: cs } = await c.from('contract')
-        .select('batch_id, status, vendor_id').in('batch_id', ids);
-      for (const row of ((cs ?? []) as any[])) {
+      const cs: any[] = [];
+      for (const part of chunk(ids, 60)) {
+        cs.push(...await selectAllRows<any>('useContractBatches counts', () => c.from('contract')
+          .select('batch_id, status, vendor_id').in('batch_id', part).order('id')));
+      }
+      for (const row of cs) {
         const cur = counts.get(row.batch_id) ?? { total: 0, unassigned: 0, issued: 0 };
         cur.total += 1;
         if (row.vendor_id == null) cur.unassigned += 1;
@@ -637,7 +666,7 @@ export function useContractBatches(workspaceId: string | null) {
         counts.set(row.batch_id, cur);
       }
     }
-    setBatches(((bs ?? []) as any[]).map((b) => ({
+    setBatches((bs as any[]).map((b) => ({
       ...(b as ContractBatch),
       shared: (b.shared ?? {}) as Record<string, string>,
       ...(counts.get(b.id) ?? { total: 0, unassigned: 0, issued: 0 }),
@@ -745,11 +774,12 @@ export function useBatchContracts(workspaceId: string | null, batchId: string | 
   const load = useCallback(async () => {
     if (!workspaceId || !batchId) { setRows([]); setLoading(false); return; }
     setLoading(true); setError('');
-    const { data, error: e } = await legal().from('contract')
+    // PAGED: a task is "add 200 vendors at a time" by design and nothing
+    // caps how often that is repeated, so a batch can hold more than a page.
+    const data = await selectAllRows<any>('useBatchContracts', () => legal().from('contract')
       .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, batch_id')
-      .eq('batch_id', batchId).order('created_at', { ascending: true });
-    if (e) { setError(e.message ?? String(e)); setRows([]); setLoading(false); return; }
-    setRows(((data ?? []) as any[]) as Contract[]);
+      .eq('batch_id', batchId).order('created_at', { ascending: true }).order('id'), setError);
+    setRows(data as Contract[]);
     setLoading(false);
   }, [workspaceId, batchId]);
 
