@@ -20,6 +20,7 @@ import {
   archivedToggleLabel, archiveConfirm,
   bulletText, BULLET, shortContractId, printCss,
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
+  cappedList, LIST_SHOW_MAX,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -985,6 +986,36 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
     taskReference({ id: '9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01' }),
     shortContractId('9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01'));
   eq('no id, nothing to render', taskReference({}), '');
+}
+
+
+/* -- a list stops at two hundred --------------------------------------- */
+// Siraj's rule: "a table over ~200 rows pages or virtualises. No exceptions.
+// Four thousand <tr>s in one render froze the ledger." The Register, the
+// Signatures screen and Cases all already capped; the Tasks list rendered
+// every batch in the workspace, which is fine with the twenty it was built
+// against and is the shape of every performance bug this project has had.
+{
+  eq('the cap is the one the other screens use', LIST_SHOW_MAX, 200);
+  const rows = Array.from({ length: 250 }, (_, i) => i);
+  const c = cappedList(rows);
+  eq('it draws the first two hundred', c.shown.length, 200);
+  eq('and says how many are left', c.hidden, 50);
+  eq('in order', c.shown[0], 0);
+  // The slice and the remainder come from ONE call, so the rows on screen
+  // and the sentence under them cannot disagree about what was left out.
+  eq('the two halves always add up', c.shown.length + c.hidden, rows.length);
+  // Under the cap nothing is hidden and nothing is copied for no reason.
+  const small = [1, 2, 3];
+  eq('a short list is untouched', cappedList(small).hidden, 0);
+  eq('and is the same array', cappedList(small).shown, small);
+  eq('exactly at the cap hides nothing',
+    cappedList(Array.from({ length: 200 }, (_, i) => i)).hidden, 0);
+  eq('one over hides one',
+    cappedList(Array.from({ length: 201 }, (_, i) => i)).hidden, 1);
+  eq('an empty list is empty', cappedList([]), { shown: [], hidden: 0 });
+  eq('and nothing at all is too', cappedList(null), { shown: [], hidden: 0 });
+  eq('a caller can ask for fewer', cappedList([1, 2, 3], 2), { shown: [1, 2], hidden: 1 });
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

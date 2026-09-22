@@ -10,7 +10,7 @@ import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import { ContractFill, MultiChoice } from '@/components/workflow/legal/ContractFill';
 import {
   batchProgress, contractStatusLabel, contractStatusBadge, sortListValues, taskReference,
-  recoveryLabel, recoveryUrgent,
+  recoveryLabel, recoveryUrgent, cappedList, LIST_SHOW_MAX,
 } from '@/lib/legal';
 import {
   startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
@@ -85,7 +85,11 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
   useEffect(() => () => { onUnmount.current(); }, []);
 
   const hidden = pendingIds(pending);
-  const shown = batches.filter((b) => !hidden.has(b.id));
+  // Capped, like every other list screen in here. This one drew every batch
+  // in the workspace, which is fine with twenty and is the shape of every
+  // performance bug this project has had.
+  const live = batches.filter((b) => !hidden.has(b.id));
+  const { shown, hidden: over } = cappedList(live, LIST_SHOW_MAX);
 
   /* -- The bin (migration 120) ---------------------------------------
    *
@@ -180,6 +184,14 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
               </li>
             ))}
           </ul>
+          {over > 0 && (
+            <p style={{
+              fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 12, paddingTop: 12,
+              borderTop: '1px solid var(--aq-border-light)',
+            }}>
+              Showing the first {LIST_SHOW_MAX} of {live.length}. The newest are first.
+            </p>
+          )}
         </section>
       )}
 
@@ -207,7 +219,7 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
               <p style={{ fontSize: 13, color: 'var(--aq-text-secondary)' }}>Nothing deleted recently.</p>
             ) : (
               <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-                {bin.rows.map((d, i) => (
+                {cappedList(bin.rows, LIST_SHOW_MAX).shown.map((d, i) => (
                   <li key={d.id} style={{
                     display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '9px 2px',
                     borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',

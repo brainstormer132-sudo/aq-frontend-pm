@@ -651,6 +651,35 @@ export interface ContractBatchLite extends ContractBatch {
 }
 
 /**
+ * How many rows a list screen draws before it stops.
+ *
+ * The number the Register, the Signatures screen and the Cases screen all
+ * already use. Siraj's rule, learned the hard way: "a table over ~200 rows
+ * pages or virtualises. No exceptions. Four thousand <tr>s in one render
+ * froze the ledger."
+ */
+export const LIST_SHOW_MAX = 200;
+
+/**
+ * Draw the first N and say how many are left.
+ *
+ * Pulled out because the Tasks list did not do this at all - it rendered
+ * every batch in the workspace. That is fine with the twenty tasks it was
+ * built against and is exactly the shape of every performance bug this
+ * project has had: "worked with 20, broke with 4,000".
+ *
+ * Returns the slice AND the remainder, together, so the rows on screen and
+ * the sentence under them cannot disagree about how many were left out - two
+ * separate calculations of the same fact is how that drifts.
+ */
+export function cappedList<T>(rows: T[], max: number = LIST_SHOW_MAX): { shown: T[]; hidden: number } {
+  const all = rows ?? [];
+  const n = Math.max(0, Math.trunc(Number(max) || 0));
+  if (all.length <= n) return { shown: all, hidden: 0 };
+  return { shown: all.slice(0, n), hidden: all.length - n };
+}
+
+/**
  * A task in the recycle bin (migration 120).
  *
  * Shaped by what the bin screen has to decide with, and nothing more - in
