@@ -1564,7 +1564,15 @@ export function printCss(): string {
      body - it is a line of text in quotation marks, not a masthead. */
   .doc-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 2mm 0 8mm; }
   /* A heading is the body size in bold. Same as the document. */
-  .doc-h { font-size: 12pt; font-weight: 700; margin: 7mm 0 2.5mm;
+  /* PADDING above, not margin.
+     Siraj: "move the third thing down its cut off" / "same thing for 5" -
+     sections three and five, the two that happen to start at the top of a
+     page. A block's MARGIN-TOP is discarded when it lands at the top of a
+     page fragment, which is exactly where those two headings land, so they
+     came out jammed against the letterhead while every other heading had its
+     7mm. Padding is not discarded, so the gap is the same wherever the
+     heading falls. */
+  .doc-h { font-size: 12pt; font-weight: 700; margin: 0 0 2.5mm; padding-top: 7mm;
     page-break-after: avoid; break-after: avoid; }
   /* NOT justified. Siraj: "its too blocky its not smooth and the wording
      still looks weird". Arabic justifies by stretching the spaces between

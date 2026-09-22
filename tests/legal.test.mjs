@@ -1018,5 +1018,33 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   eq('a caller can ask for fewer', cappedList([1, 2, 3], 2), { shown: [1, 2], hidden: 1 });
 }
 
+
+/* -- a heading keeps its gap at the top of a page ---------------------- */
+// Siraj: "move the third thing down its cut off" / "same thing for 5" -
+// sections three and five, which are the two that happen to start at the top
+// of a page.
+//
+// A block's MARGIN-TOP is discarded when it lands at the top of a page
+// fragment. PADDING is not. So every other heading had its 7mm and those two
+// sat jammed against the letterhead, which reads as cut off. Written as
+// padding-top for that reason alone - anyone tidying it back into the margin
+// shorthand reintroduces the bug, so the rule is asserted rather than
+// commented.
+{
+  const css = printCss();
+  const rule = /\.doc-h \{([^}]*)\}/s.exec(css);
+  ok('there is a heading rule', !!rule);
+  ok('the gap above a heading is padding', /padding-top:\s*7mm/.test(rule[1]));
+  // The shorthand's FIRST value is the top one, and it has to be zero.
+  // (Written as `margin:\\s*0` rather than "no non-zero margin": the obvious
+  // negative form, /margin:\\s*[^0;]/, matches the SPACE after the colon,
+  // because \\s* is happy to match nothing. It failed against correct code.)
+  ok('and NOT a top margin, which a page break would drop',
+    /margin:\s*0\b/.test(rule[1]) && !/margin-top:/.test(rule[1]));
+  // Still asked to stay with its section - a heading alone at the foot of a
+  // page is the other half of the same complaint.
+  ok('a heading still refuses to be orphaned', /break-after: avoid/.test(rule[1]));
+}
+
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
