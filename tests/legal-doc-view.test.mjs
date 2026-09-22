@@ -16,7 +16,7 @@
 import {
   documentSections, sectionSummary, moveSection, moveLine, OPENING_TITLE,
   inlineParts, INSERT_KINDS, lineKindLabel,
-  publishWarning, newDraftWarning, unknownFieldsNote, cannotPublish,
+  publishWarning, newDraftWarning, editTemplateWarning, unknownFieldsNote, cannotPublish,
 } from '../.test-build/legal-doc-view.js';
 
 let pass = 0, fail = 0;
@@ -196,6 +196,19 @@ eq('and so does nothing at all', lineKindLabel(null), 'Line');
   ok('it names the version it will create', w.includes('version 4'));
   ok('and promises the old one is untouched', w.includes('stays exactly as it is'));
   ok('and that issued contracts are safe', w.includes('untouched'));
+}
+{
+  // The Edit button on a contract's preview goes somewhere else and changes
+  // something else. Three facts, and all three have to be in the sentence -
+  // "it does not change this contract" is the one people assume backwards.
+  const w = editTemplateWarning('UGC vendor contract');
+  ok('it names the template', w.includes('UGC vendor contract'));
+  ok('and says this contract is untouched', w.includes('keeps the version it was made from'));
+  ok('and that the ones already raised are too', w.includes('already raised'));
+  ok('and that editing means a new version', w.includes('starts a new version'));
+  ok('and that only later contracts get it', w.includes('after you publish'));
+  ok('no name still asks a whole question', editTemplateWarning('').startsWith('Open the template'));
+  ok('and so does no name at all', editTemplateWarning(null).includes('the template'));
 }
 
 eq('nothing missing says nothing', unknownFieldsNote([]), '');

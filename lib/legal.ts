@@ -1021,6 +1021,68 @@ export function visibleBlocks<T extends { id?: string }>(blocks: T[], offIds: st
   return blocks.filter((b) => !(b.id != null && off.has(b.id)));
 }
 
+/**
+ * The preview, with its switches in it.
+ *
+ * Siraj: "and optional closes put a check next to the clause". The switchboard
+ * beside the form is a list of headings out of context; the decision is easier
+ * to make against the clause you are actually reading.
+ *
+ * One row per thing to draw, in document order:
+ *
+ *   * an ordinary block            -> { block, group: null }
+ *   * the FIRST block of a clause
+ *     that is switched on          -> { block, group, on: true }   tick + text
+ *   * a clause switched off        -> { block: null, group, on: false }  a stub
+ *
+ * The other blocks of a switched-on clause are ordinary rows, and the other
+ * blocks of a switched-off one are not drawn at all.
+ *
+ * THE STUB IS THE WHOLE POINT. A clause that is off cannot simply vanish from
+ * the preview or there is no way to bring it back from in the document, and it
+ * cannot be shown greyed-out-but-whole either: the preview is what the paper
+ * will say, and a paragraph on screen that is not on the paper is a lie the
+ * screen tells. One line naming it, with an empty box, is neither.
+ *
+ * So: the blocks this returns are EXACTLY visibleBlocks(blocks, offIds), in
+ * the same order, always. That is asserted rather than described, because it
+ * is the only thing standing between the preview and the print. Pure.
+ */
+export interface PreviewRow<T> {
+  /** The block to draw, or null for the one-line stub of an excluded clause. */
+  block: T | null;
+  /** Set on the first row of an optional clause, and on a stub. */
+  group: OptionalGroup | null;
+  /** Whether that clause is switched on. Meaningless when `group` is null. */
+  on: boolean;
+}
+
+export function previewRows<T extends { id?: string }>(
+  blocks: T[], groups: OptionalGroup[], offIds: string[],
+): PreviewRow<T>[] {
+  const byFirst = new Map<string, OptionalGroup>();
+  for (const g of groups) byFirst.set(g.firstId, g);
+  const off = new Set(offIds);
+  const out: PreviewRow<T>[] = [];
+  for (const b of blocks) {
+    const id = b.id == null ? '' : String(b.id);
+    const g = byFirst.get(id);
+    if (g) {
+      // Read from the off-list, not from `on` of a previous row: a half-off
+      // group reads as ON (see optionalGroupOn) and its first block is drawn.
+      const on = optionalGroupOn(g, offIds);
+      out.push({ block: on ? b : null, group: g, on });
+      continue;
+    }
+    // Any block on the off-list is gone, whether it belongs to a group or is
+    // a stale id from an older version. Same rule as visibleBlocks, which is
+    // what makes the two agree.
+    if (off.has(id)) continue;
+    out.push({ block: b, group: null, on: true });
+  }
+  return out;
+}
+
 // ---- date alerts (a tracked date warns, and an expired one blocks) ------
 //
 // A date field can carry an alert window (placeholder.alert_days, migration

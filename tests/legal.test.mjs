@@ -16,6 +16,7 @@ import {
   tableRowSource, tableFieldRow, tableRowsFor, fillSegments, batchProgress,
   tableHasInvalidCell,
   optionalGroups, optionalGroupOn, toggleOptionalGroup, clauseChoiceSummary,
+  previewRows,
   isArchivedTemplate, splitTemplates, withoutArchived, archivedNote,
   archivedToggleLabel, archiveConfirm,
   bulletText, BULLET, shortContractId, printCss,
@@ -893,6 +894,61 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   eq('and rides in the count beside the ones that do have names',
     clauseChoiceSummary(gs, ['b15', ...off1]),
     '2 of 3 excluded: Fourth: terms and 1 more.');
+
+  // ---- the switches, in the document --------------------------------
+  //
+  // Siraj: "put a check next to the clause". What is worth protecting is one
+  // thing and it is not cosmetic: THE PREVIEW AND THE PRINT SHOW THE SAME
+  // BLOCKS. A stub row is allowed to appear where a clause was switched off,
+  // and nothing else may differ.
+  {
+    const rows = previewRows(doc, gs, off1);
+    eq('the drawn blocks are exactly the printed ones',
+      rows.filter((r) => r.block).map((r) => r.block.id),
+      visibleBlocks(doc, off1).map((b) => b.id));
+    // The switched-off section leaves one stub, not three.
+    eq('an excluded clause is one row, not none and not three',
+      rows.filter((r) => r.group && !r.on).map((r) => r.group.key), ['terms']);
+    eq('and the stub carries no block to draw',
+      rows.find((r) => r.group && !r.on).block, null);
+    // A switch rides on the FIRST block of its clause; the rest are ordinary.
+    eq('the tick sits on the first block of the clause',
+      rows.filter((r) => r.group && r.on).map((r) => r.block.id), ['b15', 'b36']);
+    eq('the other blocks of an included clause carry no tick',
+      rows.filter((r) => !r.group).map((r) => r.block.id), ['b1', 'b37', 'b40']);
+    eq('and the order is the document\u2019s',
+      rows.map((r) => (r.block ? r.block.id : `stub:${r.group.key}`)),
+      ['b1', 'b15', 'stub:terms', 'b36', 'b37', 'b40']);
+  }
+  {
+    // Nothing off: every optional clause is drawn, each with a ticked box,
+    // and the block list is the whole document.
+    const rows = previewRows(doc, gs, []);
+    eq('all on draws everything', rows.map((r) => r.block.id), doc.map((b) => b.id));
+    eq('with three ticks', rows.filter((r) => r.group && r.on).length, 3);
+    eq('and no stubs', rows.filter((r) => !r.block).length, 0);
+  }
+  {
+    // A half-off group reads as ON, so its first block is drawn and its
+    // switched-off members are not - which is what visibleBlocks does too.
+    const rows = previewRows(doc, gs, ['b22']);
+    eq('a half-off clause still agrees with the print',
+      rows.filter((r) => r.block).map((r) => r.block.id),
+      visibleBlocks(doc, ['b22']).map((b) => b.id));
+    eq('and its switch reads on', rows.find((r) => r.group && r.group.key === 'terms').on, true);
+  }
+  {
+    // A stale id - one naming a block that is not in this version at all, or
+    // is not optional - drops the block, exactly as the print does. The two
+    // must not part company over a value somebody edited by hand.
+    const rows = previewRows(doc, gs, ['b40', 'ghost']);
+    eq('a stale off-id is dropped by both',
+      rows.filter((r) => r.block).map((r) => r.block.id),
+      visibleBlocks(doc, ['b40', 'ghost']).map((b) => b.id));
+  }
+  eq('a document with no optional clauses is drawn straight through',
+    previewRows(doc, [], []).map((r) => r.block.id), doc.map((b) => b.id));
+  eq('and an empty document draws nothing', previewRows([], gs, []), []);
 
   {
     // Group before you cap: three names and a number, never a paragraph.

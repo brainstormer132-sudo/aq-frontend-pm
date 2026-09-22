@@ -247,6 +247,32 @@ export function newDraftWarning(version: number): string {
 }
 
 /**
+ * What "Edit template" asks, from a contract.
+ *
+ * Siraj: "or edit on the top of the preview to edit any part of the template".
+ *
+ * The button is on a contract, and everything about what it does next happens
+ * somewhere else - which is precisely the sentence people skip and then are
+ * surprised by. Three facts, in the order they matter:
+ *
+ *   1. THIS contract does not change. It is stamped to the version it was
+ *      raised on and it keeps it, whatever the template becomes.
+ *   2. A published version is frozen (098), so editing the wording means a
+ *      NEW version.
+ *   3. Only contracts raised after that new version is published use it.
+ *
+ * Pure. `title` is the template's name when the screen knows it.
+ */
+export function editTemplateWarning(title?: string | null): string {
+  const name = String(title ?? '').trim();
+  return `Open ${name || 'the template'} for editing?`
+    + ' This contract keeps the version it was made from - editing the template'
+    + ' does not change it, or any contract already raised.'
+    + ' A published version is frozen, so changing the wording starts a new'
+    + ' version, and only contracts made after you publish it will use it.';
+}
+
+/**
  * The unknown-field bar, in words rather than a tooltip on a greyed button.
  *
  * Returns '' when there is nothing wrong, so the caller renders nothing.

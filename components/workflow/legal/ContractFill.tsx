@@ -31,13 +31,16 @@ import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
   blockText, blockKV, detectDir, sortListValues,
   contractStatusLabel, contractStatusBadge, contractPrintHTML, printReference,
-  contractCanonical, formatFingerprint, visibleBlocks, isOptionalBlock, blockAllText,
+  contractCanonical, formatFingerprint, visibleBlocks, blockAllText,
   contractDateAlerts, hasBlockingAlert, dateAlertLabel,
   tableColumns, tableColumnFields, tableKey, parseTableRows, serializeTableRows, emptyTableRow, tableHasInvalidCell,
   tableRowSource, tableRowsFor, fillSegments,
-  optionalGroups, optionalGroupOn, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
+  optionalGroups, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
+  previewRows, type OptionalGroup,
   type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
 } from '@/lib/legal';
+import { editTemplateWarning } from '@/lib/legal-doc-view';
+import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
 import { AqDrawingBlock } from '@/components/AQLoading';
 
 /**
@@ -83,6 +86,9 @@ export function ContractFill({
   const [filing, setFiling] = useState(false);
   const [signedOn, setSignedOn] = useState('');
   const [signErr, setSignErr] = useState('');
+
+  /** Whether the template editor is open over this screen. See below. */
+  const [editingTemplate, setEditingTemplate] = useState(false);
   const signBlocked = contract ? cannotFileSigned(contract as any) : 'No contract loaded.';
   const onFile = contract ? hasSignedCopy(contract as any) : false;
 
@@ -104,7 +110,6 @@ export function ContractFill({
   // (114) collapse into a single switch carrying all their ids. An optional
   // block with no group is still its own switch, which is what it was before
   // groups existed.
-  const optionalBlocks = useMemo(() => blocks.filter(isOptionalBlock), [blocks]);
   const optGroups = useMemo(() => optionalGroups(blocks), [blocks]);
   // Only the add-rows tables get a TableFill above the form. A one-row table
   // (a vendor contract's outputs table) has no rows to add: its four cells are
@@ -429,6 +434,25 @@ export function ContractFill({
     setTimeout(() => { try { w.print(); } catch { /* the user can print from the window */ } }, 350);
   };
 
+  /* -- Editing the template, from the contract ------------------------
+   *
+   * Siraj: "or edit on the top of the preview to edit any part of the
+   * template". The template editor opens IN PLACE rather than sending anybody
+   * to Documents to find the right template by name - it is the same
+   * component the Documents screen mounts, given this contract's template id.
+   *
+   * Coming back reloads the contract. Nothing about THIS contract can have
+   * changed (it is stamped to its own version, and a published version is
+   * frozen), but a new draft version may now exist, and a reload is cheaper
+   * than reasoning about which of those two things happened.
+   */
+  if (editingTemplate && contract) {
+    return (
+      <LegalEditor workspaceId={workspaceId} templateId={contract.template_id}
+        onBack={() => { setEditingTemplate(false); void ed.reload(); }} />
+    );
+  }
+
   return (
     <div className="aq-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -733,50 +757,43 @@ export function ContractFill({
               );
             })}
 
-            {optionalBlocks.length > 0 && (
-              <>
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
-                  color: 'var(--aq-text-muted)', marginTop: 6 }}>Optional clauses</div>
-                <div className="aq-card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {optGroups.map((g) => {
-                    const included = optionalGroupOn(g, offIds);
-                    // A group shows its heading; a lone block shows its own
-                    // first ninety characters, as it always did.
-                    const first = blocks.find((b) => b.id === g.firstId);
-                    const text = g.label
-                      || (first ? blockAllText(first).slice(0, 90) : '')
-                      || '(empty clause)';
-                    return (
-                      <label key={g.key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
-                        opacity: included ? 1 : 0.55, cursor: editable ? 'pointer' : 'default' }}>
-                        <input type="checkbox" checked={included} disabled={!editable}
-                          onChange={() => ed.setValue(OPT_OFF_KEY,
-                            serializeOffIds(toggleOptionalGroup(g, offIds, !included)))}
-                          style={{ marginTop: 3 }} />
-                        <span dir="auto" style={{ fontSize: 12.5, minWidth: 0 }}>
-                          {text}
-                          {g.ids.length > 1 && (
-                            <span style={{ color: 'var(--aq-text-muted)' }}> {'\u00b7'} {g.ids.length} blocks</span>
-                          )}
-                        </span>
-                        {!editable && (
-                          <span className={`aq-badge ${included ? 'aq-badge-success' : 'aq-badge-muted'}`}
-                            style={{ marginInlineStart: 'auto' }}>{included ? 'Included' : 'Excluded'}</span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+            {/* The clause switches used to live here, as a card of
+                checkboxes under the form: seven headings out of context, and
+                the decision made a column away from the sentence it is about.
+                They are in the preview now, each beside its own clause and in
+                the document's order. One control, one place - a second copy
+                of the same switch is only somewhere else to look. */}
           </div>
 
           {/* Live preview */}
           <div style={{ flex: '1 1 360px', minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
-              color: 'var(--aq-text-muted)', marginBottom: 12 }}>Preview</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.05em',
+                textTransform: 'uppercase', color: 'var(--aq-text-muted)' }}>Preview</span>
+              {/* Not disabled on an issued contract: the wording of the
+                  TEMPLATE is a separate thing from this frozen copy of it,
+                  and somebody reading a signed contract is exactly who
+                  notices a sentence that needs fixing for the next one. */}
+              <button className="aq-btn aq-btn-ghost" style={{ marginInlineStart: 'auto', fontSize: 12 }}
+                disabled={!contract}
+                onClick={() => {
+                  // No name: this screen knows the template's id, not its
+                  // title, and a second two-query hook for one word in a
+                  // confirm box is not worth the round trip. The editor
+                  // itself names it on the line above the document.
+                  if (!confirm(editTemplateWarning(null))) return;
+                  setEditingTemplate(true);
+                }}>Edit template</button>
+            </div>
             <div className="aq-card" style={{ padding: 22 }} dir={dir}>
-              <PreviewBody blocks={visible} values={values} />
+              {/* All the blocks, not `visible`: the optional ones carry their
+                  own tick here, and an excluded clause leaves a one-line stub
+                  so it can be brought back from where it belongs. What is
+                  DRAWN is still exactly `visible` - asserted in lib/legal. */}
+              <PreviewBody blocks={blocks} values={values}
+                groups={optGroups} offIds={offIds} editable={!!editable}
+                onToggle={(g, on) => ed.setValue(OPT_OFF_KEY,
+                  serializeOffIds(toggleOptionalGroup(g, offIds, on)))} />
             </div>
           </div>
         </div>
@@ -1228,53 +1245,121 @@ function Seg({ s }: { s: FillSegment }) {
     padding: '0 3px', borderRadius: 3 }}>{s.v}</span>;
 }
 
-function PreviewBody({ blocks, values }: { blocks: TemplateBlock[]; values: Record<string, string> }) {
+function PreviewBody({
+  blocks, values, groups, offIds, editable, onToggle,
+}: {
+  blocks: TemplateBlock[];
+  values: Record<string, string>;
+  /** The optional clauses, as decisions. Omitted, the preview has no ticks. */
+  groups?: OptionalGroup[];
+  offIds?: string[];
+  editable?: boolean;
+  onToggle?: (g: OptionalGroup, on: boolean) => void;
+}) {
   if (!blocks.length) {
     return <div style={{ fontSize: 13, color: 'var(--aq-text-muted)' }}>This version has no content.</div>;
   }
+  const rows = previewRows(blocks, groups ?? [], offIds ?? []);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {blocks.map((b) => {
-        if (b.block_type === 'kv') {
-          const kv = blockKV(b);
+      {rows.map((row) => {
+        const g = row.group;
+        // An excluded clause: one line, an empty box, and its name. Not the
+        // paragraph greyed out - the preview is what the paper will say.
+        if (g && !row.on) {
           return (
-            <div key={b.id} dir="auto" style={{ fontSize: 14 }}>
-              <span style={{ fontWeight: 600 }}><Filled text={kv.label} values={values} />:</span>{' '}
-              <span><Filled text={kv.value} values={values} /></span>
-            </div>
+            <ClauseSwitch key={`stub:${g.key}`} group={g} on={false} editable={!!editable}
+              text={clauseName(g, blocks)} onToggle={onToggle} stub />
           );
         }
-        if (b.block_type === 'table') {
-          const cols = tableColumns(b);
-          if (!cols.length) return null;
-          const rows = tableRowsFor(b, values);
-          return (
-            <table key={b.id} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, margin: '6px 0' }}>
-              <thead>
-                <tr>{cols.map((c) => <th key={c.key} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', textAlign: 'start', background: 'var(--aq-surface-2, rgba(0,0,0,0.04))' }}>{c.label}</th>)}</tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 ? (
-                  <tr><td colSpan={cols.length} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', color: 'var(--aq-text-muted)', textAlign: 'center' }}>(no rows)</td></tr>
-                ) : rows.map((r, ri) => (
-                  <tr key={ri}>{cols.map((c) => (
-                    <td key={c.key} dir="auto" style={{ border: '1px solid var(--aq-border)', padding: '3px 6px' }}>
-                      <Filled text={`{{ ${c.key} }}`} values={r} />
-                    </td>
-                  ))}</tr>
-                ))}
-              </tbody>
-            </table>
-          );
-        }
-        const text = <Filled text={blockText(b)} values={values} />;
-        if (b.block_type === 'title') return <div key={b.id} dir="auto" style={{ fontSize: 18, fontWeight: 700 }}>{text}</div>;
-        if (b.block_type === 'h') return <div key={b.id} dir="auto" style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{text}</div>;
-        if (b.block_type === 'li') return <div key={b.id} dir="auto" style={{ fontSize: 14, paddingInlineStart: 16 }}>{'\u2022'} {text}</div>;
-        return <div key={b.id} dir="auto" style={{ fontSize: 14, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{text}</div>;
+        const b = row.block as TemplateBlock;
+        const drawn = <PreviewBlock key={b.id} block={b} values={values} />;
+        if (!g) return drawn;
+        return (
+          <div key={`g:${g.key}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <ClauseSwitch group={g} on editable={!!editable}
+              text={clauseName(g, blocks)} onToggle={onToggle} />
+            {drawn}
+          </div>
+        );
       })}
     </div>
   );
+}
+
+/** A clause's own name for the tick: its heading, or its first words. */
+function clauseName(g: OptionalGroup, blocks: TemplateBlock[]): string {
+  if (g.label) return g.label;
+  const first = blocks.find((b) => b.id === g.firstId);
+  return (first ? blockAllText(first).slice(0, 60) : '') || 'Optional clause';
+}
+
+/**
+ * One tick in the document. Small, muted and above the clause it controls, so
+ * the preview still reads as the contract rather than as a form.
+ */
+function ClauseSwitch({
+  group, on, text, editable, onToggle, stub,
+}: {
+  group: OptionalGroup; on: boolean; text: string; editable: boolean;
+  onToggle?: (g: OptionalGroup, on: boolean) => void; stub?: boolean;
+}) {
+  const live = editable && !!onToggle;
+  return (
+    <label dir="auto" style={{
+      display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 11.5,
+      color: 'var(--aq-text-muted)', cursor: live ? 'pointer' : 'default',
+      ...(stub ? { fontStyle: 'italic' } : null),
+    }}>
+      <input type="checkbox" checked={on} disabled={!live}
+        onChange={() => onToggle?.(group, !on)} style={{ alignSelf: 'center' }} />
+      <span style={{ minWidth: 0 }}>
+        {text}
+        {stub ? ' \u2014 not included' : ''}
+      </span>
+    </label>
+  );
+}
+
+/** One block of the document, as the preview draws it. */
+function PreviewBlock({ block: b, values }: { block: TemplateBlock; values: Record<string, string> }) {
+  if (b.block_type === 'kv') {
+    const kv = blockKV(b);
+    return (
+      <div key={b.id} dir="auto" style={{ fontSize: 14 }}>
+        <span style={{ fontWeight: 600 }}><Filled text={kv.label} values={values} />:</span>{' '}
+        <span><Filled text={kv.value} values={values} /></span>
+      </div>
+    );
+  }
+  if (b.block_type === 'table') {
+    const cols = tableColumns(b);
+    if (!cols.length) return null;
+    const rows = tableRowsFor(b, values);
+    return (
+      <table key={b.id} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, margin: '6px 0' }}>
+        <thead>
+          <tr>{cols.map((c) => <th key={c.key} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', textAlign: 'start', background: 'var(--aq-surface-2, rgba(0,0,0,0.04))' }}>{c.label}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr><td colSpan={cols.length} style={{ border: '1px solid var(--aq-border)', padding: '3px 6px', color: 'var(--aq-text-muted)', textAlign: 'center' }}>(no rows)</td></tr>
+          ) : rows.map((r, ri) => (
+            <tr key={ri}>{cols.map((c) => (
+              <td key={c.key} dir="auto" style={{ border: '1px solid var(--aq-border)', padding: '3px 6px' }}>
+                <Filled text={`{{ ${c.key} }}`} values={r} />
+              </td>
+            ))}</tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+  const text = <Filled text={blockText(b)} values={values} />;
+  if (b.block_type === 'title') return <div key={b.id} dir="auto" style={{ fontSize: 18, fontWeight: 700 }}>{text}</div>;
+  if (b.block_type === 'h') return <div key={b.id} dir="auto" style={{ fontSize: 15, fontWeight: 600, marginTop: 4 }}>{text}</div>;
+  if (b.block_type === 'li') return <div key={b.id} dir="auto" style={{ fontSize: 14, paddingInlineStart: 16 }}>{'\u2022'} {text}</div>;
+  return <div dir="auto" style={{ fontSize: 14, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{text}</div>;
 }
 
 /**
