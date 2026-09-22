@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useContractBatches, useBatchContracts, useClientBrands,
   useLegalPlaceholders, useManagedLists,
@@ -9,8 +9,13 @@ import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import { ContractFill, MultiChoice } from '@/components/workflow/legal/ContractFill';
 import {
-  batchProgress, contractStatusLabel, contractStatusBadge, sortListValues,
+  batchProgress, contractStatusLabel, contractStatusBadge, sortListValues, taskReference,
 } from '@/lib/legal';
+import {
+  startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
+  type Pending,
+} from '@/lib/pending-removal';
+import { UndoBar } from '@/components/workflow/campaign/ui';
 import {
   moneyText, datedValues, arabicWeekday, parsePlatforms,
   UGC_DATE_KEY, UGC_DAY_KEY, UGC_BRAND_KEY, UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY,
@@ -42,6 +47,44 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
   const { batches, loading, error, busy, create, addMore, remove } = useContractBatches(ws);
   const [openBatch, setOpenBatch] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+
+  /* -- Deleting, with a way back ------------------------------------
+   *
+   * The `x` on a task row used to delete immediately, with no confirmation of
+   * any kind - one stray click and the task was gone. The rest of the app
+   * answers this with an undo window rather than a dialog (see
+   * lib/pending-removal for why), so this does too.
+   *
+   * ONE interval for the whole list, not one per row: the arithmetic lives in
+   * lib/pending-removal where it is tested, and there are no timer handles to
+   * leak. Anything still counting when the screen closes is committed, because
+   * the user asked for it and only undo takes that back. */
+  const [pending, setPending] = useState<Pending[]>([]);
+  const commit = useRef<(id: string) => void>(() => {});
+  commit.current = (id: string) => { void remove(id); };
+
+  useEffect(() => {
+    if (!pending.length) return undefined;
+    const t = setInterval(() => {
+      setPending((list) => {
+        const { next, due } = tickPending(list);
+        for (const id of due) commit.current(id);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [pending.length]);
+
+  // Leaving the screen is not undoing. Committed on the way out, once.
+  const onUnmount = useRef<() => void>(() => {});
+  onUnmount.current = () => {
+    const { due } = flushPending(pending);
+    for (const id of due) commit.current(id);
+  };
+  useEffect(() => () => { onUnmount.current(); }, []);
+
+  const hidden = pendingIds(pending);
+  const shown = batches.filter((b) => !hidden.has(b.id));
 
   if (openBatch) {
     const b = batches.find((x) => x.id === openBatch) ?? null;
@@ -77,7 +120,7 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
 
       {loading ? (
         <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Loading tasks\u2026'} /></div>
-      ) : batches.length === 0 ? (
+      ) : (shown.length === 0 && pending.length === 0) ? (
         <div className="aq-card" style={{ padding: 24, textAlign: 'center' }}>
           <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>No tasks yet.</p>
           <p style={{ color: 'var(--aq-text-muted)', fontSize: 12.5, marginTop: 6 }}>
@@ -86,8 +129,18 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
         </div>
       ) : (
         <section className="aq-card" style={{ padding: 18 }}>
+          {pending.map((p) => (
+            <div key={p.id} style={{ marginBottom: 10 }}>
+              <UndoBar label={removedLabel(p.title, 'task')} seconds={p.left}
+                onUndo={() => setPending((l) => cancelPending(l, p.id))}
+                onNow={() => {
+                  setPending((l) => cancelPending(l, p.id));
+                  commit.current(p.id);
+                }} />
+            </div>
+          ))}
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {batches.map((b, i) => (
+            {shown.map((b, i) => (
               <li key={b.id} style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
                 borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
@@ -97,6 +150,13 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
                   style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
                   <span dir="auto" style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{b.title}</span>
                   <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                    {/* Siraj: "the task should have an id". A batch has no
+                        number of its own, so this is the same eight uppercase
+                        characters the printed contract carries - an id quoted
+                        off a task and one quoted off a contract look like the
+                        same kind of thing. */}
+                    <code style={{ direction: 'ltr', fontSize: 11.5 }}>{taskReference(b)}</code>
+                    {' \u00b7 '}
                     {batchProgress(b)}
                     {b.shared[UGC_BRAND_KEY] ? <> {'\u00b7'} <span dir="auto">{b.shared[UGC_BRAND_KEY]}</span></> : null}
                   </span>
@@ -104,7 +164,7 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
                 {b.unassigned > 0 && <span className="aq-badge aq-badge-warning">{b.unassigned} to fill</span>}
                 <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 8px' }} disabled={busy}
                   title="Delete the task. The contracts stay in the Register."
-                  onClick={() => { void remove(b.id); }}>&times;</button>
+                  onClick={() => { setPending((l) => startPending(l, b.id, b.title)); }}>&times;</button>
                 <span role="button" tabIndex={0} onClick={() => setOpenBatch(b.id)}
                   style={{ fontSize: 14, color: 'var(--aq-text-muted)', cursor: 'pointer' }}>&rsaquo;</span>
               </li>

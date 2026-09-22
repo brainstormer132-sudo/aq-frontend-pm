@@ -1250,22 +1250,42 @@ export interface PrintDoc {
 }
 
 /**
- * What identifies the contract at the top of its printed page.
- *
- * The contract NUMBER once it has one, and the first eight characters of the
- * row id only until then. Two screens used to answer this differently - the
- * fill screen printed the id fragment while the register showed the number -
- * so the same contract named itself two ways depending on which button was
- * pressed. One function now, so it cannot drift again.
+ * The contract's NUMBER for the top of its printed page, or '' when it has
+ * none yet. Two screens used to answer this differently - the fill screen
+ * printed an id fragment while the register showed the number - so the same
+ * contract named itself two ways depending on which button was pressed. One
+ * function, so it cannot drift again.
  *
  * A draft has no number: it is reserved at issue, before the fingerprint, so
  * that the sealed document covers the number it prints.
+ *
+ * CHANGED 22 Sep: it used to fall back to `Ref: <first eight of the id>`.
+ * That fallback predates the labelled meta strip, and under it a draft printed
+ * "CONTRACT NO  Ref: 9f2c1a4e" - a label saying "number" over a value saying
+ * "Ref", for a thing that is not a number. The strip now carries the id on its
+ * own labelled row (see shortContractId), so the number row simply does not
+ * appear until there is a number. One fact, one place.
  */
 export function printReference(c: { id?: string | null; contract_no?: string | null }): string {
-  const no = String(c?.contract_no ?? '').trim();
-  if (no) return no;
-  const id = String(c?.id ?? '').trim();
-  return id ? `Ref: ${id.slice(0, 8)}` : '';
+  return String(c?.contract_no ?? '').trim();
+}
+
+/**
+ * What identifies a TASK on screen.
+ *
+ * Siraj: "the task should have an id these all look terrible and thrown
+ * around". A contract batch has no number of its own - `legal.contract_batch`
+ * is keyed by uuid and nothing else - so a task row was identified only by a
+ * free-text title somebody typed, and two tasks called "Rabea" were the same
+ * row as far as anybody reading the screen could tell.
+ *
+ * The same eight uppercase characters the printed contract carries, so an id
+ * quoted off a task row and an id quoted off a contract look like the same
+ * kind of thing. Empty for a row with no id, so the caller renders nothing
+ * rather than an empty code box.
+ */
+export function taskReference(b: { id?: string | null }): string {
+  return shortContractId(b?.id);
 }
 
 /**

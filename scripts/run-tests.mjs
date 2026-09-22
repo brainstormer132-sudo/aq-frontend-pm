@@ -98,6 +98,7 @@ const LIBS = [
   'lib/legal-external.ts',
   'lib/legal-doc-view.ts',
   'lib/legal-amount.ts',
+  'lib/pending-removal.ts',
 ];
 
 const GREEN = '\x1b[32m';

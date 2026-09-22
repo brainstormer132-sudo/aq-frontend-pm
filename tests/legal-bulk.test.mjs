@@ -104,9 +104,21 @@ ok('an empty batch is still a document, not a crash',
 eq('an issued contract prints its number',
   printReference({ id: '9f2c1a4e-0000', contract_no: 'AQ-2026-0108' }), 'AQ-2026-0108');
 eq('a draft has no number yet, so it falls back to the id',
-  printReference({ id: '9f2c1a4e-0000', contract_no: null }), 'Ref: 9f2c1a4e');
-eq('and blank is not a number', printReference({ id: 'abcdefgh12', contract_no: '  ' }), 'Ref: abcdefgh');
+  printReference({ id: '9f2c1a4e-0000', contract_no: null }), '');
+eq('and blank is not a number', printReference({ id: 'abcdefgh12', contract_no: '  ' }), '');
 eq('nothing at all prints nothing', printReference({}), '');
+// CHANGED 22 Sep. It used to fall back to `Ref: <first eight of the id>`,
+// which predates the labelled meta strip at the top of the page. Under that
+// fallback a draft printed "CONTRACT NO  Ref: 9f2c1a4e" - a label saying
+// "number" over a value saying "Ref", for a thing that is not a number. The
+// id now has its own labelled row, so the number row is simply absent until
+// there is a number.
+ok('a draft contributes no number row at all',
+  !contractPrintHTML({ title: 't', dir: 'ltr', values: {},
+    blocks: [{ block_type: 'p', content: { text: 'x' } }],
+    meta: { reference: printReference({ id: '9f2c1a4e-1111-2222-3333-444444444444', contract_no: null }),
+            contractId: '9f2c1a4e-1111-2222-3333-444444444444', status: 'draft' },
+  }).includes('Contract no'));
 
 /* -- 4. building the documents from raw rows ------------------------- */
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useContracts, usePublishedVersions, loadContractPrintDocs } from '@/hooks/use-legal';
 import { kindLabel, contractStatusLabel, contractStatusBadge, CONTRACT_STATUSES, contractsPrintHTML } from '@/lib/legal';
 import {
@@ -11,6 +11,11 @@ import {
 } from '@/lib/legal-supersede';
 import { signedTally, hasSignedCopy } from '@/lib/legal-signed';
 import { AqDrawingBlock } from '@/components/AQLoading';
+import {
+  startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
+  type Pending,
+} from '@/lib/pending-removal';
+import { UndoBar } from '@/components/workflow/campaign/ui';
 import { ContractFill } from '@/components/workflow/legal/ContractFill';
 
 /**
@@ -56,6 +61,38 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
   const [sel, setSel] = useState<string[]>([]);
   const [printing, setPrinting] = useState(false);
   const [note, setNote] = useState('');
+
+  /* -- Deleting a draft, with a way back -----------------------------
+   *
+   * Was `confirm('Delete this draft contract?')`. Siraj: "fix delete showing
+   * a popup on google it should be the same thing also as all tasks". The
+   * campaign screens have answered this with an undo window for a while - a
+   * dialog asks the same question forty times and trains you to click
+   * through it. Same machine as the Tasks list; see lib/pending-removal. */
+  const [pending, setPending] = useState<Pending[]>([]);
+  const commit = useRef<(id: string) => void>(() => {});
+  commit.current = (id: string) => { void remove(id); };
+
+  useEffect(() => {
+    if (!pending.length) return undefined;
+    const t = setInterval(() => {
+      setPending((list) => {
+        const { next, due } = tickPending(list);
+        for (const id of due) commit.current(id);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [pending.length]);
+
+  const onUnmount = useRef<() => void>(() => {});
+  onUnmount.current = () => {
+    const { due } = flushPending(pending);
+    for (const id of due) commit.current(id);
+  };
+  useEffect(() => () => { onUnmount.current(); }, []);
+
+  const hiddenIds = pendingIds(pending);
 
   // One memo for the view, everything else derived from it. Two memos that
   // each filter would be two answers to "which contracts are we looking at",
@@ -239,8 +276,19 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
             <div className="aq-badge aq-badge-warning" style={{ display: 'block', padding: 9, marginTop: 10 }}>{note}</div>
           )}
 
+          {pending.map((p) => (
+            <div key={p.id} style={{ marginTop: 10 }}>
+              <UndoBar label={removedLabel(p.title, 'draft')} seconds={p.left}
+                onUndo={() => setPending((l) => cancelPending(l, p.id))}
+                onNow={() => {
+                  setPending((l) => cancelPending(l, p.id));
+                  commit.current(p.id);
+                }} />
+            </div>
+          ))}
+
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {view.shown.map((c, i) => (
+            {view.shown.filter((c) => !hiddenIds.has(c.id)).map((c, i) => (
               <li key={c.id} style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
                 borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
@@ -273,7 +321,7 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
                 <span className={`aq-badge ${contractStatusBadge(c.status)}`}>{contractStatusLabel(c.status)}</span>
                 {c.status === 'draft' && (
                   <button className="aq-btn aq-btn-ghost" title="Delete draft" style={{ padding: '4px 8px' }}
-                    onClick={async () => { if (confirm('Delete this draft contract?')) await remove(c.id); }}>
+                    onClick={() => { setPending((l) => startPending(l, c.id, c.title ?? '')); }}>
                     &times;
                   </button>
                 )}
