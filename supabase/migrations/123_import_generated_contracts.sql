@@ -5,326 +5,156 @@
 -- Siraj: "import all the data from the contract app ... we dont need the
 -- contract app".
 --
+-- -- A SCRIPT, NOT A FUNCTION ----------------------------------------
+--
+-- The first three versions of this file wrapped the import in a SECURITY
+-- DEFINER function with the guard every legal RPC carries. That was wrong
+-- twice over.
+--
+-- It did not work: the Supabase SQL editor runs as `postgres` with no JWT, so
+-- auth.uid() is null and the guard refused the only caller a one-off import
+-- will ever have. Measured, after two wrong guesses about what the editor is:
+--
+--   current_user | session_user | is_superuser | uid  | role
+--   postgres     | postgres     | off          | null | none
+--
+-- `postgres` on Supabase Cloud is NOT a superuser, so a superuser test does
+-- not identify the editor either.
+--
+-- And it should not have worked. A function granted to `authenticated` is a
+-- permanent surface every signed-in user can call, created solely to run one
+-- import one time. There is nothing to guard here if there is nothing to
+-- call: this is a script somebody with database access runs once, which is
+-- the access that lets them write these rows by hand anyway.
+--
 -- -- WHY external_doc AND NOT contract -------------------------------
 --
--- public.generated_contracts is the contract app's OUTPUT table: a contract
--- number, the parties, an amount, and a path to a DOCX/PDF in storage. It has
--- no template, no version and no field values.
+-- public.generated_contracts is the contract app's OUTPUT: a contract number,
+-- the parties, an amount, and a path to a DOCX/PDF in storage. No template,
+-- no version, no field values.
 --
--- legal.contract cannot hold that. Everything the Register does - the print,
--- the fingerprint, the optional clauses, the supersede chain - is derived from
--- a version's blocks and the contract's field values, and these have neither.
--- Inventing a template version for 707 historical PDFs would put a
--- provenance on documents people actually signed that they do not have.
+-- legal.contract cannot hold that. The print, the fingerprint, the optional
+-- clauses and the supersede chain are all derived from a version's blocks and
+-- the contract's own values, and these have neither. Inventing a template
+-- version for 707 historical PDFs would put a provenance on documents people
+-- actually signed that those documents do not have.
 --
 -- legal.external_doc (118) is the table written for exactly this: "an
--- agreement this app did not generate - filed so the register is complete. No
--- number, no version, no fingerprint: none of those mean anything for a
--- document we did not draft." It already carries `reference` for the source
--- system's own number.
+-- agreement this app did not generate - filed so the register is complete."
 --
--- -- THE NUMBERS, MEASURED NOT ASSUMED -------------------------------
+-- -- THE NUMBERS, MEASURED BEFORE ANY OF THIS WAS WRITTEN ------------
 --
---   707  rows
---   707  DISTINCT contract_id, 0 blank - the source id is a real key
---   644  have a file (every one of those has a DOCX; 597 also have a PDF)
---    63  have NEITHER and cannot be imported (see below)
---     4  contract_type values, all vendor payment variants:
---        after_pay_real 572, after_pay 71, after_payment 62, advance_pay 2
---   0    resolve to a workspace through their client, so the caller names it
+--   707  rows, 707 DISTINCT contract_id, 0 blank - the source id is a key
+--   644  have a file (every one has a DOCX; 597 also have a PDF)
+--    63  have NEITHER and are skipped - file_path is NOT NULL on purpose,
+--        and a register entry pointing at nothing reads as evidence that
+--        something was filed
+--     4  contract_type values, all vendor payment variants
+--     0  resolve to a workspace through their client, so it is named below
 --
--- -- THE 63 WITH NO FILE ---------------------------------------------
+-- -- HOW TO RUN IT ---------------------------------------------------
 --
--- They are skipped, and the function says how many. external_doc.file_path is
--- NOT NULL on purpose - "the document IS the record" - and a register entry
--- pointing at nothing is worse than an absence, because it reads as evidence
--- that something was filed. legal.missing_generated_contracts() lists them so
--- somebody can go and find them.
---
--- -- IDEMPOTENT, AND UNDOABLE ----------------------------------------
---
--- Keyed on the source id with a unique index behind it, so running it twice
--- imports nothing the second time. Siraj's rule, learned from a Zoho import
--- that duplicated twelve clients nine times over by deduping through a capped
--- read.
---
--- `source` records where a row came from, so the undo can remove exactly what
--- this brought in and nothing a person filed by hand.
+-- Replace the workspace id below, paste the whole thing into the SQL editor.
+-- It runs in a transaction and the last statement is the summary. Running it
+-- twice imports nothing the second time - that is what the unique index is
+-- for. The undo is at the bottom, commented out.
 -- ============================================================
 
-set search_path = legal, public;
+begin;
 
--- 1. where a filed document came from -------------------------------
+-- The three functions the earlier versions of this file created. Dropped:
+-- nothing should be able to call an import.
+drop function if exists legal.import_generated_contracts(uuid);
+drop function if exists legal.undo_generated_contracts_import(uuid);
+drop function if exists legal.missing_generated_contracts();
 
+-- Where a filed document came from. Null for anything a person filed by hand,
+-- which is also what makes the undo safe.
 alter table legal.external_doc
   add column if not exists source text;
 
-comment on column legal.external_doc.source is
-  'Null for anything a person filed. ''contract_app'' for rows brought in by '
-  'legal.import_generated_contracts, which is also what the undo deletes on.';
-
--- 2. the key that makes a re-run a no-op ----------------------------
---
--- Partial, because a hand-filed document may legitimately have no reference
--- and several of those must not collide with each other.
-
+-- The key that makes a re-run a no-op. Partial, because a hand-filed document
+-- may legitimately have no reference and several of those must not collide.
 create unique index if not exists uq_legal_external_ws_reference
   on legal.external_doc (workspace_id, reference)
   where reference is not null and btrim(reference) <> '';
 
--- 3. the import ------------------------------------------------------
-
--- DROPPED FIRST, DELIBERATELY. `create or replace` CANNOT widen a function's
--- TABLE return - Postgres refuses with "cannot change return type of existing
--- function" - and it fails PARTWAY through a migration: the column, the index
--- and the other functions apply, the import silently stays on its old shape,
--- and the file still prints its closing notices. A half-applied migration
--- that reports success.
---
--- Found by re-running this file against a scratch database after widening the
--- return by one column. The signature check at the bottom is what makes it
--- impossible to miss next time.
-drop function if exists legal.import_generated_contracts(uuid);
-
-create function legal.import_generated_contracts(p_workspace_id uuid)
-  returns table (imported bigint, already_there bigint, no_file bigint, no_reference bigint)
-  language plpgsql security definer
-  set search_path = legal, public, pg_temp
-  as $fn$
-declare
-  v_before bigint;
-  v_after  bigint;
-  v_nofile bigint;
-  v_noref  bigint;
-begin
-  -- WHO IS ALLOWED TO RUN THIS, AND WHY IT IS NOT THE USUAL GUARD.
-  --
-  -- The first version of this file carried the same check every legal RPC
-  -- carries: `auth.uid() is null or not has_role(...)`. That refuses the
-  -- Supabase SQL EDITOR, which has no JWT - and the SQL editor is the only
-  -- place a one-off import is ever run from. The guard blocked the only
-  -- caller there will ever be, and the self-test at the bottom asserted that
-  -- refusal as if it were the correct behaviour.
-  --
-  -- So: a session must hold the role, and no session is allowed ONLY when the
-  -- caller is a superuser. That is the SQL editor or psql as the database
-  -- owner - somebody who can already write these rows by hand, so the guard
-  -- protects nothing against them.
-  --
-  -- It is not simply "allow when auth.uid() is null". A JWT minted with
-  -- role=authenticated and no `sub` would also have a null uid, and would
-  -- then import into any workspace it named. PostgREST never runs as a
-  -- superuser, so that path stays shut.
-  if auth.uid() is null then
-    if coalesce(current_setting('is_superuser', true), 'off') <> 'on' then
-      raise exception 'Only legal can import the contract app''s documents.'
-        using errcode = '42501';
-    end if;
-  elsif not public.has_role(p_workspace_id, array['owner','admin','legal']) then
-    raise exception 'Only legal can import the contract app''s documents.'
-      using errcode = '42501';
-  end if;
-  if not exists (select 1 from public.workspaces w where w.id = p_workspace_id) then
-    raise exception 'No such workspace.' using errcode = '42704';
-  end if;
-
-  select count(*) into v_before
-    from legal.external_doc where workspace_id = p_workspace_id;
-
-  insert into legal.external_doc (
-    workspace_id, title, doc_kind, party_name, reference,
-    signed_on, expires_on, notes, file_path, file_name, source, created_at
-  )
-  select
-    p_workspace_id,
-    -- Non-blank is a CHECK. Vendor and brand when we have them, the source
-    -- number when we have neither - never an empty title.
-    coalesce(
-      nullif(btrim(concat_ws(' - ', nullif(btrim(g.vendor_name), ''),
-                                    nullif(btrim(g.brand_name), ''))), ''),
-      'Contract ' || g.contract_id),
-    -- All four contract_type values are vendor payment variants. Measured,
-    -- not assumed: after_pay_real, after_pay, after_payment, advance_pay.
-    'vendor_contract',
-    coalesce(btrim(g.vendor_name), ''),
-    btrim(g.contract_id),
-    -- NOT generated_at. That is when the document was MADE; whether it came
-    -- back signed is not recorded anywhere in the source, and null already
-    -- means "on file, not signed", which is the honest answer.
-    null,
-    null,
-    btrim(concat_ws(' ',
-      'Imported from the contract app.',
-      nullif('Type: ' || nullif(btrim(g.contract_type), '') || '.', 'Type: .'),
-      nullif('Amount: ' || nullif(btrim(g.amount), '') || '.', 'Amount: .'),
-      nullif('Generated ' || nullif(btrim(g.generated_at), '') || '.', 'Generated .'),
-      nullif('By ' || nullif(btrim(g.generated_by), '') || '.', 'By .'))),
-    -- PDF when there is one, DOCX otherwise. 597 have both, 644 have a DOCX,
-    -- so the DOCX is the one that is nearly always there.
+insert into legal.external_doc (
+  workspace_id, title, doc_kind, party_name, reference,
+  signed_on, expires_on, notes, file_path, file_name, source, created_at
+)
+select
+  '874c6670-29d9-48f1-97a4-ccbc0e54208b'::uuid,
+  -- Non-blank is a CHECK. Vendor and brand when we have them, the source
+  -- number when we have neither - never an empty title.
+  coalesce(
+    nullif(btrim(concat_ws(' - ', nullif(btrim(g.vendor_name), ''),
+                                  nullif(btrim(g.brand_name), ''))), ''),
+    'Contract ' || btrim(g.contract_id)),
+  'vendor_contract',
+  coalesce(btrim(g.vendor_name), ''),
+  btrim(g.contract_id),
+  -- NOT generated_at. That is when the document was MADE; whether it came
+  -- back signed is recorded nowhere in the source, and null already means
+  -- "on file, not signed" - the honest answer rather than a flattering one.
+  null,
+  null,
+  btrim(concat_ws(' ',
+    'Imported from the contract app.',
+    nullif('Type: ' || nullif(btrim(g.contract_type), '') || '.', 'Type: .'),
+    nullif('Amount: ' || nullif(btrim(g.amount), '') || '.', 'Amount: .'),
+    nullif('Generated ' || nullif(btrim(g.generated_at), '') || '.', 'Generated .'),
+    nullif('By ' || nullif(btrim(g.generated_by), '') || '.', 'By .'))),
+  -- PDF when there is one, DOCX otherwise.
+  coalesce(nullif(btrim(g.pdf_storage_path), ''), nullif(btrim(g.docx_storage_path), '')),
+  regexp_replace(
     coalesce(nullif(btrim(g.pdf_storage_path), ''), nullif(btrim(g.docx_storage_path), '')),
-    regexp_replace(
-      coalesce(nullif(btrim(g.pdf_storage_path), ''), nullif(btrim(g.docx_storage_path), '')),
-      '^.*/', ''),
-    'contract_app',
-    -- The generation time, so the register reads in the order things happened
-    -- rather than showing 644 documents all dated today. The index on this
-    -- table is (workspace_id, created_at desc), so this IS the order.
-    coalesce(
-      (case when g.generated_at ~ '^\d{4}-\d{2}-\d{2}'
-            then g.generated_at::timestamptz else null end),
-      now())
-  from public.generated_contracts g
-  where coalesce(nullif(btrim(g.contract_id), ''), '') <> ''
-    and coalesce(
-          nullif(btrim(g.pdf_storage_path), ''),
-          nullif(btrim(g.docx_storage_path), '')) is not null
-  on conflict (workspace_id, reference)
-    where reference is not null and btrim(reference) <> ''
-    do nothing;
+    '^.*/', ''),
+  'contract_app',
+  -- The generation time, so the register reads in the order things happened.
+  -- The index on this table is (workspace_id, created_at desc), so this IS
+  -- the order; without it five months collapse into one afternoon.
+  coalesce(
+    (case when g.generated_at ~ '^\d{4}-\d{2}-\d{2}'
+          then g.generated_at::timestamptz else null end),
+    now())
+from public.generated_contracts g
+where coalesce(nullif(btrim(g.contract_id), ''), '') <> ''
+  and coalesce(nullif(btrim(g.pdf_storage_path), ''),
+               nullif(btrim(g.docx_storage_path), '')) is not null
+on conflict (workspace_id, reference)
+  where reference is not null and btrim(reference) <> ''
+  do nothing;
 
-  select count(*) into v_after
-    from legal.external_doc where workspace_id = p_workspace_id;
+-- The summary, LAST, because the SQL editor shows only the final result set.
+select
+  (select count(*) from legal.external_doc
+    where workspace_id = '874c6670-29d9-48f1-97a4-ccbc0e54208b'::uuid
+      and source = 'contract_app')                        as filed_from_contract_app,
+  (select count(*) from public.generated_contracts)       as source_rows,
+  (select count(*) from public.generated_contracts g
+    where coalesce(nullif(btrim(g.pdf_storage_path), ''),
+                   nullif(btrim(g.docx_storage_path), '')) is null)
+                                                          as skipped_no_file,
+  (select count(*) from public.generated_contracts g
+    where coalesce(nullif(btrim(g.contract_id), ''), '') = ''
+      and coalesce(nullif(btrim(g.pdf_storage_path), ''),
+                   nullif(btrim(g.docx_storage_path), '')) is not null)
+                                                          as skipped_no_reference;
 
-  select count(*) into v_nofile
-    from public.generated_contracts g
-   where coalesce(
-           nullif(btrim(g.pdf_storage_path), ''),
-           nullif(btrim(g.docx_storage_path), '')) is null;
+commit;
 
-  -- A row with no contract_id has nothing to key on, so it is skipped too.
-  -- Counted rather than skipped quietly: a number that goes in no column is
-  -- how an import comes to be trusted for something it did not do. It is
-  -- zero in the real data - measured - and this is what would say so if that
-  -- ever changed.
-  select count(*) into v_noref
-    from public.generated_contracts g
-   where coalesce(nullif(btrim(g.contract_id), ''), '') = ''
-     and coalesce(nullif(btrim(g.pdf_storage_path), ''),
-                  nullif(btrim(g.docx_storage_path), '')) is not null;
-
-  imported      := v_after - v_before;
-  already_there := (select count(*) from public.generated_contracts g
-                     where coalesce(nullif(btrim(g.pdf_storage_path), ''),
-                                    nullif(btrim(g.docx_storage_path), '')) is not null
-                       and coalesce(nullif(btrim(g.contract_id), ''), '') <> '')
-                   - imported;
-  no_file       := v_nofile;
-  no_reference  := v_noref;
-  return next;
-end;
-$fn$;
-
--- 4. the ones that could not come, by name --------------------------
-
-create or replace function legal.missing_generated_contracts()
-  returns table (contract_id text, vendor_name text, brand_name text, generated_at text)
-  language sql stable security definer
-  set search_path = legal, public, pg_temp
-  as $fn$
-  select g.contract_id, g.vendor_name, g.brand_name, g.generated_at
-    from public.generated_contracts g
-   where coalesce(nullif(btrim(g.pdf_storage_path), ''),
-                  nullif(btrim(g.docx_storage_path), '')) is null
-   order by g.generated_at;
-$fn$;
-
--- 5. the wipe --------------------------------------------------------
+-- The 63 that could not come, by name:
 --
--- Removes exactly what the import brought in, by `source`, and nothing a
--- person filed by hand. Siraj's rule: an import ships with a wipe file.
-
-create or replace function legal.undo_generated_contracts_import(p_workspace_id uuid)
-  returns bigint
-  language plpgsql security definer
-  set search_path = legal, public, pg_temp
-  as $fn$
-declare n bigint;
-begin
-  -- Same rule as the import: a session must be an owner, and no session is
-  -- allowed only for a superuser. See the note there.
-  if auth.uid() is null then
-    if coalesce(current_setting('is_superuser', true), 'off') <> 'on' then
-      raise exception 'Only an owner can undo the import.' using errcode = '42501';
-    end if;
-  elsif not public.has_role(p_workspace_id, array['owner','admin']) then
-    raise exception 'Only an owner can undo the import.' using errcode = '42501';
-  end if;
-  delete from legal.external_doc
-   where workspace_id = p_workspace_id and source = 'contract_app';
-  get diagnostics n = row_count;
-  return n;
-end;
-$fn$;
-
-revoke all on function legal.import_generated_contracts(uuid) from public;
-revoke all on function legal.missing_generated_contracts() from public;
-revoke all on function legal.undo_generated_contracts_import(uuid) from public;
-grant execute on function legal.import_generated_contracts(uuid) to authenticated;
-grant execute on function legal.missing_generated_contracts() to authenticated;
-grant execute on function legal.undo_generated_contracts_import(uuid) to authenticated;
-
--- 6. prove the SELECT runs, before proving the guard refuses --------
+--   select g.contract_id, g.vendor_name, g.brand_name, g.generated_at
+--     from public.generated_contracts g
+--    where coalesce(nullif(btrim(g.pdf_storage_path), ''),
+--                   nullif(btrim(g.docx_storage_path), '')) is null
+--    order by g.generated_at
 --
--- The lesson from 122: plpgsql does not parse a body until it is called, and
--- the guard raises before the query is reached - so a refusal test proves
--- nothing about the query. This runs the real thing.
-
-do $$
-declare n bigint;
-begin
-  select count(*) into n from (
-    select g.contract_id,
-           coalesce(nullif(btrim(g.pdf_storage_path), ''),
-                    nullif(btrim(g.docx_storage_path), '')) as f,
-           btrim(concat_ws(' - ', nullif(btrim(g.vendor_name), ''),
-                                  nullif(btrim(g.brand_name), ''))) as t,
-           (case when g.generated_at ~ '^\d{4}-\d{2}-\d{2}'
-                 then g.generated_at::timestamptz else null end) as at
-      from public.generated_contracts g
-  ) q;
-  raise notice 'legal: the import query runs - % row(s) in generated_contracts', n;
-end $$;
-
-do $$
-declare v_sig text;
-begin
-  -- BOTH PATHS, because the first version of this file tested only the one
-  -- that refuses and shipped a function nobody could run.
-  --
-  -- 1. A superuser with no session - the SQL editor, which is where this is
-  --    actually run from - must get THROUGH the guard. It will then fail on
-  --    the unknown workspace (42704), and that is the proof: reaching the
-  --    workspace check means the role check let it past.
-  begin
-    perform * from legal.import_generated_contracts('00000000-0000-0000-0000-000000000000');
-    raise exception 'legal: a nonexistent workspace was accepted';
-  exception
-    when sqlstate '42704' then
-      null;  -- got past the guard and refused the workspace. Correct.
-    when sqlstate '42501' then
-      raise exception 'legal: the import refuses the SQL editor - it cannot be run at all';
-  end;
-
-  -- THE SIGNATURE, not just the existence. A function that is present but is
-  -- the PREVIOUS version of itself is exactly what a failed `create or
-  -- replace` leaves behind, and "does it exist" says yes to that.
-  select pg_get_function_result(p.oid) into v_sig
-    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'legal' and p.proname = 'import_generated_contracts';
-  if v_sig is null or position('no_reference' in v_sig) = 0 then
-    raise exception 'legal: import_generated_contracts is the wrong shape: %',
-      coalesce(v_sig, '(missing)');
-  end if;
-
-  raise notice 'legal: the import is in place, the right shape, and refuses an anonymous caller';
-end $$;
-
-notify pgrst, 'reload schema';
-
--- Run it (as yourself, in the SQL editor, with YOUR workspace id):
---   select * from legal.import_generated_contracts('<workspace id>');
--- Re-run it: imports 0, which is the point.
--- See what could not come:
---   select * from legal.missing_generated_contracts();
--- Undo the whole thing:
---   select legal.undo_generated_contracts_import('<workspace id>');
+-- The undo - removes exactly what this brought in, by `source`, and nothing
+-- anybody filed by hand:
+--
+--   delete from legal.external_doc
+--    where workspace_id = '874c6670-29d9-48f1-97a4-ccbc0e54208b'
+--      and source = 'contract_app'
