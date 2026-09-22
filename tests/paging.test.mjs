@@ -232,23 +232,24 @@ const BOUNDED = new Map([
   // un-page them again.
   {
     const src = readFileSync('hooks/use-legal.ts', 'utf8');
-    for (const label of ['useManagedLists values', 'useContractBatches', 'useContractBatches counts',
+    for (const label of ['useManagedLists values', 'useContractBatches',
       'useBatchContracts', 'useLegalTemplates versions', 'usePublishedVersions',
       'useLegalPlaceholders']) {
       ok(`${label} is still a paged read`, src.includes(`'${label}'`));
     }
-    // The count read is chunked as well as paged: a few hundred uuids in one
-    // in() is an 11KB URL, which comes back 414 and zeroes every count.
+
+    // 'useContractBatches counts' IS GONE, ON PURPOSE.
     //
-    // Pinned to THIS call site, not to "the file contains a chunk loop" -
-    // there are two chunk(ids, 60) loops in this file and the first version
-    // of this assertion happily matched the other one while the batch counts
-    // went back to sending every uuid at once.
-    {
-      const at = src.indexOf(`'useContractBatches counts'`);
-      const loop = src.lastIndexOf('for (const part of chunk(ids, 60))', at);
-      ok('the batch counts are still chunked', at > 0 && loop > 0 && at - loop < 300);
-    }
+    // It used to be the paged, chunked read of every contract in the
+    // workspace that the Tasks screen added up to render "12 of 20 filled".
+    // Migration 122 counts them in the database instead, so there is nothing
+    // left to page: one round trip, one row per task, no thousand-row
+    // boundary to fall off and no 11KB `in()` URL to 414.
+    //
+    // Asserted the other way round now. If somebody ever puts the
+    // count-every-contract read back, this fails and says why.
+    ok('the batch counts come from the database, not from reading every contract',
+      src.includes(`rpc('batch_counts'`) && !src.includes(`'useContractBatches counts'`));
   }
 }
 

@@ -671,35 +671,37 @@ export function useContractBatches(workspaceId: string | null) {
     if (!workspaceId) { setBatches([]); setLoading(false); return; }
     setLoading(true); setError('');
     const c = legal();
-    // PAGED, and CHUNKED. Three failures were stacked here.
-    //
-    // The batch list was unpaged; the id array built from it was unpaged;
-    // and the contract read that counts per batch was neither paged nor
-    // chunked. With a few thousand contracts the counts were built from the
-    // first 1000 rows only, so every batch past that boundary reported
-    // "0 of 0 filled" and lost its "N to fill" badge - a wrong number that
-    // looks like a right one. And a few hundred uuids in one `in()` is an
-    // 11KB URL, which comes back as a 414 and zeroes every count at once.
-    //
-    // 60 per chunk, the same as loadContractPrintDocs.
+    // The batch list is PAGED: unpaged, a workspace past a thousand tasks
+    // silently stops listing them.
     const bs = await selectAllRows<any>('useContractBatches', () => c.from('contract_batch')
       .select('id, workspace_id, title, shared, version_id, created_at')
       .eq('workspace_id', workspaceId).order('created_at', { ascending: false }).order('id'), setError);
-    const ids = (bs as any[]).map((b) => b.id);
+
+    // THE COUNTS ARE COUNTED IN THE DATABASE (migration 122).
+    //
+    // This used to read EVERY CONTRACT IN THE WORKSPACE - paged in 1000s,
+    // chunked 60 batch-ids at a time - and add them up here, to render
+    // "12 of 20 filled". Four thousand contracts meant four thousand rows and
+    // around seventy requests on every visit to this screen, for sixty
+    // characters of badge.
+    //
+    // The paging and the chunking were not careless: without them the counts
+    // came from the first 1000 rows only, so every task past that boundary
+    // reported "0 of 0 filled" - a wrong number that looks like a right one -
+    // and a few hundred uuids in one `in()` is an 11KB URL that comes back
+    // 414. legal.batch_counts removes the reason either was needed: one round
+    // trip, one row per task, and no boundary to fall off.
     const counts = new Map<string, { total: number; unassigned: number; issued: number }>();
-    if (ids.length) {
-      const cs: any[] = [];
-      for (const part of chunk(ids, 60)) {
-        cs.push(...await selectAllRows<any>('useContractBatches counts', () => c.from('contract')
-          .select('batch_id, status, vendor_id').in('batch_id', part).order('id')));
-      }
-      for (const row of cs) {
-        const cur = counts.get(row.batch_id) ?? { total: 0, unassigned: 0, issued: 0 };
-        cur.total += 1;
-        if (row.vendor_id == null) cur.unassigned += 1;
-        if (row.status !== 'draft') cur.issued += 1;
-        counts.set(row.batch_id, cur);
-      }
+    const { data: cnt, error: eC } = await legal().rpc('batch_counts', {
+      p_workspace_id: workspaceId,
+    });
+    if (eC) setError(eC.message ?? String(eC));
+    for (const row of ((cnt ?? []) as any[])) {
+      counts.set(String(row.batch_id), {
+        total: Number(row.total ?? 0),
+        unassigned: Number(row.unassigned ?? 0),
+        issued: Number(row.issued ?? 0),
+      });
     }
     setBatches((bs as any[]).map((b) => ({
       ...(b as ContractBatch),
