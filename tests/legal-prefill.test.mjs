@@ -9,7 +9,7 @@ import {
   parsePlatforms, joinPlatforms, parsePlatformHandles, platformHandlePairs,
   MULTI_KEYS, UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY,
   QTY_KEYS, parseQuantifiedItem, parseQuantified, joinQuantified,
-  quantityOf, setQuantity, totalQuantity,
+  quantityOf, setQuantity, totalQuantity, durationDays,
 } from '../.test-build/legal-prefill.js';
 import { contractCanonical } from '../.test-build/legal.js';
 
@@ -609,6 +609,41 @@ ok('a row with only a platform is not empty',
   ok('too short is refused', !!newBankAccountError({ ...good, iban: 'SA85' }));
   eq('a non-Saudi IBAN is accepted', newBankAccountError({ ...good, iban: 'GB29NWBK60161331926819' }), null);
 }
+
+/* -- the campaign's term, as the contract's days ------------------------ */
+//
+// The Vendor Contracts card records a term per vendor; the UGC template asks
+// for "Duration (days)". ugcPrefill has accepted durationDays since it was
+// written and the booking caller never passed it, so legal retyped a number
+// operations had already recorded - two fields, one fact, free to disagree,
+// and the one on the contract is the one somebody signs.
+
+eq('days are days', durationDays(14, 'days'), 14);
+eq('a week is seven days, exactly', durationDays(2, 'weeks'), 14);
+eq('one week', durationDays(1, 'weeks'), 7);
+
+// THE ONE THAT MATTERS. A month is not a fixed number of days, and 60, 61
+// and 62 are all defensible readings of "2 months" - a real difference in
+// what the vendor owes. So it is left blank for legal to type rather than
+// guessed onto a document somebody signs.
+eq('months are NOT converted', durationDays(2, 'months'), null);
+eq('nor is a single month', durationDays(1, 'months'), null);
+eq('and neither is a unit nobody recognises', durationDays(3, 'fortnights'), null);
+
+// No unit recorded means days - the same default lengthLabel has always used,
+// so the two cannot come to read the same row differently.
+eq('no unit means days', durationDays(9, ''), 9);
+eq('and so does no unit at all', durationDays(9, null), 9);
+
+// Nothing recorded stays nothing. A zero or a negative term is not a term.
+eq('nothing is nothing', durationDays(null, 'days'), null);
+eq('zero is not a term', durationDays(0, 'days'), null);
+eq('nor is a negative one', durationDays(-5, 'days'), null);
+eq('nor is a word', durationDays('soon', 'days'), null);
+// A numeric string is what a form control hands back.
+eq('a typed number still counts', durationDays('30', 'days'), 30);
+// Halves round rather than reaching the contract as "10.5 days".
+eq('a half week rounds', durationDays(1.5, 'weeks'), 11);
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

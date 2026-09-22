@@ -832,3 +832,42 @@ export function setQuantity(value: unknown, name: string, qty: number): string {
 export function totalQuantity(value: unknown): number {
   return parseQuantified(value).reduce((n, i) => n + i.qty, 0);
 }
+
+/**
+ * A campaign's recorded contract length, as the number of DAYS the legal
+ * template asks for - or null when it cannot be said exactly.
+ *
+ * -- THE GAP THIS CLOSES ------------------------------------------------
+ *
+ * The Vendor Contracts card records a term per vendor (pm_tasks
+ * contract_length + contract_length_unit, migration 066). The UGC template
+ * has its own `duration` field, labelled "Duration (days)". ugcPrefill has
+ * accepted `durationDays` since it was written - and the one caller that
+ * raises a contract FROM A BOOKING never passed it.
+ *
+ * So a contract raised off a campaign arrived with Duration blank, and legal
+ * typed again a number operations had already recorded. Two fields, one fact,
+ * free to disagree - and the one on the contract is the one somebody signs.
+ *
+ * -- WHY MONTHS ARE NOT CONVERTED ---------------------------------------
+ *
+ * A week is seven days by definition, so weeks convert exactly. A MONTH IS
+ * NOT A FIXED NUMBER OF DAYS. Turning "2 months" into "60 days" would put a
+ * number on a signed contract that nobody chose - 60, 61 and 62 are all
+ * defensible readings of two months, and the difference is a real difference
+ * in what the vendor owes.
+ *
+ * So months return null: the field is left blank and legal types the term
+ * they mean. A blank a person fills is better than a number a program
+ * guessed, on a document that binds somebody. Pure.
+ */
+export function durationDays(n: unknown, unit: unknown): number | null {
+  const num = typeof n === 'number' ? n : Number(txt(n));
+  if (!Number.isFinite(num) || num <= 0) return null;
+  // Same default as lengthLabel: no unit recorded means days.
+  const u = (txt(unit) || 'days').toLowerCase();
+  if (u === 'days') return Math.round(num);
+  if (u === 'weeks') return Math.round(num * 7);
+  // 'months', or anything unrecognised. Not guessed.
+  return null;
+}

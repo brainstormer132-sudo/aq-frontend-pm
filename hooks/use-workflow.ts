@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
-import { ugcPrefill, isEmptyTableRow } from '@/lib/legal-prefill';
+import { ugcPrefill, isEmptyTableRow, durationDays } from '@/lib/legal-prefill';
 import { mapWithConcurrency, REQUEST_CONCURRENCY } from '@/lib/concurrency';
 import {
   onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
@@ -5930,7 +5930,17 @@ export async function createUgcContractFromBooking(opts: {
     account_name: p.account_name,
     account_number: p.account_number,
     iban: p.iban,
-  }, { today: opts.today });
+  }, {
+    today: opts.today,
+    // The term operations already recorded on this vendor's row, carried onto
+    // the contract instead of retyped by legal. durationDays refuses to turn
+    // MONTHS into days - a month is not a fixed number of them and the
+    // difference is a real difference in what the vendor owes - so a term in
+    // months arrives blank for legal to type. See lib/legal-prefill.
+    durationDays: durationDays(
+      (subtask as any).contract_length, (subtask as any).contract_length_unit,
+    ),
+  });
 
   const title = `${p.vendor_name || vendor.name} - ${p.brand_name || parent.brand_name || 'UGC'}`;
 
