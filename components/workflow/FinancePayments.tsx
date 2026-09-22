@@ -146,6 +146,17 @@ export function FinancePayments({
   useEffect(() => { loadMoney(); }, [loadMoney]);
 
   // One CampaignMoney per campaign for the chosen side, then the pure builder.
+  // Set in an effect, never read during render. Two reasons, and LegalCases
+  // has carried the same fix for the same ones since it hit this:
+  //
+  //   * read during render this is a FRESH STRING every time, so a memo that
+  //     lists it as a dep never matches and recomputes on every render;
+  //   * Next.js renders this on the server too, so across midnight the
+  //     server's day and the browser's differ and React reports a hydration
+  //     mismatch.
+  const [today, setToday] = useState('');
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+
   const rows: PaymentRow[] = useMemo(() => {
     if (!campaigns || !moneyById) return [];
     const built: CampaignMoney[] = campaigns.map((c) => {
@@ -181,9 +192,13 @@ export function FinancePayments({
     });
     // A campaign nobody has priced is not a debt - it is unfinished work.
     // Today (UTC, like the rest of the app) is what judges a balance overdue.
-    const today = new Date().toISOString().slice(0, 10);
+    //
+    // `today` comes from the effect above, not from the clock right here.
+    // Read inside the memo it was not a dep at all, so the page could sit
+    // open past midnight still judging balances against yesterday.
+    if (!today) return [];
     return buildPaymentRows(built.filter((c) => c.billed > 0 || Number(c.advance ?? 0) > 0), today);
-  }, [campaigns, moneyById, side]);
+  }, [campaigns, moneyById, side, today]);
 
   const counts = useMemo(() => paymentSectionCounts(rows), [rows]);
   const sectioned = useMemo(() => {

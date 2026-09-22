@@ -18,7 +18,7 @@
  * view of the same numbers.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useVendorPerformanceLines, useLegacyVendors, type WorkspaceRole } from '@/hooks/use-workflow';
 import {
   vendorPerformance, reliabilityBand, vendorMoney, type VendorPerf,
@@ -71,8 +71,19 @@ export function VendorPerformanceView({
 
   const moneyByVendor = useMemo(() => vendorMoney(money), [money]);
 
+  // Set in an effect, never read during render. Two reasons, and LegalCases
+  // has carried the same fix for the same ones since it hit this:
+  //
+  //   * read during render this is a FRESH STRING every time, so a memo that
+  //     lists it as a dep never matches and recomputes on every render;
+  //   * Next.js renders this on the server too, so across midnight the
+  //     server's day and the browser's differ and React reports a hydration
+  //     mismatch.
+  const [today, setToday] = useState('');
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+
   const ranked: Named[] = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    if (!today) return [];
     return vendorPerformance(lines, today).map((p) => {
       const meta = nameById.get(p.vendorId);
       const m = moneyByVendor.get(p.vendorId);
@@ -85,7 +96,7 @@ export function VendorPerformanceView({
         outstanding: m?.outstanding ?? 0,
       };
     });
-  }, [lines, nameById, moneyByVendor]);
+  }, [lines, nameById, moneyByVendor, today]);
 
   const needChasing = useMemo(() => ranked.filter((r) => r.needsChasing > 0).length, [ranked]);
 

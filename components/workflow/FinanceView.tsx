@@ -161,8 +161,20 @@ export function FinanceView({
   }, [profiles]);
 
   // Every open ask, most-waiting first, for the strip above the tabs.
-  const today = new Date().toISOString().slice(0, 10);
-  const requestStrip = useMemo(() => openRequests(allRows, today), [allRows, today]);
+  // Set in an effect, never read during render. Two reasons, and LegalCases
+  // has carried the same fix with the same comment since it hit this:
+  //
+  //   * read during render this is a FRESH STRING every time, so a memo that
+  //     lists it as a dep never matches and recomputes on every render;
+  //   * Next.js renders this on the server too, so across midnight the
+  //     server's day and the browser's differ and React reports a hydration
+  //     mismatch.
+  const [today, setToday] = useState('');
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
+  const requestStrip = useMemo(
+    () => (today ? openRequests(allRows, today) : []),
+    [allRows, today],
+  );
   const counts = useMemo(
     () => tabCounts(allRows, tagsByTask),
     [allRows, tagsByTask],
