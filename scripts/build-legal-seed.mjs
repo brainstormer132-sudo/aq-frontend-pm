@@ -56,7 +56,7 @@ const ROOT = join(HERE, '..');
  * reasoning as v2: a published version is frozen, so the flags go on a new
  * version and every contract stamped to v2 keeps reading exactly as it does.
  */
-const VERSION = 3;
+const VERSION = 4;
 
 // One file per version. 105 is what prod ran for v1 and stays in the repo as
 // the record of it; a bumped VERSION writes its own file beside it.
