@@ -597,6 +597,58 @@ export function bankValuesFor(a: VendorBankAccount | null | undefined): Record<s
   };
 }
 
+/**
+ * An IBAN the way it should be stored: no spaces, no dashes, upper case.
+ *
+ * People paste these in fours ("SA85 0500 0068 ...") because that is how a
+ * bank prints them. matchBankAccount already normalises before comparing, so
+ * an un-normalised one does not break the picker - it just means the same
+ * account can be stored two ways and only one of them will ever match.
+ */
+export function normaliseIban(raw: string): string {
+  return String(raw ?? '').replace(/[\s-]+/g, '').toUpperCase();
+}
+
+/**
+ * Why a new bank account cannot be saved yet, or null when it can.
+ *
+ * Siraj: "if a vendor doesnt have an iban you can save an iban from inside
+ * the task for example no iban added you can type the data and it will save".
+ *
+ * All four are required, not just the IBAN, and that is a kindness rather
+ * than strictness: all four PRINT on the contract and all four are required
+ * in the field registry, so an account saved with two of them fills two boxes
+ * and then blocks Issue with no explanation. Better to say so while the form
+ * is open.
+ *
+ * The IBAN check is deliberately loose - two letters then digits, a plausible
+ * length. It is not a mod-97 checksum: this has to accept whatever a vendor
+ * actually banks with, and a validator that rejects a real account is worse
+ * than one that accepts a typo somebody can see.
+ *
+ * Pure.
+ */
+export function newBankAccountError(input: {
+  bank_name?: string; account_name?: string; account_number?: string; iban?: string;
+}): string | null {
+  const missing: string[] = [];
+  if (!txt(input?.bank_name)) missing.push('the bank name');
+  if (!txt(input?.account_name)) missing.push('the account name');
+  if (!txt(input?.account_number)) missing.push('the account number');
+  const iban = normaliseIban(input?.iban ?? '');
+  if (!iban) missing.push('the IBAN');
+  if (missing.length) {
+    const list = missing.length === 1
+      ? missing[0]
+      : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+    return `Still needs ${list}. All four print on the contract.`;
+  }
+  if (!/^[A-Z]{2}[0-9]{2}[0-9A-Z]{10,30}$/.test(iban)) {
+    return 'That IBAN does not look right - two letters, two digits, then the account.';
+  }
+  return null;
+}
+
 /** The account whose IBAN matches what the contract currently holds, if any. */
 export function matchBankAccount(
   accounts: VendorBankAccount[], iban: string,

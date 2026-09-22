@@ -20,11 +20,12 @@ import {
   performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
   FIELD_GROUPS, fieldGroup, normalizeHandle, handleBody, UGC_CHANNEL_KEY, type FieldGroup,
   UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY, MULTI_KEYS, QTY_KEYS,
+  newBankAccountError, normaliseIban, type VendorBankAccount,
   parseQuantified, joinQuantified, quantityOf, setQuantity, totalQuantity,
   parsePlatforms, joinPlatforms, parsePlatformHandles,
   platformHandlePairs, joinPlatformHandles,
 } from '@/lib/legal-prefill';
-import { useLegacyVendors } from '@/hooks/use-workflow';
+import { useLegacyVendors, addVendorBank } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
@@ -92,7 +93,7 @@ export function ContractFill({
 
   // The brand and bank pickers. Both only appear when this template actually
   // uses those fields, so a template that names neither is unchanged.
-  const { brands, banks } = useContractSources(contract ?? null);
+  const { brands, banks, reload: reloadSources } = useContractSources(contract ?? null);
 
   // The blocks that make up this contract: all except optional clauses switched
   // off. Everything downstream - fields, preview, print, fingerprint - works
@@ -353,11 +354,31 @@ export function ContractFill({
               <option key={String(a.id)} value={String(a.id)}>{bankAccountLabel(a)}</option>
             ))}
           </select>
+        ) : null}
+
+        {/* Siraj: "if a vendor doesnt have an iban you can save an iban from
+            inside the task ... but if the vendor doesnt exist you have to go
+            create them".
+
+            So the two dead ends are treated differently, because they are
+            different problems. A vendor WITH no account is a gap you can fill
+            without leaving the contract - the account is saved against the
+            vendor, so it is there next time too. NO VENDOR is not a gap, it
+            is a missing record, and inventing one from a contract screen is
+            how a second half-filled vendor gets created. That one still sends
+            you to the registry. */}
+        {contract.vendor_id != null ? (
+          <AddBankAccount vendorId={Number(contract.vendor_id)} editable={editable}
+            first={banks.length === 0}
+            onSaved={(a) => {
+              const v = bankValuesFor(a);
+              for (const k of UGC_BANK_KEYS) ed.setValue(k, v[k] ?? '');
+              reloadSources();
+            }} />
         ) : (
           <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
-            {contract.vendor_id != null
-              ? 'This vendor has no bank account on file - add one on their registry page.'
-              : 'No vendor on this contract, so there are no accounts to choose from.'}
+            No vendor on this contract yet. Add the vendor first - their bank
+            details are saved against them, not against this contract.
           </div>
         )}
       </div>
@@ -811,6 +832,105 @@ function HandleBox({
  * adopts an external value - the contract finishing its load - without touching
  * what is being typed.
  */
+/**
+ * Add a bank account to the vendor, without leaving the contract.
+ *
+ * The fill screen used to end at "This vendor has no bank account on file -
+ * add one on their registry page", which is a dead end in the middle of
+ * filling a contract: the operator has the details in front of them, on the
+ * screen that needs them, and is sent somewhere else to type them.
+ *
+ * Saved against the VENDOR, not against the contract. The contract only ever
+ * holds a copy of the four values, the way picking an existing account does,
+ * so the next contract for the same vendor finds the account waiting.
+ */
+function AddBankAccount({ vendorId, editable, first, onSaved }: {
+  vendorId: number;
+  editable: boolean;
+  /** True when the vendor has none at all, which changes what the link says. */
+  first: boolean;
+  onSaved: (a: VendorBankAccount) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [form, setForm] = useState({ bank_name: '', account_name: '', account_number: '', iban: '' });
+
+  if (!editable) return null;
+
+  if (!open) {
+    return (
+      <div style={{ marginTop: first ? 0 : 8 }}>
+        {first && (
+          <div style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginBottom: 6 }}>
+            This vendor has no bank account on file.
+          </div>
+        )}
+        <button type="button" className="aq-btn aq-btn-secondary" style={{ fontSize: 12.5 }}
+          onClick={() => { setErr(''); setOpen(true); }}>
+          {first ? 'Add their bank account' : 'Add another account'}
+        </button>
+      </div>
+    );
+  }
+
+  const set = (k: keyof typeof form) => (e: any) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const problem = newBankAccountError(form);
+
+  const save = async () => {
+    if (problem) { setErr(problem); return; }
+    setBusy(true); setErr('');
+    try {
+      // Normalised on the way in. People paste an IBAN in fours because that
+      // is how a bank prints it, and the picker matches on the stored string.
+      const row = await addVendorBank(vendorId, { ...form, iban: normaliseIban(form.iban) });
+      setOpen(false);
+      setForm({ bank_name: '', account_name: '', account_number: '', iban: '' });
+      onSaved(row as unknown as VendorBankAccount);
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not save the account.');
+    } finally { setBusy(false); }
+  };
+
+  const field = (label: string, k: keyof typeof form, dir?: string) => (
+    <label style={{ display: 'block', marginBottom: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{label}</div>
+      <input className="aq-input" value={form[k]} onChange={set(k)} dir={dir ?? 'auto'}
+        disabled={busy} style={{ width: '100%' }} />
+    </label>
+  );
+
+  return (
+    <div style={{
+      marginTop: 10, padding: '12px 14px', borderRadius: 'var(--aq-radius)',
+      border: '1px solid var(--aq-border-light)', background: 'var(--aq-bg-subtle, transparent)',
+      maxWidth: 420,
+    }}>
+      {field('Bank name', 'bank_name')}
+      {field('Account name', 'account_name')}
+      {field('Account number', 'account_number', 'ltr')}
+      {field('IBAN', 'iban', 'ltr')}
+      {/* The reason it cannot save yet, shown while the form is open rather
+          than after pressing Save - all four of these print on the contract,
+          so a half-filled account fills half the boxes and then blocks Issue
+          with no explanation. */}
+      {(err || problem) && (
+        <div style={{ fontSize: 12.5, color: 'var(--aq-red-strong)', marginBottom: 8 }}>
+          {err || problem}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="button" className="aq-btn aq-btn-primary" style={{ fontSize: 12.5 }}
+          onClick={save} disabled={busy || !!problem}>
+          {busy ? 'Saving\u2026' : 'Save to the vendor'}
+        </button>
+        <button type="button" className="aq-btn aq-btn-ghost" style={{ fontSize: 12.5 }}
+          onClick={() => { setOpen(false); setErr(''); }} disabled={busy}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 export function MultiChoice({
   value, options, editable, onChange, withQuantity = false,
 }: {

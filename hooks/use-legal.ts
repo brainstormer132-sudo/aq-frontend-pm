@@ -809,6 +809,7 @@ export function useClientBrands(clientId: string | null) {
 export function useContractSources(contract: Contract | null) {
   const [brands, setBrands] = useState<{ id: string; brand_name: string }[]>([]);
   const [banks, setBanks] = useState<VendorBankAccount[]>([]);
+  const [nonce, setNonce] = useState(0);
   const taskId = contract?.pm_task_id ?? null;
   const vendorId = contract?.vendor_id ?? null;
 
@@ -841,9 +842,10 @@ export function useContractSources(contract: Contract | null) {
       setBanks(nextBanks);
     })();
     return () => { live = false; };
-  }, [taskId, vendorId]);
+  }, [taskId, vendorId, nonce]);
 
-  return { brands, banks };
+  // Bumped after adding an account, so the picker sees it without a reload.
+  return { brands, banks, reload: () => setNonce((n) => n + 1) };
 }
 
 export function useContractEditor(workspaceId: string | null, contractId: string | null) {

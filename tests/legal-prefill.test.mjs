@@ -1,6 +1,7 @@
 import {
   ugcPrefill, ugcPrefillGaps, moneyText, isEmptyTableRow, arabicWeekday,
   UGC_TABLE_COLUMN_KEYS, UGC_REQUIRED_KEYS, ARABIC_WEEKDAYS,
+  normaliseIban, newBankAccountError,
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, stampContractNumber,
   firstLast, performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY,
@@ -558,6 +559,55 @@ ok('a row with only a platform is not empty',
     setQuantity('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Home Ad',
       quantityOf('6 \u00d7 Home Ad, 3 \u00d7 Reminder', 'Home Ad')),
     '6 \u00d7 Home Ad, 3 \u00d7 Reminder');
+}
+
+
+/* -- saving a bank account from inside the contract -------------------- */
+// Siraj: "if a vendor doesnt have an iban you can save an iban from inside
+// the task ... but if the vendor doesnt exist you have to go create them".
+// The fill screen used to end at "add one on their registry page", which is
+// a dead end in the middle of filling a contract.
+{
+  const good = {
+    bank_name: 'Al Inma', account_name: 'Rawad Altathir',
+    account_number: '68202707824000', iban: 'SA85 0500 0068 2027 0782 4000',
+  };
+  eq('a complete account saves', newBankAccountError(good), null);
+
+  // All four are required because ALL FOUR PRINT. An account saved with two
+  // of them fills two boxes and then blocks Issue with no explanation.
+  ok('a missing bank name is named',
+    newBankAccountError({ ...good, bank_name: '' }).includes('the bank name'));
+  ok('so is a missing IBAN',
+    newBankAccountError({ ...good, iban: '' }).includes('the IBAN'));
+  ok('and it says why all four matter',
+    newBankAccountError({ ...good, iban: '' }).includes('print on the contract'));
+  // Two missing reads as a sentence, not a list of one.
+  {
+    const e = newBankAccountError({ bank_name: 'X', account_name: '', account_number: '', iban: '' });
+    ok('several missing are joined with "and"', e.includes(' and '));
+    ok('and all of them are named',
+      e.includes('account name') && e.includes('account number') && e.includes('IBAN'));
+  }
+  ok('nothing at all still gives a sentence', !!newBankAccountError({}));
+
+  // Pasted in fours, which is how a bank prints it.
+  eq('an IBAN is stored without its spaces',
+    normaliseIban('SA85 0500 0068 2027 0782 4000'), 'SA8505000068202707824000');
+  eq('dashes go too', normaliseIban('sa85-0500-0068'), 'SA850500 0068'.replace(' ', ''));
+  eq('and it is upper case', normaliseIban('sa8505'), 'SA8505');
+  eq('nothing stays nothing', normaliseIban(null), '');
+  // Spacing must not be the difference between saving and not.
+  eq('a spaced IBAN is as valid as a tight one',
+    newBankAccountError(good), newBankAccountError({ ...good, iban: 'SA8505000068202707824000' }));
+
+  // Loose on purpose: this has to accept whatever a vendor actually banks
+  // with. A validator that rejects a real account is worse than one that
+  // accepts a typo somebody can see.
+  ok('an obviously wrong IBAN is refused',
+    newBankAccountError({ ...good, iban: 'not-an-iban' }).includes('does not look right'));
+  ok('too short is refused', !!newBankAccountError({ ...good, iban: 'SA85' }));
+  eq('a non-Saudi IBAN is accepted', newBankAccountError({ ...good, iban: 'GB29NWBK60161331926819' }), null);
 }
 
 console.log(`legal-prefill: ${pass} passed, ${fail} failed`);
