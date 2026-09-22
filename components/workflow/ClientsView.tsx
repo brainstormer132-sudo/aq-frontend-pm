@@ -811,6 +811,8 @@ function BrandManagerInline({ clientId }: { clientId: string }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [name, setName] = useState('');
+  // The app's own dialog, in place of window.prompt().
+  const { prompt, dialog } = useConfirm();
 
   const refresh = async () => {
     setLoading(true);
@@ -849,11 +851,19 @@ function BrandManagerInline({ clientId }: { clientId: string }) {
   };
 
   const onRename = async (b: BrandRow) => {
-    const next = window.prompt('Rename brand', b.brand_name);
-    if (!next || next.trim() === b.brand_name) return;
+    // window.prompt was the last native dialog in the app. It could not say
+    // an answer was empty before you pressed OK, and its button said OK.
+    // `prompt` returns null for cancel AND for "they typed what was already
+    // there", so the two-part guard the old line carried is gone.
+    const next = await prompt({
+      message: `Rename ${b.brand_name}?`,
+      label: 'Brand name', initial: b.brand_name,
+      confirmLabel: 'Rename it', maxLength: 120,
+    });
+    if (!next) return;
     setBusy(b.id);
     try {
-      await brandsApi.update(b.id, { brand_name: next.trim() });
+      await brandsApi.update(b.id, { brand_name: next });
       await refresh();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -936,6 +946,7 @@ function BrandManagerInline({ clientId }: { clientId: string }) {
           ))}
         </ul>
       )}
+      {dialog}
     </div>
   );
 }

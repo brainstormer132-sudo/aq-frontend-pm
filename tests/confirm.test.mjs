@@ -11,6 +11,7 @@
 import {
   confirmView, confirmShownText, normaliseMessage, confirmAutoFocus,
   DEFAULT_TITLE, TITLE_MAX,
+  promptView, promptError, promptCanSubmit, promptAnswer,
 } from '../.test-build/confirm.js';
 import { publishWarning, newDraftWarning, editTemplateWarning } from '../.test-build/legal-doc-view.js';
 
@@ -138,6 +139,67 @@ eq('and an unknown tone is not danger', confirmView({ message: 'x', tone: 'scary
   ok('and both buttons', !!v.confirmLabel && !!v.cancelLabel);
 }
 eq('and undefined is the same', confirmView(undefined).title, DEFAULT_TITLE);
+
+/* -- asking for a word --------------------------------------------------- */
+//
+// window.prompt was the last native dialog. What it could not do is the
+// point of replacing it: say what is wrong with the answer BEFORE the button
+// is pressed, and name its own button.
+
+{
+  const req = { message: 'Rename this brand?', label: 'Brand name', initial: 'Rabea', maxLength: 60 };
+  const v = promptView(req);
+  eq('it splits like any other dialog', v.title, 'Rename this brand?');
+  eq('the field is labelled', v.label, 'Brand name');
+  eq('and starts with what is there', v.initial, 'Rabea');
+  // "Continue" is a confirm's word. A prompt is doing something to a name.
+  eq('the button says Save, not Continue', v.confirmLabel, 'Save');
+  eq('unless the caller names the verb',
+    promptView({ ...req, confirmLabel: 'Rename it' }).confirmLabel, 'Rename it');
+  eq('with no label it falls back to the question', promptView({ message: 'New name?' }).label, 'New name?');
+  eq('and a prompt always has a way out', v.cancelLabel, 'Cancel');
+}
+{
+  // A prompt is never a `tell` - there is always something to cancel, even
+  // if the caller passes the flag by mistake.
+  eq('tell is ignored', promptView({ message: 'x?', tell: true }).cancelLabel, 'Cancel');
+}
+
+/* -- what is wrong with the answer, said before Save is pressed ---------- */
+
+eq('empty is refused', promptError('', {}), 'Type something first.');
+eq('and so is whitespace', promptError('   ', {}), 'Type something first.');
+eq('unless the caller allows it', promptError('', { required: false }), '');
+eq('a real answer is fine', promptError('Rabea', {}), '');
+eq('length is counted after trimming', promptError('  abc  ', { maxLength: 3 }), '');
+{
+  const e = promptError('abcdef', { maxLength: 4 });
+  ok('too long says the limit', e.includes('4 characters at most'));
+  ok('and how far over it is', e.includes('2 too many'));
+}
+eq('no limit means no limit', promptError('x'.repeat(500), {}), '');
+eq('and nor does zero', promptError('x'.repeat(500), { maxLength: 0 }), '');
+
+// Save and the message cannot disagree: one is defined in terms of the other.
+{
+  const cases = [['', {}], ['ok', {}], ['   ', {}], ['abcdef', { maxLength: 4 }],
+                 ['', { required: false }], ['x', { maxLength: 1 }]];
+  let disagreed = 0;
+  for (const [val, req] of cases) {
+    if (promptCanSubmit(val, req) !== (promptError(val, req) === '')) disagreed += 1;
+  }
+  eq('the button and the message always agree', disagreed, 0);
+}
+
+/* -- the answer, and what counts as no answer ---------------------------- */
+
+eq('a new name comes back trimmed', promptAnswer('  Rabea tea  ', 'Rabea'), 'Rabea tea');
+// Renaming something to the name it already has is not a rename. The old
+// call site knew this and returned early; every caller gets it now.
+eq('the same name is not a change', promptAnswer('Rabea', 'Rabea'), null);
+eq('and neither is the same name with spaces round it', promptAnswer(' Rabea ', 'Rabea'), null);
+eq('nothing typed is not an answer', promptAnswer('   ', 'Rabea'), null);
+eq('with no initial, anything real is a change', promptAnswer('New', null), 'New');
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -177,7 +177,13 @@ export function DownloadBtn({
   variant?: 'secondary' | 'ghost';
 }) {
   const [busy, setBusy] = useState(false);
+  // NOT a modal. This is a leaf that appears once per contract row, and a
+  // dialog per instance to say a download failed is a dialog too many - the
+  // message belongs beside the button that failed. window.alert was what was
+  // here; it stopped the whole page to say "Download failed (403)".
+  const [err, setErr] = useState('');
   return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
     <button
       type="button"
       className={`aq-btn aq-btn-${variant} aq-btn-sm`}
@@ -185,6 +191,7 @@ export function DownloadBtn({
       disabled={disabled || busy}
       onClick={async () => {
         setBusy(true);
+        setErr('');
         try {
           // Need to attach the JWT manually since this isn't an <a href>.
           const { createClient } = await import('@/lib/supabase-browser');
@@ -207,7 +214,7 @@ export function DownloadBtn({
           a.remove();
           URL.revokeObjectURL(blobUrl);
         } catch (e: any) {
-          window.alert(e?.message ?? 'Download failed.');
+          setErr(e?.message ?? 'Download failed.');
         } finally {
           setBusy(false);
         }
@@ -215,6 +222,12 @@ export function DownloadBtn({
     >
       {busy ? '…' : kind.toUpperCase()}
     </button>
+    {err && (
+      <span role="alert" style={{ fontSize: 11, color: 'var(--aq-error, #c0392b)', maxWidth: 220 }}>
+        {err}
+      </span>
+    )}
+    </span>
   );
 }
 

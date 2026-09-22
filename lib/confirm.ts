@@ -126,3 +126,85 @@ export function confirmShownText(v: ConfirmView): string {
 export function normaliseMessage(msg: string | null | undefined): string {
   return String(msg ?? '').replace(/\s+/g, ' ').trim();
 }
+
+// ---- asking for a word, not a yes ---------------------------------------
+//
+// window.prompt is the last native dialog in the app. It is the same grey box
+// as confirm(), with an unlabelled text field, an OK that does not say what it
+// will do, and no way to tell somebody their answer is empty or too long
+// before they press it. "Rename brand" deserves better than that.
+//
+// Everything about how it READS lives here, next to confirmView, so a prompt
+// and a confirm cannot come to look like two different products.
+
+export interface PromptRequest extends ConfirmRequest {
+  /** The word above the field. Falls back to the title's question. */
+  label?: string;
+  /** What the field starts with. */
+  initial?: string;
+  placeholder?: string;
+  /** Empty is refused. Default true - a prompt with no answer is a cancel. */
+  required?: boolean;
+  /** Refused past this. 0 or absent means no limit. */
+  maxLength?: number;
+}
+
+export interface PromptView extends ConfirmView {
+  label: string;
+  initial: string;
+  placeholder: string;
+}
+
+export function promptView(req: PromptRequest | null | undefined): PromptView {
+  const base = confirmView({ ...(req ?? { message: '' }), tell: false });
+  return {
+    ...base,
+    // A prompt's verb is never "Continue" - it is doing something to a name.
+    confirmLabel: String(req?.confirmLabel ?? '').trim() || 'Save',
+    label: String(req?.label ?? '').trim() || base.title,
+    initial: String(req?.initial ?? ''),
+    placeholder: String(req?.placeholder ?? ''),
+  };
+}
+
+/**
+ * What is wrong with what has been typed, in words, or '' when nothing is.
+ *
+ * Checked as they type rather than after they press the button, which is the
+ * thing window.prompt could not do at all: its only answer to an empty string
+ * was to hand it back to the caller and let the caller decide, silently.
+ * Pure.
+ */
+export function promptError(value: string, req?: PromptRequest | null): string {
+  const v = String(value ?? '').trim();
+  const required = req?.required !== false;
+  if (required && !v) return 'Type something first.';
+  const max = Math.trunc(Number(req?.maxLength ?? 0));
+  if (max > 0 && v.length > max) {
+    return `${max} characters at most - that is ${v.length - max} too many.`;
+  }
+  return '';
+}
+
+/**
+ * Whether Save is live. Separate from promptError so the button and the
+ * message cannot disagree about it: one of them saying yes while the other
+ * says no is the bug this exists to make impossible.
+ */
+export function promptCanSubmit(value: string, req?: PromptRequest | null): boolean {
+  return promptError(value, req) === '';
+}
+
+/**
+ * The answer, or null for "nothing changed - treat it as a cancel".
+ *
+ * Renaming a brand to the name it already has is not a rename, and the old
+ * call site said so itself (`next.trim() === b.brand_name` fell through to a
+ * return). Putting it here means every caller gets it, and the trimming
+ * happens once rather than at each of them. Pure.
+ */
+export function promptAnswer(value: string, initial?: string | null): string | null {
+  const v = String(value ?? '').trim();
+  if (!v) return null;
+  return v === String(initial ?? '').trim() ? null : v;
+}
