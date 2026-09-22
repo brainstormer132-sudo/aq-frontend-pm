@@ -191,10 +191,22 @@ export function ContractFill({
 
   // The contract's own date, Riyadh's rather than the browser's: a contract
   // drafted at 1am in Jeddah is dated today there, not yesterday in UTC.
-  const riyadhToday = useMemo(
-    () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
-    [],
-  );
+  //
+  // Set in an effect, not in a useMemo. A useMemo with an empty dep list
+  // still runs during the FIRST render, which on Next.js is the SERVER, and
+  // that breaks this twice over:
+  //
+  //   * across midnight in Riyadh the server's answer and the browser's
+  //     differ, and this value is STAMPED ONTO THE CONTRACT - which of the
+  //     two wins would depend on render timing;
+  //   * `timeZone: 'Asia/Riyadh'` needs full ICU. A node build without it
+  //     does not throw, it quietly ignores the zone and returns UTC's day.
+  //
+  // In an effect it only ever runs in the browser, where the zone is real.
+  const [riyadhToday, setRiyadhToday] = useState('');
+  useEffect(() => {
+    setRiyadhToday(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }));
+  }, []);
 
   /** The date and the weekday move together, always. */
   const setDate = (iso: string) => {
@@ -212,6 +224,7 @@ export function ContractFill({
     if (loading || !contract || !editable || !usesDate || dateStamped) return;
     if ((values[UGC_DATE_KEY] ?? '') !== '') { setDateStamped(true); return; }
     setDateStamped(true);
+    if (!riyadhToday) return;   // not known until the effect above has run
     setDate(riyadhToday);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, contract, editable, usesDate, dateStamped, riyadhToday]);

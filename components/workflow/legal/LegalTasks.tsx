@@ -270,15 +270,32 @@ function NewTaskForm({
   const [clientId, setClientId] = useState<string | null>(null);
   const brands = useClientBrands(clientId);
 
-  const riyadhToday = useMemo(
-    () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
-    [],
-  );
-
   const [title, setTitle] = useState('');
   const [count, setCount] = useState('10');
   const [brand, setBrand] = useState('');
-  const [date, setDate] = useState(riyadhToday);
+  const [date, setDate] = useState('');
+
+  // The new task's date, Riyadh's rather than the browser's: a contract
+  // drafted at 1am in Jeddah is dated today there, not yesterday in UTC.
+  //
+  // Set in an effect, not in a useMemo. A useMemo with an empty dep list
+  // still runs during the FIRST render, which on Next.js is the SERVER, and
+  // that breaks this twice over:
+  //
+  //   * across midnight in Riyadh the server's answer and the browser's
+  //     differ, and this value is the date every contract in the task is
+  //     created with - which of the two wins would depend on render timing;
+  //   * `timeZone: 'Asia/Riyadh'` needs full ICU. A node build without it
+  //     does not throw, it quietly ignores the zone and returns UTC's day.
+  //
+  // In an effect it only ever runs in the browser, where the zone is real.
+  useEffect(() => {
+    const d = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
+    // Only seed the field while it is still untouched, so this can never
+    // overwrite a date somebody typed.
+    setDate((cur) => cur || d);
+  }, []);
+
   const [duration, setDuration] = useState('');
   const [price, setPrice] = useState('');
   const [adType, setAdType] = useState('');
