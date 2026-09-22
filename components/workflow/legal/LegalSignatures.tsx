@@ -8,8 +8,10 @@ import {
   externalState, externalBadge, externalLabel, externalNote,
   filterExternal, sortExternal, externalTally, validateExternalDoc,
   validateExternalFile, EXTERNAL_EXTENSIONS,
+  filingDeleteWarning,
 } from '@/lib/legal-external';
 import { AqDrawingBlock } from '@/components/AQLoading';
+import { ConfirmDelete } from '@/components/workflow/campaign/ui';
 
 /**
  * Signatures: what is out, what came back, and what was filed from outside.
@@ -44,6 +46,11 @@ export function LegalSignatures({ workspaceId }: { workspaceId?: string }) {
   const [kind, setKind] = useState('');
   const [adding, setAdding] = useState(false);
   const [err, setErr] = useState('');
+  // Was a window.confirm that named the filing but said nothing about the
+  // FILE - and the uploaded document is the part that cannot be recovered.
+  // Keyed by id, because this is a list: one panel, under the row it belongs
+  // to. See filingDeleteWarning.
+  const [confirmId, setConfirmId] = useState('');
 
   // Today as an ISO date, once, so every row on this render is judged against
   // the same day. Reading the clock per row is how a list sorted at midnight
@@ -164,8 +171,10 @@ export function LegalSignatures({ workspaceId }: { workspaceId?: string }) {
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
             {filed.slice(0, SHOW_MAX).map((d, i) => {
               const st = externalState(d, today);
+              // flexWrap so the confirm panel below can take a line of its
+              // own rather than being squeezed into the row.
               return (
-                <li key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 12,
+                <li key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                   padding: '9px 2px', borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)' }}>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span dir="auto" style={{ fontSize: 13.5, fontWeight: 600, display: 'block' }}>
@@ -181,12 +190,19 @@ export function LegalSignatures({ workspaceId }: { workspaceId?: string }) {
                     onClick={() => open(String(d.file_path), d.file_name)}>Open</button>
                   <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 8px' }}
                     title="Remove this filing and its document"
-                    onClick={async () => {
-                      if (!confirm(`Remove "${d.title}" and its document? This cannot be undone.`)) return;
-                      setErr('');
-                      try { await ext.remove(d); }
-                      catch (e: any) { setErr(e?.message ?? 'Could not remove it.'); }
-                    }}>&times;</button>
+                    onClick={() => setConfirmId(d.id)}>&times;</button>
+                  {confirmId === d.id && (
+                    <div style={{ flexBasis: '100%' }}>
+                      <ConfirmDelete message={filingDeleteWarning(d)} confirmLabel="Yes, remove it"
+                        onCancel={() => setConfirmId('')}
+                        onConfirm={async () => {
+                          setConfirmId('');
+                          setErr('');
+                          try { await ext.remove(d); }
+                          catch (e: any) { setErr(e?.message ?? 'Could not remove it.'); }
+                        }} />
+                    </div>
+                  )}
                 </li>
               );
             })}

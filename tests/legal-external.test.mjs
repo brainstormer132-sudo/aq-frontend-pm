@@ -19,6 +19,7 @@ import {
   validateExternalFile, validateExternalDoc, externalStoragePath,
   externalState, externalBadge, externalLabel, externalNote,
   filterExternal, sortExternal, externalTally, addDays,
+  filingDeleteWarning,
 } from '../.test-build/legal-external.js';
 
 let pass = 0, fail = 0;
@@ -174,6 +175,24 @@ eq('the line under the title says who and what',
   'Adex Tower \u00b7 Other \u00b7 lease.pdf (118 KB)');
 eq('with no other side it still says the kind and the file',
   externalNote(d({ kind: 'nda', file: 'nda.pdf' })), 'NDA \u00b7 nda.pdf');
+
+
+/* -- what it says before it removes a filing --------------------------- */
+// The native dialog did name the title, but said nothing about the FILE -
+// and the file is the part that cannot be recovered. A filing row can be
+// typed again in a minute; the signed PDF somebody uploaded cannot.
+{
+  const w = filingDeleteWarning({ title: 'NDA - Rabea', file_name: 'nda-rabea.pdf' });
+  ok('it names the filing', w.includes('"NDA - Rabea"'));
+  ok('and the file that goes with it', w.includes('nda-rabea.pdf'));
+  ok('and says it cannot be undone', w.includes('cannot be undone'));
+  // A filing with no upload must not promise to delete a file that is not there.
+  ok('no file, no sentence about one',
+    !filingDeleteWarning({ title: 'NDA' }).includes('uploaded file'));
+  ok('an unnamed filing still reads as a sentence',
+    filingDeleteWarning({}).startsWith('Remove this filing?'));
+  ok('and so does nothing at all', filingDeleteWarning(null).length > 15);
+}
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

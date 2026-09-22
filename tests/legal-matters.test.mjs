@@ -16,6 +16,7 @@ import {
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle, searchMatters,
   legalKpis, kpiBadge,
   isCollectionMatter, splitMatters, distinctParties,
+  matterDeleteWarning,
 } from '../.test-build/legal-matters.js';
 
 let pass = 0, fail = 0;
@@ -551,6 +552,34 @@ eq('bad is the error badge', kpiBadge('bad'), 'aq-badge-error');
 eq('warn is the warning badge', kpiBadge('warn'), 'aq-badge-warning');
 eq('good is the success badge', kpiBadge('good'), 'aq-badge-success');
 eq('plain is muted', kpiBadge('plain'), 'aq-badge-muted');
+
+
+/* -- what it says before it deletes a matter --------------------------- */
+// Siraj, on the native dialogs: "fix it". The old one was
+// `confirm('Delete this matter and its whole log?')` - which names nothing,
+// so on a screen with four matters open it is not a question anybody can
+// answer, and asked the same way every time it trains people to click
+// through it.
+{
+  const m = { title: 'Unpaid invoice 412', party_name: 'Rabea' };
+  const w = matterDeleteWarning(m, 6);
+  eq('it names the matter', w.includes('"Unpaid invoice 412"'), true);
+  eq('and who it is against', w.includes('Rabea'), true);
+  // The one consequence that is not obvious. The log is the record of what
+  // was said and when, which is the part somebody would actually miss.
+  eq('it counts the log entries going with it', w.includes('6 log entries'), true);
+  eq('and says it cannot be undone', w.includes('cannot be undone'), true);
+  eq('one entry is singular', matterDeleteWarning(m, 1).includes('1 log entry'), true);
+  eq('no count still warns about the log', matterDeleteWarning(m).includes('whole log'), true);
+  eq('and zero is not printed as a number', matterDeleteWarning(m, 0).includes('0 log'), false);
+  // A matter with nothing filled in still gets a sentence: a confirmation
+  // with no words in it is worse than the dialog it replaces.
+  eq('an unnamed matter still reads as a sentence',
+    matterDeleteWarning({}).startsWith('Delete this matter?'), true);
+  eq('and so does nothing at all', matterDeleteWarning(null).length > 20, true);
+  eq('no party, no dangling "against"',
+    matterDeleteWarning({ title: 'X' }).includes('against'), false);
+}
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

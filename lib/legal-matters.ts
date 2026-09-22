@@ -601,3 +601,33 @@ export function kpiBadge(tone: LegalKpi['tone']): string {
     : tone === 'warn' ? 'aq-badge-warning'
       : tone === 'good' ? 'aq-badge-success' : 'aq-badge-muted';
 }
+
+/**
+ * What the screen says before it deletes a matter.
+ *
+ * Siraj, on the native dialogs: "fix it". `confirm('Delete this matter and
+ * its whole log?')` names nothing - on a screen with four matters that is not
+ * a question anybody can answer - and a dialog asked the same way every time
+ * trains people to click through it.
+ *
+ * So: the matter's own title, who it is against, and the one consequence that
+ * is not obvious - the event log goes with it. A matter's log is the record of
+ * what was said and when, which is the part somebody would actually miss.
+ *
+ * Pure. Returns a sentence, never an empty string, because a confirmation
+ * with no words in it is worse than the dialog it replaces.
+ */
+export function matterDeleteWarning(
+  m: { title?: string | null; party_name?: string | null } | null | undefined,
+  events?: number | null,
+): string {
+  const title = String(m?.title ?? '').trim();
+  const party = String(m?.party_name ?? '').trim();
+  const named = title ? `"${title}"` : 'this matter';
+  const against = party ? ` against ${party}` : '';
+  const n = Math.max(0, Math.trunc(Number(events ?? 0)));
+  const log = n > 0
+    ? ` Its ${n} log entr${n === 1 ? 'y' : 'ies'} go with it.`
+    : ' Its whole log goes with it.';
+  return `Delete ${named}${against}?${log} This cannot be undone.`;
+}

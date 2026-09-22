@@ -844,3 +844,50 @@ export function OverridableMoney({
     </span>
   );
 }
+
+/**
+ * Delete, when there is no way back.
+ *
+ * The counterpart to UndoBar, and the choice between them is about the act,
+ * not the screen. An undo window suits something you do repeatedly and can
+ * take back - removing a booking, a draft, a task. THIS suits the one-off
+ * that cannot be taken back: a legal matter with its whole event log, a filed
+ * document and the file behind it.
+ *
+ * A four-second bar is the wrong instrument there, and so is `window.confirm`.
+ * A native dialog says "Delete this matter and its whole log?" with no name in
+ * it - on a screen with four matters open that is not a question anybody can
+ * answer - and it trains people to click through. This puts the name and the
+ * consequence in front of them, in the page, and makes "Keep it" the easy
+ * click.
+ *
+ * Lifted from the shape MarketingInbox has used since the triage work, so
+ * there are two patterns in the app rather than five.
+ */
+export function ConfirmDelete({ message, busy, onConfirm, onCancel, confirmLabel }: {
+  message: string;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  /** Defaults to "Yes, delete it". Say "Yes, remove it" where that reads better. */
+  confirmLabel?: string;
+}) {
+  return (
+    <div role="alertdialog" aria-label="Confirm delete" style={{
+      marginTop: 12, padding: '12px 14px', borderRadius: 'var(--aq-radius)',
+      background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)',
+    }}>
+      <p style={{ fontSize: 12.5, color: 'var(--aq-red-strong)', margin: 0, lineHeight: 1.5 }} dir="auto">
+        {message}
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button type="button" className="aq-btn" onClick={onConfirm} disabled={busy}
+          style={{ background: 'var(--aq-red)', color: '#fff', border: 'none', fontSize: 12.5 }}>
+          {busy ? 'Deleting…' : (confirmLabel || 'Yes, delete it')}
+        </button>
+        <button type="button" className="aq-btn aq-btn-secondary" onClick={onCancel} disabled={busy}
+          style={{ fontSize: 12.5 }}>Keep it</button>
+      </div>
+    </div>
+  );
+}

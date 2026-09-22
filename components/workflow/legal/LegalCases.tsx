@@ -13,8 +13,10 @@ import {
   partySearch, newMatterProblems, parseMatterAmount, defaultMatterTitle,
   legalKpis, kpiBadge, unhandledCount, splitMatters,
   type MatterSide, type MatterWarning, type PartyOption, type NewMatterDraft,
+  matterDeleteWarning,
 } from '@/lib/legal-matters';
 import { AqDrawingBlock } from '@/components/AQLoading';
+import { ConfirmDelete } from '@/components/workflow/campaign/ui';
 
 /**
  * The Legal Registry - Cases.
@@ -500,6 +502,11 @@ function MatterDetail({ matter, onClose, onStatus, onDelete }: {
   onDelete: () => Promise<void>;
 }) {
   const { events, loading, log } = useMatterEvents(matter?.id ?? null);
+  // Was `confirm('Delete this matter and its whole log?')`, which names
+  // nothing - on a screen with four matters open that is not a question
+  // anybody can answer. See ConfirmDelete, and matterDeleteWarning for the
+  // sentence it shows.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [kind, setKind] = useState('note');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -550,12 +557,21 @@ function MatterDetail({ matter, onClose, onStatus, onDelete }: {
             {MATTER_STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
           <span style={{ flex: 1 }} />
-          <button className="aq-btn aq-btn-ghost" disabled={busy}
-            onClick={async () => { if (confirm('Delete this matter and its whole log?')) await onDelete(); }}>
-            Delete
-          </button>
+          {!confirmDelete && (
+            <button className="aq-btn aq-btn-ghost" disabled={busy}
+              style={{ color: 'var(--aq-red)' }}
+              onClick={() => setConfirmDelete(true)}>
+              Delete
+            </button>
+          )}
           <button className="aq-btn aq-btn-ghost" onClick={onClose} disabled={busy}>Close</button>
         </div>
+
+        {confirmDelete && (
+          <ConfirmDelete message={matterDeleteWarning(matter, events.length)} busy={busy}
+            onCancel={() => setConfirmDelete(false)}
+            onConfirm={() => { setConfirmDelete(false); void onDelete(); }} />
+        )}
 
         <div style={{ marginTop: 18, borderTop: '1px solid var(--aq-border-light)', paddingTop: 14 }}>
           {/* .aq-input and .aq-select both carry width:100% in globals.css. In a

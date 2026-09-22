@@ -227,3 +227,23 @@ export function externalTally(rows: ExternalDoc[], todayStr: string): ExternalTa
   }
   return t;
 }
+
+/**
+ * What the screen says before it removes a filed document.
+ *
+ * The same reasoning as matterDeleteWarning: the native dialog did name the
+ * title, but it said nothing about the FILE - and the file is the part that
+ * cannot be recovered. A filing row can be typed again in a minute; the signed
+ * PDF somebody uploaded cannot.
+ *
+ * Pure.
+ */
+export function filingDeleteWarning(
+  d: { title?: string | null; file_name?: string | null } | null | undefined,
+): string {
+  const title = String(d?.title ?? '').trim();
+  const file = String(d?.file_name ?? '').trim();
+  const named = title ? `"${title}"` : 'this filing';
+  const withFile = file ? ` The uploaded file ${file} is deleted with it.` : '';
+  return `Remove ${named}?${withFile} This cannot be undone.`;
+}
