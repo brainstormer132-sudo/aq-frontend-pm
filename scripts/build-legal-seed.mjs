@@ -56,7 +56,7 @@ const ROOT = join(HERE, '..');
  * reasoning as v2: a published version is frozen, so the flags go on a new
  * version and every contract stamped to v2 keeps reading exactly as it does.
  */
-const VERSION = 4;
+const VERSION = 5;
 
 // One file per version. 105 is what prod ran for v1 and stays in the repo as
 // the record of it; a bumped VERSION writes its own file beside it.
@@ -120,11 +120,15 @@ const FIELDS = [
 //
 // The label is READ FROM THE HEADING BLOCK, never typed here - the Arabic
 // lives in contract-template-ar.js and crosses no console.
+// 1-BASED positions. v5 inserted the licences clause at position 23, so every
+// range below that point moved by one. The assertions under "attach the
+// optional flags" are what caught the drift - a range that no longer starts on
+// a heading throws rather than shipping a template with the wrong checkboxes.
 const OPTIONAL_SECTIONS = [
-  { group: 'terms',       from: 21, to: 26 },  // rabi'an: terms and conditions
-  { group: 'termination', from: 27, to: 35 },  // khamisan: ending / changing it
-  { group: 'notices',     from: 36, to: 37 },  // sadisan: notices
-  { group: 'disputes',    from: 38, to: 39 },  // sabi'an: disputes, Saudi courts
+  { group: 'terms',       from: 21, to: 27 },  // rabi'an: terms and conditions
+  { group: 'termination', from: 28, to: 36 },  // khamisan: ending / changing it
+  { group: 'notices',     from: 37, to: 38 },  // sadisan: notices
+  { group: 'disputes',    from: 39, to: 40 },  // sabi'an: disputes, Saudi courts
 ];
 
 // Standalone removable blocks: their own switch, no group. The fill screen
@@ -219,7 +223,9 @@ for (const pos of OPTIONAL_SINGLES) {
 }
 // The structural blocks must stay exactly that. Named rather than derived, so
 // widening a range into one of them is a build failure and not a surprise.
-const STRUCTURAL = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 40, 41, 42];
+// Also 1-based, and also shifted by v5's inserted clause: the closing three
+// (the two centred lines and the signature row) moved from 40-42 to 41-43.
+const STRUCTURAL = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 41, 42, 43];
 for (const pos of STRUCTURAL) {
   if (blocks[pos - 1].optional) {
     throw new Error(`block ${pos} is structural and must never be optional`);
@@ -256,6 +262,21 @@ const blockRows = blocks.map((b, i) =>
   `${b.optional ? 'true' : 'false'}, ${nq(b.optionalGroup ?? null)}, ${nq(b.optionalLabel ?? null)})`
 ).join(',\n');
 
+/**
+ * The same blocks again, as one jsonb array, so the seed can tell the
+ * difference between "already run" and "somebody else took this number".
+ *
+ * This is the v3 lesson in code. 109_ugc_template_v3.sql sat unrun for a day
+ * and could never have worked: the editor's publish-and-start-a-new-draft had
+ * already taken version 3, so the seed found a version, printed a cheerful
+ * "already exists - blocks left alone", and exited 0. A no-op that reports
+ * success is the worst kind of failure, because every gate after it passes.
+ *
+ * Now: same blocks -> notice, exit 0, genuinely idempotent. Different blocks
+ * -> raise, and nothing downstream runs.
+ */
+const expectedContent = q(JSON.stringify(blocks.map((b) => b.content)));
+
 const sql = `-- ============================================================
 -- ${basename(OUT)}   GENERATED - do not hand-edit.
 --   node scripts/build-legal-seed.mjs
@@ -290,6 +311,7 @@ declare
   v_ws  uuid := ${q(WORKSPACE)};
   v_tpl uuid;
   v_ver uuid;
+  v_have jsonb;
   n_arch integer;
 begin
   if not exists (select 1 from public.workspaces where id = v_ws) then
@@ -326,7 +348,15 @@ ${blockRows};
      where id = v_ver;
     raise notice 'seeded % blocks', ${blocks.length};
   else
-    raise notice 'version ${VERSION} already exists - blocks left alone';
+    -- Already there. Ours, or somebody else's? See expectedContent above.
+    select coalesce(jsonb_agg(content order by position), '[]'::jsonb)
+      into v_have
+      from legal.doc_template_block where version_id = v_ver;
+    if v_have is distinct from ${expectedContent}::jsonb then
+      raise exception 'version ${VERSION} already exists and is NOT this seed - % block(s) there, % here. Bump VERSION in scripts/build-legal-seed.mjs and rebuild; nothing was written.',
+        jsonb_array_length(v_have), ${blocks.length};
+    end if;
+    raise notice 'version ${VERSION} is already this exact seed - nothing to do';
   end if;
 
   -- 3. retire every other published vendor_contract -------------
