@@ -11,6 +11,7 @@ import {
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 /**
  * Documents: the editable templates, grouped by kind.
@@ -55,6 +56,7 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const { ask, dialog } = useConfirm();
   const [showRetired, setShowRetired] = useState(false);
   const [retiring, setRetiring] = useState('');
   const [retireErr, setRetireErr] = useState('');
@@ -62,7 +64,9 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
   /** Retire or restore one. The confirm is only on the way OUT: restoring is
    *  putting something back, and nothing needs permission to be undone. */
   const retire = async (t: LegalTemplateLite, archived: boolean) => {
-    if (archived && !confirm(archiveConfirm(t))) return;
+    if (archived && !await ask({
+      message: archiveConfirm(t), confirmLabel: 'Retire it', tone: 'danger',
+    })) return;
     setRetiring(t.id); setRetireErr('');
     try { await setArchived(t.id, archived); }
     catch (e: any) { setRetireErr(e?.message ?? 'Could not change that template.'); }
@@ -270,6 +274,7 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
           </div>
         </div>
       )}
+      {dialog}
     </div>
   );
 }

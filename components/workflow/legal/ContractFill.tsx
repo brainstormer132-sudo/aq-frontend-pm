@@ -41,6 +41,7 @@ import {
 } from '@/lib/legal';
 import { editTemplateWarning } from '@/lib/legal-doc-view';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { AqDrawingBlock } from '@/components/AQLoading';
 
 /**
@@ -89,6 +90,9 @@ export function ContractFill({
 
   /** Whether the template editor is open over this screen. See below. */
   const [editingTemplate, setEditingTemplate] = useState(false);
+
+  // The app's own dialog. Siraj, on Chrome's: "fix this add an actual thing".
+  const { ask, dialog } = useConfirm();
   const signBlocked = contract ? cannotFileSigned(contract as any) : 'No contract loaded.';
   const onFile = contract ? hasSignedCopy(contract as any) : false;
 
@@ -616,7 +620,10 @@ export function ContractFill({
               <button className="aq-btn aq-btn-ghost" disabled={filing}
                 title="Take the signed copy off. The contract goes back to issued."
                 onClick={async () => {
-                  if (!confirm('Remove the signed copy? The contract goes back to issued.')) return;
+                  if (!await ask({
+                    message: 'Remove the signed copy? The contract goes back to issued.',
+                    confirmLabel: 'Remove it', tone: 'danger',
+                  })) return;
                   setFiling(true); setSignErr('');
                   try { await removeSignedCopy(contract); await ed.reload(); }
                   catch (e: any) { setSignErr(e?.message ?? 'Could not remove it.'); }
@@ -776,12 +783,14 @@ export function ContractFill({
                   notices a sentence that needs fixing for the next one. */}
               <button className="aq-btn aq-btn-ghost" style={{ marginInlineStart: 'auto', fontSize: 12 }}
                 disabled={!contract}
-                onClick={() => {
+                onClick={async () => {
                   // No name: this screen knows the template's id, not its
-                  // title, and a second two-query hook for one word in a
-                  // confirm box is not worth the round trip. The editor
-                  // itself names it on the line above the document.
-                  if (!confirm(editTemplateWarning(null))) return;
+                  // title, and a second two-query hook for one word in the
+                  // dialog is not worth the round trip. The editor itself
+                  // names it on the line above the document.
+                  if (!await ask({
+                    message: editTemplateWarning(null), confirmLabel: 'Open the editor',
+                  })) return;
                   setEditingTemplate(true);
                 }}>Edit template</button>
             </div>
@@ -799,6 +808,7 @@ export function ContractFill({
         </div>
         </>
       )}
+      {dialog}
     </div>
   );
 }

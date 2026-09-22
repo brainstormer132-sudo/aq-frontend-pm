@@ -16,6 +16,7 @@ import {
   type DocSection,
 } from '@/lib/legal-doc-view';
 import { AqDrawingBlock } from '@/components/AQLoading';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { FieldsPanel } from '@/components/workflow/legal/FieldsPanel';
 
 /**
@@ -90,15 +91,43 @@ export function LegalEditor({
   const blocked = cannotPublish(blocks.length, unknown, !!editable);
   const note = unknownFieldsNote(unknown);
 
-  const doPublish = () => {
+  // The app's own dialog, not the browser's. Siraj, on Chrome's: "fix this
+  // add an actual thing". See components/ui/ConfirmDialog.
+  const { ask, dialog } = useConfirm();
+
+  const doPublish = async () => {
     if (!version) return;
-    if (!confirm(publishWarning(version.version, blocks.length))) return;
+    // Dangerous because it is the irreversible one on this screen: a
+    // published version can never be edited again. So the dialog opens on
+    // Cancel and the verb on the other button says what it does.
+    if (!await ask({
+      message: publishWarning(version.version, blocks.length),
+      confirmLabel: `Publish version ${version.version}`, tone: 'danger',
+    })) return;
     ed.publish();
   };
-  const doNewDraft = () => {
+  const doNewDraft = async () => {
     if (!version) return;
-    if (!confirm(newDraftWarning(version.version))) return;
+    if (!await ask({
+      message: newDraftWarning(version.version),
+      confirmLabel: `Start version ${version.version + 1}`,
+    })) return;
     ed.startNewDraft();
+  };
+
+  /* The two deletes used to ask inside the row that drew the button, which
+   * meant prop-drilling `ask` through two components. They ask here instead,
+   * where the action already lives: the row now just says what was clicked. */
+  const deleteHeading = async (id: string, title: string) => {
+    if (!await ask({
+      message: `Delete the heading "${title || 'untitled'}"? The lines under it stay.`,
+      confirmLabel: 'Delete the heading', tone: 'danger',
+    })) return;
+    ed.deleteBlock(id);
+  };
+  const deleteLine = async (id: string) => {
+    if (!await ask({ message: 'Delete this line?', tone: 'danger' })) return;
+    ed.deleteBlock(id);
   };
 
   return (
@@ -197,7 +226,8 @@ export function LegalEditor({
                   editingId={editingId} onEdit={setEditingId}
                   regFields={reg.placeholders}
                   onSave={ed.saveBlock}
-                  onDelete={ed.deleteBlock}
+                  onDeleteHeading={deleteHeading}
+                  onDeleteLine={deleteLine}
                   onToggleOptional={ed.setBlockOptional}
                   onAddAt={ed.addBlockAt}
                   onMoveSection={(d) => ed.reorder(moveSection(blocks, si, d))}
@@ -215,6 +245,7 @@ export function LegalEditor({
           </div>
         )}
       </div>
+      {dialog}
     </div>
   );
 }
@@ -223,7 +254,7 @@ export function LegalEditor({
 
 function SectionView({
   section, index, total, blocks, labels, dir, editable, busy, folded, onFold,
-  editingId, onEdit, regFields, onSave, onDelete, onToggleOptional, onAddAt,
+  editingId, onEdit, regFields, onSave, onDeleteHeading, onDeleteLine, onToggleOptional, onAddAt,
   onMoveSection, onMoveLine, registerInsert,
 }: {
   section: DocSection; index: number; total: number;
@@ -232,7 +263,8 @@ function SectionView({
   editingId: string | null; onEdit: (id: string | null) => void;
   regFields: Placeholder[];
   onSave: (id: string, c: Record<string, unknown>) => void;
-  onDelete: (id: string) => void;
+  onDeleteHeading: (id: string, title: string) => void;
+  onDeleteLine: (id: string) => void;
   onToggleOptional: (id: string, v: boolean) => void;
   onAddAt: (t: EditorBlockType, i: number) => void;
   onMoveSection: (d: -1 | 1) => void;
@@ -273,7 +305,7 @@ function SectionView({
               <OptionalToggle block={head} busy={busy} onToggle={onToggleOptional} />
               <button className="aq-btn aq-btn-ghost" disabled={busy}
                 title="Delete this heading" style={{ padding: '2px 7px' }}
-                onClick={() => { if (confirm(`Delete the heading "${blockText(head) || 'untitled'}"? The lines under it stay.`)) onDelete(head.id); }}>
+                onClick={() => onDeleteHeading(head.id, blockText(head))}>
                 &times;
               </button>
             </span>
@@ -289,7 +321,7 @@ function SectionView({
               <LineRow
                 block={b} labels={labels} dir={dir} editable={editable} busy={busy}
                 editing={editingId === b.id} onEdit={onEdit} regFields={regFields}
-                onSave={onSave} onDelete={onDelete} onToggleOptional={onToggleOptional}
+                onSave={onSave} onDelete={onDeleteLine} onToggleOptional={onToggleOptional}
                 canUp={i > 0} canDown={i < body.length - 1}
                 onMove={(d) => onMoveLine(b.id, d)}
                 registerInsert={registerInsert}
@@ -357,7 +389,7 @@ function LineRow({
           <OptionalToggle block={block} busy={busy} onToggle={onToggleOptional} />
           <button className="aq-btn aq-btn-ghost" disabled={busy} title="Delete this line"
             style={{ padding: '1px 6px' }}
-            onClick={() => { if (confirm('Delete this line?')) onDelete(block.id); }}>&times;</button>
+            onClick={() => onDelete(block.id)}>&times;</button>
         </span>
       )}
     </div>
