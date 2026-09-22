@@ -54,6 +54,108 @@ export interface LegalTemplateLite {
   /** Newest version's number and status, folded from doc_template_version. */
   latest_version?: number | null;
   latest_status?: VersionStatus | null;
+  /** When it was retired (119). Null means live. */
+  archived_at?: string | null;
+}
+
+/* -- retiring a template ------------------------------------------------ */
+
+/**
+ * Siraj: "also we cant delete any templates."
+ *
+ * He was right, and mostly not for the reason it looks like. There was no
+ * button - but a real delete cannot exist either: `legal.contract` holds
+ * `template_id` and `version_id` ON DELETE RESTRICT (100), and 098's freeze
+ * says in as many words that a published version "cannot be deleted, only
+ * archived". A template any contract was ever made from is permanent, and
+ * that permanence is what makes an issued contract's number and fingerprint
+ * mean anything.
+ *
+ * So the verb is RETIRE. Archiving changes what is OFFERED and nothing else:
+ * no version, no block and no issued contract is touched, and it can be
+ * undone. See migration 119 for why that is a column on the template rather
+ * than `status='archived'` on its versions.
+ */
+export interface ArchivableTemplate {
+  id: string;
+  name?: string | null;
+  archived_at?: string | null;
+}
+
+export function isArchivedTemplate(t: ArchivableTemplate | null | undefined): boolean {
+  return !!String(t?.archived_at ?? '').trim();
+}
+
+/**
+ * The live ones and the retired ones, in one pass, each keeping the order it
+ * came in. The screen groups each half by kind afterwards - splitting first
+ * is what stops a retired template appearing under a heading that counts it.
+ */
+export function splitTemplates<T extends ArchivableTemplate>(
+  ts: T[],
+): { active: T[]; archived: T[] } {
+  const active: T[] = [];
+  const archived: T[] = [];
+  for (const t of ts ?? []) {
+    if (isArchivedTemplate(t)) archived.push(t); else active.push(t);
+  }
+  return { active, archived };
+}
+
+/**
+ * Drop the versions whose template has been retired.
+ *
+ * The new-contract picker lists published VERSIONS, and the archive flag is
+ * on the TEMPLATE, so without this a retired template keeps being offered -
+ * which is the whole complaint. Pure, and takes the id set from the caller,
+ * because the picker already reads the templates for their names.
+ */
+export function withoutArchived<V extends { template_id: string }>(
+  versions: V[], archivedTemplateIds: Set<string> | null | undefined,
+): V[] {
+  if (!archivedTemplateIds || archivedTemplateIds.size === 0) return versions ?? [];
+  return (versions ?? []).filter((v) => !archivedTemplateIds.has(String(v?.template_id ?? '')));
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * "Retired 22 Sep 2026", or '' while it is live.
+ *
+ * Formatted by hand rather than through toLocaleDateString, twice over:
+ * node's ICU renders September as "Sept" and a browser's may render "Sep", so
+ * the same function gives two answers in the test and on the screen; and the
+ * locale one shifts the DAY across a timezone for a late-evening timestamp.
+ * The stored date is taken as written, like every other date on these screens.
+ */
+export function archivedNote(t: ArchivableTemplate | null | undefined): string {
+  const at = String(t?.archived_at ?? '').trim();
+  if (!at) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(at);
+  if (!m) return 'Retired';
+  const mon = MONTHS[Number(m[2]) - 1];
+  if (!mon) return 'Retired';
+  return `Retired ${Number(m[3])} ${mon} ${m[1]}`;
+}
+
+/** The drawer's own label, so the screen holds no counting logic. */
+export function archivedToggleLabel(n: number, showing: boolean): string {
+  const count = Math.max(0, Math.trunc(n));
+  if (count === 0) return '';
+  const what = `${count} retired template${count === 1 ? '' : 's'}`;
+  return showing ? `Hide ${what}` : `Show ${what}`;
+}
+
+/**
+ * What the confirm says. A SENTENCE rather than a boolean, because the one
+ * thing somebody needs to know before pressing this is that it is not a
+ * delete - and the second is that it is not a one-way door either.
+ */
+export function archiveConfirm(t: ArchivableTemplate | null | undefined): string {
+  const name = String(t?.name ?? '').trim() || 'this template';
+  return `Retire "${name}"? It leaves the Documents list and the new-contract picker.`
+    + ' Nothing already issued from it changes, and you can restore it.';
 }
 
 /**

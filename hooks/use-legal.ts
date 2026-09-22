@@ -19,6 +19,7 @@ import {
   defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
   contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
   OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks, TABLE_KEY_PREFIX,
+  withoutArchived,
 } from '@/lib/legal';
 import type { PrintContract, PrintBuild, FieldRow } from '@/lib/legal-bulk';
 import { chunk, versionIdsOf, buildPrintDocs } from '@/lib/legal-bulk';
@@ -67,7 +68,7 @@ export function useLegalTemplates(workspaceId: string | null) {
     if (!workspaceId) { setTemplates([]); setLoading(false); return; }
     setLoading(true); setError('');
     const { data: tpls, error: e1 } = await legal().from('doc_template')
-      .select('id, doc_kind, name, description, updated_at')
+      .select('id, doc_kind, name, description, updated_at, archived_at')
       .eq('workspace_id', workspaceId);
     if (e1) { setError(e1.message ?? String(e1)); setTemplates([]); setLoading(false); return; }
     const { data: vers } = await legal().from('doc_template_version')
@@ -80,6 +81,7 @@ export function useLegalTemplates(workspaceId: string | null) {
     }
     setTemplates(((tpls ?? []) as any[]).map((t) => ({
       id: t.id, doc_kind: t.doc_kind, name: t.name, description: t.description, updated_at: t.updated_at,
+      archived_at: t.archived_at ?? null,
       latest_version: byTpl.get(t.id)?.version ?? null,
       latest_status: byTpl.get(t.id)?.status ?? null,
     })));
@@ -104,7 +106,28 @@ export function useLegalTemplates(workspaceId: string | null) {
     return id;
   }, [workspaceId, fetchAll]);
 
-  return { templates, loading, error, refetch: fetchAll, createTemplate };
+  /**
+   * Retire a template, or bring it back (119).
+   *
+   * This writes ONE column on ONE row. It deliberately does not touch the
+   * template's versions: archiving a version is irreversible under the 098
+   * freeze, and a draft-only version cannot be archived at all. See the
+   * header of 119 for the whole argument.
+   *
+   * `archived_by` is written with the date and cleared with it, because the
+   * CHECK refuses one without the other.
+   */
+  const setArchived = useCallback(async (id: string, archived: boolean) => {
+    const sb = createClient() as unknown as SupabaseClient;
+    const { data: who } = await sb.auth.getUser();
+    const { error: e } = await legal().from('doc_template').update(archived
+      ? { archived_at: new Date().toISOString(), archived_by: who?.user?.id ?? null }
+      : { archived_at: null, archived_by: null }).eq('id', id);
+    if (e) throw e;
+    await fetchAll();
+  }, [fetchAll]);
+
+  return { templates, loading, error, refetch: fetchAll, createTemplate, setArchived };
 }
 
 export interface DocVersionLite {
@@ -423,11 +446,17 @@ export function usePublishedVersions(workspaceId: string | null) {
       .select('id, template_id, version, status').eq('workspace_id', workspaceId).eq('status', 'published');
     if (e1) { setError(e1.message ?? String(e1)); setVersions([]); setLoading(false); return; }
     const { data: tpls } = await c.from('doc_template')
-      .select('id, name, doc_kind').eq('workspace_id', workspaceId);
+      .select('id, name, doc_kind, archived_at').eq('workspace_id', workspaceId);
     const byId = new Map(((tpls ?? []) as any[]).map((t) => [t.id, t]));
+    // A retired template is not offered for a new contract (119). The flag is
+    // on the TEMPLATE and this read lists VERSIONS, so the filter has to
+    // happen here - without it, retiring one changes nothing on this screen,
+    // which is the complaint that started it.
+    const retired = new Set(((tpls ?? []) as any[])
+      .filter((t) => !!t.archived_at).map((t) => String(t.id)));
     // keep the highest published version per template
     const best = new Map<string, any>();
-    for (const v of (vers ?? []) as any[]) {
+    for (const v of withoutArchived((vers ?? []) as any[], retired)) {
       const cur = best.get(v.template_id);
       if (!cur || v.version > cur.version) best.set(v.template_id, v);
     }

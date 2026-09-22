@@ -16,6 +16,8 @@ import {
   tableRowSource, tableFieldRow, tableRowsFor, fillSegments, batchProgress,
   tableHasInvalidCell,
   optionalGroups, optionalGroupOn, toggleOptionalGroup,
+  isArchivedTemplate, splitTemplates, withoutArchived, archivedNote,
+  archivedToggleLabel, archiveConfirm,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -713,6 +715,87 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   // braces for a row written before it existed.
   eq('a blank group name is not a group',
     optionalGroups([blk('z', true, '   ')]).map((g) => g.key), ['z']);
+}
+
+/* -- retiring a template ---------------------------------------------- */
+//
+// Siraj: "also we cant delete any templates." A real delete cannot exist -
+// legal.contract holds template_id and version_id ON DELETE RESTRICT, and
+// 098's freeze refuses to delete a published version at all. So the verb is
+// retire, and what is worth protecting is that retiring changes what is
+// OFFERED and nothing else.
+
+{
+  const tpl = (o) => ({ id: o.id ?? 't1', name: o.name ?? 'UGC', archived_at: o.at ?? null });
+
+  eq('a live template is not archived', isArchivedTemplate(tpl({})), false);
+  eq('one with a date is', isArchivedTemplate(tpl({ at: '2026-09-22T10:00:00Z' })), true);
+  // Half a write, which the 119 CHECK refuses to store - but a blank string
+  // reaching the screen must not read as retired.
+  eq('a blank date is not archived', isArchivedTemplate(tpl({ at: '   ' })), false);
+  eq('nothing is not archived', isArchivedTemplate(null), false);
+
+  const rows = [
+    tpl({ id: 'a' }),
+    tpl({ id: 'b', at: '2026-09-01T00:00:00Z' }),
+    tpl({ id: 'c' }),
+    tpl({ id: 'd', at: '2026-09-02T00:00:00Z' }),
+  ];
+  const sp = splitTemplates(rows);
+  eq('the live ones keep their order', sp.active.map((t) => t.id), ['a', 'c']);
+  eq('and so do the retired ones', sp.archived.map((t) => t.id), ['b', 'd']);
+  eq('every template is in exactly one half', sp.active.length + sp.archived.length, rows.length);
+  eq('splitting does not mutate the input', rows.map((t) => t.id), ['a', 'b', 'c', 'd']);
+  eq('splitting nothing is two empty lists', splitTemplates([]), { active: [], archived: [] });
+}
+
+{
+  // THE COMPLAINT ITSELF: the picker lists published VERSIONS and the flag is
+  // on the TEMPLATE, so without this a retired template keeps being offered.
+  const vs = [
+    { version_id: 'v1', template_id: 'a' },
+    { version_id: 'v2', template_id: 'b' },
+    { version_id: 'v3', template_id: 'c' },
+  ];
+  eq('a retired template is not offered for a new contract',
+    withoutArchived(vs, new Set(['b'])).map((v) => v.version_id), ['v1', 'v3']);
+  eq('nothing retired changes nothing', withoutArchived(vs, new Set()).map((v) => v.version_id),
+    ['v1', 'v2', 'v3']);
+  eq('and neither does a missing set', withoutArchived(vs, null).length, 3);
+  eq('retiring everything leaves an empty picker',
+    withoutArchived(vs, new Set(['a', 'b', 'c'])), []);
+  eq('filtering does not mutate the input', vs.length, 3);
+}
+
+{
+  eq('a live template has no retired line', archivedNote({ id: 't', archived_at: null }), '');
+  eq('a retired one says when',
+    archivedNote({ id: 't', archived_at: '2026-09-22T10:00:00Z' }), 'Retired 22 Sep 2026');
+  // A date nobody can parse still has to say the thing that matters.
+  eq('an unreadable date still reads as retired',
+    archivedNote({ id: 't', archived_at: 'not a date' }), 'Retired');
+  eq('a nonsense month does not index off the end',
+    archivedNote({ id: 't', archived_at: '2026-13-01T00:00:00Z' }), 'Retired');
+  // Taken as written: a late-evening timestamp must not shift a day because
+  // of where the browser is, and node and a browser must agree on "Sep".
+  eq('a late-evening retirement is still that day',
+    archivedNote({ id: 't', archived_at: '2026-09-22T23:30:00Z' }), 'Retired 22 Sep 2026');
+  eq('a bare date works too', archivedNote({ id: 't', archived_at: '2026-01-05' }), 'Retired 5 Jan 2026');
+
+  eq('no retired templates means no drawer', archivedToggleLabel(0, false), '');
+  eq('one reads in the singular', archivedToggleLabel(1, false), 'Show 1 retired template');
+  eq('several do not', archivedToggleLabel(3, false), 'Show 3 retired templates');
+  eq('and the label flips when it is open', archivedToggleLabel(3, true), 'Hide 3 retired templates');
+  eq('a negative count is no drawer', archivedToggleLabel(-2, false), '');
+
+  // The confirm has to say the two things somebody needs before pressing it:
+  // that this is not a delete, and that it is not a one-way door.
+  const c = archiveConfirm({ id: 't', name: 'Rawad altathir UGC' });
+  ok('the confirm names the template', c.includes('Rawad altathir UGC'));
+  ok('it says nothing issued changes', c.includes('Nothing already issued'));
+  ok('and that it can be undone', c.includes('restore'));
+  ok('an unnamed template still gets a sentence',
+    archiveConfirm({ id: 't', name: '  ' }).includes('this template'));
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

@@ -6,7 +6,8 @@ import {
 } from '@/hooks/use-legal';
 import {
   DOC_KINDS, kindLabel, statusLabel, statusBadge, groupTemplatesByKind, validateNewTemplate,
-  type DocKind,
+  splitTemplates, archivedNote, archivedToggleLabel, archiveConfirm,
+  type DocKind, type LegalTemplateLite,
 } from '@/lib/legal';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
@@ -24,10 +25,29 @@ import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
  * fields", and any warnings. A parse can be subtly wrong, and the only moment
  * anybody will ever check is the moment before they press save. Nothing
  * reaches the database or the bucket until they do.
+ *
+ * -- RETIRE, NOT DELETE ----------------------------------------------
+ *
+ * Siraj: "also we cant delete any templates." There was no button, and there
+ * could not have been much of one: legal.contract holds template_id and
+ * version_id ON DELETE RESTRICT (100), and 098's freeze refuses to delete a
+ * published version at all. A template any contract was ever made from is
+ * permanent, and that permanence is what makes an issued contract's number
+ * and fingerprint mean anything.
+ *
+ * So Retire (119). It takes the template out of this list and out of the
+ * new-contract picker and changes nothing else - no version, no block, no
+ * issued contract - and Restore brings it back. The retired ones live in a
+ * drawer at the bottom rather than a separate screen, because "where did it
+ * go" is a question a drawer answers and a screen somebody has to be told
+ * about does not.
  */
 export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
-  const { templates, loading, error, createTemplate } = useLegalTemplates(workspaceId ?? null);
-  const groups = useMemo(() => groupTemplatesByKind(templates), [templates]);
+  const { templates, loading, error, createTemplate, setArchived } = useLegalTemplates(workspaceId ?? null);
+  // Split FIRST, then group each half. Grouping the whole list and filtering
+  // inside would leave a kind heading standing over nothing.
+  const split = useMemo(() => splitTemplates(templates), [templates]);
+  const groups = useMemo(() => groupTemplatesByKind(split.active), [split.active]);
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -35,6 +55,19 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [showRetired, setShowRetired] = useState(false);
+  const [retiring, setRetiring] = useState('');
+  const [retireErr, setRetireErr] = useState('');
+
+  /** Retire or restore one. The confirm is only on the way OUT: restoring is
+   *  putting something back, and nothing needs permission to be undone. */
+  const retire = async (t: LegalTemplateLite, archived: boolean) => {
+    if (archived && !confirm(archiveConfirm(t))) return;
+    setRetiring(t.id); setRetireErr('');
+    try { await setArchived(t.id, archived); }
+    catch (e: any) { setRetireErr(e?.message ?? 'Could not change that template.'); }
+    finally { setRetiring(''); }
+  };
 
   // The upload, in the order it happens: pick a file, read it, name it, save.
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -111,14 +144,19 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
       )}
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
+      {retireErr && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{retireErr}</div>}
 
       {loading ? (
         <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Loading templates\u2026'} /></div>
-      ) : templates.length === 0 ? (
+      ) : split.active.length === 0 ? (
         <div className="aq-card" style={{ padding: 28, textAlign: 'center' }}>
-          <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>No document templates yet.</p>
+          <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>
+            {split.archived.length ? 'Every template is retired.' : 'No document templates yet.'}
+          </p>
           <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 6 }}>
-            Create one to start - a vendor contract, an NDA, a client contract, or anything else.
+            {split.archived.length
+              ? 'Restore one from the drawer below, or start a new one.'
+              : 'Create one to start - a vendor contract, an NDA, a client contract, or anything else.'}
           </p>
         </div>
       ) : (
@@ -128,13 +166,16 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
               color: 'var(--aq-text-muted)', marginBottom: 10 }}>{g.label}</h3>
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
               {g.items.map((t, i) => (
-                <li key={t.id} role="button" tabIndex={0} onClick={() => setOpenId(t.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(t.id); } }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', cursor: 'pointer',
-                    borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
-                  }}>
-                  <span style={{ flex: 1, minWidth: 0 }}>
+                <li key={t.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+                }}>
+                  {/* The NAME opens the editor, not the whole row: a Retire
+                      button inside a clickable row is one mis-aimed click
+                      away from opening the thing you meant to put away. */}
+                  <span role="button" tabIndex={0} onClick={() => setOpenId(t.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(t.id); } }}
+                    style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
                     <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{t.name}</span>
                     {t.description ? (
                       <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>{t.description}</span>
@@ -144,12 +185,51 @@ export function LegalDocuments({ workspaceId }: { workspaceId?: string }) {
                     <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>v{t.latest_version}</span>
                   ) : null}
                   <span className={`aq-badge ${statusBadge(t.latest_status)}`}>{statusLabel(t.latest_status)}</span>
-                  <span style={{ fontSize: 14, color: 'var(--aq-text-muted)' }}>&rsaquo;</span>
+                  <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px', whiteSpace: 'nowrap' }}
+                    disabled={retiring === t.id} title="Take it out of this list and the new-contract picker"
+                    onClick={() => void retire(t, true)}>
+                    {retiring === t.id ? 'Retiring\u2026' : 'Retire'}
+                  </button>
+                  <span role="button" tabIndex={0} onClick={() => setOpenId(t.id)}
+                    style={{ fontSize: 14, color: 'var(--aq-text-muted)', cursor: 'pointer' }}>&rsaquo;</span>
                 </li>
               ))}
             </ul>
           </section>
         ))
+      )}
+
+      {/* The drawer. Not a separate screen: "where did it go" is a question a
+          drawer answers and a screen somebody has to be told about does not. */}
+      {!loading && split.archived.length > 0 && (
+        <section className="aq-card" style={{ padding: 18 }}>
+          <button className="aq-btn aq-btn-ghost" style={{ padding: 0 }}
+            onClick={() => setShowRetired((v) => !v)}>
+            {archivedToggleLabel(split.archived.length, showRetired)}
+          </button>
+          {showRetired && (
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', marginTop: 12 }}>
+              {split.archived.map((t, i) => (
+                <li key={t.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', opacity: 0.75,
+                  borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+                }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{t.name}</span>
+                    <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                      {kindLabel(t.doc_kind)}
+                      {archivedNote(t) ? ` \u00b7 ${archivedNote(t)}` : ''}
+                    </span>
+                  </span>
+                  <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px', whiteSpace: 'nowrap' }}
+                    disabled={retiring === t.id} onClick={() => void retire(t, false)}>
+                    {retiring === t.id ? 'Restoring\u2026' : 'Restore'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       {parsed && (
