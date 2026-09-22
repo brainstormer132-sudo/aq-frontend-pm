@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useContractBatches, useBatchContracts, useClientBrands,
-  useLegalPlaceholders, useManagedLists,
+  useLegalPlaceholders, useManagedLists, useDeletedBatches,
 } from '@/hooks/use-legal';
 import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import { ContractFill, MultiChoice } from '@/components/workflow/legal/ContractFill';
 import {
   batchProgress, contractStatusLabel, contractStatusBadge, sortListValues, taskReference,
+  recoveryLabel, recoveryUrgent,
 } from '@/lib/legal';
 import {
   startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
@@ -44,7 +45,7 @@ import { AqDrawingBlock } from '@/components/AQLoading';
  */
 export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
   const ws = workspaceId ?? null;
-  const { batches, loading, error, busy, create, addMore, remove } = useContractBatches(ws);
+  const { batches, loading, error, busy, create, addMore, remove, reload } = useContractBatches(ws);
   const [openBatch, setOpenBatch] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
@@ -85,6 +86,15 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
 
   const hidden = pendingIds(pending);
   const shown = batches.filter((b) => !hidden.has(b.id));
+
+  /* -- The bin (migration 120) ---------------------------------------
+   *
+   * A deleted task comes back for thirty days. Loaded only when the drawer
+   * is opened: the bin is looked at rarely, and fetching it on every visit
+   * to Tasks would spend a round trip on something nobody asked for. */
+  const bin = useDeletedBatches(ws);
+  const [binOpen, setBinOpen] = useState(false);
+  useEffect(() => { if (binOpen) void bin.reload(); }, [binOpen]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (openBatch) {
     const b = batches.find((x) => x.id === openBatch) ?? null;
@@ -172,6 +182,63 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
           </ul>
         </section>
       )}
+
+      {/* The bin. A link rather than a section, because an empty recycle bin
+          taking up a card is a screen telling you about itself. */}
+      <div>
+        <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 8px', fontSize: 12.5 }}
+          onClick={() => setBinOpen((v) => !v)}>
+          {binOpen ? 'Hide recently deleted' : 'Recently deleted'}
+        </button>
+        {binOpen && (
+          <section className="aq-card" style={{ padding: 16, marginTop: 8 }}>
+            <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginBottom: 10 }}>
+              A deleted task is kept for 30 days, then removed for good. Its contracts
+              stay in the Register either way.
+            </p>
+            {bin.error && (
+              <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 9, marginBottom: 10 }}>
+                {bin.error}
+              </div>
+            )}
+            {bin.loading ? (
+              <AqDrawingBlock label={'Loading\u2026'} />
+            ) : bin.rows.length === 0 ? (
+              <p style={{ fontSize: 13, color: 'var(--aq-text-secondary)' }}>Nothing deleted recently.</p>
+            ) : (
+              <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
+                {bin.rows.map((d, i) => (
+                  <li key={d.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '9px 2px',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
+                  }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span dir="auto" style={{ fontSize: 13.5, fontWeight: 600, display: 'block' }}>
+                        {d.title}
+                      </span>
+                      <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                        <code style={{ direction: 'ltr', fontSize: 11.5 }}>{taskReference(d)}</code>
+                        {' \u00b7 '}
+                        {d.contracts} contract{d.contracts === 1 ? '' : 's'}
+                        {d.deleted_by_name ? <> {'\u00b7'} deleted by <span dir="auto">{d.deleted_by_name}</span></> : null}
+                      </span>
+                    </span>
+                    {/* tabular-nums so a countdown does not jitter as it ticks. */}
+                    <span style={{
+                      fontSize: 12, fontVariantNumeric: 'tabular-nums',
+                      color: recoveryUrgent(d.days_left) ? 'var(--aq-red)' : 'var(--aq-text-muted)',
+                    }}>{recoveryLabel(d.days_left)}</span>
+                    <button className="aq-btn aq-btn-secondary" style={{ padding: '4px 10px', fontSize: 12.5 }}
+                      onClick={async () => { await bin.restore(d.id); await reload(); }}>
+                      Bring it back
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+      </div>
     </div>
   );
 }

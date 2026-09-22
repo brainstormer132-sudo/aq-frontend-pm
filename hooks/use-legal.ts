@@ -13,7 +13,7 @@ import { stampContractNumber } from '@/lib/legal-prefill';
 import type {
   DocKind, LegalTemplateLite, VersionStatus, EditorBlockType, TemplateBlock, Placeholder,
   Dept, ManagedList, ManagedListValue, FieldDef, Contract, ContractStatus,
-  ContractBatch, ContractBatchLite,
+  ContractBatch, ContractBatchLite, DeletedBatch,
 } from '@/lib/legal';
 import {
   defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
@@ -677,15 +677,63 @@ export function useContractBatches(workspaceId: string | null) {
     await load();
   });
 
-  /** Delete the task. The contracts survive; they stop being grouped
-   *  (ON DELETE SET NULL, migration 112). */
+  /**
+   * Send the task to the bin. It comes back for thirty days (migration 120).
+   *
+   * Was a hard `delete`, which took the grouping with it the moment somebody
+   * clicked the cross: legal.contract.batch_id is ON DELETE SET NULL, so the
+   * contracts survived but stopped being grouped, permanently. The soft
+   * delete keeps the batch row, so the grouping is still there if it is
+   * restored; the contracts ungroup at purge instead, thirty days later.
+   */
   const remove = (batchId: string) => run(async () => {
-    const { error: e } = await legal().from('contract_batch').delete().eq('id', batchId);
+    const { error: e } = await legal().rpc('soft_delete_batch', { p_batch_id: batchId });
     if (e) throw e;
     await load();
   });
 
   return { batches, loading, error, busy, reload: load, create, addMore, remove };
+}
+
+/**
+ * The tasks in the bin, and the way back out.
+ *
+ * Read through an RPC rather than a table select, because the 120 policy
+ * hides exactly these rows from an ordinary read - which is the point. A
+ * screen that forgets `.is('deleted_at', null)` cannot show a deleted task as
+ * live, because it cannot see one at all.
+ *
+ * Deliberately NOT loaded with the main list: the bin is opened rarely, and
+ * fetching it on every visit to Tasks would spend a round trip on something
+ * nobody asked for. The caller loads it when the drawer opens.
+ */
+export function useDeletedBatches(workspaceId: string | null) {
+  const [rows, setRows] = useState<DeletedBatch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId) { setRows([]); return; }
+    setLoading(true); setError('');
+    const { data, error: e } = await legal().rpc('deleted_batches', { p_workspace_id: workspaceId });
+    if (e) { setError(e.message ?? String(e)); setRows([]); }
+    else setRows((data ?? []) as DeletedBatch[]);
+    setLoading(false);
+  }, [workspaceId]);
+
+  const restore = useCallback(async (batchId: string) => {
+    setError('');
+    const { data, error: e } = await legal().rpc('restore_batch', { p_batch_id: batchId });
+    if (e) { setError(e.message ?? String(e)); throw e; }
+    // 0 rows means somebody else brought it back, or its thirty days are up.
+    // Saying so is better than a silent no-op that looks like a broken button.
+    if (Number(data ?? 0) === 0) {
+      setError('Nothing to bring back - it may have been restored already, or its 30 days may be up.');
+    }
+    await load();
+  }, [load]);
+
+  return { rows, loading, error, reload: load, restore };
 }
 
 /** The contracts in one task, with each one's vendor name folded in. */

@@ -651,6 +651,54 @@ export interface ContractBatchLite extends ContractBatch {
 }
 
 /**
+ * A task in the recycle bin (migration 120).
+ *
+ * Shaped by what the bin screen has to decide with, and nothing more - in
+ * particular `contracts`, because "bring back 12 contracts" is a different
+ * decision from "bring back an empty task".
+ */
+export interface DeletedBatch {
+  id: string;
+  title: string;
+  deleted_at: string;
+  deleted_by?: string | null;
+  deleted_by_name?: string | null;
+  contracts: number;
+  days_left: number;
+}
+
+/**
+ * How long a binned task has left, in words.
+ *
+ * Lifted out of SettingsView, where the PM bin formats the same thing inline
+ * in its JSX. A countdown is arithmetic with an off-by-one in it - "1 days
+ * left", or "0 days left" on the day it goes - and arithmetic in a template
+ * is arithmetic nobody tests.
+ *
+ * `gone today` rather than "0 days left", because zero days is not a
+ * quantity anybody acts on and "today" is.
+ */
+export function recoveryLabel(daysLeft: number): string {
+  const n = Math.max(0, Math.trunc(Number(daysLeft) || 0));
+  if (n === 0) return 'gone today';
+  return `${n} day${n === 1 ? '' : 's'} left`;
+}
+
+/**
+ * When the countdown should read as urgent.
+ *
+ * Seven days, which is the threshold the PM bin already uses - and, as it
+ * turns out, the number Siraj remembered as the window itself when he asked
+ * for this ("any deleted tasks stays for 7 days"). The window is thirty; the
+ * red is at seven.
+ */
+export const RECOVERY_URGENT_DAYS = 7;
+
+export function recoveryUrgent(daysLeft: number): boolean {
+  return Math.max(0, Math.trunc(Number(daysLeft) || 0)) <= RECOVERY_URGENT_DAYS;
+}
+
+/**
  * How a task's list row reads: "12 contracts - 5 still need a vendor".
  *
  * Says the work left rather than the work done, because the reason to open a

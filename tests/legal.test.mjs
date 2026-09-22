@@ -19,6 +19,7 @@ import {
   isArchivedTemplate, splitTemplates, withoutArchived, archivedNote,
   archivedToggleLabel, archiveConfirm,
   bulletText, BULLET, shortContractId, printCss,
+  recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
 } from '../.test-build/legal.js';
 
 let pass = 0, fail = 0;
@@ -947,6 +948,43 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   ok('and that it can be undone', c.includes('restore'));
   ok('an unnamed template still gets a sentence',
     archiveConfirm({ id: 't', name: '  ' }).includes('this template'));
+}
+
+
+/* -- how long a binned task has left ----------------------------------- */
+// Lifted out of SettingsView, where the PM bin formats the same thing inline
+// in its JSX. A countdown is arithmetic with an off-by-one in it, and
+// arithmetic in a template is arithmetic nobody tests.
+{
+  eq('the ordinary case', recoveryLabel(12), '12 days left');
+  eq('one day is singular', recoveryLabel(1), '1 day left');
+  // Zero days is not a quantity anybody acts on. "Today" is.
+  eq('the last day says today', recoveryLabel(0), 'gone today');
+  eq('and so does anything past it', recoveryLabel(-3), 'gone today');
+  eq('a fraction does not leak into the words', recoveryLabel(2.7), '2 days left');
+  eq('nonsense reads as today rather than NaN', recoveryLabel(null), 'gone today');
+
+  // The red threshold is SEVEN, and the window is THIRTY. Worth pinning
+  // both: Siraj asked for "deleted tasks stay for 7 days", which is the
+  // threshold he was remembering, not the window.
+  eq('the urgent threshold is seven', RECOVERY_URGENT_DAYS, 7);
+  eq('a week out is urgent', recoveryUrgent(7), true);
+  eq('eight days is not', recoveryUrgent(8), false);
+  eq('and the last day certainly is', recoveryUrgent(0), true);
+}
+
+/* -- what identifies a task on screen ---------------------------------- */
+// Siraj: "the task should have an id these all look terrible and thrown
+// around". A batch has no number of its own, so this is the contract's own
+// short form - an id quoted off a task and one quoted off a contract should
+// look like the same kind of thing.
+{
+  eq('a task reads like a contract id',
+    taskReference({ id: '9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01' }), '9AE8D2BA');
+  eq('and agrees with the printed one',
+    taskReference({ id: '9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01' }),
+    shortContractId('9ae8d2ba-4c11-42f7-9a30-1d5e6b2c8f01'));
+  eq('no id, nothing to render', taskReference({}), '');
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
