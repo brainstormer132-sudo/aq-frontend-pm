@@ -538,6 +538,41 @@ export function usePublishedVersions(workspaceId: string | null) {
   return { versions, loading, error, reload: load };
 }
 
+/**
+ * One version's blocks, in document order, for a screen that is not editing
+ * it: the New-task form, which needs them only to know what the optional
+ * clauses ARE before a single contract exists.
+ *
+ * Deliberately not useDocEditor: that one is keyed on the TEMPLATE and always
+ * opens its newest version, draft included. This has to read the exact
+ * published version the task will be stamped to, or the block ids it hands
+ * back name clauses in a document nobody is signing.
+ *
+ * Not paged, and the paging suite agrees: this is narrowed to ONE parent row
+ * (`.eq('version_id', ...)`), not a workspace-wide read. A version's blocks
+ * are its whole document - forty-three of them today - and useContractEditor
+ * reads them exactly this way for the same reason.
+ */
+export function useVersionBlocks(workspaceId: string | null, versionId: string | null) {
+  const [blocks, setBlocks] = useState<TemplateBlock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspaceId || !versionId) { setBlocks([]); setLoading(false); return; }
+    setLoading(true); setError('');
+    const { data, error: e } = await legal().from('doc_template_block')
+      .select('id, version_id, workspace_id, position, block_type, content, optional, optional_group, optional_label, condition, clause_id')
+      .eq('version_id', versionId).order('position');
+    if (e) { setError(e.message ?? String(e)); setBlocks([]); setLoading(false); return; }
+    setBlocks(((data ?? []) as any[]) as TemplateBlock[]);
+    setLoading(false);
+  }, [workspaceId, versionId]);
+
+  useEffect(() => { void load(); }, [load]);
+  return { blocks, loading, error, reload: load };
+}
+
 export type ContractRow = Contract & { template_name: string; doc_kind: DocKind };
 
 /**
@@ -683,12 +718,25 @@ export function useContractBatches(workspaceId: string | null) {
     finally { setBusy(false); }
   };
 
-  /** Create a task and its first N contracts. Returns the batch id. */
-  const create = (title: string, count: number, shared: Record<string, string>) =>
+  /**
+   * Create a task and its first N contracts. Returns the batch id.
+   *
+   * `versionId` is the template version the New-task form was looking at when
+   * it drew the optional-clause checkboxes. It matters because the choice is
+   * stored as BLOCK IDS, and a block id only means something inside the
+   * version it belongs to. Left out, create_contract_batch resolves the
+   * published vendor-contract version itself - the same rule, run twice, and
+   * two answers that agree today is not the same as two answers that cannot
+   * disagree. Passing it makes the contracts carry the document the operator
+   * actually ticked.
+   */
+  const create = (title: string, count: number, shared: Record<string, string>,
+    versionId?: string | null) =>
     run(async () => {
       if (!workspaceId) throw new Error('No workspace selected.');
       const { data, error: e } = await legal().rpc('create_contract_batch', {
         p_workspace_id: workspaceId, p_title: title.trim(), p_count: count, p_shared: shared,
+        p_version_id: versionId ?? null,
       });
       if (e) throw e;
       await load();

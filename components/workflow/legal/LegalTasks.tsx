@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useContractBatches, useBatchContracts, useClientBrands,
   useLegalPlaceholders, useManagedLists, useDeletedBatches,
+  usePublishedVersions, useVersionBlocks,
 } from '@/hooks/use-legal';
 import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
@@ -11,6 +12,8 @@ import { ContractFill, MultiChoice } from '@/components/workflow/legal/ContractF
 import {
   batchProgress, contractStatusLabel, contractStatusBadge, sortListValues, taskReference,
   recoveryLabel, recoveryUrgent, cappedList, LIST_SHOW_MAX,
+  optionalGroups, optionalGroupOn, toggleOptionalGroup, serializeOffIds, parseOffIds,
+  clauseChoiceSummary, blockAllText, OPT_OFF_KEY,
 } from '@/lib/legal';
 import {
   startPending, cancelPending, tickPending, flushPending, removedLabel, pendingIds,
@@ -104,7 +107,7 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
     const b = batches.find((x) => x.id === openBatch) ?? null;
     return (
       <TaskDetail workspaceId={ws} batchId={openBatch} title={b?.title ?? 'Task'}
-        shared={b?.shared ?? {}} busy={busy}
+        shared={b?.shared ?? {}} versionId={b?.version_id ?? null} busy={busy}
         onAddMore={(n) => addMore(openBatch, n)}
         onBack={() => setOpenBatch(null)} />
     );
@@ -125,8 +128,8 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
       {formOpen && (
         <NewTaskForm workspaceId={ws} busy={busy}
           onCancel={() => setFormOpen(false)}
-          onCreate={async (title, count, shared) => {
-            const id = await create(title, count, shared);
+          onCreate={async (title, count, shared, versionId) => {
+            const id = await create(title, count, shared, versionId);
             setFormOpen(false);
             setOpenBatch(id);
           }} />
@@ -262,7 +265,8 @@ function NewTaskForm({
   workspaceId: string | null;
   busy: boolean;
   onCancel: () => void;
-  onCreate: (title: string, count: number, shared: Record<string, string>) => Promise<void>;
+  onCreate: (title: string, count: number, shared: Record<string, string>,
+    versionId: string | null) => Promise<void>;
 }) {
   const reg = useLegalPlaceholders(workspaceId);
   const lists = useManagedLists(workspaceId);
@@ -302,6 +306,38 @@ function NewTaskForm({
   const [platform, setPlatform] = useState('');
   const [err, setErr] = useState('');
 
+  // ---- the optional clauses, decided once for the whole task ----------
+  //
+  // Siraj: "and it only saves for that task not all task all task uses
+  // default". It did save - into the CONTRACT, which meant re-ticking the
+  // same clause on every one of ninety-nine vendors, and a new task starting
+  // from the template's defaults again. The decision belongs to the job, so
+  // it is asked here and copied onto every contract the task raises
+  // (create_contract_batch, migration 112, copies each shared key into
+  // contract_field). A later tick on one contract still wins for that
+  // contract - the copy happens once, at creation, and never again.
+  //
+  // WHICH VERSION. The choice is stored as block ids, and a block id means
+  // nothing outside the version it belongs to. So the form resolves the
+  // published vendor-contract version itself, draws the switches from THAT
+  // version's blocks, and passes the same version id to create - rather than
+  // letting the RPC resolve it a second time and hoping the two agree.
+  const pub = usePublishedVersions(workspaceId);
+  const vendorVersions = useMemo(
+    () => pub.versions.filter((v) => v.doc_kind === 'vendor_contract'),
+    [pub.versions],
+  );
+  // Exactly one, or none. Two published vendor-contract templates is a state
+  // create_contract_batch refuses outright, and guessing which one somebody
+  // meant is how a task gets raised on the wrong document.
+  const versionId = vendorVersions.length === 1 ? vendorVersions[0].version_id : null;
+  const tpl = useVersionBlocks(workspaceId, versionId);
+  const optGroups = useMemo(() => optionalGroups(tpl.blocks), [tpl.blocks]);
+  const [offIds, setOffIds] = useState<string[]>([]);
+  // A version change resets the ticks rather than carrying ids across: the
+  // old ids name blocks in a document this task is not being raised on.
+  useEffect(() => { setOffIds([]); }, [versionId]);
+
   const optionsFor = (key: string) => {
     const f = reg.placeholders.find((p) => p.key === key);
     if (!f?.list_id) return [];
@@ -331,8 +367,12 @@ function NewTaskForm({
       Amount_full: money,
       [UGC_AD_TYPE_KEY]: adType,
       [UGC_PLATFORM_KEY]: platform,
+      // Empty means every clause is in, and 112 skips empty shared values, so
+      // "all included" writes no row at all - which is exactly what no row
+      // has always meant.
+      [OPT_OFF_KEY]: serializeOffIds(offIds),
     };
-    try { await onCreate(title, Math.round(n), shared); }
+    try { await onCreate(title, Math.round(n), shared, versionId); }
     catch { /* the hook surfaces it */ }
   };
 
@@ -441,6 +481,45 @@ function NewTaskForm({
         </div>
       </div>
 
+      {optGroups.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Optional clauses</div>
+          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginBottom: 6 }}>
+            Ticked clauses go into every contract this task makes. Untick one here and
+            you do not have to untick it again on each vendor - and a single contract can
+            still be changed on its own afterwards.
+          </div>
+          <div className="aq-card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {optGroups.map((g) => {
+              const included = optionalGroupOn(g, offIds);
+              // A section shows its heading; a lone clause shows its own first
+              // ninety characters. Same fallback the fill screen uses, so the
+              // two lists cannot come to read differently.
+              const first = tpl.blocks.find((b) => b.id === g.firstId);
+              const text = g.label
+                || (first ? blockAllText(first).slice(0, 90) : '')
+                || '(empty clause)';
+              return (
+                <label key={g.key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
+                  opacity: included ? 1 : 0.55, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={included} style={{ marginTop: 3 }}
+                    onChange={() => setOffIds(toggleOptionalGroup(g, offIds, !included))} />
+                  <span dir="auto" style={{ fontSize: 12.5, minWidth: 0 }}>
+                    {text}
+                    {g.ids.length > 1 && (
+                      <span style={{ color: 'var(--aq-text-muted)' }}> {'\u00b7'} {g.ids.length} blocks</span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--aq-text-muted)', marginTop: 6 }}>
+            {clauseChoiceSummary(optGroups, offIds)}
+          </div>
+        </div>
+      )}
+
       {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{err}</div>}
 
       <div style={{ display: 'flex', gap: 8 }}>
@@ -455,17 +534,27 @@ function NewTaskForm({
 
 /** One task: its contracts, one line each, click to fill one in. */
 function TaskDetail({
-  workspaceId, batchId, title, shared, busy, onAddMore, onBack,
+  workspaceId, batchId, title, shared, versionId, busy, onAddMore, onBack,
 }: {
   workspaceId: string | null;
   batchId: string;
   title: string;
   shared: Record<string, string>;
+  versionId: string | null;
   busy: boolean;
   onAddMore: (n: number) => Promise<void>;
   onBack: () => void;
 }) {
   const { rows, loading, error, reload } = useBatchContracts(workspaceId, batchId);
+  // The clause choice, read back. Its stored form is block ids, which say
+  // nothing on their own - the version's blocks are what turn them into the
+  // names of clauses. Same version the task was stamped to, so the ids can
+  // only resolve against the document they were ticked on.
+  const tpl = useVersionBlocks(workspaceId, versionId);
+  const clauses = useMemo(
+    () => clauseChoiceSummary(optionalGroups(tpl.blocks), parseOffIds(shared[OPT_OFF_KEY])),
+    [tpl.blocks, shared],
+  );
   const { vendors } = useLegacyVendors();
   const [openContract, setOpenContract] = useState<string | null>(null);
   const [more, setMore] = useState('5');
@@ -499,6 +588,7 @@ function TaskDetail({
         <Term label="Price" value={shared.Amount_full} />
         <Term label="Platform" value={shared[UGC_PLATFORM_KEY]} />
         <Term label="Ad type" value={shared[UGC_AD_TYPE_KEY]} />
+        {clauses ? <Term label="Clauses" value={clauses} /> : null}
       </section>
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}

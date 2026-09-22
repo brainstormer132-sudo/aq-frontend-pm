@@ -970,6 +970,37 @@ export function toggleOptionalGroup(
   return [...off];
 }
 
+/**
+ * One line saying what the switches add up to, for a screen that shows the
+ * choice rather than offering it: the task card, and the New-task form's own
+ * summary under the checkboxes.
+ *
+ * Siraj: "it only saves for that task not all task all task uses default" -
+ * so the choice is now made once on the task and carried onto every contract
+ * it raises. A choice made in one place and spent in another has to be
+ * readable back, or nobody trusts it.
+ *
+ * GROUPED BEFORE IT IS CAPPED. Three names and a count, never a list of
+ * twelve: "4 of 9 excluded: Bank details, Exclusivity, Usage and 1 more."
+ * The count covers the ones past three AND the ones with no heading, so the
+ * number after "of" and the names can never disagree about how many there
+ * are. Pure.
+ */
+export function clauseChoiceSummary(groups: OptionalGroup[], offIds: string[]): string {
+  if (!groups.length) return '';
+  const off = groups.filter((g) => !optionalGroupOn(g, offIds));
+  if (!off.length) {
+    return `All ${groups.length} optional clause${groups.length === 1 ? '' : 's'} included.`;
+  }
+  const head = `${off.length} of ${groups.length} excluded`;
+  const names = off.map((g) => String(g.label ?? '').trim()).filter(Boolean).slice(0, 3);
+  if (!names.length) return `${head}.`;
+  const rest = off.length - names.length;
+  return rest > 0
+    ? `${head}: ${names.join(', ')} and ${rest} more.`
+    : `${head}: ${names.join(', ')}.`;
+}
+
 /** The block ids switched OFF, parsed from the reserved field's CSV value. */
 export function parseOffIds(csv: string | null | undefined): string[] {
   return String(csv ?? '').split(',').map((s) => s.trim()).filter(Boolean);

@@ -15,7 +15,7 @@ import {
   TABLE_KEY_PREFIX, tableKey, tableColumns, tableColumnFields, parseTableRows, serializeTableRows, emptyTableRow,
   tableRowSource, tableFieldRow, tableRowsFor, fillSegments, batchProgress,
   tableHasInvalidCell,
-  optionalGroups, optionalGroupOn, toggleOptionalGroup,
+  optionalGroups, optionalGroupOn, toggleOptionalGroup, clauseChoiceSummary,
   isArchivedTemplate, splitTemplates, withoutArchived, archivedNote,
   archivedToggleLabel, archiveConfirm,
   bulletText, BULLET, shortContractId, printCss,
@@ -868,6 +868,43 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   // braces for a row written before it existed.
   eq('a blank group name is not a group',
     optionalGroups([blk('z', true, '   ')]).map((g) => g.key), ['z']);
+
+  // ---- reading the choice back --------------------------------------
+  //
+  // The choice is made on the task now and spent on every contract it makes,
+  // so the two screens that only SHOW it need one line of prose. What is
+  // worth protecting: the number after "of" and the names after the colon
+  // can never disagree about how many clauses are off.
+  eq('nothing optional, nothing to say', clauseChoiceSummary([], []), '');
+  eq('all on says so, and counts', clauseChoiceSummary(gs, []),
+    'All 3 optional clauses included.');
+  eq('one switch is singular',
+    clauseChoiceSummary(optionalGroups([blk('only', true, 'g', 'Bank details')]), []),
+    'All 1 optional clause included.');
+  eq('one off names it', clauseChoiceSummary(gs, off1),
+    '1 of 3 excluded: Fourth: terms.');
+  eq('two off name both',
+    clauseChoiceSummary(gs, [...off1, 'b36', 'b37']),
+    '2 of 3 excluded: Fourth: terms, Sixth: notices.');
+  // A lone block has no heading. It still COUNTS - "1 of 3" with no name is
+  // right, "nothing excluded" would be a lie.
+  eq('an unlabelled switch counts without naming itself',
+    clauseChoiceSummary(gs, ['b15']), '1 of 3 excluded.');
+  eq('and rides in the count beside the ones that do have names',
+    clauseChoiceSummary(gs, ['b15', ...off1]),
+    '2 of 3 excluded: Fourth: terms and 1 more.');
+
+  {
+    // Group before you cap: three names and a number, never a paragraph.
+    const many = optionalGroups(['a', 'b', 'c', 'd', 'e'].map(
+      (k) => blk(k, true, k, `Clause ${k.toUpperCase()}`)));
+    eq('five off is three names and a count',
+      clauseChoiceSummary(many, ['a', 'b', 'c', 'd', 'e']),
+      '5 of 5 excluded: Clause A, Clause B, Clause C and 2 more.');
+    eq('exactly three is three names and no tail',
+      clauseChoiceSummary(many, ['a', 'b', 'c']),
+      '3 of 5 excluded: Clause A, Clause B, Clause C.');
+  }
 }
 
 /* -- retiring a template ---------------------------------------------- */
