@@ -253,6 +253,56 @@ export function filterOverrides<T extends OverrideRow>(rows: T[], q: string): T[
   ].some((v) => String(v ?? '').toLowerCase().includes(needle)));
 }
 
+/* ===================================================================
+   THE RULES THEMSELVES
+   =================================================================== */
+
+/**
+ * Whether marking this booking done is blocked by the contract rule, as the
+ * sentence somebody reads - or null when it is not blocked at all.
+ *
+ * -- WHY THE STATUS IS AN ARGUMENT ----------------------------------
+ *
+ * The rule is about COMPLETING a booking, not about a booking. Putting one on
+ * hold, cancelling it, or moving it back to pending are all fine with no
+ * contract, and a rule that fired on every status change would be a rule
+ * people learn to click through.
+ *
+ * `cancelled` is deliberately not blocked. A booking that never happened owes
+ * nobody a contract, and blocking the tidy-up is how a campaign ends with six
+ * live bookings nobody did.
+ *
+ * -- WHY THE EXEMPTION COMES IN AS A VALUE --------------------------
+ *
+ * From vendor_categories.requires_contract (125). UNDEFINED READS AS
+ * REQUIRED, matching lib/settings: a row fetched before that migration ran
+ * carries no such field, and reading its absence as "excused" would turn the
+ * rule off everywhere at exactly the moment nobody would notice.
+ */
+export function bookingContractGap(input: {
+  /** The status the booking is being moved TO. */
+  nextStatus?: unknown;
+  /** The contract request raised from this booking, if any. */
+  contractRequestId?: unknown;
+  /** A contract in the legal register against this booking, if the caller
+   *  has looked. Either one counts - a contract is a contract. */
+  contractId?: unknown;
+  /** vendor_categories.requires_contract. Undefined means required. */
+  categoryRequiresContract?: unknown;
+  /** For the sentence. */
+  vendorName?: unknown;
+}): string | null {
+  if (String(input?.nextStatus ?? '').trim().toLowerCase() !== 'done') return null;
+  if (input?.categoryRequiresContract === false) return null;
+  if (String(input?.contractRequestId ?? '').trim()) return null;
+  if (String(input?.contractId ?? '').trim()) return null;
+
+  const who = String(input?.vendorName ?? '').trim();
+  return who
+    ? `${who} has no contract on this booking.`
+    : 'This booking has no contract.';
+}
+
 /**
  * The heading. One sentence with the numbers in it, so the screen says
  * something before anybody scrolls.

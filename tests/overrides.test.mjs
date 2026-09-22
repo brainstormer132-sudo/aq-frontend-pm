@@ -20,7 +20,7 @@ import {
   REASON_MIN, REASON_MAX, reasonError, normaliseReason,
   CODE_MIN, CODE_MAX, codeShapeError,
   actorLabel, overrideTally, byPerson, byRule,
-  sortOverrides, filterOverrides, overrideSummary,
+  sortOverrides, filterOverrides, overrideSummary, bookingContractGap,
 } from '../.test-build/overrides.js';
 
 let pass = 0, fail = 0;
@@ -238,6 +238,51 @@ const row = (o = {}) => {
       row({ id: '3', actor: 'u2', passed: false }),
     ]),
     '2 rules passed by 2 people, and 1 attempt refused.');
+}
+
+
+// -- 9. the contract rule itself ------------------------------------
+{
+  const gap = (o) => bookingContractGap(o);
+
+  // The rule is about COMPLETING, not about existing. Everything else is
+  // fine with no contract, and a rule that fired on every status change is a
+  // rule people learn to click through.
+  eq('done with no contract is blocked',
+    gap({ nextStatus: 'done', vendorName: 'Rawad Media' }),
+    'Rawad Media has no contract on this booking.');
+  eq('no vendor name still says something',
+    gap({ nextStatus: 'done' }), 'This booking has no contract.');
+  eq('pending is not blocked', gap({ nextStatus: 'pending' }), null);
+  eq('on hold is not blocked', gap({ nextStatus: 'on_hold' }), null);
+  // A booking that never happened owes nobody a contract, and blocking the
+  // tidy-up is how a campaign ends with six live bookings nobody did.
+  eq('cancelled is not blocked', gap({ nextStatus: 'cancelled' }), null);
+  eq('no status at all is not blocked', gap({}), null);
+  eq('case does not matter', typeof gap({ nextStatus: ' DONE ' }), 'string');
+
+  // Either kind of contract counts.
+  eq('a contract request clears it',
+    gap({ nextStatus: 'done', contractRequestId: 'cr1' }), null);
+  eq('a legal contract clears it',
+    gap({ nextStatus: 'done', contractId: 'c1' }), null);
+  // ...but an empty string is not an id.
+  ok('a blank contract id does not clear it',
+    !!gap({ nextStatus: 'done', contractRequestId: '   ' }));
+
+  // The exemption.
+  eq('an excused category is not blocked',
+    gap({ nextStatus: 'done', categoryRequiresContract: false }), null);
+  ok('a required category is blocked',
+    !!gap({ nextStatus: 'done', categoryRequiresContract: true }));
+
+  // THE ONE THAT MATTERS. A row read before migration 125 ran carries no
+  // such field, and reading its absence as "excused" would switch the rule
+  // off everywhere at exactly the moment nobody would notice.
+  ok('an ABSENT exemption means the rule still applies',
+    !!gap({ nextStatus: 'done', categoryRequiresContract: undefined }));
+  ok('and so does a null one',
+    !!gap({ nextStatus: 'done', categoryRequiresContract: null }));
 }
 
 console.log(`${pass} passed, ${fail} failed`);

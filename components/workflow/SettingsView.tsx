@@ -22,6 +22,13 @@ import {
   LOOKUP_COPY,
   type LookupKind, type LookupRow,
 } from '@/lib/settings';
+import { createClient } from '@/lib/supabase-browser';
+import { useOverrideCode, useOverrideLog } from '@/hooks/use-overrides';
+import {
+  RULES, ruleLabel, codeShapeError,
+  actorLabel, overrideTally, byPerson, byRule,
+  sortOverrides, filterOverrides, overrideSummary,
+} from '@/lib/overrides';
 
 /**
  * Settings — the vocabularies every campaign picks from, and the numbers the
@@ -72,7 +79,9 @@ export function SettingsView({
   const categories = useClientCategories(workspaceId);
   const platforms = useTaskPlatforms(workspaceId);
   const { usage, refetch: refetchUsage } = useLookupUsage(workspaceId);
-  const { categories: vendorCats } = useVendorCategoriesLegacy();
+  const { categories: vendorCats, refetch: refetchVendorCats } = useVendorCategoriesLegacy();
+  // Which category row is mid-save, so its tick cannot be clicked twice.
+  const [savingCat, setSavingCat] = useState('');
   // Only an owner or admin can read this at all — the RPC enforces it, so a
   // marketing user simply sees an empty bin rather than a forbidden one.
   const { items: deleted, refetch: refetchDeleted } = useDeletedTasks(workspaceId);
@@ -167,10 +176,11 @@ export function SettingsView({
         <header style={{ marginBottom: 10 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700 }}>Vendor categories</h3>
           <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 3, maxWidth: '70ch' }}>
-            Shared by every workspace, so it is not edited here. It decides two
-            things you would not guess from the Vendors screen: which identifier
-            a vendor is asked for, and whether booking one puts a row on the
-            campaign's tracking sheet.
+            Shared by every workspace. It decides three things you would not
+            guess from the Vendors screen: which identifier a vendor is asked
+            for, whether booking one puts a row on the campaign's tracking
+            sheet, and whether a booking with that vendor needs a contract
+            before it can be marked complete.
           </p>
         </header>
 
@@ -188,6 +198,7 @@ export function SettingsView({
                 <Th>Category</Th>
                 <Th>Identifier on file</Th>
                 <Th>Tracking sheet</Th>
+                <Th>Contract required</Th>
               </tr>
             </thead>
             <tbody>
@@ -207,12 +218,45 @@ export function SettingsView({
                   <Td muted={!c.tracked}>
                     {c.tracked ? 'Booking one adds a row' : '—'}
                   </Td>
+                  {/* Excusing a category here is the alternative to passing
+                      the rule one booking at a time. It is deliberately the
+                      easier of the two to find and the harder of the two to
+                      do: migration 126 makes writing this table owner and
+                      admin only, because an exemption easier to reach than
+                      the override defeats the override. */}
+                  <Td>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                      cursor: canEdit ? 'pointer' : 'default' }}>
+                      <input
+                        type="checkbox"
+                        checked={c.requiresContract}
+                        disabled={!canEdit || savingCat === c.id}
+                        onChange={async (e) => {
+                          const on = e.target.checked;
+                          setSavingCat(c.id); setError('');
+                          const { error: err } = await (createClient() as any)
+                            .from('vendor_categories')
+                            .update({ requires_contract: on })
+                            .eq('id', c.id);
+                          if (err) setError(err.message ?? String(err));
+                          else await refetchVendorCats();
+                          setSavingCat('');
+                        }}
+                      />
+                      <span style={{ color: c.requiresContract ? undefined : 'var(--aq-text-muted)' }}>
+                        {c.requiresContract ? 'Yes' : 'Excused'}
+                      </span>
+                    </label>
+                  </Td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </section>
+
+      {/* -- Passing a rule --------------------------------------- */}
+      <RuleOverrides workspaceId={workspaceId} canEdit={canEdit} />
 
       {/* ── Deleted tasks ────────────────────────────────────────── */}
       {(canEdit || deleted.length > 0) && (
@@ -779,6 +823,226 @@ function BackgroundJobs({ workspaceId }: { workspaceId: string }) {
             </div>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The override code, and the record of every time somebody used it.
+ *
+ * Siraj: "every rule can be bypassed but will be documented".
+ *
+ * -- WHY THE CODE HAS NO "SHOW" BUTTON ------------------------------
+ *
+ * There is nowhere to read it from. The hash lives in a table with RLS on and
+ * NO POLICIES (migration 125), so no signed-in caller can fetch it, and the
+ * only function that touches it compares and never returns. Setting a new one
+ * replaces the old; there is no recovering the old one, and that is the
+ * correct shape for a shared secret.
+ *
+ * -- WHY THE REFUSALS ARE ON SCREEN ---------------------------------
+ *
+ * A log with only the successes in it cannot tell you somebody spent ten
+ * minutes guessing. The counts and the rows both show refused attempts, and
+ * the per-person list carries them in their own column, because "Omar passed
+ * one rule" and "Omar passed one rule after four wrong codes" are different
+ * facts about the same afternoon.
+ */
+function RuleOverrides({ workspaceId, canEdit }: { workspaceId: string; canEdit: boolean }) {
+  const { hasCode, setCode, error: codeErr } = useOverrideCode(workspaceId);
+  const { rows, loading, error: logErr, reload } = useOverrideLog(workspaceId);
+
+  const [open, setOpen] = useState(false);
+  const [code, setCodeText] = useState('');
+  const [again, setAgain] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [q, setQ] = useState('');
+  const [showAll, setShowAll] = useState(false);
+
+  // ONE memo. Every number and every row below comes from this, so the
+  // heading cannot disagree with what is under it.
+  const view = useMemo(() => ({
+    tally: overrideTally(rows),
+    summary: overrideSummary(rows),
+    people: byPerson(rows),
+    rules: byRule(rows),
+    list: sortOverrides(filterOverrides(rows, q)),
+  }), [rows, q]);
+
+  const shapeErr = code ? codeShapeError(code) : null;
+  const mismatch = code && again && code !== again ? 'Those two do not match.' : null;
+
+  return (
+    <section className="aq-card" style={{ padding: 18 }}>
+      <header style={{ marginBottom: 10 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700 }}>Passing a rule</h3>
+        <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 3, maxWidth: '70ch' }}>
+          Every rule in the app can be passed with one shared code, and every
+          use of it is written down here - who, why, what, and when. A rule
+          nobody can pass is a rule people work around, and the way around is
+          worse than the rule. What this buys is the record, not the wall.
+        </p>
+      </header>
+
+      {(codeErr || logErr || msg) && (
+        <div className="aq-badge aq-badge-warning" style={{ display: 'block', padding: 9, marginBottom: 10 }}>
+          {msg || codeErr || logErr}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        paddingBottom: 12, borderBottom: '1px solid var(--aq-border-light)' }}>
+        <span style={{ fontSize: 13 }}>
+          {hasCode === null ? 'Checking…'
+            : hasCode
+              ? 'A code is set.'
+              : 'No code has been set, so no rule can be passed at all.'}
+        </span>
+        {canEdit && !open && (
+          <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+            onClick={() => { setOpen(true); setMsg(''); }}>
+            {hasCode ? 'Change it' : 'Set a code'}
+          </button>
+        )}
+        {!canEdit && (
+          <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+            Only an owner or an admin can set it.
+          </span>
+        )}
+      </div>
+
+      {open && (
+        <div style={{ background: 'var(--aq-bg-sunken)', borderRadius: 'var(--aq-radius)',
+          padding: 12, marginTop: 12 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--aq-text-secondary)', marginBottom: 8 }}>
+            Anyone who has this code can pass any rule, under their own name.
+            It cannot be read back afterwards - not here and not anywhere - so
+            if it is forgotten, set a new one.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input className="aq-input" type="password" autoComplete="new-password"
+              value={code} onChange={(e) => setCodeText(e.target.value)}
+              placeholder="A new code" style={{ flex: '1 1 200px', minWidth: 0 }} />
+            <input className="aq-input" type="password" autoComplete="new-password"
+              value={again} onChange={(e) => setAgain(e.target.value)}
+              placeholder="Type it again" style={{ flex: '1 1 200px', minWidth: 0 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 11.5,
+              color: shapeErr || mismatch ? 'var(--aq-error)' : 'var(--aq-text-muted)' }}>
+              {shapeErr || mismatch || 'At least 6 characters. Short enough to say down a phone.'}
+            </span>
+            <button className="aq-btn aq-btn-ghost" disabled={busy}
+              onClick={() => { setOpen(false); setCodeText(''); setAgain(''); }}>Cancel</button>
+            <button className="aq-btn aq-btn-primary"
+              disabled={busy || !!shapeErr || !!mismatch || !code || code !== again}
+              onClick={async () => {
+                setBusy(true); setMsg('');
+                try {
+                  await setCode(code);
+                  setOpen(false); setCodeText(''); setAgain('');
+                  setMsg('The code is set. Nothing shows it again.');
+                } catch (e: any) { setMsg(e?.message ?? 'That did not go through.'); }
+                finally { setBusy(false); }
+              }}>
+              {busy ? 'Saving…' : 'Save the code'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 14 }}>
+        <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+          {loading ? 'Loading the log…' : view.summary}
+        </p>
+
+        {!loading && (view.tally.passed + view.tally.refused) > 0 && (
+          <>
+            {/* Group before you cap. Who, and which rules - two short lists
+                that answer the question the rows are only evidence for. */}
+            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 12 }}>
+              <div style={{ minWidth: 220 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)', marginBottom: 4 }}>
+                  Counted per person
+                </p>
+                <ul style={{ listStyle: 'none', fontSize: 12.5 }}>
+                  {view.people.slice(0, 10).map((p) => (
+                    <li key={p.actor} style={{ padding: '2px 0' }}>
+                      <b>{p.passed}</b> {p.passed === 1 ? 'rule' : 'rules'} passed
+                      {' · '}{p.name}
+                      {p.refused > 0 && (
+                        <span style={{ color: 'var(--aq-text-muted)' }}>
+                          {' · '}{p.refused} wrong {p.refused === 1 ? 'code' : 'codes'}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div style={{ minWidth: 220 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)', marginBottom: 4 }}>
+                  Which rules
+                </p>
+                <ul style={{ listStyle: 'none', fontSize: 12.5 }}>
+                  {view.rules.slice(0, 10).map((r) => (
+                    <li key={r.key} style={{ padding: '2px 0' }}>
+                      <b>{r.passed}</b>{' · '}{r.label}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Search by person, reason, rule or what it was"
+                style={{ flex: '1 1 auto', minWidth: 0 }} />
+              <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+                onClick={() => { void reload(); }}>Refresh</button>
+            </div>
+
+            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
+              {view.list.slice(0, showAll ? 200 : 15).map((r, i) => (
+                <li key={r.id} style={{ padding: '7px 2px',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)' }}>
+                  <span style={{ fontSize: 12.5, display: 'block' }}>
+                    <span className={`aq-badge ${r.passed ? 'aq-badge-warning' : 'aq-badge-error'}`}
+                      style={{ marginRight: 6 }}>
+                      {r.passed ? 'Passed' : 'Wrong code'}
+                    </span>
+                    <b>{ruleLabel(r.rule_key)}</b>
+                    {r.entity_name ? <span dir="auto">{' · '}{r.entity_name}</span> : null}
+                  </span>
+                  <span dir="auto" style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                    {actorLabel(r)}
+                    {r.created_at ? `, ${new Date(r.created_at).toLocaleString()}` : ''}
+                    {' — '}{'“'}{r.reason}{'”'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {view.list.length > 15 && !showAll && (
+              <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 0', fontSize: 12.5 }}
+                onClick={() => setShowAll(true)}>
+                Show more ({view.list.length} in all)
+              </button>
+            )}
+            {showAll && view.list.length > 200 && (
+              <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 8 }}>
+                Showing 200 of {view.list.length}. Search to narrow it.
+              </p>
+            )}
+          </>
+        )}
+
+        {/* The rules that exist, so somebody can see what the code opens
+            before they hand it to anybody. */}
+        <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 14 }}>
+          {RULES.length === 1 ? 'The rule it opens: ' : `The ${RULES.length} rules it opens: `}
+          {RULES.map((r) => r.label).join('; ')}.
+        </p>
       </div>
     </section>
   );

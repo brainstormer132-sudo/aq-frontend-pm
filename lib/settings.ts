@@ -240,6 +240,7 @@ export interface VendorCategoryInput {
   key?: string | null;
   label?: string | null;
   requires_license?: unknown;
+  requires_contract?: unknown;
   sort_order?: unknown;
   is_active?: unknown;
 }
@@ -251,6 +252,18 @@ export interface VendorCategoryRow {
   identifier: 'Licence number' | 'ID number';
   active: boolean;
   tracked: boolean;
+  /**
+   * Whether a booking with a vendor in this category must have a contract
+   * before it can be completed (migration 125).
+   *
+   * ABSENT MEANS TRUE, which is the whole care in this field. The column has
+   * `default true`, and between deploying the screen and running the
+   * migration every row comes back without it - so reading a missing value as
+   * `false` would show every category as excused, and the screen would be
+   * quietly wrong in the permissive direction about a rule somebody is
+   * relying on.
+   */
+  requiresContract: boolean;
 }
 
 /**
@@ -281,6 +294,10 @@ export function buildVendorCategories(
         identifier: c.requires_license ? 'Licence number' : 'ID number',
         active: c.is_active !== false,
         tracked: wanted.has(key.toLowerCase()) || wanted.has(label.toLowerCase()),
+        // `!== false`, not `=== true`. See the field's comment: undefined is
+        // a row read before migration 125 ran, and the safe reading of that
+        // is "the rule applies", not "this category is excused".
+        requiresContract: c.requires_contract !== false,
       };
     });
 }

@@ -102,6 +102,7 @@ const LIBS = [
   'lib/legal-amount.ts',
   'lib/pending-removal.ts',
   'lib/confirm.ts',
+  'lib/settings.ts',
 ];
 
 const GREEN = '\x1b[32m';
