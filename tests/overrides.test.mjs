@@ -16,7 +16,7 @@
  *      somebody who did it once.
  */
 import {
-  RULES, ruleByKey, ruleLabel,
+  RULES, passableRules, ruleByKey, ruleLabel,
   REASON_MIN, REASON_MAX, reasonError, normaliseReason,
   CODE_MIN, CODE_MAX, codeShapeError,
   actorLabel, overrideTally, byPerson, byRule,
@@ -56,6 +56,17 @@ const row = (o = {}) => {
   ok('there are rules', RULES.length >= 2);
   ok('every rule has a key, a label, what it says when it blocks, and why',
     RULES.every((r) => r.key && r.label && r.blocked && r.why));
+  // Stated, not left to default. `undefined` would read as not-passable by
+  // accident, and a rule that is wired but reads as unwired is a rule people
+  // are told they cannot pass when they can.
+  ok('every rule says outright whether the code opens it',
+    RULES.every((r) => typeof r.passable === 'boolean'));
+  ok('at least one rule IS passable - otherwise the code opens nothing',
+    passableRules().length >= 1);
+  ok('passableRules is a subset of RULES',
+    passableRules().every((r) => RULES.includes(r)));
+  ok('and it is exactly the ones marked passable',
+    passableRules().length === RULES.filter((r) => r.passable).length);
   ok('the keys are unique', new Set(RULES.map((r) => r.key)).size === RULES.length);
   // Keys go in the database and into URLs; a key with a space or a capital
   // in it is a key somebody will mistype once and never find again.

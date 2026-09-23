@@ -25,7 +25,7 @@ import {
 import { createClient } from '@/lib/supabase-browser';
 import { useOverrideCode, useOverrideLog } from '@/hooks/use-overrides';
 import {
-  RULES, ruleLabel, codeShapeError,
+  RULES, passableRules, ruleLabel, codeShapeError,
   actorLabel, overrideTally, byPerson, byRule,
   sortOverrides, filterOverrides, overrideSummary,
 } from '@/lib/overrides';
@@ -1040,8 +1040,16 @@ function RuleOverrides({ workspaceId, canEdit }: { workspaceId: string; canEdit:
         {/* The rules that exist, so somebody can see what the code opens
             before they hand it to anybody. */}
         <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 14 }}>
-          {RULES.length === 1 ? 'The rule it opens: ' : `The ${RULES.length} rules it opens: `}
-          {RULES.map((r) => r.label).join('; ')}.
+          {passableRules().length === 1
+            ? 'The rule it opens: '
+            : `The ${passableRules().length} rules it opens: `}
+          {passableRules().map((r) => r.label).join('; ')}.
+          {RULES.length > passableRules().length && (
+            <>
+              {' '}Stopped by, but not yet passable with the code:{' '}
+              {RULES.filter((r) => !r.passable).map((r) => r.label).join('; ')}.
+            </>
+          )}
         </p>
       </div>
     </section>

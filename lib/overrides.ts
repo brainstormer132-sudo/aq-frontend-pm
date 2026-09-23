@@ -44,6 +44,17 @@ export interface RuleDef {
   label: string;
   blocked: string;
   why: string;
+  /**
+   * Whether the override code can open this one YET.
+   *
+   * Not a policy - Siraj's instruction is that every rule can be passed. It
+   * is a statement of fact about what is wired, so the Settings card can say
+   * what the code actually opens instead of promising two rules and
+   * delivering one. A rule listed here but not routed through the gate is a
+   * rule somebody will hand the code out for and then find they still cannot
+   * pass.
+   */
+  passable: boolean;
 }
 
 /**
@@ -62,6 +73,7 @@ export const RULES: RuleDef[] = [
     why: 'A vendor who has worked and been paid with nothing signed is the'
       + ' position with no way back. Categories that never have a contract can'
       + ' be excused in Settings instead of passed here.',
+    passable: true,
   },
   {
     key: 'contract_request_incomplete',
@@ -69,6 +81,13 @@ export const RULES: RuleDef[] = [
     blocked: 'Some of what the contract needs is still missing.',
     why: 'Every missing field here comes out blank on the paper somebody'
       + ' signs, and the values freeze the moment it is issued.',
+    // NOT YET. Passing this one does not skip a formality - it sends a
+    // contract out with blanks where the IBAN and the fee should be, on paper
+    // somebody signs, and the values freeze at issue so there is no fixing it
+    // afterwards without a correction (116). That is a different bargain from
+    // the booking rule, and it is Siraj's to make rather than mine to assume
+    // from "every rule can be bypassed".
+    passable: false,
   },
 ];
 
@@ -76,6 +95,11 @@ const BY_KEY = new Map(RULES.map((r) => [r.key, r]));
 
 export function ruleByKey(key: unknown): RuleDef | null {
   return BY_KEY.get(String(key ?? '').trim()) ?? null;
+}
+
+/** The rules the code actually opens today. What the Settings card lists. */
+export function passableRules(): RuleDef[] {
+  return RULES.filter((r) => r.passable);
 }
 
 /**
