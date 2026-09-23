@@ -108,8 +108,17 @@ export function LegalSignatures({ workspaceId }: { workspaceId?: string }) {
         )}
       </div>
 
-      {err && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{err}</div>}
-      {ext.error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{ext.error}</div>}
+      {/* A sentence, so a <div role="alert"> and not an `aq-badge`: the badge
+          class uppercases its contents, which turns "Could not open that
+          document." into shouting. Badges are for one or two words - the
+          "3 expired" chips above are what they are for. */}
+      {(err || ext.error) && (
+        <div role="alert" style={{
+          background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)',
+          color: 'var(--aq-red-strong)', padding: '10px 12px',
+          borderRadius: 'var(--aq-radius)', fontSize: 12.5,
+        }}>{err || ext.error}</div>
+      )}
 
       {/* -- sent back from outside, awaiting a decision --------------- */}
       <SentBack workspaceId={workspaceId} />
@@ -449,9 +458,11 @@ function SentBack({ workspaceId }: { workspaceId?: string }) {
       </p>
 
       {error && (
-        <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10, marginBottom: 10 }}>
-          {error}
-        </div>
+        <div role="alert" style={{
+          background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)',
+          color: 'var(--aq-red-strong)', padding: '10px 12px',
+          borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 10,
+        }}>{error}</div>
       )}
 
       {loading ? (
@@ -496,8 +507,12 @@ function SentBack({ workspaceId }: { workspaceId?: string }) {
                 Reject
               </button>
               {rowErr && rowErr.id === u.id && (
-                <div className="aq-badge aq-badge-warning"
-                  style={{ flexBasis: '100%', display: 'block', padding: 8, marginTop: 2 }}>
+                <div role="alert" style={{
+                  flexBasis: '100%', background: 'var(--aq-amber-bg)',
+                  border: '1px solid var(--aq-amber-border)', color: 'var(--aq-amber-deep)',
+                  padding: '8px 10px', borderRadius: 'var(--aq-radius)',
+                  fontSize: 12.5, marginTop: 2,
+                }}>
                   {rowErr.msg}
                 </div>
               )}
@@ -571,8 +586,12 @@ function SentBack({ workspaceId }: { workspaceId?: string }) {
                         </button>
                       )}
                       {rowErr && rowErr.id === u.id && (
-                        <div className="aq-badge aq-badge-warning"
-                          style={{ flexBasis: '100%', display: 'block', padding: 8, marginTop: 2 }}>
+                        <div role="alert" style={{
+                          flexBasis: '100%', background: 'var(--aq-amber-bg)',
+                          border: '1px solid var(--aq-amber-border)', color: 'var(--aq-amber-deep)',
+                          padding: '8px 10px', borderRadius: 'var(--aq-radius)',
+                          fontSize: 12.5, marginTop: 2,
+                        }}>
                           {rowErr.msg}
                         </div>
                       )}

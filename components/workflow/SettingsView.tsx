@@ -857,7 +857,12 @@ function RuleOverrides({ workspaceId, canEdit }: { workspaceId: string; canEdit:
   const [code, setCodeText] = useState('');
   const [again, setAgain] = useState('');
   const [busy, setBusy] = useState(false);
+  // What happened, and whether it was a good thing. Kept apart because the
+  // first version put both through one amber `aq-badge`, which uppercases its
+  // contents - so "The code is set" arrived SHOUTING IN THE COLOUR OF A
+  // PROBLEM, which is how a confirmation gets read as a failure.
   const [msg, setMsg] = useState('');
+  const [msgOk, setMsgOk] = useState(false);
   const [q, setQ] = useState('');
   const [showAll, setShowAll] = useState(false);
 
@@ -886,9 +891,18 @@ function RuleOverrides({ workspaceId, canEdit }: { workspaceId: string; canEdit:
         </p>
       </header>
 
-      {(codeErr || logErr || msg) && (
-        <div className="aq-badge aq-badge-warning" style={{ display: 'block', padding: 9, marginBottom: 10 }}>
-          {msg || codeErr || logErr}
+      {msg && msgOk && (
+        <p style={{ fontSize: 12.5, color: 'var(--aq-text-secondary)', marginBottom: 10 }}>
+          {msg}
+        </p>
+      )}
+      {((msg && !msgOk) || codeErr || logErr) && (
+        <div role="alert" style={{
+          background: 'var(--aq-amber-bg)', border: '1px solid var(--aq-amber-border)',
+          color: 'var(--aq-amber-deep)', padding: '10px 12px',
+          borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 10,
+        }}>
+          {(msg && !msgOk) ? msg : (codeErr || logErr)}
         </div>
       )}
 
@@ -902,7 +916,7 @@ function RuleOverrides({ workspaceId, canEdit }: { workspaceId: string; canEdit:
         </span>
         {canEdit && !open && (
           <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
-            onClick={() => { setOpen(true); setMsg(''); }}>
+            onClick={() => { setOpen(true); setMsg(''); setMsgOk(false); }}>
             {hasCode ? 'Change it' : 'Set a code'}
           </button>
         )}
@@ -943,9 +957,12 @@ function RuleOverrides({ workspaceId, canEdit }: { workspaceId: string; canEdit:
                 try {
                   await setCode(code);
                   setOpen(false); setCodeText(''); setAgain('');
-                  setMsg('The code is set. Nothing shows it again.');
-                } catch (e: any) { setMsg(e?.message ?? 'That did not go through.'); }
-                finally { setBusy(false); }
+                  setMsgOk(true);
+                  setMsg('Saved. Nothing shows the code again \u2014 if it is forgotten, set a new one.');
+                } catch (e: any) {
+                  setMsgOk(false);
+                  setMsg(e?.message ?? 'That did not go through.');
+                } finally { setBusy(false); }
               }}>
               {busy ? 'Saving…' : 'Save the code'}
             </button>
