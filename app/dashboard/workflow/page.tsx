@@ -60,6 +60,9 @@ async function ensureProfile(user: { id: string; email?: string | null; user_met
 export default function WorkflowPage() {
   const router = useRouter();
   const [view, setView] = useState<View>('inbox');
+  /** Which filter the Register opens on when somebody arrives from a number
+   *  on Signatures. Lives here because it crosses two screens. */
+  const [legalFilter, setLegalFilter] = useState('');
   const [user, setUser] = useState<{ id: string; email: string; full_name: string } | null>(null);
   const [workspace, setWorkspace] = useState<{ id: string; name: string } | null>(null);
   const [bootError, setBootError] = useState('');
@@ -410,8 +413,21 @@ export default function WorkflowPage() {
         {view === 'legal-matters'    && canLegal && <LegalView section="matters"    workspaceId={workspace.id} role={role} />}
         {view === 'legal-cases'      && canLegal && <LegalView section="cases"      workspaceId={workspace.id} role={role} />}
         {view === 'legal-documents'  && canLegal && <LegalView section="documents"  workspaceId={workspace.id} role={role} />}
-        {view === 'legal-register'   && canLegal && <LegalView section="register"   workspaceId={workspace.id} role={role} />}
-        {view === 'legal-signatures' && canLegal && <LegalView section="signatures" workspaceId={workspace.id} role={role} />}
+        {/* key: the Register keeps the filter it opened on as its own state,
+            so arriving from a different number on Signatures has to remount
+            it - otherwise the second visit ignores the number that was
+            clicked and shows whatever the first visit was left on. */}
+        {view === 'legal-register'   && canLegal && (
+          <LegalView key={`reg-${legalFilter}`} section="register" workspaceId={workspace.id}
+            role={role} registerFilter={legalFilter} />
+        )}
+        {view === 'legal-signatures' && canLegal && (
+          <LegalView section="signatures" workspaceId={workspace.id} role={role}
+            onSection={(s, f) => {
+              setLegalFilter(f ?? '');
+              setView(`legal-${s}` as any);
+            }} />
+        )}
 
         {/* Campaigns and the rollup are already loaded for the Dashboard
             and All Tasks, so the Clients register can say how much work each

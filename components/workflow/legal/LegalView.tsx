@@ -29,17 +29,31 @@ import { LegalTasks } from '@/components/workflow/legal/LegalTasks';
 
 export type LegalSection = 'matters' | 'cases' | 'documents' | 'register' | 'signatures';
 
-export function LegalView({ section, workspaceId }: {
+export function LegalView({ section, workspaceId, role, onSection, registerFilter }: {
   section: LegalSection;
   workspaceId?: string;
+  /** Who is looking. The Register needs it: only owner, admin and legal may
+   *  accept or reject a signed copy (migration 127), and a button that is
+   *  about to be refused should not be offered. */
   role?: WorkspaceRole | null;
+  /** Move to another legal screen. Signatures uses it so each number is a
+   *  way into the Register filtered to itself. */
+  onSection?: (s: LegalSection, filter?: string) => void;
+  /** The filter the Register opens on, when arriving from a number. */
+  registerFilter?: string;
 }) {
   switch (section) {
     case 'matters': return <LegalTasks workspaceId={workspaceId} />;
     case 'cases': return <LegalCases workspaceId={workspaceId} />;
     case 'documents': return <LegalDocuments workspaceId={workspaceId} />;
-    case 'register': return <LegalRegister workspaceId={workspaceId} />;
-    case 'signatures': return <LegalSignatures workspaceId={workspaceId} />;
+    case 'register': return (
+      <LegalRegister workspaceId={workspaceId} role={role}
+        initialSource={(registerFilter ?? '') as any} />
+    );
+    case 'signatures': return (
+      <LegalSignatures workspaceId={workspaceId}
+        onOpenRegister={onSection ? (f) => onSection('register', f) : undefined} />
+    );
     default: {
       // Unreachable while LegalSection is exhausted above. The assignment is
       // the guard: add a section without a screen and this line stops

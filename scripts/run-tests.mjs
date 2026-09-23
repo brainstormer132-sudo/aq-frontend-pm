@@ -97,6 +97,7 @@ const LIBS = [
   'lib/legal-signed.ts',
   'lib/legal-review.ts',
   'lib/overrides.ts',
+  'lib/legal-register.ts',
   'lib/legal-external.ts',
   'lib/legal-doc-view.ts',
   'lib/legal-amount.ts',

@@ -1,8 +1,29 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useContracts, usePublishedVersions, loadContractPrintDocs } from '@/hooks/use-legal';
-import { kindLabel, contractStatusLabel, contractStatusBadge, CONTRACT_STATUSES, contractsPrintHTML } from '@/lib/legal';
+import {
+  useContracts, usePublishedVersions, loadContractPrintDocs,
+  useExternalDocs, useSignedReviews, signedCopyUrl, reviewFileUrl,
+} from '@/hooks/use-legal';
+import {
+  kindLabel, contractStatusLabel, contractStatusBadge, CONTRACT_STATUSES,
+  contractsPrintHTML, DOC_KINDS,
+} from '@/lib/legal';
+import {
+  registerRows, printableIds, sortRegister, filterRegister, registerTally,
+  registerNote, registerSummary, cannotReviewHere, canReview,
+  type RegisterRow, type SourceFilter,
+} from '@/lib/legal-register';
+import {
+  reviewLabel, reviewBadge, reviewState,
+  reasonError, normaliseReason, REJECT_REASONS, REASON_MAX,
+} from '@/lib/legal-review';
+import {
+  externalState, externalBadge, externalLabel, externalNote,
+  validateExternalDoc, validateExternalFile, EXTERNAL_EXTENSIONS,
+  filingDeleteWarning,
+} from '@/lib/legal-external';
+import type { WorkspaceRole } from '@/hooks/use-workflow';
 import {
   filterContracts, toggleId, selectedInOrder, skippedNote, bulkPrintNote,
 } from '@/lib/legal-bulk';
@@ -15,7 +36,7 @@ import {
   startPending, cancelPending, tickPending, flushPending, removedLabel,
   type Pending,
 } from '@/lib/pending-removal';
-import { UndoBar } from '@/components/workflow/campaign/ui';
+import { UndoBar, ConfirmDelete } from '@/components/workflow/campaign/ui';
 import { ContractFill } from '@/components/workflow/legal/ContractFill';
 
 /**
@@ -45,9 +66,23 @@ import { ContractFill } from '@/components/workflow/legal/ContractFill';
  */
 const SHOW_MAX = 200;
 
-export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
+export function LegalRegister({ workspaceId, role, initialSource }: {
+  workspaceId?: string;
+  role?: WorkspaceRole | null;
+  /** Where the screen opens, when somebody arrived from a number on
+   *  Signatures. Only the starting value - changing the dropdown here wins
+   *  from then on, which is why it is not kept in sync. */
+  initialSource?: SourceFilter;
+}) {
   const { contracts, loading, error, create, remove } = useContracts(workspaceId ?? null);
   const pub = usePublishedVersions(workspaceId ?? null);
+  // The other half of the register. 118 created external_doc "so the register
+  // is complete" and then it was built onto Signatures, so the register was
+  // never complete - this is that sentence honoured.
+  const ext = useExternalDocs(workspaceId ?? null);
+  // And the signed copies people have sent back, so a filed document can say
+  // one is waiting on the row it belongs to.
+  const rev = useSignedReviews(workspaceId ?? null);
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
@@ -58,6 +93,20 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
 
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [source, setSource] = useState<SourceFilter>(initialSource ?? '');
+  /** The filed document opened for a look. A generated contract opens
+   *  ContractFill instead; the two are different enough that one panel
+   *  serving both would be a panel with half its fields blank. */
+  const [openDocId, setOpenDocId] = useState<string | null>(null);
+  const [filing, setFiling] = useState(false);
+  const [confirmId, setConfirmId] = useState('');
+
+  // Today as an ISO date, once, so every row on this render is judged against
+  // the same day - and set in an effect rather than read during render, or
+  // the server and the browser disagree across midnight and React reports a
+  // hydration mismatch on a badge somebody can see.
+  const [today, setToday] = useState('');
+  useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
   const [sel, setSel] = useState<string[]>([]);
   const [printing, setPrinting] = useState(false);
   const [note, setNote] = useState('');
@@ -123,11 +172,31 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
     // left 199 on screen instead of pulling row 201 up.
     const gone = new Set(pendingKey ? pendingKey.split(',') : []);
     const live = gone.size ? contracts.filter((c: any) => !gone.has(c.id)) : contracts;
-    const rows = filterContracts(live, q, status);
-    return { rows, shown: rows.slice(0, SHOW_MAX), hidden: Math.max(0, rows.length - SHOW_MAX) };
-  }, [contracts, q, status, pendingKey]);
 
-  const picked = useMemo(() => selectedInOrder(view.rows, sel), [view.rows, sel]);
+    // ONE list, built once. Every number on this screen and every row in it
+    // come from here, so the heading cannot disagree with what is under it.
+    const all = sortRegister(registerRows(live as any[], ext.docs as any[], rev.uploads as any[]));
+    const rows = filterRegister(all, q, source, status);
+    return {
+      all,
+      rows,
+      shown: rows.slice(0, SHOW_MAX),
+      hidden: Math.max(0, rows.length - SHOW_MAX),
+      tally: registerTally(all),
+      summary: registerSummary(all),
+      // What Select all may take. A filed document is somebody else's PDF
+      // with no template version to rebuild it from - see printableOnly.
+      printable: printableIds(rows),
+    };
+  }, [contracts, ext.docs, rev.uploads, q, status, source, pendingKey]);
+
+  // The selection is contract rows, in register order, and can only ever hold
+  // printable ones: the checkbox is not drawn on a filed row, and Select all
+  // goes through printableIds.
+  const picked = useMemo(
+    () => selectedInOrder(view.rows.filter((r) => r.source === 'generated').map((r) => r.row), sel),
+    [view.rows, sel],
+  );
 
   if (openId) {
     return (
@@ -188,7 +257,11 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
     } finally { setPrinting(false); }
   };
 
-  const allPicked = view.rows.length > 0 && picked.length === view.rows.length;
+  // Against the PRINTABLE rows, not every row. With filed documents in the
+  // list this was the line that would quietly have lied: "Select all 40" on a
+  // view of 40 where 12 cannot be printed would never read as all-selected,
+  // so the box could never be ticked off again.
+  const allPicked = view.printable.length > 0 && picked.length === view.printable.length;
   const warn = bulkPrintNote(picked.length);
 
   return (
@@ -199,8 +272,21 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
           unless it is told min-width:0. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <input className="aq-input" value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by number, title, template or kind"
+          placeholder="Search by number, title, template, kind or the other side"
           style={{ flex: '1 1 auto', minWidth: 0 }} />
+        {/* One control for both questions. "Show me the filed ones" and "show
+            me what is waiting" are the same kind of question, and two
+            dropdowns to answer them is one too many. */}
+        <select className="aq-select" value={source}
+          onChange={(e) => setSource(e.target.value as SourceFilter)}
+          style={{ flex: '0 0 auto', width: 'auto', minWidth: 150 }}>
+          <option value="">Everything</option>
+          <option value="generated">Generated here</option>
+          <option value="filed">Filed from outside</option>
+          <option value="review">
+            Waiting to be looked at{view.tally.awaitingReview ? ` (${view.tally.awaitingReview})` : ''}
+          </option>
+        </select>
         <select className="aq-select" value={status} onChange={(e) => setStatus(e.target.value)}
           style={{ flex: '0 0 auto', width: 'auto', minWidth: 130 }}>
           <option value="">All statuses</option>
@@ -208,6 +294,10 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
             <option key={s.key} value={s.key}>{s.label}</option>
           ))}
         </select>
+        <button className="aq-btn aq-btn-ghost" style={{ flex: '0 0 auto' }}
+          onClick={() => { setFiling(true); setNote(''); }}>
+          File an agreement
+        </button>
         <button className="aq-btn aq-btn-primary" onClick={() => { setPicking(true); setFormErr(''); }}
           disabled={pub.loading} style={{ flex: '0 0 auto' }}>
           New contract
@@ -217,9 +307,20 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
       {/* Signed contracts, at a glance. Clicking a number filters to it, so
           the checklist is the register rather than a second screen showing
           the same rows a different way. */}
-      {!loading && contracts.length > 0 && (
+      {!loading && view.all.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
           fontSize: 13, color: 'var(--aq-text-secondary)' }}>
+          {/* What is in the register, in one line, before anybody scrolls. */}
+          <span style={{ flexBasis: '100%', color: 'var(--aq-text-muted)' }}>{view.summary}</span>
+          {view.tally.awaitingReview > 0 && (
+            <span role="button" tabIndex={0} style={{ cursor: 'pointer' }}
+              onClick={() => setSource('review')}
+              onKeyDown={(e) => { if (e.key === 'Enter') setSource('review'); }}>
+              <b style={{ fontSize: 15, color: 'var(--aq-warning, #a86200)' }}>
+                {view.tally.awaitingReview}
+              </b> signed {view.tally.awaitingReview === 1 ? 'copy' : 'copies'} to look at
+            </span>
+          )}
           <span role="button" tabIndex={0} style={{ cursor: 'pointer' }}
             onClick={() => setStatus('signed')}
             onKeyDown={(e) => { if (e.key === 'Enter') setStatus('signed'); }}>
@@ -236,28 +337,35 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
           <span style={{ color: 'var(--aq-text-muted)' }}>
             {tally.issued} issued in total
           </span>
-          {status ? (
+          {(status || source) ? (
             <button className="aq-btn aq-btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
-              onClick={() => setStatus('')}>Show all</button>
+              onClick={() => { setStatus(''); setSource(''); }}>Show all</button>
           ) : null}
         </div>
       )}
 
-      {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
+      {(error || ext.error || rev.error) && (
+        <div role="alert" style={{
+          background: 'var(--aq-red-bg)', border: '1px solid var(--aq-red-border)',
+          color: 'var(--aq-red-strong)', padding: '10px 12px',
+          borderRadius: 'var(--aq-radius)', fontSize: 12.5,
+        }}>{error || ext.error || rev.error}</div>
+      )}
 
-      {loading ? (
-        <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Loading contracts\u2026'} /></div>
-      ) : contracts.length === 0 ? (
+      {(loading || ext.loading) ? (
+        <div className="aq-card" style={{ padding: 8 }}><AqDrawingBlock label={'Loading the register\u2026'} /></div>
+      ) : view.all.length === 0 ? (
         <div className="aq-card" style={{ padding: 28, textAlign: 'center' }}>
-          <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>No contracts yet.</p>
+          <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>Nothing in the register yet.</p>
           <p style={{ color: 'var(--aq-text-muted)', fontSize: 13, marginTop: 6 }}>
-            Create one from a published template - it stays stamped to that exact version.
+            Create a contract from a published template - it stays stamped to that exact
+            version - or file an agreement somebody else drafted.
           </p>
         </div>
       ) : view.rows.length === 0 ? (
         <div className="aq-card" style={{ padding: 28, textAlign: 'center' }}>
           <p style={{ color: 'var(--aq-text-secondary)', fontSize: 14 }}>
-            No contract matches that.
+            Nothing matches that.
           </p>
         </div>
       ) : (
@@ -267,17 +375,22 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
             paddingBottom: 12, borderBottom: '1px solid var(--aq-border-light)',
           }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-              <input type="checkbox" checked={allPicked}
-                onChange={() => setSel(allPicked ? [] : view.rows.map((r) => r.id))} />
+              <input type="checkbox" checked={allPicked} disabled={!view.printable.length}
+                onChange={() => setSel(allPicked ? [] : view.printable)} />
               <span>
-                {allPicked ? 'Clear' : `Select all ${view.rows.length}`}
+                {allPicked ? 'Clear' : `Select all ${view.printable.length}`}
                 {view.hidden > 0 && !allPicked ? ' matching' : ''}
               </span>
             </label>
             <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--aq-text-muted)' }}>
               {picked.length > 0
                 ? `${picked.length} selected`
-                : `${view.rows.length} contract${view.rows.length === 1 ? '' : 's'}`}
+                : `${view.rows.length} row${view.rows.length === 1 ? '' : 's'}`}
+              {/* Said out loud rather than left as a missing checkbox. */}
+              {view.rows.length > view.printable.length && (
+                <> {'\u00b7'} {view.rows.length - view.printable.length} filed from outside,
+                  {' '}which cannot be printed as a stack</>
+              )}
             </span>
             <button className="aq-btn aq-btn-ghost" disabled={!picked.length || printing}
               onClick={printPicked}
@@ -305,47 +418,111 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
           ))}
 
           <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
-            {view.shown.map((c, i) => (
-              <li key={c.id} style={{
-                display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
+            {view.shown.map((r, i) => {
+              const c = r.row;
+              const filed = r.source === 'filed';
+              const st = filed ? externalState(c, today) : null;
+              return (
+              <li key={r.id} style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', flexWrap: 'wrap',
                 borderTop: i === 0 ? 'none' : '1px solid var(--aq-border-light)',
               }}>
-                <input type="checkbox" checked={sel.includes(c.id)}
-                  onChange={() => setSel((s) => toggleId(s, c.id))}
-                  aria-label={`Select ${c.title || 'contract'}`}
-                  style={{ flex: '0 0 auto', cursor: 'pointer' }} />
-                <span role="button" tabIndex={0} onClick={() => setOpenId(c.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(c.id); } }}
-                  style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{c.title || '(untitled)'}</span>
-                  <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
-                    {c.contract_no ? <><code style={{ direction: 'ltr' }}>{c.contract_no}</code> {'\u00b7'} </> : null}
-                    {c.template_name} {'\u00b7'} {kindLabel(c.doc_kind)}
+                {/* Only a generated contract gets a box. A filed document
+                    cannot go in a print stack, and a checkbox that does
+                    nothing is worse than none. */}
+                {filed ? (
+                  <span aria-hidden style={{ flex: '0 0 auto', width: 13 }} />
+                ) : (
+                  <input type="checkbox" checked={sel.includes(r.id)}
+                    onChange={() => setSel((x) => toggleId(x, r.id))}
+                    aria-label={`Select ${r.title}`}
+                    style={{ flex: '0 0 auto', cursor: 'pointer' }} />
+                )}
+                <span role="button" tabIndex={0}
+                  onClick={() => (filed ? setOpenDocId(r.id) : setOpenId(r.id))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      if (filed) setOpenDocId(r.id); else setOpenId(r.id);
+                    }
+                  }}
+                  style={{ flex: 1, minWidth: 180, cursor: 'pointer' }}>
+                  <span dir="auto" style={{ fontSize: 14, fontWeight: 600, display: 'block' }}>{r.title}</span>
+                  <span dir="auto" style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
+                    {r.reference ? <><code style={{ direction: 'ltr' }}>{r.reference}</code> {'\u00b7'} </> : null}
+                    {filed
+                      ? <>filed from outside {'\u00b7'} {kindLabel(r.kind)}{r.party ? ` \u00b7 ${r.party}` : ''}</>
+                      : <>{c.template_name} {'\u00b7'} {kindLabel(r.kind)}</>}
                   </span>
                 </span>
-                {hasSignedCopy(c as any) && (
+
+                {/* The thing to act on, said on the row it belongs to. */}
+                {r.review && (
+                  <span className={`aq-badge ${reviewBadge(r.review)}`}
+                    title="A signed copy was sent back from outside">
+                    {r.review === 'pending' ? 'Signed copy waiting' : reviewLabel(r.review)}
+                  </span>
+                )}
+
+                {!filed && hasSignedCopy(c as any) && (
                   <span title="The signed copy is on file"
                     style={{ flex: '0 0 auto', color: 'var(--aq-success, #1a7f37)', fontWeight: 700 }}>
                     {'\u2713'}
                   </span>
                 )}
-                {(() => {
-                  const st = supersedeState(c, links);
-                  return st === 'none' ? null : (
-                    <span className={`aq-badge ${supersedeBadge(st)}`}>{supersedeLabel(st)}</span>
+                {!filed && (() => {
+                  const sup = supersedeState(c, links);
+                  return sup === 'none' ? null : (
+                    <span className={`aq-badge ${supersedeBadge(sup)}`}>{supersedeLabel(sup)}</span>
                   );
                 })()}
-                <span className={`aq-badge ${contractStatusBadge(c.status)}`}>{contractStatusLabel(c.status)}</span>
-                {c.status === 'draft' && (
+                {filed
+                  ? <span className={`aq-badge ${externalBadge(st!)}`}>{externalLabel(st!)}</span>
+                  : <span className={`aq-badge ${contractStatusBadge(r.status)}`}>{contractStatusLabel(r.status)}</span>}
+
+                {!filed && r.status === 'draft' && (
                   <button className="aq-btn aq-btn-ghost" title="Delete draft" style={{ padding: '4px 8px' }}
-                    onClick={() => { setPending((l) => startPending(l, c.id, c.title ?? '')); }}>
+                    onClick={() => { setPending((l) => startPending(l, r.id, r.title)); }}>
                     &times;
                   </button>
                 )}
-                <span role="button" tabIndex={0} onClick={() => setOpenId(c.id)}
+                <span role="button" tabIndex={0}
+                  onClick={() => (filed ? setOpenDocId(r.id) : setOpenId(r.id))}
                   style={{ fontSize: 14, color: 'var(--aq-text-muted)', cursor: 'pointer' }}>&rsaquo;</span>
+
+                {/* Opened in place, under its own row, rather than on a screen
+                    of its own: the point of the move is that the decision and
+                    the document are in the same place, and a full-page detour
+                    would put them back on two screens with a Back button
+                    between them. */}
+                {filed && openDocId === r.id && (
+                  <div style={{ flexBasis: '100%' }}>
+                    <FiledDocument
+                      row={r}
+                      state={st!}
+                      role={role ?? null}
+                      onClose={() => setOpenDocId(null)}
+                      onDecided={async () => { await rev.reload(); }}
+                      accept={rev.accept}
+                      reject={rev.reject}
+                      onRemove={() => setConfirmId(r.id)}
+                    />
+                    {confirmId === r.id && (
+                      <div style={{ marginTop: 8 }}>
+                        <ConfirmDelete message={filingDeleteWarning(c)} confirmLabel="Yes, remove it"
+                          onCancel={() => setConfirmId('')}
+                          onConfirm={async () => {
+                            setConfirmId(''); setOpenDocId(null);
+                            try { await ext.remove(c); }
+                            catch (e: any) { setNote(e?.message ?? 'Could not remove it.'); }
+                          }} />
+                      </div>
+                    )}
+                  </div>
+                )}
               </li>
-            ))}
+              );
+            })}
           </ul>
 
           {view.hidden > 0 && (
@@ -358,6 +535,12 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
             </p>
           )}
         </section>
+      )}
+
+      {filing && (
+        <FileAgreement
+          onCancel={() => setFiling(false)}
+          onFile={async (v) => { await ext.file(v); setFiling(false); }} />
       )}
 
       {picking && (
@@ -399,6 +582,323 @@ export function LegalRegister({ workspaceId }: { workspaceId?: string }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A document filed from outside, opened in the register - and the decision on
+ * the signed copy somebody sent back against it.
+ *
+ * Siraj: *"you cant check the contract / contract details and id rather it be
+ * in the register rather than its own place"*.
+ *
+ * -- EVERYTHING THE IMPORT KEPT IS ON SCREEN ------------------------
+ *
+ * Migration 123 put the contract app's type, amount, generation date and
+ * generator into `notes` rather than inventing columns for them, so `notes`
+ * is shown in full and not truncated. It is the only place those four facts
+ * survive, and a decision made without them is a decision made on a title.
+ *
+ * -- TWO FILES, AND THEY ARE NOT THE SAME FILE ----------------------
+ *
+ * The DOCUMENT is what went out, in the legal-signed bucket. The SIGNED COPY
+ * is what came back, in the contract app's own bucket (which is why migration
+ * 124 had to exist at all). Reviewing means comparing the two, so both are
+ * openable from here, labelled for which is which - a single "Open" button
+ * would be the most confusing control on the screen.
+ */
+function FiledDocument({
+  row, state, role, onClose, onDecided, accept, reject, onRemove,
+}: {
+  row: RegisterRow;
+  state: ReturnType<typeof externalState>;
+  role: WorkspaceRole | null;
+  onClose: () => void;
+  onDecided: () => Promise<void> | void;
+  accept: (id: string) => Promise<void>;
+  reject: (id: string, reason: string) => Promise<void>;
+  onRemove: () => void;
+}) {
+  const d = row.row;
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+
+  const blocked = cannotReviewHere(row, role);
+  const badReason = reason ? reasonError(reason) : null;
+
+  const openDoc = async () => {
+    setMsg('');
+    const url = await signedCopyUrl(String(d?.file_path ?? ''), d?.file_name);
+    if (url) window.open(url, '_blank');
+    else setMsg('Could not open that document.');
+  };
+
+  const openScan = async () => {
+    setMsg('');
+    const u = row.upload;
+    const url = await reviewFileUrl(String(u?.storage_path ?? ''), u?.original_filename);
+    if (url) window.open(url, '_blank');
+    else {
+      setMsg('This app cannot open that signed copy - it is in the contract app\u2019s'
+        + ' storage. If migration 124 has not been run, that is why.');
+    }
+  };
+
+  const field = (k: string, v: any) => (v ? (
+    <div style={{ minWidth: 160 }}>
+      <span style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--aq-text-muted)' }}>{k}</span>
+      <span dir="auto" style={{ fontSize: 13 }}>{v}</span>
+    </div>
+  ) : null);
+
+  const asDate = (v: any) => (v ? new Date(`${String(v)}T00:00:00`).toLocaleDateString() : '');
+
+  return (
+    <div style={{ background: 'var(--aq-bg-sunken)', borderRadius: 'var(--aq-radius)',
+      padding: 14, marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 10 }}>
+        {field('Kind', kindLabel(row.kind))}
+        {field('Other side', row.party)}
+        {field('Their reference', row.reference)}
+        {field('Signed on', asDate(d?.signed_on) || 'not recorded')}
+        {field('Expires', asDate(d?.expires_on) || 'no end date')}
+        {field('State', externalLabel(state))}
+        {field('File', externalNote(d))}
+      </div>
+
+      {d?.notes && (
+        <p dir="auto" style={{ fontSize: 12.5, color: 'var(--aq-text-secondary)',
+          marginBottom: 10, whiteSpace: 'pre-wrap' }}>{d.notes}</p>
+      )}
+
+      {msg && (
+        <div role="alert" style={{
+          background: 'var(--aq-amber-bg)', border: '1px solid var(--aq-amber-border)',
+          color: 'var(--aq-amber-deep)', padding: '8px 10px',
+          borderRadius: 'var(--aq-radius)', fontSize: 12.5, marginBottom: 10,
+        }}>{msg}</div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+          onClick={openDoc}>Open the document</button>
+        {row.uploadId && (
+          <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+            onClick={openScan}>Open the signed copy</button>
+        )}
+        <span style={{ flex: 1, minWidth: 0 }} />
+        <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+          onClick={onRemove} title="Remove this filing and its document">Remove</button>
+        <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 10px' }}
+          onClick={onClose}>Close</button>
+      </div>
+
+      {/* The decision, under the thing being decided about. */}
+      {row.uploadId && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--aq-border-light)' }}>
+          <p style={{ fontSize: 12.5, marginBottom: 8 }}>
+            <span className={`aq-badge ${reviewBadge(row.review!)}`} style={{ marginRight: 6 }}>
+              {reviewLabel(row.review!)}
+            </span>
+            A signed copy was sent back for this one.
+          </p>
+
+          {blocked ? (
+            <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)' }}>{blocked}</p>
+          ) : rejecting ? (
+            <div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                {REJECT_REASONS.map((x) => (
+                  <button key={x} type="button" className="aq-btn aq-btn-ghost"
+                    style={{ padding: '3px 9px', fontSize: 11.5 }}
+                    onClick={() => setReason(x)}>{x}</button>
+                ))}
+              </div>
+              <textarea dir="auto" className="aq-input" rows={2} value={reason} autoFocus
+                maxLength={REASON_MAX + 50}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Or say it in your own words - they read this in their portal"
+                style={{ width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 11.5,
+                  color: badReason ? 'var(--aq-error)' : 'var(--aq-text-muted)' }}>
+                  {badReason || 'They see this next to their upload.'}
+                </span>
+                <button className="aq-btn aq-btn-ghost" disabled={busy}
+                  onClick={() => { setRejecting(false); setReason(''); }}>Cancel</button>
+                <button className="aq-btn aq-btn-primary"
+                  disabled={busy || !!reasonError(reason)}
+                  onClick={async () => {
+                    setBusy(true); setMsg('');
+                    try {
+                      await reject(row.uploadId!, normaliseReason(reason));
+                      setRejecting(false); setReason('');
+                      await onDecided();
+                    } catch (e: any) { setMsg(e?.message ?? 'That did not go through.'); }
+                    finally { setBusy(false); }
+                  }}>
+                  {busy ? 'Sending\u2026' : 'Send it back'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="aq-btn aq-btn-primary" style={{ padding: '4px 12px' }}
+                disabled={busy || reviewState({ status: row.review } as any) === 'accepted'}
+                onClick={async () => {
+                  setBusy(true); setMsg('');
+                  try { await accept(row.uploadId!); await onDecided(); }
+                  catch (e: any) { setMsg(e?.message ?? 'That did not go through.'); }
+                  finally { setBusy(false); }
+                }}>
+                {busy ? '\u2026' : 'Accept'}
+              </button>
+              <button className="aq-btn aq-btn-ghost" style={{ padding: '4px 12px' }}
+                disabled={busy || row.review === 'rejected'}
+                onClick={() => { setMsg(''); setRejecting(true); }}>
+                {row.review === 'accepted' ? 'Send it back' : 'Reject'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The filing form, moved here from Signatures with the documents it makes.
+ *
+ * Migration 118's own sentence: an outside agreement is filed "so the
+ * register is complete". The form that files one belongs beside the register
+ * it completes.
+ *
+ * The file is required and is picked LAST, because choosing it is the
+ * commitment: everything above it can be typed and retyped, and a form that
+ * uploads the moment a file is chosen has no cancel.
+ */
+function FileAgreement({ onCancel, onFile }: {
+  onCancel: () => void;
+  onFile: (v: {
+    title: string; doc_kind: string; party_name: string; reference: string;
+    signed_on: string | null; expires_on: string | null; notes: string; fileObj: File;
+  }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState('');
+  const [docKind, setDocKind] = useState('other');
+  const [party, setParty] = useState('');
+  const [reference, setReference] = useState('');
+  const [signedOn, setSignedOn] = useState('');
+  const [expiresOn, setExpiresOn] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const formErr = validateExternalDoc({
+    title, doc_kind: docKind, signed_on: signedOn || null, expires_on: expiresOn || null,
+  });
+
+  const label = { display: 'block', fontSize: 12, fontWeight: 600,
+    color: 'var(--aq-text-muted)', marginBottom: 4 } as const;
+
+  return (
+    <div role="dialog" aria-modal="true" style={{
+      position: 'fixed', inset: 0, background: 'var(--aq-backdrop, rgba(0,0,0,0.4))',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
+      overflowY: 'auto',
+    }} onClick={() => !busy && onCancel()}>
+      <div className="aq-card" style={{ padding: 22, width: 'min(560px, 100%)' }}
+        onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>File an agreement</h3>
+
+        <label style={label}>What is it?</label>
+        <input dir="auto" className="aq-input" value={title} autoFocus
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Adex Tower office lease" style={{ width: '100%' }} />
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+          <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+            <label style={label}>Kind</label>
+            <select className="aq-select" value={docKind}
+              onChange={(e) => setDocKind(e.target.value)} style={{ width: '100%' }}>
+              {DOC_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+            <label style={label}>Other side</label>
+            <input dir="auto" className="aq-input" value={party}
+              onChange={(e) => setParty(e.target.value)}
+              placeholder="Who it is with" style={{ width: '100%' }} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+          <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+            <label style={label}>Signed on</label>
+            <input className="aq-input" type="date" value={signedOn}
+              onChange={(e) => setSignedOn(e.target.value)}
+              title="Leave it empty if it is on file but not signed" style={{ width: '100%' }} />
+          </div>
+          <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+            <label style={label}>Expires</label>
+            <input className="aq-input" type="date" value={expiresOn}
+              onChange={(e) => setExpiresOn(e.target.value)}
+              title="So it shows up before it runs out" style={{ width: '100%' }} />
+          </div>
+          <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+            <label style={label}>Their reference</label>
+            <input dir="auto" className="aq-input" value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="If it has one" style={{ width: '100%' }} />
+          </div>
+        </div>
+
+        <label style={{ ...label, marginTop: 12 }}>Notes</label>
+        <textarea dir="auto" className="aq-input" rows={2} value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Anything the next person should know"
+          style={{ width: '100%', resize: 'vertical' }} />
+
+        {(err || (title.trim() && formErr)) && (
+          <div className="aq-badge aq-badge-warning" style={{ display: 'block', marginTop: 12, padding: 8 }}>
+            {err || formErr}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', marginTop: 18 }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: 'var(--aq-text-muted)' }}>
+            PDF, Word or a photo.
+          </span>
+          <button className="aq-btn aq-btn-ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+          {/* Picking the file IS the save - see the header. */}
+          <label className="aq-btn aq-btn-primary"
+            style={{ cursor: busy || formErr ? 'default' : 'pointer', opacity: busy || formErr ? 0.55 : 1 }}>
+            {busy ? 'Filing\u2026' : 'Choose the file and save'}
+            <input type="file" hidden disabled={busy || !!formErr}
+              accept={EXTERNAL_EXTENSIONS.map((x) => `.${x}`).join(',')}
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.currentTarget.value = '';
+                if (!f) return;
+                const bad = validateExternalFile({ name: f.name, size: f.size });
+                if (bad) { setErr(bad); return; }
+                setBusy(true); setErr('');
+                try {
+                  await onFile({
+                    title, doc_kind: docKind, party_name: party, reference,
+                    signed_on: signedOn || null, expires_on: expiresOn || null,
+                    notes, fileObj: f,
+                  });
+                } catch (e2: any) {
+                  setErr(e2?.message ?? 'Could not file it.');
+                } finally { setBusy(false); }
+              }} />
+          </label>
+        </div>
+      </div>
     </div>
   );
 }
