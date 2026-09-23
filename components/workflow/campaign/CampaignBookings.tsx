@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  useLegacyVendors, useVendorAdLines,
+  useLegacyVendors, useVendorCategoriesLegacy, useVendorAdLines,
   updateTaskFields, updateTasksBulk, removeSubtask, syncBookingPriceFromAds,
   ensureTrackingRowsForBooking, shouldTrackVendorOnSheet, vendorNeedsInsight,
   vendorCategoryKey,
@@ -25,6 +25,9 @@ import {
   type BookingRow,
 } from '@/lib/campaign-page';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
+import { useCampaignContracts } from '@/hooks/use-legal';
+import { OverrideGate } from '@/components/ui/OverrideGate';
+import { bookingContractGap } from '@/lib/overrides';
 
 const UNDO_MS = 4000;
 
@@ -145,6 +148,12 @@ export function CampaignBookings({
   onChanged: () => Promise<void> | void;
 }) {
   const { vendors, banks } = useLegacyVendors();
+  // For the contract rule below: which categories are excused from it.
+  const { categories: vendorCats } = useVendorCategoriesLegacy();
+  // A contract raised in Legal (107) does not touch the booking row, so the
+  // rule has to ask. See useCampaignContracts for what that would otherwise
+  // cost: every booking contracted the new way, blocked.
+  const { bySubtask: legalContracted } = useCampaignContracts(task?.id ?? null);
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -155,6 +164,18 @@ export function CampaignBookings({
   // Filter the vendors by status (Pending to start) and by a name search.
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [query, setQuery] = useState('');
+
+  /**
+   * The booking whose completion is being stopped by the contract rule, and
+   * what it was being moved to.
+   *
+   * Held rather than acted on: the save does not happen until the rule is
+   * passed, so cancelling leaves the booking exactly where it was. An
+   * optimistic save followed by an undo would flicker the tile through
+   * "done" and back, and on a slow connection somebody would see it stick.
+   */
+  const [gate, setGate] = useState<
+    { subtaskId: string; next: string; blocked: string; name: string } | null>(null);
 
   // Pending removals, each with its own countdown. Kept in a ref as well so
   // the pagehide flush can reach them without a stale closure.
@@ -298,6 +319,47 @@ export function CampaignBookings({
   });
 
   /* ── One booking's fields ──────────────────────────────────────── */
+
+  /**
+   * Whether a vendor's category still needs a contract.
+   *
+   * UNKNOWN MEANS YES, twice over: an unrecognised category and a booking
+   * with no vendor at all both keep the rule on. The only thing that turns
+   * it off is a category explicitly ticked off in Settings - the same
+   * direction lib/settings and lib/overrides both take, because the failure
+   * to avoid is the rule quietly applying to nobody.
+   */
+  const categoryRequiresContract = (v: unknown): boolean => {
+    const k = String(vendorCategoryKey(v as any) ?? '').trim().toLowerCase();
+    if (!k) return true;
+    const cat = (vendorCats as any[]).find((c) =>
+      String((c as any)?.key ?? '').trim().toLowerCase() === k
+      || String((c as any)?.label ?? '').trim().toLowerCase() === k);
+    return (cat as any)?.requires_contract !== false;
+  };
+
+  /**
+   * Marking a booking done, with the contract rule in front of it.
+   *
+   * Every other status change goes straight through - see bookingContractGap
+   * for why only `done` is gated and why `cancelled` is not.
+   */
+  const changeBookingStatus = (sub: any, next: string) => {
+    const v = (vendors as any[]).find((x) => Number(x.id) === Number(sub?.vendor_id)) ?? null;
+    const blocked = bookingContractGap({
+      nextStatus: next,
+      contractRequestId: sub?.contract_request_id,
+      contractId: legalContracted.has(String(sub?.id ?? '')) ? sub?.id : null,
+      categoryRequiresContract: categoryRequiresContract(v),
+      vendorName: v?.name,
+    });
+    if (blocked) {
+      setGate({ subtaskId: sub.id, next, blocked,
+        name: String(sub?.title ?? v?.name ?? 'this booking') });
+      return;
+    }
+    saveOn(sub.id, 'status', next, sub?.status);
+  };
 
   const saveOn = (subtaskId: string, field: string, value: unknown, was?: unknown) =>
     opt.set(subtaskId, field, value, {
@@ -777,7 +839,7 @@ export function CampaignBookings({
                   clearable={false}
                   value={(sub as any).status ?? 'pending'}
                   options={[...TASK_STATUSES].map((s) => ({ v: String(s), l: labelFor(String(s)) }))}
-                  onChange={(v) => saveOn(sub.id, 'status', v ?? 'pending', (sub as any).status)}
+                  onChange={(v) => changeBookingStatus(sub, v ?? 'pending')}
                 />
               </F>
               {/* Platform and Ad type follow the same rule as Client price:
@@ -867,6 +929,26 @@ export function CampaignBookings({
                 </>
               )}
             </Fields>
+
+            {/* The rule, and the way past it. Under the fields rather than
+                inside the status cell: it is a paragraph and two boxes, and
+                the grid cell it would otherwise sit in is 150px wide. */}
+            {gate && gate.subtaskId === sub.id && (
+              <OverrideGate
+                workspaceId={workspaceId}
+                ruleKey="booking_complete_without_contract"
+                blocked={gate.blocked}
+                entityKind="pm_task"
+                entityId={gate.subtaskId}
+                entityName={gate.name}
+                onCancel={() => setGate(null)}
+                onPassed={async () => {
+                  const g = gate;
+                  setGate(null);
+                  saveOn(g.subtaskId, 'status', g.next, (sub as any).status);
+                }}
+              />
+            )}
 
             {requirements.length > 0 && (
               <div style={{ marginTop: 10 }}>

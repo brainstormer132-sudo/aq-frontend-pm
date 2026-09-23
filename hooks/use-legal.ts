@@ -1917,3 +1917,65 @@ export function useSignedReviews(workspaceId: string | null) {
 
   return { uploads, loading, error, reload: load, accept, reject };
 }
+
+/* ===================================================================
+   WHICH BOOKINGS ON A CAMPAIGN HAVE A CONTRACT (migration 107)
+   =================================================================== */
+
+/**
+ * The subtask ids on this campaign that have a contract in the legal
+ * register, and are therefore past the contract rule.
+ *
+ * -- WHY THIS EXISTS AT ALL -----------------------------------------
+ *
+ * There are TWO ways a booking gets a contract and they write to different
+ * places. Asking for one through the old flow sets
+ * pm_tasks.contract_request_id; raising one in Legal (107) sets
+ * legal.contract.subtask_id and touches the booking row not at all.
+ *
+ * So a rule that checks only contract_request_id blocks every booking whose
+ * contract was raised the NEW way - the way the app is moving to. It would
+ * have sent people to the override code for having done the right thing, and
+ * filled the log with entries that prove nothing.
+ *
+ * -- WHY NOT legal.contract DIRECTLY --------------------------------
+ *
+ * legal.* is RLS'd to owner, admin and legal, and the people on the campaign
+ * screen are operations and marketing. contracts_for_campaign is the
+ * SECURITY DEFINER window 107 opened for exactly this: status only, no
+ * titles of other people's contracts, no field values, and nothing at all
+ * for a campaign in a workspace the caller is not in.
+ *
+ * -- WHAT COUNTS ----------------------------------------------------
+ *
+ * Draft, issued and signed. A VOID contract does not: it was withdrawn, so
+ * the booking is back to having none, and treating it as cover would let a
+ * cancelled contract satisfy the rule forever.
+ */
+export function useCampaignContracts(pmTaskId: string | null) {
+  const [bySubtask, setBySubtask] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!pmTaskId) { setBySubtask(new Set()); setLoading(false); return; }
+    setLoading(true);
+    const { data, error } = await (createClient() as unknown as SupabaseClient)
+      .schema('legal').rpc('contracts_for_campaign', { p_pm_task_id: pmTaskId });
+    // Best effort on purpose. If this read fails the rule falls back to
+    // contract_request_id alone, which over-blocks - and over-blocking with
+    // a way past it is the safe direction for a read that might be down.
+    if (error) { setBySubtask(new Set()); setLoading(false); return; }
+    const out = new Set<string>();
+    for (const row of (data ?? []) as any[]) {
+      if (String(row?.status ?? '').toLowerCase() === 'void') continue;
+      const id = String(row?.subtask_id ?? '').trim();
+      if (id) out.add(id);
+    }
+    setBySubtask(out);
+    setLoading(false);
+  }, [pmTaskId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return { bySubtask, loading, reload: load };
+}
