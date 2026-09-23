@@ -80,14 +80,23 @@ export const RULES: RuleDef[] = [
     label: 'A contract request needs its details',
     blocked: 'Some of what the contract needs is still missing.',
     why: 'Every missing field here comes out blank on the paper somebody'
-      + ' signs, and the values freeze the moment it is issued.',
-    // NOT YET. Passing this one does not skip a formality - it sends a
-    // contract out with blanks where the IBAN and the fee should be, on paper
-    // somebody signs, and the values freeze at issue so there is no fixing it
-    // afterwards without a correction (116). That is a different bargain from
-    // the booking rule, and it is Siraj's to make rather than mine to assume
-    // from "every rule can be bypassed".
-    passable: false,
+      + ' signs, and the values freeze the moment it is issued - so passing'
+      + ' this sends the request to legal for them to judge, not to the vendor.',
+    // Siraj, asked whether this one should be passable: "yes details should be
+    // passable the legal needs to see the details to understand if the details
+    // are right or not".
+    //
+    // Which is the argument this file was missing. The rule was written as
+    // though the app could tell a missing field from an acceptable one, and it
+    // cannot: a vendor with no licence number may be a category that has none,
+    // and a fee left blank may be a favour. Blocking at the REQUEST stage does
+    // not prevent a bad contract - it prevents the one person qualified to
+    // spot one from ever seeing it.
+    //
+    // So it opens, and what comes out the other side is a request in legal's
+    // queue with the gaps visible and a logged reason for why it was sent
+    // anyway. Nothing is issued by passing this.
+    passable: true,
   },
 ];
 

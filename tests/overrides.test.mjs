@@ -63,6 +63,12 @@ const row = (o = {}) => {
     RULES.every((r) => typeof r.passable === 'boolean'));
   ok('at least one rule IS passable - otherwise the code opens nothing',
     passableRules().length >= 1);
+  // Siraj, on the second rule: "yes details should be passable the legal
+  // needs to see the details to understand if the details are right or not".
+  // Both are wired now, so the Settings card names both and the "not yet
+  // passable" line disappears - which it should not do while a rule is
+  // listed but unwired.
+  eq('every listed rule is passable', passableRules().length, RULES.length);
   ok('passableRules is a subset of RULES',
     passableRules().every((r) => RULES.includes(r)));
   ok('and it is exactly the ones marked passable',

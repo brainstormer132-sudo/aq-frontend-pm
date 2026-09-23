@@ -18,6 +18,7 @@ import {
 import {
   paymentSchedule, bookingSchedule, dueLabel, scheduleTone,
 } from '@/lib/payment-schedule';
+import { OverrideGate } from '@/components/ui/OverrideGate';
 import type { OptimisticSave } from '@/hooks/use-optimistic-save';
 
 /**
@@ -80,6 +81,17 @@ export function CampaignVendorContracts({
    * done and what most bookings want.
    */
   const [split, setSplit] = useState<SplitMode>('combined');
+
+  /**
+   * The booking whose contract request is being sent with fields missing.
+   *
+   * Siraj: "yes details should be passable the legal needs to see the details
+   * to understand if the details are right or not". The app cannot tell a
+   * missing field from an acceptable one - a category with no licence number,
+   * a fee that is a favour - and blocking here stopped the one person who can
+   * from ever seeing it.
+   */
+  const [gateFor, setGateFor] = useState<string | null>(null);
 
   const canRequest = !!role
     && ['owner', 'admin', 'marketing', 'sales', 'key_account'].includes(role);
@@ -175,15 +187,18 @@ export function CampaignVendorContracts({
   const signed = rows.filter((r) => r.track.state === 'done').length;
   const waiting = rows.filter((r) => r.track.state === 'waiting').length;
 
-  const askOne = (row: typeof rows[number]) => run(async () => {
+  const askOne = (row: typeof rows[number], overridden = false) => run(async () => {
     const ids = await sendVendorContractRequest({
       subtask: row.sub, parent: task, vendor: row.vendor,
       bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
       client, requestedBy: currentUserId, split,
       banks: banks as any,
+      overridden,
     });
     setNotice(ids.length === 1
-      ? `Contract requested for ${row.name}.`
+      ? (overridden
+        ? `Requested for ${row.name} with gaps - legal will see what is missing.`
+        : `Contract requested for ${row.name}.`)
       : `${ids.length} contracts requested for ${row.name}, one per line.`);
   });
 
@@ -280,6 +295,30 @@ export function CampaignVendorContracts({
           detail={
             <>
               {r.track.state === 'blocked' && <Missing items={r.readiness.missing as any} />}
+              {/* The rule, and the way past it, under the list of what is
+                  missing - so the gaps are on screen while somebody decides
+                  whether they matter. */}
+              {r.track.state === 'blocked' && canRequest && r.vendor && (
+                gateFor === r.sub.id ? (
+                  <OverrideGate
+                    workspaceId={String(task.workspace_id ?? '')}
+                    ruleKey="contract_request_incomplete"
+                    blocked={`${r.name}: ${r.readiness.missing.map((m: any) => m.label).join(', ')}.`}
+                    entityKind="pm_task"
+                    entityId={r.sub.id}
+                    entityName={r.name}
+                    onCancel={() => setGateFor(null)}
+                    onPassed={async () => { setGateFor(null); await askOne(r, true); }}
+                  />
+                ) : (
+                  <button type="button" className="aq-btn aq-btn-ghost"
+                    style={{ padding: '3px 9px', fontSize: 11.5, marginTop: 6 }}
+                    disabled={busy}
+                    onClick={() => setGateFor(r.sub.id)}>
+                    Send it anyway, with the code
+                  </button>
+                )
+              )}
               {r.pay.instalments.length > 0 && <PaySchedule schedule={r.pay} />}
             </>
           }

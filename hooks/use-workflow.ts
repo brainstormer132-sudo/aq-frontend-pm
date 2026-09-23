@@ -5824,6 +5824,22 @@ export async function sendVendorContractRequest(opts: {
    * combined contract, and every contract before 083, uses.
    */
   banks?: LegacyBankAccount[];
+  /**
+   * Send it even though the readiness check says fields are missing.
+   *
+   * Set ONLY by the override gate, which has already taken the shared code
+   * and a reason and written both to public.rule_override with the caller's
+   * name on them (migrations 125, 127). Siraj: "yes details should be
+   * passable the legal needs to see the details to understand if the details
+   * are right or not" - the app cannot tell a missing field from an
+   * acceptable one, and blocking here stops the person who can from ever
+   * seeing it.
+   *
+   * It does NOT skip the duplication guards above: asking twice for the same
+   * ads is a mistake in any circumstances, not a rule somebody might have a
+   * reason to pass.
+   */
+  overridden?: boolean;
 }): Promise<string[]> {
   const { subtask, vendor, bank } = opts;
 
@@ -5848,10 +5864,17 @@ export async function sendVendorContractRequest(opts: {
     throw new Error('A contract has already been requested for this booking.');
   }
 
+  // A vendor is not a detail. Even an overridden request needs somebody to
+  // contract WITH, and there is no version of this that produces a usable
+  // document without one - so this refusal stands whatever the caller passed.
+  if (!vendor) {
+    throw new Error('This booking has no vendor, so there is nobody to contract with.');
+  }
+
   const check = vendorContractReadiness(
     subtask, vendor, bank, linesTotal, opts.parent, lines,
   );
-  if (!check.ready || !vendor) {
+  if (!check.ready && !opts.overridden) {
     throw new Error(
       `Not ready to send. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
     );
