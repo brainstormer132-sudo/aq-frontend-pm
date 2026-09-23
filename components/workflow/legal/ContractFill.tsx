@@ -25,7 +25,7 @@ import {
   parsePlatforms, joinPlatforms, parsePlatformHandles,
   platformHandlePairs, joinPlatformHandles,
 } from '@/lib/legal-prefill';
-import { useLegacyVendors, addVendorBank } from '@/hooks/use-workflow';
+import { useLegacyVendors, addVendorBank, type WorkspaceRole } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   fillFieldsForBlocks, validateFieldValue, contractReady, fillPlaceholders,
@@ -38,6 +38,7 @@ import {
   optionalGroups, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
   previewRows, type OptionalGroup,
   type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
+  cannotIssue, canApprove, approvalNote,
 } from '@/lib/legal';
 import { editTemplateWarning } from '@/lib/legal-doc-view';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
@@ -53,9 +54,12 @@ import { AqDrawingBlock } from '@/components/AQLoading';
  * every required field is valid; an issued contract is frozen and read-only.
  */
 export function ContractFill({
-  workspaceId, contractId, onBack, onOpen,
+  workspaceId, contractId, onBack, onOpen, role,
 }: {
   workspaceId?: string; contractId: string; onBack: () => void;
+  /** Who is looking. Only an owner may approve a draft for issue (migration
+   *  128), and a button that is about to be refused should not be offered. */
+  role?: WorkspaceRole | null;
   /** Open a different contract in place - how a freshly raised correction is
    *  handed over. Falls back to going Back when the parent does not offer it. */
   onOpen?: (id: string) => void;
@@ -65,6 +69,15 @@ export function ContractFill({
   const lists = useManagedLists(workspaceId ?? null);
   const { links: sup } = useSupersedeLinks(workspaceId ?? null);
   const { contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds } = ed;
+
+  // An owner approves the draft before it can be issued (migration 128), and
+  // any change to the values takes the approval back - see setValue, which
+  // mirrors the trigger so the button never offers what the database refuses.
+  const approvalBlocked = cannotIssue(contract as any);
+  // No name here on purpose: this screen does not load profiles, and one
+  // more read to put a name on a line that already says WHEN is a round trip
+  // for decoration. approvalNote handles a missing name by leaving it out.
+  const approverName = '';
 
   // Correcting an issued contract (migration 116). The original is never
   // touched - a correction is a NEW contract pointing back at this one, so
@@ -491,8 +504,28 @@ export function ContractFill({
         {contract && editable && (
           <>
             <button className="aq-btn aq-btn-ghost" disabled={busyAll} onClick={saveDraft}>Save draft</button>
-            <button className="aq-btn aq-btn-primary" disabled={busyAll || !ready || blocked || tablesInvalid} onClick={issue}
-              title={blocked ? 'A tracked date is expired - fix it before issuing'
+            {/* The approval, beside the thing it gates. Only an owner sees a
+                button; everybody else sees where it stands, so "why can I not
+                issue this" is answered on the screen rather than by asking. */}
+            {canApprove(role) && !contract?.approved_at && (
+              <button className="aq-btn aq-btn-ghost" disabled={busyAll}
+                onClick={() => { void ed.approve(); }}
+                title="Approve this draft so it can be issued. Any change to the values takes the approval back.">
+                Approve for issue
+              </button>
+            )}
+            {canApprove(role) && contract?.approved_at && (
+              <button className="aq-btn aq-btn-ghost" disabled={busyAll}
+                onClick={() => { void ed.unapprove(); }}
+                title="Take the approval back">
+                Take approval back
+              </button>
+            )}
+            <button className="aq-btn aq-btn-primary"
+              disabled={busyAll || !ready || blocked || tablesInvalid || !!approvalBlocked}
+              onClick={issue}
+              title={approvalBlocked ? approvalBlocked
+                : blocked ? 'A tracked date is expired - fix it before issuing'
                 : tablesInvalid ? 'A table cell is out of range or off-list - fix it before issuing'
                 : ready ? 'Freeze the values and issue the contract' : 'Fill every required field first'}>
               Issue contract
@@ -500,6 +533,20 @@ export function ContractFill({
           </>
         )}
       </div>
+
+      {/* Where the approval stands, said in words. An issued contract from
+          before 128 says why it has none rather than reading as a defect. */}
+      {contract && (
+        <p style={{ fontSize: 12.5,
+          color: contract.approved_at ? 'var(--aq-text-secondary)' : 'var(--aq-text-muted)' }}>
+          {approvalNote(contract as any, {
+            who: approverName,
+            at: contract.approved_at ? new Date(contract.approved_at).toLocaleDateString() : '',
+          })}
+          {editable && !contract.approved_at && !canApprove(role)
+            ? ' An owner has to approve it before it can be issued.' : ''}
+        </p>
+      )}
 
       {error && <div className="aq-badge aq-badge-error" style={{ display: 'block', padding: 10 }}>{error}</div>}
       {banner && <div className="aq-badge aq-badge-success" style={{ display: 'block', padding: 10 }}>{banner}</div>}

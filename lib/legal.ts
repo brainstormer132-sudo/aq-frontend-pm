@@ -623,6 +623,12 @@ export interface Contract {
   bank_account_id?: number | null;
   /** AQ-<year>-0001, reserved at issue (migration 108). Null while a draft. */
   contract_no?: string | null;
+  /** When an owner approved this draft for issue (migration 128), and who.
+   *  Null means it cannot be issued - and ANY change to the values clears it,
+   *  because an approval of a draft that has since been edited is an approval
+   *  of something else. */
+  approved_at?: string | null;
+  approved_by?: string | null;
   /** The contract this one corrects (migration 116). Written when the
    *  correction is created and immutable after - the database refuses to move
    *  it, which is what makes the chain trustworthy. Null on an ordinary
@@ -1209,6 +1215,80 @@ export function dateAlertLabel(state: DateAlert): string {
 // template defines the columns; the contract adds rows. Row data is stored as
 // JSON in a reserved contract_field keyed by the block id, so it freezes with
 // everything else at issue and enters the fingerprint.
+
+/**
+ * The three field keys that do NOT clear an owner's approval (migration 128).
+ *
+ * Kept here, beside the keys themselves, and duplicated in the migration's
+ * trigger - which is the right kind of duplication, because the database has
+ * to hold the rule whether or not this screen is the caller. What matters is
+ * that the two lists say the same three things, and a test below asserts this
+ * one is exactly the fingerprint, the issued-at stamp, and the contract
+ * number.
+ *
+ * All three are written BY the issue path, after the approval. The number in
+ * particular is not typed - the register assigns it at issue - so an owner who
+ * approved a numberless draft is not being asked to approve a different
+ * document when the number appears.
+ */
+export const APPROVAL_EXEMPT_KEYS: readonly string[] = [
+  FINGERPRINT_KEY, ISSUED_AT_KEY, 'id',
+];
+
+/**
+ * Whether writing this key clears the approval.
+ *
+ * The screen mirrors the trigger rather than waiting to be told: the contract
+ * row it is holding says `approved_at` while the database has already cleared
+ * it, and offering Issue in that gap only produces a refusal nobody expected.
+ */
+export function changeClearsApproval(key: unknown): boolean {
+  return !APPROVAL_EXEMPT_KEYS.includes(String(key ?? ''));
+}
+
+/**
+ * Why this contract cannot be issued yet, or null when it can.
+ *
+ * The sentence rather than a boolean, so a disabled button says why - the
+ * shape cannotFileSigned and cannotAccept already use.
+ */
+export function cannotIssue(c: { status?: unknown; approved_at?: unknown } | null): string | null {
+  const st = String(c?.status ?? '').toLowerCase();
+  if (!c) return 'No contract loaded.';
+  if (st !== 'draft') return `This contract is ${st || 'not a draft'}, so it is already out.`;
+  if (!String(c?.approved_at ?? '').trim()) {
+    return 'An owner has to approve this before it can be issued.';
+  }
+  return null;
+}
+
+/** Whether this person may approve a contract for issue. Owner only, matching
+ *  migration 128 - so the screen never offers what the database refuses. */
+export function canApprove(role: unknown): boolean {
+  return String(role ?? '').trim().toLowerCase() === 'owner';
+}
+
+/**
+ * The line that says where the approval stands. Dates arrive formatted -
+ * this file has no locale and no clock.
+ */
+export function approvalNote(
+  c: { status?: unknown; approved_at?: unknown } | null,
+  fmt: { at?: string; who?: string },
+): string {
+  const st = String(c?.status ?? '').toLowerCase();
+  if (!String(c?.approved_at ?? '').trim()) {
+    return st === 'draft'
+      ? 'Not approved yet.'
+      : 'Issued before approvals were recorded.';
+  }
+  const who = String(fmt.who ?? '').trim();
+  const at = String(fmt.at ?? '').trim();
+  if (who && at) return `Approved by ${who} on ${at}.`;
+  if (at) return `Approved on ${at}.`;
+  if (who) return `Approved by ${who}.`;
+  return 'Approved.';
+}
 
 export const TABLE_KEY_PREFIX = '__aq_table_';
 export interface TableColumn { key: string; label: string; }

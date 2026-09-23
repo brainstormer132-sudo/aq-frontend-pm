@@ -17,6 +17,7 @@ import type {
 } from '@/lib/legal';
 import {
   defaultBlockContent, moveItem, withPositions, nextPosition, contractEditable,
+  changeClearsApproval,
   contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
   OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks, TABLE_KEY_PREFIX,
   withoutArchived,
@@ -600,7 +601,7 @@ export function useContracts(workspaceId: string | null) {
     // the order: with a non-unique order two pages overlap and a row falls
     // between them. See selectAllRows and tests/paging.
     const cs = await selectAllRows<any>('useContracts', () => c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at, approved_at, approved_by')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .order('id'), (m) => setError(m));
@@ -919,7 +920,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setLoading(true); setError('');
     const c = legal();
     const { data: ct, error: e0 } = await c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at, approved_at, approved_by')
       .eq('id', contractId).single();
     if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
     setContract(ct as Contract);
@@ -938,7 +939,22 @@ export function useContractEditor(workspaceId: string | null, contractId: string
 
   useEffect(() => { void load(); }, [load]);
 
-  const setValue = (key: string, value: string) => setValues((v) => ({ ...v, [key]: value }));
+  /**
+   * Set a value, and drop the approval if this key is one that clears it.
+   *
+   * The screen MIRRORS the trigger in migration 128 rather than waiting to be
+   * told. The contract row held here still says `approved_at` while the
+   * database has already cleared it, and offering Issue in that gap produces
+   * a refusal nobody expected. The rule is one function in lib/legal, used by
+   * both sides, and the three exempt keys are asserted there against the keys
+   * the issue path actually writes.
+   */
+  const setValue = (key: string, value: string) => {
+    setValues((v) => ({ ...v, [key]: value }));
+    if (changeClearsApproval(key)) {
+      setContract((c) => (c && c.approved_at ? { ...c, approved_at: null, approved_by: null } : c));
+    }
+  };
 
   const guard = () => {
     if (!workspaceId || !contract) throw new Error('No contract loaded.');
@@ -1028,6 +1044,26 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setContract((c) => (c ? { ...c, title: title.trim() } : c));
   });
 
+  /**
+   * An owner approves the draft for issue, or takes it back (migration 128).
+   *
+   * Both go through the RPCs rather than an update, because the role check is
+   * the point and `legal` may update a contract through RLS without being
+   * allowed to approve one. A reload follows: the approval is not the only
+   * thing that may have moved, and it is one read.
+   */
+  const approve = () => run(async () => {
+    const { error: e } = await legal().rpc('approve_contract', { p_contract_id: contractId });
+    if (e) throw new Error(e.message ?? String(e));
+    await load();
+  });
+
+  const unapprove = () => run(async () => {
+    const { error: e } = await legal().rpc('unapprove_contract', { p_contract_id: contractId });
+    if (e) throw new Error(e.message ?? String(e));
+    await load();
+  });
+
   const fingerprint = values[FINGERPRINT_KEY] || null;
   const issuedAt = values[ISSUED_AT_KEY] || null;
   const offIds = parseOffIds(values[OPT_OFF_KEY]);
@@ -1043,6 +1079,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     contract, blocks, values, loading, error, busy, editable, fingerprint, issuedAt, offIds,
     setVendor,
     reload: load, setValue, saveAll, issue, rename, toggleBlockOff,
+    approve, unapprove,
   };
 }
 

@@ -206,6 +206,7 @@ export function LegalRegister({ workspaceId, role, initialSource }: {
       // "Saved." banner, and a dateStamped flag that stopped the new draft
       // being dated at all. Keying it remounts instead.
       <ContractFill key={openId} workspaceId={workspaceId} contractId={openId}
+        role={role ?? null}
         onBack={() => setOpenId(null)} onOpen={(id) => setOpenId(id)} />
     );
   }

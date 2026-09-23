@@ -43,7 +43,7 @@ export function LegalView({ section, workspaceId, role, onSection, registerFilte
   registerFilter?: string;
 }) {
   switch (section) {
-    case 'matters': return <LegalTasks workspaceId={workspaceId} />;
+    case 'matters': return <LegalTasks workspaceId={workspaceId} role={role} />;
     case 'cases': return <LegalCases workspaceId={workspaceId} />;
     case 'documents': return <LegalDocuments workspaceId={workspaceId} />;
     case 'register': return (

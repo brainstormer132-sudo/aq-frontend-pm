@@ -24,6 +24,7 @@ import {
   bulletText, BULLET, shortContractId, printCss,
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
   cappedList, LIST_SHOW_MAX,
+  APPROVAL_EXEMPT_KEYS, changeClearsApproval, cannotIssue, canApprove, approvalNote,
 } from '../.test-build/legal.js';
 import { amountInWords } from '../.test-build/legal-amount.js';
 
@@ -1291,6 +1292,71 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   // Still asked to stay with its section - a heading alone at the foot of a
   // page is the other half of the same complaint.
   ok('a heading still refuses to be orphaned', /break-after: avoid/.test(rule[1]));
+}
+
+
+// -- an owner approves before issue (migration 128) ------------------
+//
+// The rules that matter:
+//
+//   1. THE EXEMPT LIST IS EXACTLY THREE KEYS, and they are the three the
+//      issue path writes. It is duplicated in the migration's trigger - the
+//      database has to hold the rule whether or not this screen is the
+//      caller - so this asserts what the two lists must agree on. Wrong in
+//      the permissive direction and an edit stops clearing the approval;
+//      wrong in the strict direction and NOTHING CAN EVER BE ISSUED, because
+//      pressing Issue would clear the approval one statement before the gate
+//      checks it.
+//   2. OWNER ONLY. Siraj: "contract needs to be signed by owners". Admin and
+//      legal are not owners, and the screen must not offer what 128 refuses.
+{
+  eq('the exempt keys are exactly the three the issue path writes',
+    [...APPROVAL_EXEMPT_KEYS].sort(), [FINGERPRINT_KEY, ISSUED_AT_KEY, 'id'].sort());
+  eq('there are three of them', APPROVAL_EXEMPT_KEYS.length, 3);
+
+  eq('the seal does not clear an approval', changeClearsApproval(FINGERPRINT_KEY), false);
+  eq('nor the issued-at stamp', changeClearsApproval(ISSUED_AT_KEY), false);
+  eq('nor the contract number', changeClearsApproval('id'), false);
+  eq('but the fee does', changeClearsApproval('amount'), true);
+  eq('and so does the optional-clause choice', changeClearsApproval(OPT_OFF_KEY), true);
+  eq('and a table', changeClearsApproval(`${TABLE_KEY_PREFIX}abc`), true);
+  eq('an unnamed key clears it - unknown means it counts', changeClearsApproval(''), true);
+  eq('and null does too', changeClearsApproval(null), true);
+
+  eq('an owner may approve', canApprove('owner'), true);
+  eq('case and spacing do not matter', canApprove(' OWNER '), true);
+  eq('an admin may not', canApprove('admin'), false);
+  eq('nor legal', canApprove('legal'), false);
+  eq('nor anybody else',
+    ['marketing', 'sales', 'operations', 'finance', 'member', 'key_account'].map(canApprove),
+    [false, false, false, false, false, false]);
+  eq('no role is not an owner', canApprove(null), false);
+
+  ok('an unapproved draft says an owner has to approve it',
+    /approve/i.test(String(cannotIssue({ status: 'draft', approved_at: null }))));
+  eq('an approved draft can be issued',
+    cannotIssue({ status: 'draft', approved_at: '2026-09-23T10:00:00Z' }), null);
+  ok('a blank approval is no approval', !!cannotIssue({ status: 'draft', approved_at: '   ' }));
+  ok('an issued contract is already out',
+    /already out/.test(String(cannotIssue({ status: 'issued', approved_at: 'x' }))));
+  ok('so is a signed one', !!cannotIssue({ status: 'signed', approved_at: 'x' }));
+  ok('nothing loaded says so', !!cannotIssue(null));
+
+  eq('not approved', approvalNote({ status: 'draft', approved_at: null }, {}), 'Not approved yet.');
+  // An issued contract from before 128 has no approval and never will. Saying
+  // "not approved yet" about it would read as a defect in a document already
+  // out in the world.
+  eq('an older issued contract says why it has none',
+    approvalNote({ status: 'issued', approved_at: null }, {}),
+    'Issued before approvals were recorded.');
+  eq('who and when',
+    approvalNote({ status: 'draft', approved_at: 'x' }, { who: 'Siraj', at: '23 Sep' }),
+    'Approved by Siraj on 23 Sep.');
+  eq('when only', approvalNote({ status: 'draft', approved_at: 'x' }, { at: '23 Sep' }),
+    'Approved on 23 Sep.');
+  eq('who only', approvalNote({ status: 'draft', approved_at: 'x' }, { who: 'Siraj' }),
+    'Approved by Siraj.');
+  eq('neither, but approved', approvalNote({ status: 'draft', approved_at: 'x' }, {}), 'Approved.');
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

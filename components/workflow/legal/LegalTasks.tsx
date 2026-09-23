@@ -6,7 +6,7 @@ import {
   useLegalPlaceholders, useManagedLists, useDeletedBatches,
   usePublishedVersions, useVersionBlocks,
 } from '@/hooks/use-legal';
-import { useClients, useLegacyVendors } from '@/hooks/use-workflow';
+import { useClients, useLegacyVendors, type WorkspaceRole } from '@/hooks/use-workflow';
 import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import { ContractFill, MultiChoice, PreviewBody } from '@/components/workflow/legal/ContractFill';
 import {
@@ -46,7 +46,12 @@ import { AqDrawingBlock } from '@/components/AQLoading';
  * distracting i only want to click on them then be able to work on their
  * data". One line each, click to open the fill screen.
  */
-export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
+export function LegalTasks({ workspaceId, role }: {
+  workspaceId?: string;
+  /** Passed through to the fill screen: only an owner may approve a draft for
+   *  issue (128), and a contract opened from here is the same contract. */
+  role?: WorkspaceRole | null;
+}) {
   const ws = workspaceId ?? null;
   const { batches, loading, error, busy, create, addMore, remove, reload } = useContractBatches(ws);
   const [openBatch, setOpenBatch] = useState<string | null>(null);
@@ -109,6 +114,7 @@ export function LegalTasks({ workspaceId }: { workspaceId?: string }) {
       <TaskDetail workspaceId={ws} batchId={openBatch} title={b?.title ?? 'Task'}
         shared={b?.shared ?? {}} versionId={b?.version_id ?? null} busy={busy}
         onAddMore={(n) => addMore(openBatch, n)}
+        role={role ?? null}
         onBack={() => setOpenBatch(null)} />
     );
   }
@@ -550,9 +556,13 @@ function NewTaskForm({
 
 /** One task: its contracts, one line each, click to fill one in. */
 function TaskDetail({
-  workspaceId, batchId, title, shared, versionId, busy, onAddMore, onBack,
+  workspaceId, batchId, title, shared, versionId, busy, onAddMore, onBack, role,
 }: {
   workspaceId: string | null;
+  /** Threaded to the fill screen: a contract opened from a task is the same
+   *  contract as one opened from the Register, and only an owner approves it
+   *  for issue (migration 128). */
+  role?: WorkspaceRole | null;
   batchId: string;
   title: string;
   shared: Record<string, string>;
@@ -584,6 +594,7 @@ function TaskDetail({
   if (openContract) {
     return (
       <ContractFill workspaceId={workspaceId ?? undefined} contractId={openContract}
+        role={role ?? null}
         onBack={() => { setOpenContract(null); void reload(); }} />
     );
   }
