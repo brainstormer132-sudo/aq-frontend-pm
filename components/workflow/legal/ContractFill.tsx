@@ -38,7 +38,7 @@ import {
   optionalGroups, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
   previewRows, type OptionalGroup,
   type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
-  cannotIssue, canApprove, approvalNote,
+  cannotIssue, canApprove, approvalNote, printApproval,
 } from '@/lib/legal';
 import { editTemplateWarning } from '@/lib/legal-doc-view';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
@@ -74,10 +74,11 @@ export function ContractFill({
   // any change to the values takes the approval back - see setValue, which
   // mirrors the trigger so the button never offers what the database refuses.
   const approvalBlocked = cannotIssue(contract as any);
-  // No name here on purpose: this screen does not load profiles, and one
-  // more read to put a name on a line that already says WHEN is a round trip
-  // for decoration. approvalNote handles a missing name by leaving it out.
-  const approverName = '';
+  // The name comes off the contract row itself (migration 129), not from a
+  // profile lookup - so it costs nothing here, and it is the name that was
+  // true when the approval happened rather than whatever that person is
+  // called today. approvalNote handles a missing one by leaving it out.
+  const approverName = String(contract?.approved_name ?? '').trim();
 
   // Correcting an issued contract (migration 116). The original is never
   // touched - a correction is a NEW contract pointing back at this one, so
@@ -435,6 +436,9 @@ export function ContractFill({
         // pressed print.
         generatedOn: new Date().toISOString().slice(0, 10),
         fingerprint: fingerprint ? formatFingerprint(fingerprint) : undefined,
+        // The owner's signing line. Undefined on an unapproved draft, and
+        // then nothing is printed - see printApproval.
+        approval: printApproval(contract),
         // A reprint of a replaced contract says so, loudly. The one moment
         // this matters is somebody pulling an old copy off the printer and
         // handing it over as the current agreement.

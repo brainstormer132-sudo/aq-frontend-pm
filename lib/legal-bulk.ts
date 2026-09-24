@@ -30,7 +30,7 @@
 
 import {
   type Dir, type TemplateBlock, type PrintDoc, type PrintMeta,
-  detectDir, visibleBlocks, parseOffIds, formatFingerprint, printReference,
+  detectDir, visibleBlocks, parseOffIds, formatFingerprint, printReference, printApproval,
   contractStatusLabel, kindLabel, FINGERPRINT_KEY, OPT_OFF_KEY,
 } from './legal';
 import type { Letterhead } from './legal-letterhead';
@@ -53,6 +53,12 @@ export interface PrintContract {
   /** The contract this one corrects (116). Null on nearly all of them. */
   supersedes_id?: string | null;
   supersede_reason?: string | null;
+  /** The owner's approval (128, 129), so a batch prints the signing line too.
+   *  A stack of forty where only the ones printed one at a time carry the
+   *  approval is the kind of difference nobody notices until somebody is
+   *  holding the wrong one. */
+  approved_at?: string | null;
+  approved_name?: string | null;
 }
 
 /** One field value row, as legal.contract_field stores it. */
@@ -183,6 +189,7 @@ export function buildPrintDocs(input: {
       status: String(c?.status ?? ''),
       reference: printReference(c),
       fingerprint: fp ? formatFingerprint(fp) : undefined,
+      approval: printApproval(c),
     };
     // Only a LIVE correction replaces anything. One still in draft has no
     // number and has replaced nothing, and stamping SUPERSEDED on a contract

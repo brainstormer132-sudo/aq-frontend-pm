@@ -25,6 +25,7 @@ import {
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
   cappedList, LIST_SHOW_MAX,
   APPROVAL_EXEMPT_KEYS, changeClearsApproval, cannotIssue, canApprove, approvalNote,
+  printApproval, approvalCaption,
 } from '../.test-build/legal.js';
 import { amountInWords } from '../.test-build/legal-amount.js';
 
@@ -1357,6 +1358,123 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
   eq('who only', approvalNote({ status: 'draft', approved_at: 'x' }, { who: 'Siraj' }),
     'Approved by Siraj.');
   eq('neither, but approved', approvalNote({ status: 'draft', approved_at: 'x' }, {}), 'Approved.');
+}
+
+/* -- the owner's signing line on the paper (128, 129) ----------------
+ *
+ * The half of "signed by owners" that is made of ink. What is being pinned
+ * here, in order of how much it would cost to get wrong:
+ *
+ *   1. AN UNAPPROVED CONTRACT PRINTS NO SIGNING LINE. A blank rule under the
+ *      words "Approved for issue" is an invitation to sign a document nobody
+ *      approved - the exact outcome the approval gate exists to prevent.
+ *   2. The approval does not touch the fingerprint. It is meta, like the
+ *      number and the supersede lines; folding it in would make every
+ *      already-issued contract verify as "differs".
+ *   3. The name is escaped and direction-isolated, because it is a person's
+ *      name typed by a person into a profile.
+ */
+{
+  eq('no approval, nothing to print', printApproval({ status: 'draft' }), undefined);
+  eq('a blank timestamp is not an approval',
+    printApproval({ approved_at: '   ', approved_name: 'Siraj' }), undefined);
+  eq('nothing loaded prints nothing', printApproval(null), undefined);
+  eq('undefined prints nothing', printApproval(undefined), undefined);
+  eq('the date is the day, not the instant',
+    printApproval({ approved_at: '2026-09-23T22:40:11.512Z', approved_name: 'Siraj Q' }),
+    { name: 'Siraj Q', on: '2026-09-23' });
+  eq('a space-separated timestamp gives the same day',
+    printApproval({ approved_at: '2026-09-23 22:40:11+03', approved_name: 'Siraj Q' }).on,
+    '2026-09-23');
+  eq('the name is trimmed',
+    printApproval({ approved_at: '2026-09-23T00:00:00Z', approved_name: '  Siraj Q  ' }).name,
+    'Siraj Q');
+  // 128: an approval with no named actor is a real state. It still prints -
+  // the approval is the timestamp, and the line says so with the name blank.
+  eq('an approval with nobody named still prints',
+    printApproval({ approved_at: '2026-09-23T00:00:00Z' }),
+    { name: '', on: '2026-09-23' });
+
+  // The caption carries both languages whichever way the document runs, like
+  // the fingerprint's. Arabic is checked by codepoint, not by eye.
+  const ALEF_AIN = '\u0627\u0639';
+  ok('the caption is bilingual in an English document',
+    approvalCaption('ltr').includes('Approved for issue')
+    && approvalCaption('ltr').includes(ALEF_AIN));
+  ok('and in an Arabic one', approvalCaption('rtl').includes(ALEF_AIN)
+    && approvalCaption('rtl').includes('Approved for issue'));
+  ok("the document's own language leads", approvalCaption('rtl').indexOf(ALEF_AIN) === 0);
+  ok('and in English the English does',
+    approvalCaption('ltr').indexOf('Approved') === 0);
+
+  const sheet = (meta) => contractPrintHTML({
+    title: 'c', dir: 'ltr', values: {},
+    blocks: [{ block_type: 'p', content: { text: 'body text' } }],
+    meta,
+  });
+
+  const approved = sheet({
+    reference: 'AQ-2026-0108', fingerprint: 'ABCD 1234',
+    approval: printApproval({ approved_at: '2026-09-23T10:00:00Z', approved_name: 'Siraj Q' }),
+  });
+  // The DIV, not the class name: every class in this file also appears in
+  // printCss, in the head, on every page - so `includes('doc-approval')` is
+  // true of a document that prints no signing line at all, and a test written
+  // that way passes whatever the renderer does.
+  const LINE = '<div class="doc-approval">';
+  ok('an approved contract prints the signing line', approved.includes(LINE));
+  ok('with the approver on it', approved.includes('<bdi>Siraj Q</bdi>'));
+  ok('a rule to sign on', approved.includes('doc-approval-r'));
+  ok('and the date it was approved', approved.includes('2026-09-23'));
+  // Before the seal, after the agreement. The seal is a footnote about the
+  // document; the signature is part of what is being handed over.
+  ok('the signing line comes before the seal',
+    approved.indexOf(LINE) < approved.indexOf('<div class="doc-fp">'));
+  ok('and after the body', approved.indexOf('body text') < approved.indexOf(LINE));
+
+  const draft = sheet({ status: 'draft', approval: printApproval({ status: 'draft' }) });
+  ok('AN UNAPPROVED DRAFT PRINTS NO SIGNING LINE', !draft.includes(LINE));
+  ok('not even the caption', !draft.includes('Approved for issue'));
+  // ...and it still prints everything else, so the check above is not passing
+  // because the document came out empty.
+  ok('while printing the contract itself', draft.includes('body text'));
+
+  const nameless = sheet({
+    approval: printApproval({ approved_at: '2026-09-23T10:00:00Z' }),
+  });
+  ok('an approval with no name still prints its line',
+    nameless.includes('<div class="doc-approval-r"></div>'));
+  ok('with a blank held above the rule', nameless.includes('&nbsp;'));
+
+  const nasty = sheet({
+    approval: printApproval({
+      approved_at: '2026-09-23T10:00:00Z',
+      approved_name: '<script>alert(1)</script>',
+    }),
+  });
+  ok('a name is escaped', !nasty.includes('<script>'));
+  ok('and still shown', nasty.includes('&lt;script&gt;'));
+
+  // The guarantee that keeps every contract issued before today verifying:
+  // the approval lives in meta, and meta is not in the canonical.
+  {
+    const blocks = [{ block_type: 'p', content: { text: 'Owed {{ amount }}' } }];
+    const values = { amount: '100' };
+    const withApproval = contractPrintHTML({
+      title: 'c', dir: 'ltr', blocks, values,
+      meta: { approval: { name: 'Siraj Q', on: '2026-09-23' } },
+    });
+    const without = contractPrintHTML({ title: 'c', dir: 'ltr', blocks, values, meta: {} });
+    ok('the contract itself prints either way',
+      withApproval.includes('Owed <bdi>100</bdi>') && without.includes('Owed <bdi>100</bdi>'));
+    // Byte for byte: take the signing line out of the approved page and what
+    // is left IS the unapproved page. Nothing else on the sheet moved, which
+    // is what "the approval is meta, not content" has to mean for the seal to
+    // keep verifying every contract issued before today.
+    eq('and the approval changes NOTHING else on the page',
+      withApproval.replace(/<div class="doc-approval">[\s\S]*?<\/div><\/div>/, ''),
+      without);
+  }
 }
 
 console.log(`legal: ${pass} passed, ${fail} failed`);

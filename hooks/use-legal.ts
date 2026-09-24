@@ -601,7 +601,7 @@ export function useContracts(workspaceId: string | null) {
     // the order: with a non-unique order two pages overlap and a row falls
     // between them. See selectAllRows and tests/paging.
     const cs = await selectAllRows<any>('useContracts', () => c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at, approved_at, approved_by')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at, approved_at, approved_by, approved_name')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
       .order('id'), (m) => setError(m));
@@ -920,7 +920,7 @@ export function useContractEditor(workspaceId: string | null, contractId: string
     setLoading(true); setError('');
     const c = legal();
     const { data: ct, error: e0 } = await c.from('contract')
-      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at, approved_at, approved_by')
+      .select('id, workspace_id, template_id, version_id, title, status, created_at, updated_at, pm_task_id, subtask_id, vendor_id, bank_account_id, contract_no, supersedes_id, supersede_reason, signed_path, signed_name, signed_bytes, signed_on, signed_recorded_at, approved_at, approved_by, approved_name')
       .eq('id', contractId).single();
     if (e0) { setError(e0.message ?? String(e0)); setLoading(false); return; }
     setContract(ct as Contract);
@@ -952,7 +952,8 @@ export function useContractEditor(workspaceId: string | null, contractId: string
   const setValue = (key: string, value: string) => {
     setValues((v) => ({ ...v, [key]: value }));
     if (changeClearsApproval(key)) {
-      setContract((c) => (c && c.approved_at ? { ...c, approved_at: null, approved_by: null } : c));
+      setContract((c) => (c && c.approved_at
+        ? { ...c, approved_at: null, approved_by: null, approved_name: null } : c));
     }
   };
 

@@ -22,6 +22,7 @@ import {
   contractPrintHTML, contractsPrintHTML, contractSheetHtml, printReference,
   bulkPrintTitle, printDocTitle, FINGERPRINT_KEY, OPT_OFF_KEY,
 } from '../.test-build/legal.js';
+import { printApproval } from '../.test-build/legal.js';
 import { supersedeLinks } from '../.test-build/legal-supersede.js';
 
 let pass = 0, fail = 0;
@@ -286,6 +287,38 @@ ok('a big one warns rather than refuses', (bulkPrintNote(BULK_PRINT_WARN_AT) ?? 
   ok('a workspace that has never corrected anything prints no notice',
     !contractsPrintHTML(plain.docs).includes('SUPERSEDED')
     && !contractsPrintHTML(plain.docs).includes('doc-replaces"'));
+}
+
+/* -- the approval reaches the batch too ------------------------------
+ *
+ * The failure this pins: a stack of forty where only the contracts printed
+ * one at a time carry the owner's signing line. Nobody notices until somebody
+ * is holding the one that does not.
+ */
+{
+  const blocks = [blk({ id: 'b1', v: 'v9', pos: 1, text: 'Body' })];
+  const yes = { ...ct({ id: 'c-yes', v: 'v9', no: 'AQ-2026-0201' }),
+    approved_at: '2026-09-23T10:00:00Z', approved_name: 'Siraj Q' };
+  const no = ct({ id: 'c-no', v: 'v9', no: 'AQ-2026-0202', status: 'draft' });
+
+  const built = buildPrintDocs({ contracts: [yes, no], blocks, fields: [] });
+  eq('the approved one carries its approval into the batch',
+    built.docs[0].meta.approval, { name: 'Siraj Q', on: '2026-09-23' });
+  eq('and the unapproved one carries none', built.docs[1].meta.approval, undefined);
+
+  const html = contractsPrintHTML(built.docs);
+  eq('exactly one signing line in a stack of two',
+    html.split('doc-approval"').length - 1, 1);
+  ok('and it names the owner who approved it', html.includes('<bdi>Siraj Q</bdi>'));
+
+  // A batch of one is still byte for byte the single print - the guarantee
+  // this whole suite opens with, re-checked now that meta has one more field
+  // in it that only one of the two paths fills.
+  const single = contractSheetHtml(built.docs[0]);
+  ok('a batch of one with an approval is the single print',
+    contractsPrintHTML([built.docs[0]]).includes(single));
+  eq('and printApproval is what both of them used',
+    printApproval(yes), built.docs[0].meta.approval);
 }
 
 console.log(`${pass} passed, ${fail} failed`);

@@ -629,6 +629,12 @@ export interface Contract {
    *  of something else. */
   approved_at?: string | null;
   approved_by?: string | null;
+  /** The approving owner's name AS IT WAS at that moment (migration 129).
+   *  Copied from their profile by approve_contract and never re-derived: a
+   *  renamed or deleted profile must not change what an issued contract says
+   *  about who approved it. Null when the approval came from a call with no
+   *  JWT, or when that person's profile carries no name. */
+  approved_name?: string | null;
   /** The contract this one corrects (migration 116). Written when the
    *  correction is created and immutable after - the database refuses to move
    *  it, which is what makes the chain trustworthy. Null on an ordinary
@@ -1545,6 +1551,28 @@ export interface PrintMeta {
    *  Printed loudly, because an old copy coming out of the printer looking
    *  like the current agreement is the failure supersede exists to prevent. */
   replacedBy?: string;
+  /** Who approved it for issue, and when (migrations 128 and 129). Absent on
+   *  a draft nobody has approved, and on anything issued before 128 - and in
+   *  both cases nothing is printed, rather than an empty signing line
+   *  inviting somebody to write a name on it. */
+  approval?: PrintApproval;
+}
+
+/**
+ * The approval as the PAPER needs it: two strings, already shaped.
+ *
+ * Deliberately not the contract row. This file has no clock, no locale and no
+ * database, and a printer that starts formatting timestamps is a printer that
+ * puts 9/23/2026 on one machine and 23/09/2026 on another - the failure the
+ * fill screen's `generatedOn` comment already records.
+ */
+export interface PrintApproval {
+  /** The owner's name as it stood when they approved. May be EMPTY: an
+   *  approval with no named actor is a real state (128 wrote down why), and a
+   *  blank space above the signing rule says so without claiming anything. */
+  name: string;
+  /** The date, ISO, no time. A contract is approved on a day. */
+  on: string;
 }
 
 /** One contract, everything the printer needs of it and nothing else. */
@@ -1683,6 +1711,23 @@ export function contractSheetHtml(args: PrintDoc): string {
   const ref = meta.reference ? escapeHtml(meta.reference) : '';
   const fp = meta.fingerprint ? escapeHtml(meta.fingerprint) : '';
 
+  // The owner's signing line (128, 129). Siraj: "contract needs to be signed
+  // by owners" - and asked whether that meant a step in the app or a line on
+  // the paper, he said both. The name is printed ABOVE the rule, the way the
+  // two party signatures already are on this document, so the page has one
+  // signing idiom rather than two. A blank line holds the rule down when the
+  // approval has no name behind it, so the rule cannot ride up under the
+  // caption and read as an underline.
+  const ap = meta.approval;
+  const approvalHtml = ap
+    ? `<div class="doc-approval">`
+      + `<div class="doc-approval-l">${escapeHtml(approvalCaption(dir))}</div>`
+      + `<div class="doc-approval-n">${ap.name ? `<bdi>${escapeHtml(ap.name)}</bdi>` : '&nbsp;'}</div>`
+      + `<div class="doc-approval-r"></div>`
+      + (ap.on ? `<div class="doc-approval-d" dir="ltr">${escapeHtml(ap.on)}</div>` : '')
+      + `</div>`
+    : '';
+
   // The supersede lines (116). DELIBERATELY OUTSIDE contractCanonical, like
   // the reference and the fingerprint itself: an original is sealed at issue,
   // and its correction is written afterwards. Folding "replaced by" into the
@@ -1739,6 +1784,7 @@ export function contractSheetHtml(args: PrintDoc): string {
   ${replacedBy ? `<div class="doc-replaced">${replacedBy}</div>` : ''}
   ${replaces ? `<div class="doc-replaces">${replaces}</div>` : ''}
   ${bodyHtml}
+  ${approvalHtml}
   ${fp ? `<div class="doc-fp"><div class="doc-fp-label">${escapeHtml(fingerprintCaption(dir))}</div><div class="doc-fp-hash">${fp}</div></div>` : ''}
 </div>
   </td></tr></tbody>
@@ -1764,6 +1810,56 @@ export function fingerprintCaption(dir: Dir): string {
   // Both, always - the contract is Arabic and the people filing it are not
   // all Arabic readers - but the document's own language leads.
   return dir === 'rtl' ? `${ar} \u2014 ${en}` : `${en} \u2014 ${ar}`;
+}
+
+/**
+ * What the signing line at the foot of an approved contract is called.
+ *
+ * Both languages, the document's own leading, exactly like the fingerprint
+ * caption above - for the same reason: the contract is Arabic and the people
+ * filing it are not all Arabic readers.
+ */
+export function approvalCaption(dir: Dir): string {
+  const ar = '\u0627\u0639\u062a\u0645\u0627\u062f \u0627\u0644\u0625\u0635\u062f\u0627\u0631';
+  const en = 'Approved for issue';
+  return dir === 'rtl' ? `${ar} \u2014 ${en}` : `${en} \u2014 ${ar}`;
+}
+
+/**
+ * The approval block for a contract's print meta, or undefined when there is
+ * none to print.
+ *
+ * -- WHY IT IS OUTSIDE THE FINGERPRINT ------------------------------
+ *
+ * Every instinct says an approval should be sealed. It is not, and it must
+ * not be, for the same reason the contract NUMBER and the supersede lines are
+ * not (see contractSheetHtml): the fingerprint covers THE AGREEMENT - the
+ * version's blocks and the values filled into them - and it is computed at
+ * issue, which is after the approval and before the number. Folding the
+ * approval in would either seal a thing that is not part of what the vendor
+ * agreed to, or - worse - make every contract already issued verify as
+ * "differs" the moment this shipped.
+ *
+ * What makes the printed line trustworthy is not the seal. It is that
+ * legal.contract.approved_at is the gate: an unapproved contract cannot reach
+ * `issued` at all (128), so a contract that exists as an issued document is a
+ * contract an owner approved. The line on the paper reports that fact, and
+ * the register is where it is checked.
+ *
+ * A DRAFT prints nothing here. An empty signing rule under the words
+ * "Approved for issue" is an invitation to sign a document nobody approved,
+ * which is the one outcome this whole migration exists to prevent.
+ */
+export function printApproval(
+  c: { approved_at?: unknown; approved_name?: unknown } | null | undefined,
+): PrintApproval | undefined {
+  const at = String(c?.approved_at ?? '').trim();
+  if (!at) return undefined;
+  // slice, not Date: an ISO timestamp already starts with its own date, and
+  // parsing it would drag this file's output onto the printer's time zone -
+  // a contract approved at 01:00 in Riyadh printing yesterday's date in
+  // London.
+  return { name: String(c?.approved_name ?? '').trim(), on: at.slice(0, 10) };
 }
 
 /** The stylesheet every printed contract shares, batch or not. */
@@ -1870,6 +1966,15 @@ export function printCss(): string {
   .sig-col { flex: 1; min-width: 0; }
   .sig-name { font-weight: 700; margin-bottom: 26px; }
   .sig-rule { border-top: 1px solid #333; }
+  /* The owner's approval and signing line. One column, not the two-sided
+     sig-row: this is AQ signing off its own document, not two parties
+     agreeing. It keeps together across a page break, because a rule on its
+     own at the top of a page is a line nobody knows what to do with. */
+  .doc-approval { margin-top: 14mm; max-width: 72mm; page-break-inside: avoid; }
+  .doc-approval-l { font-size: 8pt; color: #666666; letter-spacing: 0.02em; }
+  .doc-approval-n { font-weight: 700; margin-top: 2mm; margin-bottom: 9mm; }
+  .doc-approval-r { border-top: 1px solid #333333; }
+  .doc-approval-d { margin-top: 1.5mm; font-size: 8pt; color: #666666; }
   .doc-fp { margin-top: 12mm; padding-top: 2.5mm; border-top: 0.5pt solid #dddddd; }
   .doc-fp-label { font-size: 6.5pt; color: #999999; letter-spacing: 0.02em; }
   .doc-fp-hash { margin-top: 1mm; font-family: 'Courier New', monospace; font-size: 6.5pt; color: #999999; word-break: break-all; direction: ltr; text-align: left; }
