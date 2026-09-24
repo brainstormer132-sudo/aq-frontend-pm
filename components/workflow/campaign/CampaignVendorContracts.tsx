@@ -3,8 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   useLegacyVendors, updateTaskFields,
-  vendorContractReadiness, sendVendorContractRequest, sendVendorContractRequests,
-  createUgcContractFromBooking,
+  vendorContractReadiness, raiseVendorContracts, raiseVendorContractsForBookings,
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
 import { Card, Note, Missing, inkButton, TONE } from './ui';
@@ -13,7 +12,7 @@ import {
   contractTrack, contractIsStuck, askAllLabel, lengthLabel, money, bulkResultLine,
 } from '@/lib/campaign-page';
 import {
-  contractPlan, contractCoverage, type SplitMode,
+  contractPlan, contractCoverage, lineContractId, type SplitMode,
 } from '@/lib/vendor-contracts';
 import {
   paymentSchedule, bookingSchedule, dueLabel, scheduleTone,
@@ -37,13 +36,14 @@ import type { OptimisticSave } from '@/hooks/use-optimistic-save';
  * exactly like the ones it sent.
  */
 export function CampaignVendorContracts({
-  task, subtasks, adLinesBySubtask, requests, bookings, client, role,
+  task, subtasks, adLinesBySubtask, contracts, bookings, client, role,
   currentUserId, today, opt, onChanged,
 }: {
   task: PMTask;
   subtasks: PMTask[];
   /**
-   * The actual contract_requests rows for this campaign's bookings.
+   * The CONTRACTS for this campaign's bookings, as
+   * legal.contracts_for_campaign hands them over (132).
    *
    * This card used to read `contract_status`, `contract_requested_at` and
    * `contract_generated_at` off the SUBTASK. Only the first of those is a
@@ -52,9 +52,12 @@ export function CampaignVendorContracts({
    * Legal 9 days" reset to "Sent today" the moment anybody edited an
    * unrelated field on that booking. A number that looks right and is wrong
    * is worse than no number, and it is the number a chase would be built on.
+   *
+   * It then read public.contract_requests, which was right until the contract
+   * app those requests were sent to was deleted. These are the real thing.
    */
-  requests: { pm_task_id?: string | null; status?: unknown;
-              created_at?: unknown; generated_at?: unknown }[];
+  contracts: { subtask_id?: string | null; status?: unknown; contract_no?: unknown;
+               issued_at?: unknown; signed_on?: unknown; created_at?: unknown }[];
   /** The ads inside each booking. A contract covers ads, not a booking (070). */
   adLinesBySubtask: Map<string, any[]>;
   bookings: { id: string; name: string; amount?: number | null; [k: string]: any }[];
@@ -109,17 +112,17 @@ export function CampaignVendorContracts({
     [subtasks],
   );
 
-  const requestByTask = useMemo(() => {
+  const contractBySubtask = useMemo(() => {
     const m = new Map<string, any>();
     // Newest first, so the first one seen for a booking is its current
-    // request. A booking can have several once contracts are split per line.
-    for (const r of [...(requests ?? [])].sort((a, b) =>
+    // contract. A booking can have several once contracts are split per line.
+    for (const c of [...(contracts ?? [])].sort((a, b) =>
       String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))) {
-      const k = String(r.pm_task_id ?? '');
-      if (k && !m.has(k)) m.set(k, r);
+      const k = String(c.subtask_id ?? '');
+      if (k && !m.has(k)) m.set(k, c);
     }
     return m;
-  }, [requests]);
+  }, [contracts]);
 
   const rows = useMemo(() => vendorSubtasks.map((sub) => {
     const booking = bookings.find((b) => b.id === sub.id);
@@ -129,12 +132,12 @@ export function CampaignVendorContracts({
     const readiness = vendorContractReadiness(
       sub, vendor, bank, booking?.amount ?? booking?.price ?? null, task, lines as any,
     );
-    // From the request itself, which is the only thing that knows when it
-    // was asked for and what came back.
-    const request = requestByTask.get(sub.id) ?? null;
+    // From the contract itself, which is the only thing that knows when it
+    // was raised and where it has got to.
+    const contract = contractBySubtask.get(sub.id) ?? null;
 
     // The first missing thing, said on the row. The full list opens under it.
-    const blocker = !request && !readiness.ready
+    const blocker = !contract && !readiness.ready
       ? (readiness.missing[0] as any)?.label ?? 'Not ready'
       : null;
 
@@ -161,16 +164,16 @@ export function CampaignVendorContracts({
       today,
     });
     const plan = contractPlan(
-      (lines as any[]).filter((l) => !l.contract_request_id), split,
+      (lines as any[]).filter((l) => !lineContractId(l)), split,
     );
 
     return {
       sub, vendor, booking, readiness, blocker, lines, cover, plan, pay,
       name: booking?.name ?? vendor?.name ?? sub.title ?? 'Unnamed vendor',
-      track: contractTrack(request, today, blocker),
+      track: contractTrack(contract, today, blocker),
     };
   }), [vendorSubtasks, bookings, vendors, banks, today, adLinesBySubtask, task,
-       split, requestByTask]);
+       split, contractBySubtask]);
 
   const ready = rows.filter((r) => r.track.state === 'none' && !r.blocker);
   const blocked = rows.filter((r) => r.track.state === 'blocked');
@@ -187,44 +190,48 @@ export function CampaignVendorContracts({
   const signed = rows.filter((r) => r.track.state === 'done').length;
   const waiting = rows.filter((r) => r.track.state === 'waiting').length;
 
+  /**
+   * ONE button now.
+   *
+   * There were two, Ask and Draft, and the code said why in its own comment:
+   * "Separate from Ask on purpose while both worlds exist: Ask sends a
+   * request to the contract app, Draft puts a real contract in the Register."
+   * The contract app was deleted, so Ask wrote into a system with no reader.
+   *
+   * Asking raises the draft. Legal open it in the Register, check it, and
+   * Issue - which is what the person pressing this always thought Ask did.
+   *
+   * The workspace's own day, not UTC's: 'en-CA' is the one locale that
+   * formats as YYYY-MM-DD, which is what a contract's date fields take.
+   */
+  const workspaceToday = () =>
+    new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
+
   const askOne = (row: typeof rows[number], overridden = false) => run(async () => {
-    const ids = await sendVendorContractRequest({
+    const ids = await raiseVendorContracts({
       subtask: row.sub, parent: task, vendor: row.vendor,
       bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
       client, requestedBy: currentUserId, split,
       banks: banks as any,
+      today: workspaceToday(),
       overridden,
     });
     setNotice(ids.length === 1
       ? (overridden
-        ? `Requested for ${row.name} with gaps - legal will see what is missing.`
-        : `Contract requested for ${row.name}.`)
-      : `${ids.length} contracts requested for ${row.name}, one per line.`);
-  });
-
-  // Raise the UGC contract in the legal system, prefilled from this booking.
-  // Separate from Ask on purpose while both worlds exist: Ask sends a request
-  // to the contract app, Draft puts a real contract in the Register for legal
-  // to check and Issue. The date is the workspace's own day - 'en-CA' is the
-  // one locale that formats as YYYY-MM-DD, which is what the date field takes.
-  const draftOne = (row: typeof rows[number]) => run(async () => {
-    const id = await createUgcContractFromBooking({
-      subtask: row.sub, parent: task, vendor: row.vendor,
-      bank: (banks as any[]).find((x) => Number(x.vendor_id) === Number((row.sub as any).vendor_id)) ?? null,
-      client,
-      today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
-    });
-    setNotice(`Contract drafted for ${row.name}. Legal will find it in the Register (${id.slice(0, 8)}).`);
+        ? `Raised for ${row.name} with gaps - legal will see what is missing in the Register.`
+        : `Contract raised for ${row.name}. Legal will find it in the Register.`)
+      : `${ids.length} contracts raised for ${row.name}, one per line.`);
   });
 
   const askAll = () => run(async () => {
-    const res = await sendVendorContractRequests({
+    const res = await raiseVendorContractsForBookings({
       subtasks: ready.map((r) => r.sub),
       parent: task,
       vendors: vendors as any,
       banks: banks as any,
       client,
       requestedBy: currentUserId,
+      today: workspaceToday(),
       split,
     });
     setNotice(bulkResultLine(res.sent, res.skipped));
@@ -370,13 +377,9 @@ export function CampaignVendorContracts({
               )}
               {canRequest && r.track.state === 'none' && (
                 <button type="button" style={inkButton(busy)} disabled={busy}
-                  onClick={() => askOne(r)}>Ask</button>
-              )}
-              {canRequest && r.vendor && (
-                <button type="button" style={inkButton(busy)} disabled={busy}
-                  onClick={() => draftOne(r)}
-                  title="Put a prefilled UGC contract in the legal Register for legal to check and issue"
-                >Draft contract</button>
+                  onClick={() => askOne(r)}
+                  title="Raise the contract, prefilled from this booking. Legal check it in the Register and issue it."
+                >Ask</button>
               )}
               {/* Ads added after the contract went out. The old shape could
                   not express this at all — the booking had a contract, so it

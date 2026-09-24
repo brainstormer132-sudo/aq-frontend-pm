@@ -1991,29 +1991,38 @@ export function useSignedReviews(workspaceId: string | null) {
  * cancelled contract satisfy the rule forever.
  */
 export function useCampaignContracts(pmTaskId: string | null) {
+  const [rows, setRows] = useState<any[]>([]);
   const [bySubtask, setBySubtask] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!pmTaskId) { setBySubtask(new Set()); setLoading(false); return; }
+    if (!pmTaskId) { setRows([]); setBySubtask(new Set()); setLoading(false); return; }
     setLoading(true);
     const { data, error } = await (createClient() as unknown as SupabaseClient)
       .schema('legal').rpc('contracts_for_campaign', { p_pm_task_id: pmTaskId });
     // Best effort on purpose. If this read fails the rule falls back to
     // contract_request_id alone, which over-blocks - and over-blocking with
     // a way past it is the safe direction for a read that might be down.
-    if (error) { setBySubtask(new Set()); setLoading(false); return; }
+    if (error) { setRows([]); setBySubtask(new Set()); setLoading(false); return; }
+    const all = (data ?? []) as any[];
     const out = new Set<string>();
-    for (const row of (data ?? []) as any[]) {
+    for (const row of all) {
       if (String(row?.status ?? '').toLowerCase() === 'void') continue;
       const id = String(row?.subtask_id ?? '').trim();
       if (id) out.add(id);
     }
+    // The rows themselves, for the campaign card: status, number, when it was
+    // issued and when it was signed (132). VOID ONES ARE KEPT here, unlike
+    // the set above - a booking whose only contract was voided must read
+    // "Void - ask again" rather than "never asked for", which is a different
+    // thing and sends somebody looking for a contract that was deliberately
+    // killed.
+    setRows(all);
     setBySubtask(out);
     setLoading(false);
   }, [pmTaskId]);
 
   useEffect(() => { void load(); }, [load]);
 
-  return { bySubtask, loading, reload: load };
+  return { rows, bySubtask, loading, reload: load };
 }

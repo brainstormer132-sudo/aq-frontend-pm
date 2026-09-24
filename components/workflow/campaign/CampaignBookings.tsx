@@ -8,7 +8,7 @@ import {
   vendorCategoryKey,
   vendorDataRequirements, vendorContractReadiness, contractTally,
   vendorSubtaskTitle, isAutoVendorTitle,
-  sendVendorContractRequests,
+  raiseVendorContractsForBookings,
   displayName, labelFor, AD_TYPES, TASK_STATUSES,
   type PMTask, type WorkspaceRole,
 } from '@/hooks/use-workflow';
@@ -306,13 +306,16 @@ export function CampaignBookings({
   });
 
   const bulkRequestContracts = () => run(async () => {
-    const res = await sendVendorContractRequests({
+    const res = await raiseVendorContractsForBookings({
       subtasks: selectedList,
       parent: task,
       vendors: vendors as any,
       banks: banks as any,
       client,
       requestedBy: currentUserId,
+      // The workspace's own day. 'en-CA' is the one locale that formats as
+      // YYYY-MM-DD, which is what a contract's date fields take.
+      today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
     });
     setNotice(bulkResultLine(res.sent, res.skipped));
     setSelected(new Set());

@@ -370,6 +370,24 @@ export interface Coverage {
 }
 
 /**
+ * The contract covering this ad, whichever system stamped it.
+ *
+ * `contract_id` is the real one (131): a row in legal.contract that legal
+ * open in the Register. `contract_request_id` is what the deleted contract
+ * app used, and it is read here ONLY so that an ad stamped before the switch
+ * does not silently read as uncontracted - which would offer a second
+ * contract for work already covered.
+ *
+ * It goes when the column does. Until then this is the single place that
+ * knows both exist, so nothing else has to.
+ */
+export function lineContractId(l: {
+  contract_id?: unknown; contract_request_id?: unknown;
+} | null | undefined): string {
+  return txt(l?.contract_id) || txt(l?.contract_request_id);
+}
+
+/**
  * Read from the ads, not the booking.
  *
  * Before 070 a booking pointed at one contract and that was the whole story,
@@ -377,19 +395,19 @@ export interface Coverage {
  * read as "contract signed". Counting the ads is the only way to say it.
  */
 export function contractCoverage(
-  lines: (PlanLine & { contract_request_id?: unknown })[],
+  lines: (PlanLine & { contract_id?: unknown; contract_request_id?: unknown })[],
 ): Coverage {
   let covered = 0, uncovered = 0;
-  const requests = new Set<string>();
+  const contracts = new Set<string>();
   for (const l of lines ?? []) {
-    const req = txt(l.contract_request_id);
-    if (req) { covered += qty(l); requests.add(req); }
+    const id = lineContractId(l);
+    if (id) { covered += qty(l); contracts.add(id); }
     else uncovered += qty(l);
   }
   return {
     covered,
     uncovered,
-    contracts: requests.size,
+    contracts: contracts.size,
     complete: covered > 0 && uncovered === 0,
     partial: covered > 0 && uncovered > 0,
   };

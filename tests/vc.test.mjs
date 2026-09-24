@@ -1,6 +1,6 @@
 import {
   vendorContractNeeds, contractPlan, contractCoverage, lineLabel, planSentence,
-  singleBankId,
+  singleBankId, lineContractId,
 } from '../.test-build/vendor-contracts.js';
 
 let pass = 0, fail = 0;
@@ -286,6 +286,48 @@ eq('an unnamed line is still an ad', lineLabel({ quantity: 1 }), 'Ad');
     { bank_account_id: '7' }, { bank_account_id: 7 },
   ]), 7);
   eq('empty is null', singleBankId([]), null);
+}
+
+/* -- which contract covers an ad (131) -------------------------------
+ *
+ * Two columns mean the same thing for as long as the old one exists:
+ * contract_id is a real legal.contract, contract_request_id is what the
+ * deleted contract app stamped. An ad stamped by the old system must not
+ * silently read as uncontracted - that would offer a second contract for
+ * work already covered.
+ */
+eq('the real contract wins',
+  lineContractId({ contract_id: 'c-1', contract_request_id: 'r-9' }), 'c-1');
+eq('the old stamp still counts',
+  lineContractId({ contract_request_id: 'r-9' }), 'r-9');
+eq('neither is uncovered', lineContractId({}), '');
+eq('nothing is uncovered', lineContractId(null), '');
+eq('blank is not a stamp',
+  lineContractId({ contract_id: '   ', contract_request_id: '' }), '');
+
+{
+  // Coverage counts ADS, not lines, and counts distinct contracts.
+  const c = contractCoverage([
+    { id: 'l1', quantity: 3, contract_id: 'c-1' },
+    { id: 'l2', quantity: 2, contract_id: 'c-1' },
+    { id: 'l3', quantity: 4, contract_request_id: 'r-old' },
+    { id: 'l4', quantity: 1 },
+  ]);
+  eq('covered ads', c.covered, 9);
+  eq('uncovered ads', c.uncovered, 1);
+  eq('two separate contracts, counted once each', c.contracts, 2);
+  eq('partly covered', c.partial, true);
+  eq('and not complete', c.complete, false);
+}
+{
+  // The same line stamped by both columns is ONE contract, not two - which
+  // is what a naive union of the two sets would have said.
+  const c = contractCoverage([
+    { id: 'l1', quantity: 1, contract_id: 'c-1', contract_request_id: 'r-1' },
+    { id: 'l2', quantity: 1, contract_id: 'c-1' },
+  ]);
+  eq('one contract', c.contracts, 1);
+  eq('and every ad covered', c.complete, true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

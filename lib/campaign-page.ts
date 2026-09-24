@@ -1338,43 +1338,77 @@ function askedOn(iso: unknown, today: string): string {
 }
 
 /**
- * The same journey for a contract request, whose columns are named differently
- * and whose states are Legal's rather than finance's.
+ * The same journey for a CONTRACT, whose states are Legal's rather than
+ * finance's.
+ *
+ * It used to take a public.contract_requests row - a request sent to the
+ * contract app, which no longer exists. It now takes the contract itself, as
+ * legal.contracts_for_campaign hands it over (132): status, number, when it
+ * was issued, when it was signed.
+ *
+ * -- WHAT THE NEW STATUSES BUY --------------------------------------
+ *
+ * The request had one in-flight state: sent. A contract has two, and the
+ * difference is the difference between chasing the right person:
+ *
+ *   draft    legal have not looked at it yet.       Chase legal.
+ *   issued   it is out with the vendor, unsigned.   Chase the vendor.
+ *
+ * Both are `waiting`, deliberately, so contractIsStuck still catches them:
+ * a contract issued five weeks ago and never signed is exactly as stuck as
+ * one legal never opened, and it is the case the old tracking could not see
+ * at all - the request went to 'generated' the moment a document existed.
  */
 export function contractTrack(
-  req: { status?: unknown; created_at?: unknown; generated_at?: unknown } | null,
+  contract: {
+    status?: unknown; contract_no?: unknown;
+    issued_at?: unknown; signed_on?: unknown; created_at?: unknown;
+  } | null,
   today: string,
   blockedReason?: string | null,
 ): Track {
   const reason = txt(blockedReason);
-  if (!req) {
+  if (!contract) {
     return reason
       ? { state: 'blocked', badge: reason, askedLabel: `${reason} — then this can be asked for`, answeredLabel: '', waitingDays: null }
       : { state: 'none', badge: 'Ready to ask', askedLabel: 'Not asked for yet', answeredLabel: '', waitingDays: null };
   }
 
-  const status = txt(req.status);
-  if (status === 'generated') {
+  const status = txt(contract.status).toLowerCase();
+  const no = txt(contract.contract_no);
+
+  if (status === 'signed') {
     return {
-      state: 'done', badge: 'Signed',
-      askedLabel: askedOn(req.created_at, today),
-      answeredLabel: `Signed ${shortDate(req.generated_at, today)}`,
+      state: 'done', badge: no || 'Signed',
+      askedLabel: askedOn(contract.created_at, today),
+      answeredLabel: `Signed ${shortDate(contract.signed_on, today)}`,
       waitingDays: null,
     };
   }
-  // Rejected and cancelled are not "in flight" — they are a reason to ask again.
-  if (status === 'rejected' || status === 'cancelled') {
+  // Void is not "in flight" - it is a reason to raise another one. The old
+  // system called this rejected or cancelled.
+  if (status === 'void') {
     return {
-      state: 'none', badge: status === 'rejected' ? 'Rejected' : 'Cancelled',
-      askedLabel: askedOn(req.created_at, today),
+      state: 'none', badge: 'Void',
+      askedLabel: askedOn(contract.created_at, today),
       answeredLabel: 'Ask again', waitingDays: null,
     };
   }
-  const days = daysBetween(req.created_at, today);
+  if (status === 'issued') {
+    const days = daysBetween(contract.issued_at ?? contract.created_at, today);
+    return {
+      state: 'waiting',
+      badge: no || 'Issued',
+      askedLabel: askedOn(contract.created_at, today),
+      answeredLabel: `Issued ${shortDate(contract.issued_at, today)} — not signed`,
+      waitingDays: days,
+    };
+  }
+  const days = daysBetween(contract.created_at, today);
   return {
     state: 'waiting',
     badge: days == null ? 'With Legal' : days === 0 ? 'Sent today' : `With Legal ${days} day${days === 1 ? '' : 's'}`,
-    askedLabel: askedOn(req.created_at, today),
+    askedLabel: askedOn(contract.created_at, today),
     answeredLabel: 'Not back yet',
     waitingDays: days,
   };

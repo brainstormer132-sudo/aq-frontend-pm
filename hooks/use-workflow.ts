@@ -18,6 +18,7 @@ import {
   vendorContractNeeds, contractPlan, contractCoverage, singleBankId,
   type SplitMode, type ContractGroup,
 } from '@/lib/vendor-contracts';
+import { lineContractId } from '@/lib/vendor-contracts';
 import {
   campaignBlockers, campaignBriefNeeds, campaignGapLine,
 } from '@/lib/sales-readiness';
@@ -5837,7 +5838,7 @@ async function insertVendorContractRequest(
  * button: it refuses loudly, naming what's missing and where to fix it, which
  * is the same contract the client-side send already honours.
  */
-export async function sendVendorContractRequest(opts: {
+export async function raiseVendorContracts(opts: {
   subtask: PMTask;
   parent: PMTask;
   vendor: LegacyVendor | null;
@@ -5883,11 +5884,15 @@ export async function sendVendorContractRequest(opts: {
    * reason to pass.
    */
   overridden?: boolean;
+  /** YYYY-MM-DD in the workspace's own day, not UTC's. The contract carries
+   *  dates, and a contract raised at 01:00 in Riyadh must not be dated
+   *  yesterday because the browser was told to think in UTC. */
+  today: string;
 }): Promise<string[]> {
   const { subtask, vendor, bank } = opts;
 
   if (!subtask.workspace_id) {
-    throw new Error('This subtask has no workspace; cannot raise a request.');
+    throw new Error('This subtask has no workspace; cannot raise a contract.');
   }
 
   const lines = opts.lines ?? await fetchVendorAdLines(subtask.id);
@@ -5899,7 +5904,7 @@ export async function sendVendorContractRequest(opts: {
   // March ads are contracted and whose June ads are not should raise a
   // contract for June, not a duplicate of March — which is why this reads
   // the ads rather than the booking's single link.
-  const free = lines.filter((l) => !(l as any).contract_request_id);
+  const free = lines.filter((l) => !lineContractId(l as any));
   if (lines.length && !free.length) {
     throw new Error('Every ad on this booking is already under contract.');
   }
@@ -5941,11 +5946,12 @@ export async function sendVendorContractRequest(opts: {
       ? (opts.banks?.find((b) => Number(b.id) === bankId
           && Number(b.vendor_id) === Number(vendor.id)) ?? bank)
       : bank;
-    ids.push(await insertVendorContractRequest(
-      subtask,
-      buildVendorContractPayload({ ...opts, vendor, bank: groupBank, lines: covered }),
-      g.lineIds,
-    ));
+    ids.push(await createUgcContractFromBooking({
+      subtask, parent: opts.parent, vendor, bank: groupBank, client: opts.client,
+      lines: covered as any,
+      today: opts.today,
+      lineIds: g.lineIds,
+    }));
   }
   return ids;
 }
@@ -5972,6 +5978,15 @@ export async function createUgcContractFromBooking(opts: {
   lines?: AdLine[];
   /** YYYY-MM-DD in the workspace's own day, not UTC's. */
   today: string;
+  /**
+   * The ads this contract covers (131).
+   *
+   * Passed straight to the database, which stamps them and refuses if every
+   * one is already under contract - so two contracts can never cover the
+   * same ad even if two people press at once. Omitted means the whole
+   * booking and stamps nothing, which is what this did before 131.
+   */
+  lineIds?: string[];
 }): Promise<string> {
   const { subtask, parent, vendor, bank } = opts;
   if (!subtask.workspace_id) throw new Error('This booking has no workspace.');
@@ -6019,6 +6034,7 @@ export async function createUgcContractFromBooking(opts: {
     p_title: title,
     p_values: values,
     p_table_row: isEmptyTableRow(tableRow) ? null : tableRow,
+    p_line_ids: opts.lineIds?.length ? opts.lineIds : null,
   });
   if (error) throw error;
   if (!data) throw new Error('The contract was not created.');
@@ -6136,13 +6152,15 @@ export function contractTally(
  * six going out. Every failure comes back named so the caller can show which
  * rows were skipped and why, rather than a single "some failed".
  */
-export async function sendVendorContractRequests(opts: {
+export async function raiseVendorContractsForBookings(opts: {
   subtasks: PMTask[];
   parent: PMTask;
   vendors: LegacyVendor[];
   banks: LegacyBankAccount[];
   client?: ClientRow | null;
   requestedBy: string;
+  /** YYYY-MM-DD in the workspace's own day, not UTC's. */
+  today: string;
   /** Applied to every booking in the batch. */
   split?: SplitMode;
 }): Promise<{ sent: number; skipped: { title: string; reason: string }[] }> {
@@ -6165,11 +6183,12 @@ export async function sendVendorContractRequests(opts: {
       // contracts — "Requested 4 contracts" has to be four pieces of paper,
       // not four vendors, or the number on the tally is a different number
       // from the number in the pile.
-      const ids = await sendVendorContractRequest({
+      const ids = await raiseVendorContracts({
         subtask, parent: opts.parent, vendor, bank,
         client: opts.client, requestedBy: opts.requestedBy, split: opts.split,
         lines: linesBySubtask.get(subtask.id) ?? [],
         banks: opts.banks,
+        today: opts.today,
       });
       sent += ids.length;
     } catch (e: any) {

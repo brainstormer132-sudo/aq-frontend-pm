@@ -18,7 +18,9 @@ eq('one threshold, not two', CONTRACT_PATIENCE_DAYS, PAGE_PATIENCE);
 eq('and it is a week', CONTRACT_PATIENCE_DAYS, 7);
 
 /* ── contractIsStuck ─────────────────────────────────────────────── */
-const req = (created, status = 'pending') => ({ status, created_at: created });
+// A CONTRACT now, not a request to the deleted contract app. `draft` is what
+// `pending` was: raised, and legal have not dealt with it.
+const req = (created, status = 'draft') => ({ status, created_at: created });
 
 eq('a week is stuck',
   contractIsStuck(contractTrack(req('2026-08-20'), TODAY, null)), true);
@@ -28,23 +30,64 @@ eq('sent today is not',
   contractIsStuck(contractTrack(req(TODAY), TODAY, null)), false);
 eq('a month is very stuck',
   contractIsStuck(contractTrack(req('2026-07-01'), TODAY, null)), true);
-// Signed, rejected and cancelled all came back. None of them is waiting.
+// Signed came back. Void is not in flight. Neither is waiting.
 eq('signed is not stuck',
   contractIsStuck(contractTrack(
-    { status: 'generated', created_at: '2026-06-01', generated_at: '2026-06-05' },
+    { status: 'signed', created_at: '2026-06-01', signed_on: '2026-06-05' },
     TODAY, null)), false);
-eq('rejected is not stuck',
-  contractIsStuck(contractTrack(req('2026-06-01', 'rejected'), TODAY, null)), false);
-eq('cancelled is not stuck',
-  contractIsStuck(contractTrack(req('2026-06-01', 'cancelled'), TODAY, null)), false);
+eq('void is not stuck',
+  contractIsStuck(contractTrack(req('2026-06-01', 'void'), TODAY, null)), false);
 // Never asked for is a different problem, handled by its own gap.
-eq('no request is not stuck',
+eq('no contract is not stuck',
   contractIsStuck(contractTrack(null, TODAY, null)), false);
 eq('blocked is not stuck',
   contractIsStuck(contractTrack(null, TODAY, 'IBAN')), false);
 // The day count itself, which is what the message prints.
 eq('counts the days',
   contractTrack(req('2026-08-13'), TODAY, null).waitingDays, 14);
+
+/* -- ISSUED: the state the old tracking could not see ---------------- */
+//
+// A request went to 'generated' the moment a document existed, so a contract
+// issued five weeks ago and never signed read as finished. It is not
+// finished - it is out with a vendor who has not signed it - and it is
+// exactly as stuck as one legal never opened.
+{
+  const out = contractTrack(
+    { status: 'issued', contract_no: 'AQ-2026-0108',
+      created_at: '2026-07-01', issued_at: '2026-07-05' },
+    TODAY, null);
+  eq('an unsigned issued contract is still waiting', out.state, 'waiting');
+  eq('and it is stuck', contractIsStuck(out), true);
+  eq('its badge is its number', out.badge, 'AQ-2026-0108');
+  eq('and it says it is not signed yet', out.answeredLabel.includes('not signed'), true);
+  // Counted from the ISSUE, not from the raise: a vendor cannot be late with
+  // something that had not been sent to them.
+  eq('the clock runs from the issue', out.waitingDays,
+    contractTrack({ status: 'issued', created_at: '2026-07-05', issued_at: '2026-07-05' },
+      TODAY, null).waitingDays);
+  const fresh = contractTrack(
+    { status: 'issued', created_at: '2026-06-01', issued_at: TODAY }, TODAY, null);
+  eq('issued today is not stuck, however old the draft was',
+    contractIsStuck(fresh), false);
+}
+{
+  const signed = contractTrack(
+    { status: 'signed', contract_no: 'AQ-2026-0108',
+      created_at: '2026-07-01', signed_on: '2026-07-20' }, TODAY, null);
+  eq('a signed contract is done', signed.state, 'done');
+  eq('its badge is its number too', signed.badge, 'AQ-2026-0108');
+  eq('a signed contract with no number still says so',
+    contractTrack({ status: 'signed', created_at: '2026-07-01' }, TODAY, null).badge,
+    'Signed');
+}
+eq('void says to ask again',
+  contractTrack(req('2026-06-01', 'void'), TODAY, null).answeredLabel, 'Ask again');
+eq('and is not counted as waiting',
+  contractTrack(req('2026-06-01', 'void'), TODAY, null).waitingDays, null);
+// Status arrives from PostgREST as text; nothing guarantees its case.
+eq('the status is read case-insensitively',
+  contractTrack({ status: 'SIGNED', created_at: '2026-07-01' }, TODAY, null).state, 'done');
 
 /* ── The dashboard list ──────────────────────────────────────────── */
 const booking = (over) => ({

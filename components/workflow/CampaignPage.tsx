@@ -27,6 +27,7 @@ import {
   FailureBanner, SavingDot, UndoBar, MultiPick, StringList, OverridableMoney,
   TONE,
   Card, Group, Fields, F, Val, Pick, Text, HILITE, Money } from './campaign/ui';
+import { useCampaignContracts } from '@/hooks/use-legal';
 import { useOptimisticSave } from '@/hooks/use-optimistic-save';
 import { useRealtime } from '@/hooks/use-realtime';
 import { useCoalesced } from '@/hooks/use-coalesced';
@@ -129,13 +130,14 @@ export function CampaignPage({
     workspaceId, useMemo(() => [taskId, ...subtaskIds], [taskId, subtaskIds]),
   );
 
-  // Which is whose. The paperwork card wants the client's; the index entry
-  // labelled "Vendor contracts" was counting the client's, so a campaign with
-  // ten vendor contracts pending read 0.
-  const vendorRequests = useMemo(
-    () => (requests as any[]).filter((r) => String(r.request_kind ?? r.kind ?? '') === 'vendor'),
-    [requests],
-  );
+  // The vendor contracts themselves (132). This used to filter the campaign's
+  // contract_requests down to the vendor ones - the index entry labelled
+  // "Vendor contracts" was counting the CLIENT's, so a campaign with ten
+  // vendor contracts pending read 0 - and then the contract app those
+  // requests were sent to was deleted. These are the real contracts, read
+  // through the security-definer function because legal.* is not readable by
+  // the people on this screen.
+  const { rows: vendorContracts, reload: reloadContracts } = useCampaignContracts(taskId);
   // The refetch was being thrown away.
   //
   // `useAdLinesForSubtasks` returns one, nothing here called it, and the ad
@@ -190,12 +192,14 @@ export function CampaignPage({
     void refetchSubtasks();
     void refetchDocs();
     void refetchRequests();
+    void reloadContracts();
     void refetchTracking();
     void refetchComments();
     void refetchFiles();
     void refetchAdLines();
     void refetchPublished();
-  }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, refetchTracking,
+  }, [refetch, refetchSubtasks, refetchDocs, refetchRequests, reloadContracts,
+      refetchTracking,
       refetchComments, refetchFiles, refetchAdLines, refetchPublished]);
 
   // The campaign row and everything hanging off it.
@@ -451,17 +455,17 @@ export function CampaignPage({
   const stuckContracts = useMemo(() => {
     if (!today) return [];
     const byTask = new Map<string, any>();
-    for (const r of [...(vendorRequests as any[])].sort((a, b) =>
+    for (const c of [...(vendorContracts as any[])].sort((a, b) =>
       String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))) {
-      const k = String(r.pm_task_id ?? '');
-      if (k && !byTask.has(k)) byTask.set(k, r);
+      const k = String(c.subtask_id ?? '');
+      if (k && !byTask.has(k)) byTask.set(k, c);
     }
     return bookings.flatMap((b) => {
       const track = contractTrack(byTask.get(b.id) ?? null, today, null);
       if (!contractIsStuck(track)) return [];
       return [{ id: b.id, name: b.name, days: track.waitingDays ?? 0 }];
     });
-  }, [bookings, vendorRequests, today]);
+  }, [bookings, vendorContracts, today]);
 
   const gaps = useMemo(
     () => (today && view
@@ -490,8 +494,16 @@ export function CampaignPage({
 
   const index = useMemo(() => pageIndex({
     bookings: bookings.length,
-    contractsWaiting: vendorRequests.filter((r) => r.status === 'pending').length,
-    contractsTotal: vendorRequests.length,
+    // Waiting means NOT FINISHED: with legal as a draft, or out with the
+    // vendor unsigned. The old count read status === 'pending' on a request,
+    // which went to 'generated' the moment a document existed - so a contract
+    // issued in May and never signed counted as done.
+    contractsWaiting: (vendorContracts as any[]).filter((c) => {
+      const s = String(c?.status ?? '').toLowerCase();
+      return s === 'draft' || s === 'issued';
+    }).length,
+    contractsTotal: (vendorContracts as any[]).filter(
+      (c) => String(c?.status ?? '').toLowerCase() !== 'void').length,
     trackingRows: trackingRows.length,
     adsPosted: totals.Posted,
     adsTotal: trackingRows.length,
@@ -513,7 +525,7 @@ export function CampaignPage({
       ((view as any)?.contract_status === 'signed_attached' ? 1 : 0)
       + (((view as any)?.quotation_numbers ?? []).length ? 1 : 0)
       + (((view as any)?.invoice_numbers ?? []).length ? 1 : 0),
-  }), [bookings, vendorRequests, trackingRows.length, totals.Posted, docRequests,
+  }), [bookings, vendorContracts, trackingRows.length, totals.Posted, docRequests,
        comments.length, view, serviceTypes, gaps, publishedRows.length]);
 
   // Named after the vendor where there is one, so a comment says which
@@ -1258,7 +1270,7 @@ export function CampaignPage({
             task={task}
             subtasks={shownSubtasks as any}
             adLinesBySubtask={bySubtask}
-            requests={vendorRequests as any}
+            contracts={vendorContracts as any}
             bookings={bookings}
             client={currentClient}
             role={role}
@@ -1266,11 +1278,16 @@ export function CampaignPage({
             today={today ?? ''}
             opt={opt}
             onChanged={async () => {
-              // The ads carry the contract link now (070), so a request
-              // raised here changes them as well as the bookings. Without
-              // this the card kept saying "Ask" for something it had just
-              // asked for — the same dropped-refetch bug three times over.
-              await Promise.all([refetch(), refetchSubtasks(), refetchAdLines()]);
+              // The ads carry the contract link now (070, and the real one
+              // since 131), so a contract raised here changes them as well as
+              // the bookings. Without this the card kept saying "Ask" for
+              // something it had just asked for — the same dropped-refetch
+              // bug three times over. The contracts themselves are the fourth:
+              // the row's whole track comes from them now, so a raise that did
+              // not reload them would leave the row reading "Not asked for".
+              await Promise.all([
+                refetch(), refetchSubtasks(), refetchAdLines(), reloadContracts(),
+              ]);
             }}
           />
 
