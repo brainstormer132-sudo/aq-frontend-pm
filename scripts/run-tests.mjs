@@ -104,6 +104,7 @@ const LIBS = [
   'lib/pending-removal.ts',
   'lib/confirm.ts',
   'lib/settings.ts',
+  'lib/sales-readiness.ts',
 ];
 
 const GREEN = '\x1b[32m';

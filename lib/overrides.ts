@@ -98,6 +98,20 @@ export const RULES: RuleDef[] = [
     // anyway. Nothing is issued by passing this.
     passable: true,
   },
+  {
+    key: 'campaign_to_marketing_incomplete',
+    label: 'A campaign needs its budget and its brief',
+    blocked: 'This campaign is going to marketing without everything it needs.',
+    why: 'Marketing triages against the budget and the brief - service type,'
+      + ' priority, who works on it. Without them the campaign is either'
+      + ' guessed at or parked until somebody chases sales, and the chasing'
+      + ' happens days later. Passing this sends it anyway, with the gap'
+      + ' visible on the campaign and your name against it.',
+    // The client and the brand are NOT in this rule. They are foreign keys
+    // everything downstream hangs off, not judgement calls, and
+    // campaignBlockers refuses them where nothing can pass.
+    passable: true,
+  },
 ];
 
 const BY_KEY = new Map(RULES.map((r) => [r.key, r]));

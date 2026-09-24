@@ -18,6 +18,9 @@ import {
   vendorContractNeeds, contractPlan, contractCoverage, singleBankId,
   type SplitMode, type ContractGroup,
 } from '@/lib/vendor-contracts';
+import {
+  campaignBlockers, campaignBriefNeeds, campaignGapLine,
+} from '@/lib/sales-readiness';
 import { avatarProblems, avatarPath, avatarStoragePath } from '@/lib/profile';
 import { taskCounts } from '@/lib/team';
 import {
@@ -1574,8 +1577,24 @@ export function useTaskSubtasks(parentTaskId: string | null) {
 // Mutations
 // ============================================================
 
-/** Sales: create a new task. Sets stage = pending_marketing — triggers
- * the on_pm_task_stage_change DB trigger which notifies marketing. */
+/**
+ * Sales: create a new task. Sets stage = pending_marketing - triggers the
+ * on_pm_task_stage_change DB trigger which notifies marketing.
+ *
+ * THE RULE (lib/sales-readiness). Two checks, with different fates:
+ *
+ *   campaignBlockers    the client, the brand, a findable name. Refused
+ *                       here whatever anybody types, because they are the
+ *                       keys the rest of the app hangs off rather than
+ *                       judgement calls.
+ *   campaignBriefNeeds  the budget and the brief. Stopped unless somebody
+ *                       passes the rule with the override code, which puts
+ *                       their name and their reason in the log (125).
+ *
+ * The check lives HERE and not only in the form, for the reason the vendor
+ * contract rule does: a second caller is written eventually, and a rule that
+ * lives in a button is a rule with a door beside it.
+ */
 export async function createSalesTask(input: {
   workspace_id: string;
   task_name: string;
@@ -1598,7 +1617,31 @@ export async function createSalesTask(input: {
   /** The deal's expected close date, carried over as the campaign due date. */
   due_date?: string | null;
   creator_id: string;
-}) {
+  /** How many brief files are going up straight after. A deck IS a brief,
+   *  and they cannot be uploaded before the campaign exists to attach them
+   *  to - so the count is passed in rather than counted here. */
+  brief_files?: number;
+}, opts: {
+  /** Set only after OverrideGate has recorded a passed rule. Never a default. */
+  overridden?: boolean;
+} = {}) {
+  const readiness = {
+    client_id: input.client_id,
+    brand_id: input.brand_id,
+    task_name: input.task_name,
+    budget: input.budget,
+    details: input.details,
+    briefFiles: input.brief_files ?? 0,
+  };
+  const blockers = campaignBlockers(readiness);
+  if (blockers.length) {
+    throw new Error(`This campaign cannot be created without ${campaignGapLine(blockers)}.`);
+  }
+  const gaps = campaignBriefNeeds(readiness);
+  if (gaps.length && !opts.overridden) {
+    throw new Error(`Not ready for marketing. Still needed: ${campaignGapLine(gaps)}.`);
+  }
+
   const { data, error } = await supabase
     .from('pm_tasks')
     .insert({

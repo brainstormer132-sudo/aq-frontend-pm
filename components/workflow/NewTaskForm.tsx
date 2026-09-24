@@ -20,6 +20,10 @@ import {
   fileSizeLabel, uploadOutcome, MAX_BRIEF_FILES,
   type Draft, type StepKey,
 } from '@/lib/new-task';
+import {
+  campaignBriefNeeds, campaignGapLine, campaignBlockedLine,
+} from '@/lib/sales-readiness';
+import { OverrideGate } from '@/components/ui/OverrideGate';
 
 /**
  * New Task — three steps.
@@ -92,6 +96,8 @@ export function NewTaskForm({
   const [success, setSuccess] = useState('');
   const [newBrand, setNewBrand] = useState('');
   const [addingBrand, setAddingBrand] = useState(false);
+  /** The rule's panel, opened by pressing Send with a gap still in the form. */
+  const [gateOpen, setGateOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { clients, loading: clientsLoading } = useClients();
@@ -121,6 +127,26 @@ export function NewTaskForm({
 
   const steps = stepStatuses(draft);
   const problems = submitProblems(draft);
+
+  /**
+   * What marketing would be missing if this went now.
+   *
+   * Computed as the form is typed, not on press, so the line under the
+   * button says what is short BEFORE anybody meets the gate. Most people
+   * will go and fill it in, which is the outcome the rule actually wants -
+   * a gate that opens with "enter the code" teaches people to reach for the
+   * code instead.
+   *
+   * An attached deck answers the brief, so the file list is part of this.
+   */
+  const gaps = useMemo(() => campaignBriefNeeds({
+    client_id: draft.clientId,
+    brand_id: draft.brandId,
+    task_name: draft.taskName,
+    budget: budgetValue(draft.budget),
+    details: draft.details,
+    briefFiles: files.length,
+  }), [draft.clientId, draft.brandId, draft.taskName, draft.budget, draft.details, files.length]);
   const canCreate = role && ['owner', 'admin', 'sales', 'marketing'].includes(role);
 
   const closerLabel = useMemo(() => {
@@ -169,6 +195,19 @@ export function NewTaskForm({
       setError('Pick the client and brand from the lists.');
       return;
     }
+    // The rule. Pressing Send with a gap opens the panel rather than
+    // refusing: every rule can be passed, with a reason and a name on it.
+    if (gaps.length) { setGateOpen(true); return; }
+    await create(false);
+  };
+
+  const create = async (overridden: boolean) => {
+    setGateOpen(false);
+    setError(''); setSuccess('');
+    if (!selectedClient || !selectedBrand) {
+      setError('Pick the client and brand from the lists.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -188,7 +227,10 @@ export function NewTaskForm({
         deal_id: prefill?.deal_id ?? null,
         due_date: prefill?.due_date ?? null,
         creator_id: currentUserId,
-      });
+        // A deck IS a brief, and it cannot be uploaded before the campaign
+        // exists to attach it to - so the count goes in, not the files.
+        brief_files: files.length,
+      }, { overridden });
 
       // The files, now that there is something to attach them to. Counted
       // rather than aborted on: the campaign is already made, and losing one
@@ -470,6 +512,21 @@ export function NewTaskForm({
         })}
       </div>
 
+      {gateOpen && (
+        <OverrideGate
+          workspaceId={workspaceId}
+          ruleKey="campaign_to_marketing_incomplete"
+          blocked={campaignBlockedLine({ task_name: draft.taskName }, gaps)}
+          entityKind="campaign"
+          // No id: the campaign does not exist yet, and inventing one would
+          // put a row in the log pointing at nothing. The name is what a
+          // reader has to go on, which is why it is recorded.
+          entityName={draft.taskName.trim() || null}
+          onPassed={() => create(true)}
+          onCancel={() => setGateOpen(false)}
+        />
+      )}
+
       {/* ── The messages, ABOVE the button ─────────────────────────
           They used to render underneath it, which is where nobody is
           looking at the moment they press it. */}
@@ -496,7 +553,9 @@ export function NewTaskForm({
         <span style={{ fontSize: 12, color: 'var(--aq-text-muted)' }}>
           {problems.length > 0
             ? problems[0]
-            : 'Marketing adds the priority, the service type and a key account manager.'}
+            : gaps.length > 0
+              ? `Still needed: ${campaignGapLine(gaps)}. It can be sent anyway with the override code.`
+              : 'Marketing adds the priority, the service type and a key account manager.'}
         </span>
       </div>
     </form>
