@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-  clientContractReadiness, sendClientContractRequest,
+  clientContractReadiness, createClientContractFromCampaign,
   requestCampaignDocument, cancelDocumentRequest, updateTaskFields,
   type PMTask, type WorkspaceRole, type DocumentRequestKind,
 } from '@/hooks/use-workflow';
@@ -78,9 +78,28 @@ export function CampaignPaperwork({
   // nothing (filter(Boolean) below).
   const term = lengthLabel((task as any).contract_length, (task as any).contract_length_unit);
 
+  /**
+   * Raise the client contract.
+   *
+   * This used to call sendClientContractRequest, which wrote a row into
+   * public.contract_requests and then said "The client contract has gone to
+   * Legal." It had not: that queue was read by the contract app, which was
+   * deleted, and the card showed it as sent because it read its own row back.
+   *
+   * It now puts a real draft in the Register, the same way the vendor side
+   * does. Until the client template is published the database refuses with a
+   * sentence saying exactly that, which is a better button than one that
+   * silently does nothing.
+   */
   const sendClient = () => run(async () => {
-    await sendClientContractRequest({ task, client, requestedBy: currentUserId });
-    setNotice('The client contract has gone to Legal.');
+    const id = await createClientContractFromCampaign({
+      task,
+      client,
+      // The workspace's own day. 'en-CA' is the one locale that formats as
+      // YYYY-MM-DD, which is what a contract's date fields take.
+      today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
+    });
+    setNotice(`Client contract raised. Legal will find it in the Register (${id.slice(0, 8)}).`);
   });
 
   const requestDoc = (kind: DocumentRequestKind) => run(async () => {

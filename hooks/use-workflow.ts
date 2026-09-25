@@ -20,6 +20,9 @@ import {
 } from '@/lib/vendor-contracts';
 import { lineContractId } from '@/lib/vendor-contracts';
 import {
+  clientContractValues, clientOutputRows, clientContractTitle,
+} from '@/lib/client-prefill';
+import {
   campaignBlockers, campaignBriefNeeds, campaignGapLine,
 } from '@/lib/sales-readiness';
 import { avatarProblems, avatarPath, avatarStoragePath } from '@/lib/profile';
@@ -5599,6 +5602,65 @@ export function vendorContractReadiness(
   });
 
   return { ready: missing.length === 0, missing };
+}
+
+
+/**
+ * Raise the CLIENT contract for a campaign, prefilled.
+ *
+ * The sibling of createUgcContractFromBooking, and the replacement for
+ * sendClientContractRequest - which wrote a row into a queue read by the
+ * deleted contract app and told the operator it had gone to Legal.
+ *
+ * The outputs table is built here rather than passed in: the Paperwork card
+ * does not hold the campaign's bookings, and one read at the moment somebody
+ * presses a button they press once per campaign is cheaper than threading
+ * bookings, ad lines and vendors through three components.
+ *
+ * THE HANDLE COLUMN IS LEFT BLANK. It lives on the vendor record, in a
+ * packed `platforms` string, and fetchCampaignBookings does not return it.
+ * Legal fill it in, which is the same choice made everywhere else here: a
+ * field we do not have is left empty, never guessed, because a guess on a
+ * contract is indistinguishable from a fact once it is printed.
+ */
+export async function createClientContractFromCampaign(opts: {
+  task: PMTask;
+  client: ClientRow | null;
+  /** YYYY-MM-DD in the workspace's own day, not UTC's. */
+  today: string;
+}): Promise<string> {
+  const { task, client } = opts;
+  if (!task?.workspace_id) throw new Error('This campaign has no workspace.');
+
+  const check = clientContractReadiness(task, client);
+  if (!check.ready) {
+    throw new Error(
+      `Not ready to raise. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
+    );
+  }
+
+  const bookings = await fetchCampaignBookings(task.id);
+  const rows = clientOutputRows(bookings.map((b) => ({
+    vendorName: b.vendor_name,
+    platform: b.platform,
+    handle: '',
+    ads: (b.lines ?? []).reduce((n: number, l: any) => n + (Number(l?.quantity) || 1), 0),
+  })));
+
+  const values = clientContractValues({
+    campaign: task as any, client: client as any, today: opts.today,
+  });
+
+  const { data, error } = await legalSchema().rpc('create_client_contract_from_campaign', {
+    p_workspace_id: task.workspace_id,
+    p_pm_task_id: task.id,
+    p_title: clientContractTitle(task as any, client as any),
+    p_values: values,
+    p_table_rows: rows.length ? rows : null,
+  });
+  if (error) throw error;
+  if (!data) throw new Error('The contract was not created.');
+  return String(data);
 }
 
 /**
