@@ -1,10 +1,20 @@
 'use client';
 
 import { getInitials } from '@/lib/utils';
-import type { Profile } from '@/types';
+
+/**
+ * All an avatar needs of a person. Two fields, declared here rather than
+ * imported: this used to `Pick` from a 364-line scaffold type file that
+ * nothing else in the app used, which is a lot of module to reach through
+ * for a name and a URL.
+ */
+export interface AvatarUser {
+  full_name: string;
+  avatar_url: string | null;
+}
 
 interface AvatarProps {
-  user: Pick<Profile, 'full_name' | 'avatar_url'> | null;
+  user: AvatarUser | null;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
 }
@@ -56,7 +66,7 @@ export function Avatar({ user, size = 'md', className = '' }: AvatarProps) {
 }
 
 interface AvatarGroupProps {
-  users: Pick<Profile, 'full_name' | 'avatar_url'>[];
+  users: AvatarUser[];
   max?: number;
   size?: 'sm' | 'md';
 }

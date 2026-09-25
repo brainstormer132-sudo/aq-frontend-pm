@@ -67,12 +67,6 @@ export const PRIORITIES: { key: Priority; label: string }[] = [
   { key: 'low',    label: 'Low' },
 ];
 
-export function priorityLabel(p: Priority | null): string {
-  if (!p) return '';
-  return PRIORITIES.find((x) => x.key === p)?.label
-    ?? p.replace(/^./, (c) => c.toUpperCase());
-}
-
 /* ── Dates and age ──────────────────────────────────────────────── */
 
 /** The Dashboard's threshold, so the two screens agree about "urgent". */
@@ -138,92 +132,7 @@ function money(v: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function buildQueue(tasks: TaskRow[], today: string): QueueItem[] {
-  const items = (tasks || []).map((t) => {
-    const arrived = isoDay(t.created_at);
-    const days = arrived ? Math.max(0, daysBetween(arrived, today)) : 0;
-    const b = money(t.budget);
-    return {
-      id: t.id,
-      name: txt(t.task_name) || txt(t.title) || 'Untitled campaign',
-      brand: txt(t.brand_name) || null,
-      brief: txt(t.description) || null,
-      // Sales are allowed to submit before the number is agreed — the New
-      // Task form deliberately lets them. Printing nothing makes that look
-      // like an error rather than like a normal Tuesday.
-      budgetLabel: b == null ? 'no budget yet' : `SAR ${Math.round(b).toLocaleString('en-US')}`,
-      hasBudget: b != null,
-      waitedDays: days,
-      waitedLabel: waitedLabel(days),
-      stale: days >= STALE_DAYS,
-      arrived,
-      raw: t,
-    };
-  });
-
-  // Oldest first. The whole point of a queue is that the thing that has
-  // waited longest is the thing you do next.
-  return items.sort((a, b) => (b.waitedDays - a.waitedDays) || a.name.localeCompare(b.name, 'en'));
-}
-
-/**
- * The order to work them in, with anything skipped this session moved to the
- * back rather than dropped.
- *
- * Skipping has to mean "not now", not "never" — a skip that removed the
- * campaign from the screen would be a quiet way to lose one.
- */
-export function orderQueue(items: QueueItem[], skipped: string[]): QueueItem[] {
-  const back = new Set(skipped);
-  const front = items.filter((i) => !back.has(i.id));
-  const rear = items.filter((i) => back.has(i.id));
-  return [...front, ...rear];
-}
-
-/** Which one to work on now, given what has been skipped and what is picked. */
-export function currentItem(
-  ordered: QueueItem[], pickedId: string | null,
-): QueueItem | null {
-  if (pickedId) {
-    const found = ordered.find((i) => i.id === pickedId);
-    if (found) return found;
-  }
-  return ordered[0] ?? null;
-}
-
-/** The one after this — where Next goes once this campaign leaves the queue. */
-export function nextAfter(ordered: QueueItem[], currentId: string): string | null {
-  const i = ordered.findIndex((x) => x.id === currentId);
-  if (i < 0) return ordered[0]?.id ?? null;
-  return (ordered[i + 1] ?? ordered[0] ?? null)?.id ?? null;
-}
-
 export interface QueuePosition { index: number; total: number; stale: number }
-
-export function queuePosition(ordered: QueueItem[], currentId: string | null): QueuePosition {
-  const i = currentId ? ordered.findIndex((x) => x.id === currentId) : -1;
-  return {
-    index: i < 0 ? 0 : i,
-    total: ordered.length,
-    stale: ordered.filter((x) => x.stale).length,
-  };
-}
-
-/** "1 of 4 waiting for triage · oldest first" */
-export function queueLine(pos: QueuePosition): string {
-  if (pos.total === 0) return 'Nothing waiting for triage.';
-  const parts = [`${pos.index + 1} of ${pos.total} waiting for triage`];
-  if (pos.total > 1) parts.push('oldest first');
-  if (pos.stale > 0) parts.push(`${pos.stale} over ${STALE_DAYS} days`);
-  return parts.join(' · ');
-}
-
-/** What the button says about what is left. */
-export function remainingLine(pos: QueuePosition): string {
-  const left = pos.total - 1;
-  if (left <= 0) return 'Last one in the queue.';
-  return `${left} more after this one`;
-}
 
 /* ── The decision ───────────────────────────────────────────────── */
 
@@ -386,27 +295,4 @@ export function deleteWarning(item: QueueItem | null): string {
 /** Said after the campaign is gone, so the screen is not silently emptier. */
 export function deletedMessage(name: string): string {
   return `Deleted “${name}”.`;
-}
-
-export function triagedMessage(name: string, owner: string, steps: number): string {
-  const tail = steps === 0
-    ? ' with no deliverables yet — add them from the campaign'
-    : ` with ${steps} deliverable${steps === 1 ? '' : 's'}`;
-  return `“${name}” is ${owner}'s now${tail}.`;
-}
-
-/* ── Finding one in particular ──────────────────────────────────── */
-
-export function searchQueue(items: QueueItem[], query: string): QueueItem[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((i) => [
-    i.name, i.brand, i.brief, txt(i.raw.legacy_client_id), i.id,
-  ].filter(Boolean).join(' ').toLowerCase().includes(q));
-}
-
-export function emptyQueueMessage(query: string, total: number): string {
-  if (total === 0) return 'Nothing is waiting for triage. Sales will land the next one here.';
-  if (query.trim()) return `Nothing waiting matches “${query.trim()}”.`;
-  return 'Nothing waiting.';
 }
