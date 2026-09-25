@@ -9,6 +9,7 @@ import {
   usePmTaskCampaignRollup, displayName, needsRealName, resolveCampaignId,
 } from '@/hooks/use-workflow';
 import { useRealtime } from '@/hooks/use-realtime';
+import { AQMark } from '@/components/auth/AQMark';
 import { SetYourNameCard } from '@/components/workflow/SetYourNameCard';
 import { SkeletonShell, SkeletonRows } from '@/components/Skeleton';
 import { WorkflowSidebar, type View } from '@/components/workflow/WorkflowSidebar';
@@ -491,28 +492,27 @@ const fullCenter: React.CSSProperties = {
   alignItems: 'center', justifyContent: 'center',
 };
 
+/**
+ * The AQ mark on the create-workspace card.
+ *
+ * It used to be `<img src="/aq-logo.png">` with an onError handler that
+ * replaced the image with the letters "AQ". THERE IS NO aq-logo.png - there
+ * never has been - so the handler fired on every render and the only thing
+ * anyone ever saw was the fallback. A 404 on every load of this screen, made
+ * invisible by a fallback tidy enough that nobody questioned it.
+ *
+ * AQMark is the drawn version, written to replace exactly this. No request,
+ * no 404, sharp at any size, and it inherits `color`.
+ */
 function Logo({ size = 40 }: { size?: number }) {
   return (
-    // Tries /aq-logo.png; if missing, the alt text falls back gracefully.
-    // Saving the logo to public/aq-logo.png will pick it up automatically.
     <div style={{
       width: size, height: size, borderRadius: 12,
       background: '#0f1d22', color: '#fff',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      fontWeight: 800, fontSize: size * 0.45,
       overflow: 'hidden',
     }}>
-      <img
-        src="/aq-logo.png"
-        alt="AQ"
-        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-        onError={(e) => {
-          (e.currentTarget as HTMLImageElement).style.display = 'none';
-          if (e.currentTarget.parentElement) {
-            e.currentTarget.parentElement.textContent = 'AQ';
-          }
-        }}
-      />
+      <AQMark size={Math.round(size * 0.62)} title="AQ Creativity" />
     </div>
   );
 }
