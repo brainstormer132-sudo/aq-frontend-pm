@@ -71,14 +71,24 @@ export function useCalendarItems(workspaceId: string | null) {
       campaignId: t.parent_task_id ?? t.id,
       campaign: t.parent_task_id ? nameOf(byId.get(t.parent_task_id)) : nameOf(t),    }));
 
-    // The ads inside vendor bookings. Selected without a workspace filter —
-    // the table has no workspace column — then matched to subtasks we already
-    // loaded, which is what scopes them.
+    // The ads inside vendor bookings.
+    //
+    // This used to select the table with NO FILTER AT ALL - it had no
+    // workspace column, so every calendar open read every ad line in the
+    // database, a thousand rows a round trip, and threw away the ones that
+    // belonged to somebody else. Migration 134 gave the table a workspace_id,
+    // stamped from the booking by a trigger, and an index to read it by.
+    //
+    // The match to `byId` below still stands and still does the real scoping:
+    // workspace_id is a denormalised copy and a copy can be stale, so a line
+    // whose booking is not in this workspace is dropped whatever the column
+    // says. The filter makes the read small; the match keeps it correct.
     const lines = await selectAllRows<any>(
       'useCalendarItems ad lines',
       () => supabase
         .from('vendor_ad_lines')
         .select('id, subtask_id, ad_type, description, due_date, status, quantity')
+        .eq('workspace_id', workspaceId)
         .order('id', { ascending: true }),
     );
 
