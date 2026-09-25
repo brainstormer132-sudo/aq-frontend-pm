@@ -38,7 +38,7 @@ import {
   optionalGroups, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
   previewRows, type OptionalGroup,
   type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
-  cannotIssue, canApprove, approvalNote, printApproval,
+  cannotIssue, canApprove, approvalNote, printApproval, PRINT_HEADER_HINT,
 } from '@/lib/legal';
 import { editTemplateWarning } from '@/lib/legal-doc-view';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
@@ -493,7 +493,8 @@ export function ContractFill({
         </span>
         {contract && (
           <button className="aq-btn aq-btn-ghost" disabled={loading} onClick={printDoc}
-            title="Open a print-ready copy to print or save as PDF">Print / Save as PDF</button>
+            title={`Open a print-ready copy to print or save as PDF. ${PRINT_HEADER_HINT}`}
+          >Print / Save as PDF</button>
         )}
         {/* Shown on anything that is not a draft, and DISABLED WITH A REASON
             rather than hidden when it cannot be used. A button that vanishes

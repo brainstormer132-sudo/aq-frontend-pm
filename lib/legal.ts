@@ -1862,6 +1862,29 @@ export function printApproval(
   return { name: String(c?.approved_name ?? '').trim(), on: at.slice(0, 10) };
 }
 
+/**
+ * The line that answers the question asked four times.
+ *
+ * Siraj: "remove date and name from the top of contracts", and three more
+ * times after that. It is CHROME'S OWN print header, drawn into the page
+ * margin, outside the document: the date on the left, the document title on
+ * the right, the file path at the foot. It is not in our HTML, and NO CSS IN
+ * THE DOCUMENT REMOVES IT - `@page { margin: 0 }` was tried, kept the header
+ * and disturbed the layout, and printing from an iframe made no difference.
+ *
+ * Two things do remove it. One is the print dialog's own "Headers and
+ * footers" tick box, which costs nothing and which Chrome REMEMBERS per
+ * user - so it is a once-per-person fix, not a once-per-contract one. The
+ * other is rendering the PDF on the server, which lives in the backend repo.
+ *
+ * So the app says so, once, next to the button. A PDF saved before unticking
+ * has the header baked in, which is most likely why it kept reappearing
+ * after somebody was told it was dealt with.
+ */
+export const PRINT_HEADER_HINT =
+  'Chrome adds its own date and file name in the page margin. Untick '
+  + '"Headers and footers" in the print dialog to remove it - Chrome remembers.';
+
 /** The stylesheet every printed contract shares, batch or not. */
 export function printCss(): string {
   return `  * { box-sizing: border-box; }

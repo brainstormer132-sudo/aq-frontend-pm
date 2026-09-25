@@ -8,6 +8,7 @@ import {
 import {
   kindLabel, contractStatusLabel, contractStatusBadge, CONTRACT_STATUSES,
   contractsPrintHTML, DOC_KINDS,
+  PRINT_HEADER_HINT,
 } from '@/lib/legal';
 import {
   registerRows, printableIds, sortRegister, filterRegister, registerTally,
@@ -399,6 +400,15 @@ export function LegalRegister({ workspaceId, role, initialSource }: {
               {printing ? 'Preparing\u2026' : `Print / Save as PDF${picked.length ? ` (${picked.length})` : ''}`}
             </button>
           </div>
+
+          {/* Said out loud here, not just in a tooltip: this is the screen
+              where forty contracts come out at once, and forty pages each
+              carrying a browser-drawn date is forty pages to reprint. */}
+          {!!picked.length && (
+            <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 8 }}>
+              {PRINT_HEADER_HINT}
+            </p>
+          )}
 
           {warn && (
             <p style={{ fontSize: 12.5, color: 'var(--aq-text-muted)', marginTop: 10 }}>{warn}</p>

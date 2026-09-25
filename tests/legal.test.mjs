@@ -25,7 +25,7 @@ import {
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
   cappedList, LIST_SHOW_MAX,
   APPROVAL_EXEMPT_KEYS, changeClearsApproval, cannotIssue, canApprove, approvalNote,
-  printApproval, approvalCaption,
+  printApproval, approvalCaption, PRINT_HEADER_HINT,
 } from '../.test-build/legal.js';
 import { amountInWords } from '../.test-build/legal-amount.js';
 
@@ -1476,6 +1476,26 @@ eq('empty row has a blank cell per column', emptyTableRow([{ key: 'a', label: 'A
       without);
   }
 }
+
+/* -- the print header, said once ------------------------------------
+ *
+ * Asked four times. It is Chrome's own header, drawn in the page margin
+ * outside the document, and no CSS in the document removes it - @page
+ * margin 0 was tried and kept it. What removes it is the print dialog's
+ * own tick box, which Chrome remembers per user. So the app says so.
+ *
+ * Pinned because the value of this line is that it names the EXACT control:
+ * "turn off headers" sends somebody hunting, and the reason it kept coming
+ * back is that a PDF saved before unticking has the header baked in.
+ */
+ok('the hint names the control by its label', PRINT_HEADER_HINT.includes('Headers and footers'));
+ok('and says Chrome remembers, so it is a once-per-person fix',
+  /remember/i.test(PRINT_HEADER_HINT));
+ok('and it is one sentence, not a paragraph', PRINT_HEADER_HINT.length < 200);
+// ASCII only: it is rendered in a tooltip and a muted line, and a smart
+// quote round the control name is the sort of thing that comes out as a
+// box in a print preview.
+ok('plain characters only', /^[\x20-\x7e]+$/.test(PRINT_HEADER_HINT));
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
