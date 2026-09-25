@@ -24,7 +24,11 @@ import {
   validateExternalDoc, validateExternalFile, EXTERNAL_EXTENSIONS,
   filingDeleteWarning,
 } from '@/lib/legal-external';
-import type { WorkspaceRole } from '@/hooks/use-workflow';
+import type { WorkspaceRole, PMTask, ClientRow } from '@/hooks/use-workflow';
+import {
+  useWorkflowTasks, useClients, createClientContractFromCampaign,
+} from '@/hooks/use-workflow';
+import { SearchablePicker } from '@/components/workflow/SearchablePicker';
 import {
   filterContracts, toggleId, selectedInOrder, skippedNote, bulkPrintNote,
 } from '@/lib/legal-bulk';
@@ -76,6 +80,11 @@ export function LegalRegister({ workspaceId, role, initialSource }: {
   initialSource?: SourceFilter;
 }) {
   const { contracts, loading, error, create, remove } = useContracts(workspaceId ?? null);
+  // Campaigns and clients, for the one case where "New contract" can fill
+  // itself in: a CLIENT contract belongs to a campaign, and the campaign
+  // knows the client, the budget and the bookings. See startNew.
+  const { tasks: campaigns } = useWorkflowTasks(workspaceId ?? null, 'all');
+  const { clients } = useClients();
   const pub = usePublishedVersions(workspaceId ?? null);
   // The other half of the register. 118 created external_doc "so the register
   // is complete" and then it was built onto Signatures, so the register was
@@ -86,6 +95,8 @@ export function LegalRegister({ workspaceId, role, initialSource }: {
   const rev = useSignedReviews(workspaceId ?? null);
 
   const [openId, setOpenId] = useState<string | null>(null);
+  /** The campaign a client contract is being raised for, when one is picked. */
+  const [campaignId, setCampaignId] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [versionId, setVersionId] = useState('');
   const [title, setTitle] = useState('');
@@ -212,14 +223,68 @@ export function LegalRegister({ workspaceId, role, initialSource }: {
     );
   }
 
+  /**
+   * A contract started from the Register.
+   *
+   * TWO PATHS, and the difference is whether anything is filled in.
+   *
+   * Picking a campaign for a CLIENT contract routes through the same
+   * function the campaign's own Paperwork card uses, so the client's
+   * registration, the budget and its words, the term, today's date and the
+   * booked influencers all arrive already there. Without one, it is a blank
+   * contract off the template - which is right for an NDA or a one-off, and
+   * wrong for a campaign's client contract.
+   *
+   * Legal live on this screen. Telling them to go and find a campaign
+   * instead is friction that ends with somebody filling a client's CR number
+   * in by hand from a registration that already holds it.
+   */
+  /** The kind of the template chosen in the dialog, or ''. */
+  const chosenKind = useMemo(
+    () => pub.versions.find((x) => x.version_id === versionId)?.doc_kind ?? '',
+    [pub.versions, versionId],
+  );
+
+  /**
+   * The campaigns a client contract can be raised for, newest first.
+   *
+   * The client's name is the HINT rather than the label: two campaigns for
+   * the same client are told apart by the campaign, and somebody searching
+   * types either.
+   */
+  const campaignOptions = useMemo(() => (campaigns ?? [])
+    .slice()
+    .sort((a: PMTask, b: PMTask) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+    .map((t: PMTask) => {
+      const client = clients.find((c: ClientRow) => c.id === (t as any).client_id);
+      return {
+        value: t.id,
+        label: t.task_name || t.title || 'Untitled campaign',
+        hint: [client?.company_name, t.brand_name].filter(Boolean).join(' \u00b7 ') || null,
+        keywords: [client?.company_name, t.brand_name].filter(Boolean).join(' '),
+      };
+    }), [campaigns, clients]);
+
   const startNew = async () => {
     const v = pub.versions.find((x) => x.version_id === versionId);
     if (!v) { setFormErr('Pick a template.'); return; }
     if (!title.trim()) { setFormErr('Give the contract a title.'); return; }
     setBusy(true); setFormErr('');
     try {
-      const id = await create(v.version_id, v.template_id, title);
-      setPicking(false); setTitle(''); setVersionId('');
+      let id: string;
+      const task = campaignId ? campaigns.find((t: PMTask) => t.id === campaignId) ?? null : null;
+      if (v.doc_kind === 'client_contract' && task) {
+        const client = clients.find((c: ClientRow) => c.id === (task as any).client_id) ?? null;
+        id = await createClientContractFromCampaign({
+          task: task as any, client: client as any,
+          // The workspace's own day. 'en-CA' is the one locale that formats
+          // as YYYY-MM-DD, which is what a contract's date fields take.
+          today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }),
+        });
+      } else {
+        id = await create(v.version_id, v.template_id, title);
+      }
+      setPicking(false); setTitle(''); setVersionId(''); setCampaignId(null);
       setOpenId(id);
     } catch (e: any) {
       setFormErr(e?.message ?? 'Could not create the contract.');
@@ -576,6 +641,26 @@ export function LegalRegister({ workspaceId, role, initialSource }: {
                     </option>
                   ))}
                 </select>
+                {chosenKind === 'client_contract' && (
+                  <>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)', margin: '14px 0 4px' }}>
+                      Campaign
+                    </label>
+                    <SearchablePicker
+                      options={campaignOptions}
+                      value={campaignId}
+                      onChange={setCampaignId}
+                      placeholder="Search campaigns\u2026"
+                      emptyLabel={'\u2014 None: start it blank \u2014'}
+                      maxWidth="100%"
+                    />
+                    <p style={{ fontSize: 12, color: 'var(--aq-text-muted)', marginTop: 6 }}>
+                      {campaignId
+                        ? 'The client\u2019s registration, the amount and its words, the term and the booked influencers will be filled in.'
+                        : 'Pick one and the contract fills itself in from the campaign and the client\u2019s registration. Without one it starts blank.'}
+                    </p>
+                  </>
+                )}
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--aq-text-muted)', margin: '14px 0 4px' }}>Title</label>
                 <input className="aq-input" value={title} onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. Vendor agreement - Rawad Media" style={{ width: '100%' }} />
