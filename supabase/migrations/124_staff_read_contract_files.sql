@@ -44,6 +44,21 @@
 -- no-op. Nothing else in the bucket's setup is touched.
 -- ============================================================
 
+-- The backend policy, counted BEFORE anything is touched. The check at the
+-- bottom compares the two counts rather than demanding a fixed number: the
+-- failure worth catching is this migration REMOVING the policy the backend
+-- depends on, and "it is still exactly as I found it" says that on a live
+-- database and on an empty one alike. Demanding `= 1` said it only on the
+-- live one, which is what stopped the replay here.
+-- A plain statement, not a do-block: a do-block commits at its end, and a
+-- temp table made `on commit drop` inside one is gone before the check runs.
+-- This one lives for the psql session and is dropped by name at the bottom.
+drop table if exists _124_before;
+create temporary table _124_before as
+select count(*) as n from pg_policies
+ where schemaname = 'storage' and tablename = 'objects'
+   and policyname = 'contracts_service_role_all';
+
 -- The name says who it is for and what it grants, because the next person to
 -- run the query at the top of this file will read the name before the body.
 drop policy if exists "contracts staff read" on storage.objects;
@@ -64,6 +79,7 @@ do $$
 declare
   n_read    integer;
   n_service integer;
+  n_before  integer;
 begin
   select count(*) into n_read from pg_policies
    where schemaname = 'storage' and tablename = 'objects'
@@ -77,13 +93,17 @@ begin
   select count(*) into n_service from pg_policies
    where schemaname = 'storage' and tablename = 'objects'
      and policyname = 'contracts_service_role_all';
-  if n_service <> 1 then
+  select n into n_before from _124_before;
+  if n_service <> n_before then
     raise exception
-      'storage: the backend policy contracts_service_role_all is gone - this migration must not have touched it';
+      'storage: the backend policy contracts_service_role_all went from % to % - this migration must not have touched it',
+      n_before, n_service;
   end if;
 
   raise notice 'storage: staff can read the contracts bucket; the backend policy is untouched';
 end $$;
+
+drop table if exists _124_before;
 
 -- Verify (paste this after running the migration):
 -- select policyname, cmd, roles::text

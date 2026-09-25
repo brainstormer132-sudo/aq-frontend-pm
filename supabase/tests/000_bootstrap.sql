@@ -103,5 +103,44 @@ create table if not exists auth.users (
   created_at timestamptz default now()
 );
 
+-- Storage.
+--
+-- Supabase creates these in every project, and five migrations depend on
+-- them: 096 puts an avatars policy on storage.objects, 102/115/117 insert a
+-- bucket and four policies each, and 124 adds the staff read on `contracts`.
+-- Without them the replay stopped dead at 096 with "relation storage.objects
+-- does not exist" - which is how CI came to be red on every push since at
+-- least 17 September while `npm test` stayed green.
+--
+-- Only what those migrations touch is modelled, and the two properties that
+-- make the assertions meaningful are kept: `id` is the bucket primary key, so
+-- `on conflict (id) do nothing` behaves, and RLS is ON, so a grant does not
+-- by itself let anon read an object. The real tables have more columns; this
+-- is scaffolding for a replay, not a copy of Supabase.
+create table if not exists storage.buckets (
+  id         text primary key,
+  name       text not null,
+  owner      uuid,
+  public     boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists storage.objects (
+  id               uuid primary key default extensions.uuid_generate_v4(),
+  bucket_id        text references storage.buckets(id),
+  name             text,
+  owner            uuid,
+  created_at       timestamptz default now(),
+  updated_at       timestamptz default now(),
+  last_accessed_at timestamptz default now(),
+  metadata         jsonb
+);
+
+alter table storage.buckets enable row level security;
+alter table storage.objects enable row level security;
+
 grant usage on schema auth       to anon, authenticated, service_role;
 grant usage on schema extensions to anon, authenticated, service_role;
+grant usage on schema storage    to anon, authenticated, service_role;
+grant all on storage.buckets, storage.objects to anon, authenticated, service_role;

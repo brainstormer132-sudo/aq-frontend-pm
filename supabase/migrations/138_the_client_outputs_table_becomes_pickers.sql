@@ -103,7 +103,9 @@ end $$;
 
 -- 3. prove it ------------------------------------------------------
 do $$
-declare n integer;
+declare
+  n     integer;
+  n_has integer;
 begin
   -- The constraint knows the new type, or every update above would have
   -- failed on it rather than on anything to do with the fields.
@@ -114,14 +116,27 @@ begin
     raise exception 'legal: the field_type check does not know list_qty (% matching)', n;
   end if;
 
+  -- Everything above this line is structural and true of any database. What
+  -- follows is about two rows that exist only once a workspace has the client
+  -- template in it, so it is checked when they are there and skipped when they
+  -- are not. An empty database - CI's replay, or a new Supabase project on the
+  -- day it is made - has nothing to say about them, and a migration that
+  -- raises there is a migration that cannot build a new environment.
+  select count(*) into n_has from legal.placeholder
+   where key in ('CLT_PLAT', 'CLT_QTY');
+  if n_has = 0 then
+    raise notice 'legal: the check knows list_qty; no client table fields here yet';
+    return;
+  end if;
+
   -- Both columns point at a list. A list field with no list_id renders an
   -- empty dropdown, which is worse than the free-text box it replaced.
   select count(*) into n from legal.placeholder
    where key in ('CLT_PLAT', 'CLT_QTY')
      and field_type in ('list', 'list_qty')
      and list_id is not null;
-  if n <> 2 then
-    raise exception 'legal: % of 2 client table columns are pickers with a list behind them', n;
+  if n <> n_has then
+    raise exception 'legal: % of % client table columns are pickers with a list behind them', n, n_has;
   end if;
 
   -- And the lists have something in them.
@@ -129,7 +144,7 @@ begin
     from legal.placeholder p
     join legal.managed_list_value v on v.list_id = p.list_id and v.active
    where p.key in ('CLT_PLAT', 'CLT_QTY');
-  if n < 2 then
+  if n < n_has then
     raise exception 'legal: the lists behind the client table are empty';
   end if;
 

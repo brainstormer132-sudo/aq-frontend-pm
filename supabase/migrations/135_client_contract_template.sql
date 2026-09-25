@@ -58,6 +58,16 @@ begin
    limit 1;
   if v_ws is null then
     select count(*) into v_n from public.workspaces;
+    -- No workspaces at all is an EMPTY database, not an ambiguous one: the
+    -- replay in CI, or a new Supabase project on the day it is created. There
+    -- is nothing to seed and nothing wrong, so say so and stop. Two or more
+    -- workspaces with no client template is genuinely ambiguous and still
+    -- raises - picking one at random is how a template lands in the wrong
+    -- company's legal register.
+    if v_n = 0 then
+      raise notice 'seed: no workspace yet - nothing to seed. Re-run this file once one exists.';
+      return;
+    end if;
     if v_n <> 1 then
       raise exception 'seed: cannot tell which workspace to use (% workspaces, no client template)', v_n;
     end if;

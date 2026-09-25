@@ -158,10 +158,15 @@ declare
   n_txt  integer;
   n_ar   integer;
 begin
+  -- Phrased as "neither may be anything else", not "both must be there".
+  -- The earlier form counted rows that only exist once a workspace has been
+  -- seeded, so it raised against an empty database and made this migration
+  -- unreplayable - the 127 lesson: a self-test whose answer depends on who
+  -- is in the database is not a test of the migration.
   select count(*) into n_list from legal.placeholder
-   where key in ('platform_smart', 'ad_types') and field_type = 'list';
-  if n_list <> 2 then
-    raise exception 'legal: expected both fields to be pickers, got %', n_list;
+   where key in ('platform_smart', 'ad_types') and field_type <> 'list';
+  if n_list <> 0 then
+    raise exception 'legal: % of these fields are not pickers', n_list;
   end if;
 
   -- Every value a picker offers must be non-empty, or the dropdown shows a
