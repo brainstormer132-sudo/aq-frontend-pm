@@ -20,7 +20,7 @@ import {
   changeClearsApproval,
   contractCanonical, FINGERPRINT_KEY, ISSUED_AT_KEY,
   OPT_OFF_KEY, parseOffIds, serializeOffIds, visibleBlocks, TABLE_KEY_PREFIX,
-  withoutArchived,
+  withoutArchived, refusedMessage,
 } from '@/lib/legal';
 import type { PrintContract, PrintBuild, FieldRow } from '@/lib/legal-bulk';
 import { chunk, versionIdsOf, buildPrintDocs } from '@/lib/legal-bulk';
@@ -125,10 +125,11 @@ export function useLegalTemplates(workspaceId: string | null) {
   const setArchived = useCallback(async (id: string, archived: boolean) => {
     const sb = createClient() as unknown as SupabaseClient;
     const { data: who } = await sb.auth.getUser();
-    const { error: e } = await legal().from('doc_template').update(archived
+    const { data: hit, error: e } = await legal().from('doc_template').update(archived
       ? { archived_at: new Date().toISOString(), archived_by: who?.user?.id ?? null }
-      : { archived_at: null, archived_by: null }).eq('id', id);
+      : { archived_at: null, archived_by: null }).eq('id', id).select('id');
     if (e) throw e;
+    if (!hit?.length) throw new Error(refusedMessage(archived ? 'Retiring the template' : 'Bringing the template back'));
     await fetchAll();
   }, [fetchAll]);
 
@@ -292,10 +293,11 @@ export function useDocEditor(workspaceId: string | null, templateId: string | nu
   /** Publish the draft: freeze it and stamp published_at (the CHECK requires it). */
   const publish = () => run(async () => {
     guard();
-    const { error: e } = await legal().from('doc_template_version')
+    const { data: hit, error: e } = await legal().from('doc_template_version')
       .update({ status: 'published', published_at: new Date().toISOString() })
-      .eq('id', version!.id);
+      .eq('id', version!.id).select('id');
     if (e) throw e;
+    if (!hit?.length) throw new Error(refusedMessage('Publishing this version'));
     await load();
   });
 
@@ -1032,9 +1034,10 @@ export function useContractEditor(workspaceId: string | null, contractId: string
       { contract_id: contractId, workspace_id: workspaceId, key: ISSUED_AT_KEY, value: new Date().toISOString() },
     ], { onConflict: 'contract_id,key' });
     if (eF) throw eF;
-    const { error: e } = await legal().from('contract')
-      .update({ status: 'issued' as ContractStatus }).eq('id', contractId);
+    const { data: hit, error: e } = await legal().from('contract')
+      .update({ status: 'issued' as ContractStatus }).eq('id', contractId).select('id');
     if (e) throw e;
+    if (!hit?.length) throw new Error(refusedMessage('Issuing this contract'));
     await load();
   });
 
@@ -1642,20 +1645,20 @@ export async function fileSignedCopy(input: {
   if (eU) throw new Error(`Could not upload the signed copy: ${eU.message}`);
 
   const { data: who } = await sb.auth.getUser();
-  const { error: eR } = await legal().from('contract').update({
+  const { data: hit, error: eR } = await legal().from('contract').update({
     status: 'signed',
     signed_path: path,
     signed_name: input.file.name,
     signed_bytes: input.file.size,
     signed_on: input.signedOn || null,
     signed_by: who?.user?.id ?? null,
-  }).eq('id', input.contract.id);
-  if (eR) {
+  }).eq('id', input.contract.id).select('id');
+  if (eR || !hit?.length) {
     // Take the orphan back out rather than leaving it. Best effort: if this
     // fails too, the object is invisible in a private bucket and the contract
     // is correctly still `issued`, which is the safe half of the pair.
     await sb.storage.from(SIGNED_BUCKET).remove([path]).catch(() => {});
-    throw eR;
+    throw eR ?? new Error(refusedMessage('Filing the signed copy'));
   }
 }
 
@@ -1670,9 +1673,10 @@ export async function fileSignedCopy(input: {
  */
 export async function removeSignedCopy(contract: Contract): Promise<void> {
   const path = String((contract as any)?.signed_path ?? '');
-  const { error } = await legal().from('contract')
-    .update({ status: 'issued', signed_path: null }).eq('id', contract.id);
+  const { data: hit, error } = await legal().from('contract')
+    .update({ status: 'issued', signed_path: null }).eq('id', contract.id).select('id');
   if (error) throw error;
+  if (!hit?.length) throw new Error(refusedMessage('Taking the signed copy off'));
   if (path) {
     await (createClient() as unknown as SupabaseClient)
       .storage.from(SIGNED_BUCKET).remove([path]).catch(() => {});

@@ -2142,3 +2142,27 @@ export function contractsPrintHTML(docs: PrintDoc[], title?: string): string {
   const dir: Dir = list.length && list.every((d) => d.dir === 'rtl') ? 'rtl' : 'ltr';
   return printDocumentHtml(title || bulkPrintTitle(list.length), dir, list.map(contractSheetHtml));
 }
+
+/**
+ * What a write says when it changed nothing.
+ *
+ * PostgREST treats an update that matches no row as a SUCCESS with no rows.
+ * Row-level security refuses by matching nothing, so "you may not touch this"
+ * and "it worked" arrive identically - and the screen, having nothing to go
+ * on, says it worked.
+ *
+ * That exact failure has now turned up four times in a week: the two
+ * registration queues (130), the client contract request that reported it had
+ * gone to Legal when the queue had no reader, and a seed whose guard
+ * recognised the wrong thing. Every one of them reported success and changed
+ * nothing, and every one was caught by counting rather than by being told.
+ *
+ * So anything that MUST have changed a row asks for it back and says this
+ * when it did not. Both halves matter: permission is the usual cause, and
+ * somebody else having moved it first is the one people forget.
+ */
+export function refusedMessage(what: string): string {
+  const w = String(what ?? '').trim() || 'That change';
+  return `${w} did not go through, and nothing was changed. `
+    + 'You may not have permission, or somebody may have changed it first.';
+}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-browser';
 import { ugcPrefill, isEmptyTableRow, durationDays } from '@/lib/legal-prefill';
+import { refusedMessage } from '@/lib/legal';
 import { mapWithConcurrency, REQUEST_CONCURRENCY } from '@/lib/concurrency';
 import {
   onCampaignCreated, onCampaignCompleted, onContractStatusChanged,
@@ -1717,7 +1718,7 @@ export async function triageMarketingTask(input: {
 
   // 1. Update the parent task. Keep service_type_id pointing at the first one
   //    for backward compat with anything still reading the single column.
-  const { error: updateErr } = await supabase
+  const { data: triaged, error: updateErr } = await supabase
     .from('pm_tasks')
     .update({
       priority: input.priority,
@@ -1725,8 +1726,10 @@ export async function triageMarketingTask(input: {
       key_account_id: input.key_account_id,
       stage: 'in_progress',
     })
-    .eq('id', input.task_id);
+    .eq('id', input.task_id)
+    .select('id');
   if (updateErr) throw updateErr;
+  if (!triaged?.length) throw new Error(refusedMessage('Triaging this request'));
 
   // 2. Replace junction rows.
   await supabase.from('task_service_types').delete().eq('task_id', input.task_id);
@@ -3167,7 +3170,7 @@ export async function markDocumentRequestIssued(
   const num = documentNumber.trim();
   if (!num) throw new Error('Give the document a number.');
 
-  const { error } = await supabase
+  const { data: issued, error } = await supabase
     .from('document_requests')
     .update({
       status: 'issued',
@@ -3175,8 +3178,12 @@ export async function markDocumentRequestIssued(
       issued_by: issuedBy,
       issued_at: new Date().toISOString(),
     })
-    .eq('id', request.id);
+    .eq('id', request.id)
+    .select('id');
   if (error) { logSbError('markDocumentRequestIssued', error, { id: request.id }); throw error; }
+  // The number goes onto the task below. If the request itself never moved,
+  // stop here rather than numbering a task against a request still open.
+  if (!issued?.length) throw new Error(refusedMessage('Marking this request issued'));
 
   const column = request.doc_kind === 'quotation' ? 'quotation_numbers' : 'invoice_numbers';
   const { data: task } = await supabase
@@ -3195,11 +3202,13 @@ export async function markDocumentRequestIssued(
 }
 
 export async function cancelDocumentRequest(id: string) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('document_requests')
     .update({ status: 'cancelled' })
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
   if (error) throw error;
+  if (!data?.length) throw new Error(refusedMessage('Cancelling this request'));
 }
 
 /**
@@ -3387,6 +3396,7 @@ export async function markTaskCompleted(taskId: string) {
     .select('id, workspace_id, client_id, parent_task_id, task_name, title, brand_name')
     .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error(refusedMessage('Marking this complete'));
 
   // Only campaigns reach the timeline. A finished subtask is internal
   // detail; a finished campaign is a thing the client experienced.
@@ -6952,14 +6962,16 @@ export async function addCrmDeal(deal: {
 }
 
 export async function updateCrmDeal(id: string, updates: Partial<CrmDeal>) {
-  const { error } = await supabase.from('crm_deals').update(updates).eq('id', id);
+  const { data, error } = await supabase.from('crm_deals').update(updates).eq('id', id).select('id');
   if (error) throw error;
+  if (!data?.length) throw new Error(refusedMessage('Saving this deal'));
 }
 
 export async function moveCrmDealStage(id: string, stage: DealStage) {
   // stage_changed_at + closed_at are maintained by the trigger.
-  const { error } = await supabase.from('crm_deals').update({ stage }).eq('id', id);
+  const { data, error } = await supabase.from('crm_deals').update({ stage }).eq('id', id).select('id');
   if (error) throw error;
+  if (!data?.length) throw new Error(refusedMessage('Moving this deal'));
 }
 
 export async function deleteCrmDeal(id: string) {
@@ -7045,19 +7057,21 @@ export async function updateCrmTask(id: string, updates: Partial<CrmTask>) {
 }
 
 export async function completeCrmTask(id: string, userId: string) {
-  const { error } = await supabase.from('crm_tasks').update({
+  const { data, error } = await supabase.from('crm_tasks').update({
     completed_at: new Date().toISOString(),
     completed_by_id: userId,
-  }).eq('id', id);
+  }).eq('id', id).select('id');
   if (error) throw error;
+  if (!data?.length) throw new Error(refusedMessage('Ticking this off'));
 }
 
 export async function uncompleteCrmTask(id: string) {
-  const { error } = await supabase.from('crm_tasks').update({
+  const { data, error } = await supabase.from('crm_tasks').update({
     completed_at: null,
     completed_by_id: null,
-  }).eq('id', id);
+  }).eq('id', id).select('id');
   if (error) throw error;
+  if (!data?.length) throw new Error(refusedMessage('Putting this back'));
 }
 
 export async function deleteCrmTask(id: string) {

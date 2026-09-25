@@ -25,7 +25,7 @@ import {
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
   cappedList, LIST_SHOW_MAX,
   APPROVAL_EXEMPT_KEYS, changeClearsApproval, cannotIssue, canApprove, approvalNote,
-  printApproval, approvalCaption, PRINT_HEADER_HINT, splitQuantity,
+  printApproval, approvalCaption, PRINT_HEADER_HINT, splitQuantity, refusedMessage,
 } from '../.test-build/legal.js';
 import { amountInWords } from '../.test-build/legal-amount.js';
 
@@ -1530,6 +1530,24 @@ ok('and it is one sentence, not a paragraph', PRINT_HEADER_HINT.length < 200);
 // quote round the control name is the sort of thing that comes out as a
 // box in a print preview.
 ok('plain characters only', /^[\x20-\x7e]+$/.test(PRINT_HEADER_HINT));
+
+/* -- what a write says when it changed nothing ----------------------
+ *
+ * PostgREST treats an update matching no row as a success with no rows, and
+ * RLS refuses by matching nothing - so "not allowed" and "done" arrive
+ * identically. Four bugs this week were exactly that.
+ */
+ok('it names the thing that did not happen',
+  refusedMessage('Issuing this contract').startsWith('Issuing this contract'));
+ok('it says nothing changed', /nothing was changed/.test(refusedMessage('x')));
+// BOTH causes. Permission is the usual one; somebody else having moved it
+// first is the one people do not think of, and the one that makes a person
+// reload instead of asking for access they already have.
+ok('it offers permission as a cause', /permission/.test(refusedMessage('x')));
+ok('and somebody else having changed it', /changed it first/.test(refusedMessage('x')));
+ok('an empty subject still reads as a sentence',
+  refusedMessage('').startsWith('That change did not go through'));
+ok('and so does nothing at all', refusedMessage(null).startsWith('That change'));
 
 console.log(`legal: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
