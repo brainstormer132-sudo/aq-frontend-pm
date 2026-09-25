@@ -5496,9 +5496,20 @@ export function clientContractReadiness(
       if (!has(client.cr_number))      missing.push({ label: 'CR number', where: `Clients → ${client.company_name}` });
       if (!has(client.vat_number))     missing.push({ label: 'VAT number', where: `Clients → ${client.company_name}` });
       if (!has(client.signatory_name)) missing.push({ label: 'Signatory name', where: `Clients → ${client.company_name}` });
-      if (!has(client.contact_email) && !has(client.contact_phone)) {
-        missing.push({ label: 'An email or phone number', where: `Clients → ${client.company_name}` });
-      }
+      // AN EMAIL OR PHONE NUMBER IS NOT REQUIRED. Siraj: "An email or phone
+      // number. are not important btw".
+      //
+      // He is right, and the contract says so: the client campaign contract
+      // prints the company name, the CR, the unified number, the VAT number,
+      // the address, who signs and in what capacity. It prints NEITHER an
+      // email nor a phone number anywhere. Blocking a contract on a field the
+      // document never shows is a readiness check enforcing a data-quality
+      // wish, which is a different job and a worse place to do it - the cost
+      // lands on somebody trying to send a contract, and the fix lands on
+      // somebody else's record.
+      //
+      // What stays required is what the paper carries and cannot be blank on
+      // it: the registration numbers and the person who signs.
     }
   }
 
