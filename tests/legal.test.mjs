@@ -25,7 +25,7 @@ import {
   recoveryLabel, recoveryUrgent, RECOVERY_URGENT_DAYS, taskReference,
   cappedList, LIST_SHOW_MAX,
   APPROVAL_EXEMPT_KEYS, changeClearsApproval, cannotIssue, canApprove, approvalNote,
-  printApproval, approvalCaption, PRINT_HEADER_HINT,
+  printApproval, approvalCaption, PRINT_HEADER_HINT, splitQuantity,
 } from '../.test-build/legal.js';
 import { amountInWords } from '../.test-build/legal-amount.js';
 
@@ -178,8 +178,42 @@ eq('value ok -> null', validateListValue('snapchat'), null);
 }
 
 // typed fields
-eq('five field types', FIELD_TYPES.map((f) => f.key), ['text', 'number', 'date', 'list', 'auto']);
+eq('six field types', FIELD_TYPES.map((f) => f.key),
+  ['text', 'number', 'date', 'list', 'auto', 'list_qty']);
 eq('fieldTypeLabel known', fieldTypeLabel('list'), 'List');
+{
+  /* -- a list value with a quantity in one cell ---------------------
+   *
+   * Siraj, on the client contract's outputs table: "the ad amount is ad type
+   * with quantity". The count must NOT be a way round a closed list - the
+   * name is checked exactly as a plain list field's is.
+   */
+  const f = { field_type: 'list_qty', required: false };
+  const list = { values: ['Home Ad', 'Story'] };
+  eq('a plain list value is fine', validateFieldValue(f, 'Home Ad', list), null);
+  eq('with a count is fine', validateFieldValue(f, '6 \u00d7 Home Ad', list), null);
+  eq('a plain x is accepted too, because people type it',
+    validateFieldValue(f, '6 x Home Ad', list), null);
+  ok('an off-list name is refused whatever the count',
+    !!validateFieldValue(f, '6 \u00d7 Billboard', list));
+  ok('and off-list with no count too', !!validateFieldValue(f, 'Billboard', list));
+  eq('empty is allowed when the field is not required',
+    validateFieldValue(f, '', list), null);
+  eq('but not when it is',
+    validateFieldValue({ ...f, required: true }, '', list), 'This field is required.');
+  // allow_other is the operator saying "this one is not on the list", and it
+  // means the same here as it does for a plain list field.
+  eq('allow_other lets an off-list name through',
+    validateFieldValue({ ...f, allow_other: true }, '2 \u00d7 Billboard', list), null);
+
+  eq('the parser splits a count from a name', splitQuantity('6 \u00d7 Home Ad'),
+    { qty: 6, name: 'Home Ad' });
+  eq('no count means one', splitQuantity('Home Ad'), { qty: 1, name: 'Home Ad' });
+  eq('nothing is nothing', splitQuantity(''), { qty: 0, name: '' });
+  // A number in the name is not a count: "3D Animation" is one ad type.
+  eq('a digit glued to a word is part of the name',
+    splitQuantity('3D Animation'), { qty: 1, name: '3D Animation' });
+}
 eq('fieldTypeLabel unknown is itself', fieldTypeLabel('zzz'), 'zzz');
 eq('list without list_id rejected', validateFieldDef({ field_type: 'list', list_id: null }), 'Pick a list for a list field.');
 eq('list with list_id ok', validateFieldDef({ field_type: 'list', list_id: 'abc' }), null);

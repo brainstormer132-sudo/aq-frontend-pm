@@ -64,7 +64,53 @@ export interface OutputRow {
   vendorName?: unknown;
   platform?: unknown;
   handle?: unknown;
-  ads?: unknown;
+  /** The ads booked with this vendor, as they were booked. */
+  lines?: { ad_type?: unknown; platform?: unknown; quantity?: unknown }[];
+}
+
+/**
+ * The one platform a row can name, or ''.
+ *
+ * The column takes a single value from the platforms list, so a booking whose
+ * ads run on TikTok AND Instagram cannot answer it - and picking the first
+ * would put a contract in front of a client saying the work is on one channel
+ * when it was agreed on two. Disagreement leaves it blank for legal, which is
+ * the same rule every other unknown follows here.
+ */
+export function rowPlatform(r: OutputRow | null | undefined): string {
+  const onRow = txt(r?.platform);
+  if (onRow) return onRow;
+  const seen: string[] = [];
+  for (const l of r?.lines ?? []) {
+    const p = txt(l?.platform);
+    if (p && !seen.includes(p)) seen.push(p);
+  }
+  return seen.length === 1 ? seen[0] : '';
+}
+
+/**
+ * What was booked, and how many: "3 x Home Ad, 2 x Story".
+ *
+ * Siraj: "the ad amount is ad type with quantity". Built with the app's own
+ * quantified form - the same one the vendor contract has always written - so
+ * one reader and one writer serve both. Duplicates merge rather than repeat:
+ * two separate Home Ad lines of 2 and 1 read as "3 x Home Ad", because that
+ * is what the client is buying.
+ */
+export function rowAds(r: OutputRow | null | undefined): string {
+  const order: string[] = [];
+  const by = new Map<string, number>();
+  for (const l of r?.lines ?? []) {
+    const name = txt(l?.ad_type);
+    if (!name) continue;
+    const n = Number(l?.quantity);
+    const q = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+    if (!by.has(name)) order.push(name);
+    by.set(name, (by.get(name) ?? 0) + q);
+  }
+  return order
+    .map((n) => (by.get(n)! > 1 ? `${by.get(n)} \u00d7 ${n}` : n))
+    .join(', ');
 }
 
 /** The two parts of an address the client record keeps, in one line. */
@@ -140,12 +186,11 @@ export function clientOutputRows(rows: OutputRow[] | null | undefined): Record<s
   for (const r of rows ?? []) {
     const name = txt(r?.vendorName);
     if (!name) continue;
-    const n = Number(r?.ads);
     out.push({
       CLT_INF: name,
-      CLT_PLAT: txt(r?.platform),
+      CLT_PLAT: rowPlatform(r),
       CLT_ACC: txt(r?.handle),
-      CLT_QTY: Number.isFinite(n) && n > 0 ? String(n) : '',
+      CLT_QTY: rowAds(r),
     });
   }
   return out;

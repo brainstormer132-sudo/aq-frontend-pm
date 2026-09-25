@@ -5644,7 +5644,9 @@ export async function createClientContractFromCampaign(opts: {
     vendorName: b.vendor_name,
     platform: b.platform,
     handle: '',
-    ads: (b.lines ?? []).reduce((n: number, l: any) => n + (Number(l?.quantity) || 1), 0),
+    // The ads themselves, not a count: the column carries the ad type with
+    // its quantity now - "3 x Home Ad" - which is what the client is buying.
+    lines: (b.lines ?? []) as any[],
   })));
 
   const values = clientContractValues({

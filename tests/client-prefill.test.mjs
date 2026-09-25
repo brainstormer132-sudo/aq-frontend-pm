@@ -9,6 +9,7 @@
 import {
   clientAddress, clientDuration, clientAmount,
   clientContractValues, clientOutputRows, clientContractTitle,
+  rowPlatform, rowAds,
 } from '../.test-build/client-prefill.js';
 
 let pass = 0, fail = 0;
@@ -86,18 +87,56 @@ eq('nor nothing', clientAmount({}), '');
 
 /* -- the outputs table ------------------------------------------- */
 {
+  const L = (ad_type, quantity, platform) => ({ ad_type, quantity, platform });
   const rows = clientOutputRows([
-    { vendorName: 'Sara', platform: 'TikTok', handle: '@sara', ads: 3 },
-    { vendorName: '', platform: 'Instagram', handle: '@nobody', ads: 2 },
-    { vendorName: 'Rawad', platform: 'Snapchat', handle: '', ads: 0 },
+    { vendorName: 'Sara', platform: 'TikTok', handle: '@sara', lines: [L('Home Ad', 3)] },
+    { vendorName: '', platform: 'Instagram', handle: '@nobody', lines: [L('Story', 2)] },
+    { vendorName: 'Rawad', platform: 'Snapchat', handle: '', lines: [] },
   ]);
   eq('a booking with no vendor is left out', rows.length, 2);
-  eq('the first row', rows[0], { CLT_INF: 'Sara', CLT_PLAT: 'TikTok', CLT_ACC: '@sara', CLT_QTY: '3' });
+  eq('the first row', rows[0],
+    { CLT_INF: 'Sara', CLT_PLAT: 'TikTok', CLT_ACC: '@sara', CLT_QTY: '3 \u00d7 Home Ad' });
   // Empty, not "0": an empty cell reads as "not agreed yet", and a printed 0
   // reads as an agreement to deliver nothing.
-  eq('no ad count prints blank, not zero', rows[1].CLT_QTY, '');
+  eq('no ads booked prints blank', rows[1].CLT_QTY, '');
   eq('and a missing handle is blank', rows[1].CLT_ACC, '');
   eq('nothing at all is no rows', clientOutputRows(null), []);
+}
+
+/* -- the ad type WITH its quantity ----------------------------------
+ *
+ * Siraj: "the ad amount is ad type with quantity". One cell answering two
+ * questions, in the app's own quantified form - the same one the vendor
+ * contract writes, so one reader serves both.
+ */
+{
+  const L = (ad_type, quantity, platform) => ({ ad_type, quantity, platform });
+  eq('one ad type, one of them, reads as itself',
+    rowAds({ lines: [L('Home Ad', 1)] }), 'Home Ad');
+  eq('several of one type carry the count',
+    rowAds({ lines: [L('Home Ad', 3)] }), '3 \u00d7 Home Ad');
+  eq('two types are listed', rowAds({ lines: [L('Home Ad', 3), L('Story', 2)] }),
+    '3 \u00d7 Home Ad, 2 \u00d7 Story');
+  // MERGED, not repeated: two Home Ad lines of 2 and 1 is three Home Ads,
+  // which is what the client is buying.
+  eq('the same type booked twice merges',
+    rowAds({ lines: [L('Home Ad', 2), L('Home Ad', 1)] }), '3 \u00d7 Home Ad');
+  eq('a line with no quantity counts as one', rowAds({ lines: [L('Home Ad', null)] }), 'Home Ad');
+  eq('a line with no type is left out', rowAds({ lines: [L('', 5)] }), '');
+  eq('no lines is empty', rowAds({ lines: [] }), '');
+  eq('nothing at all is empty', rowAds(null), '');
+}
+{
+  // The column takes ONE platform. A booking whose ads run on two cannot
+  // answer it, and picking the first would tell a client the work is on one
+  // channel when two were agreed.
+  const L = (ad_type, quantity, platform) => ({ ad_type, quantity, platform });
+  eq('the booking says so', rowPlatform({ platform: 'TikTok', lines: [L('a', 1, 'Snapchat')] }), 'TikTok');
+  eq('otherwise its ads agree', rowPlatform({ lines: [L('a', 1, 'TikTok'), L('b', 1, 'TikTok')] }), 'TikTok');
+  eq('and when they disagree it is left for legal',
+    rowPlatform({ lines: [L('a', 1, 'TikTok'), L('b', 1, 'Instagram')] }), '');
+  eq('no platform anywhere is empty', rowPlatform({ lines: [L('a', 1)] }), '');
+  eq('nothing at all is empty', rowPlatform(null), '');
 }
 
 /* -- the title --------------------------------------------------- */

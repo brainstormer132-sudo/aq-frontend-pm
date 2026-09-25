@@ -352,7 +352,7 @@ const PLACEHOLDER_G = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
  * list draws from a managed list, number is a bounded entry, date a date, auto
  * is system-filled, and text is the only free entry - names, ID numbers, IBANs.
  */
-export type FieldType = 'text' | 'number' | 'date' | 'list' | 'auto';
+export type FieldType = 'text' | 'number' | 'date' | 'list' | 'auto' | 'list_qty';
 
 export const FIELD_TYPES: { key: FieldType; label: string; hint: string }[] = [
   { key: 'text', label: 'Text', hint: 'Free text - names, ID numbers, IBANs.' },
@@ -360,6 +360,13 @@ export const FIELD_TYPES: { key: FieldType; label: string; hint: string }[] = [
   { key: 'date', label: 'Date', hint: 'A date.' },
   { key: 'list', label: 'List', hint: 'Choose from a managed list.' },
   { key: 'auto', label: 'Auto', hint: 'Filled automatically by the system.' },
+  // Siraj, on the client contract's outputs table: "the ad amount is ad type
+  // with quantity". One cell, two answers - WHAT was booked and HOW MANY -
+  // which is how the vendor contract has always written an ad type
+  // ("6 x Home Ad", see parseQuantified). This makes that a field type, so a
+  // table column can be a picker with a count beside it rather than a box
+  // somebody types "3 home ads" into three different ways.
+  { key: 'list_qty', label: 'List with a quantity', hint: 'Choose from a list, with how many.' },
 ];
 
 export function fieldTypeLabel(t: string): string {
@@ -847,7 +854,38 @@ export function validateFieldValue(
   if (f.field_type === 'list' && list && !f.allow_other && !list.values.includes(v)) {
     return 'Choose a value from the list.';
   }
+  // A quantity and a list value in one cell: "6 x Home Ad". The NAME is
+  // checked against the list exactly as a plain list field is - the count is
+  // not a way round a closed list - and the separator is whatever
+  // parseQuantified accepts, which is the one the contract app wrote.
+  if (f.field_type === 'list_qty') {
+    const item = splitQuantity(v);
+    if (item.qty < 1) return 'How many? Use 1 or more.';
+    if (!item.name) return 'Choose a value from the list.';
+    if (list && !f.allow_other && !list.values.includes(item.name)) {
+      return 'Choose a value from the list.';
+    }
+  }
   return null;
+}
+
+/**
+ * "6 x Home Ad" -> { qty: 6, name: 'Home Ad' }, and anything else -> qty 1.
+ *
+ * The same rule as lib/legal-prefill's parseQuantifiedItem, which this file
+ * cannot import: legal-prefill imports FROM here, and the test runner
+ * compiles each module on its own, so the cycle would not build. Both accept
+ * the multiplication sign and a plain x, because both get typed.
+ */
+export function splitQuantity(value: unknown): { qty: number; name: string } {
+  const s = String(value ?? '').trim();
+  const m = /^(\d{1,4})(?:\s*\u00d7|\s+[xX])\s+(.+)$/.exec(s);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const name = m[2].trim();
+    if (name && n >= 1) return { qty: n, name };
+  }
+  return { qty: s ? 1 : 0, name: s };
 }
 
 /**

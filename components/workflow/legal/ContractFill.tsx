@@ -38,7 +38,7 @@ import {
   optionalGroups, toggleOptionalGroup, serializeOffIds, OPT_OFF_KEY,
   previewRows, type OptionalGroup,
   type Placeholder, type TemplateBlock, type TableRow, type FillSegment,
-  cannotIssue, canApprove, approvalNote, printApproval, PRINT_HEADER_HINT,
+  cannotIssue, canApprove, approvalNote, printApproval, PRINT_HEADER_HINT, splitQuantity,
 } from '@/lib/legal';
 import { editTemplateWarning } from '@/lib/legal-doc-view';
 import { LegalEditor } from '@/components/workflow/legal/LegalEditor';
@@ -1536,6 +1536,46 @@ function CellInput({
         <option value="">{'--'}</option>
         {opts.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
       </select>
+    );
+  }
+  /**
+   * A list value with a count beside it, in one cell.
+   *
+   * Siraj, on the client contract's outputs table: "the ad amount is ad type
+   * with quantity". Two controls, ONE stored value - "3 x Home Ad" - which is
+   * the form the vendor contract has always written and splitQuantity reads.
+   *
+   * The count is not a separate field because the contract prints one cell,
+   * and a second column would have to be added to a document people sign to
+   * hold a number that belongs beside the thing it counts.
+   */
+  if (field.field_type === 'list_qty') {
+    const opts = sortListValues(((field.list_id ? lists.valuesByList[field.list_id] : undefined) ?? []).filter((v) => v.active));
+    const cur = splitQuantity(value);
+    const write = (qty: number, name: string) => {
+      const n = name.trim();
+      // No name, nothing to count - the cell empties rather than keeping an
+      // orphan number that prints as "3 x" on a contract.
+      if (!n) { onChange(''); return; }
+      onChange(qty > 1 ? `${qty} \u00d7 ${n}` : n);
+    };
+    return (
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 150 }}>
+        <input
+          type="number" className="aq-input" min={1} value={cur.name ? cur.qty || 1 : ''}
+          disabled={!cur.name}
+          onChange={(e) => write(Math.max(1, Math.floor(Number(e.target.value) || 1)), cur.name)}
+          title="How many" style={{ width: 62, ...bad }}
+        />
+        <select
+          className="aq-select" value={cur.name}
+          onChange={(e) => write(cur.qty || 1, e.target.value)}
+          title={err ?? undefined} style={{ flex: 1, minWidth: 90, ...bad }}
+        >
+          <option value="">{'--'}</option>
+          {opts.map((o) => <option key={o.id} value={o.value}>{o.label || o.value}</option>)}
+        </select>
+      </div>
     );
   }
   if (field.field_type === 'number') {
