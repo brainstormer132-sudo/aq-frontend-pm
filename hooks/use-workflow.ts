@@ -2348,7 +2348,6 @@ export function vendorPickerOption(v: LegacyVendor): {
   };
 }
 
-
 // ── Ad lines inside a vendor subtask (migration 056) ────────────────
 //
 // A Package Ad is one booking with several ads in it. The subtask holds the
@@ -4725,16 +4724,6 @@ export function useGeneratedContractFiles(contractIds: string[]) {
   return { rows, loading };
 }
 
-export async function createContractRequest(input: Omit<ContractRequest,
-  'id' | 'created_at' | 'status' | 'generated_contract_id' | 'generated_at' | 'reviewed_at' | 'reviewed_by'
-> & { status?: ContractRequestStatus }) {
-  const { data, error } = await supabase
-    .from('contract_requests')
-    .insert({ ...input, status: input.status ?? 'pending' })
-    .select().single();
-  if (error) throw error;
-  return data as ContractRequest;
-}
 export async function updateContractRequestStatus(id: string, status: ContractRequestStatus) {
   const fields: any = { status };
   if (status === 'approved' || status === 'rejected' || status === 'cancelled') {
@@ -5058,7 +5047,6 @@ export async function getVendorFileDownloadUrl(
   return data.signedUrl;
 }
 
-
 // ─── Client proof documents (migration 102) ────────────────────────────
 // Same shape as vendor_files. Storage bucket `client-files`, path
 // `{client_id}/{slot|_general}/{rand}-{filename}`. Slots: 'cr', 'vat',
@@ -5199,7 +5187,6 @@ export async function getClientFilePreviewUrl(
   }
   return data.signedUrl;
 }
-
 
 /**
  * A licence-holder organization (089). Talent under an org licence link to it
@@ -5615,7 +5602,6 @@ export function vendorContractReadiness(
   return { ready: missing.length === 0, missing };
 }
 
-
 /**
  * Raise the CLIENT contract for a campaign, prefilled.
  *
@@ -5674,65 +5660,6 @@ export async function createClientContractFromCampaign(opts: {
   if (error) throw error;
   if (!data) throw new Error('The contract was not created.');
   return String(data);
-}
-
-/**
- * Send a client contract request straight through, with no form.
- *
- * Everything is read from the campaign and the client record at send time,
- * so the request can't disagree with them. Refuses rather than sending a
- * half-filled request — an incomplete one just becomes someone else's
- * chase-up.
- */
-export async function sendClientContractRequest(input: {
-  task: PMTask;
-  client: ClientRow | null;
-  requestedBy: string;
-  notes?: string | null;
-}): Promise<ContractRequest> {
-  const { task, client, requestedBy } = input;
-  const check = clientContractReadiness(task, client);
-  if (!check.ready) {
-    throw new Error(
-      `Not ready to send. Still needed: ${check.missing.map((m) => m.label).join(', ')}.`,
-    );
-  }
-  if (!task.workspace_id) throw new Error('This campaign has no workspace.');
-
-  return createContractRequest({
-    pm_task_id: task.id,
-    workspace_id: task.workspace_id,
-    requested_by: requestedBy,
-    request_kind: 'client',
-    template_key: null,
-    brand_name: task.brand_name ?? '',
-    amount: Number(task.budget),
-    notes: input.notes?.trim() || null,
-
-    client_name: client?.company_name ?? null,
-    client_id_legacy: task.legacy_client_id ?? null,
-    pending_client_id: null,
-    cr_number: client?.cr_number ?? null,
-    vat_number: client?.vat_number ?? null,
-    signatory_name: client?.signatory_name ?? null,
-    street: null,
-    city: client?.city ?? null,
-    postcode: null,
-    country: client?.country ?? null,
-    email: client?.contact_email ?? null,
-    phone: client?.contact_phone ?? null,
-
-    pending_vendor_id: null,
-    vendor_id: null, vendor_name: null, vendor_category: null,
-    vendor_email: null, vendor_phone: null,
-    bank_account_id: null, bank_name: null, account_name: null,
-    iban: null, account_number: null, swift_code: null,
-    license_number: null, is_influencer: null,
-    platforms: task.platforms?.join(', ') || null,
-    ad_type: task.ad_type ?? null,
-    qty: null, channel: null,
-    details: task.task_name ?? task.title ?? null,
-  } as any);
 }
 
 /**
@@ -5864,44 +5791,6 @@ function buildVendorContractPayload(opts: {
       ? contractDetails(lines, subtask.title ?? null)
       : (subtask.title ?? null),
   };
-}
-
-/**
- * Insert the request, link the ads it covers, and link it back onto the
- * subtask so it can't re-fire.
- *
- * Two links, deliberately. `pm_tasks.contract_request_id` is the old one and
- * everything that reads it keeps working; `vendor_ad_lines.contract_request_id`
- * (070) is the one that can express a HALF-contracted booking, which is what
- * splitting produces. On a split, the booking-level link points at the first
- * contract — enough to stop the auto-fire, and the ads carry the truth.
- */
-async function insertVendorContractRequest(
-  subtask: PMTask,
-  payload: ReturnType<typeof buildVendorContractPayload>,
-  /** The ads this contract covers. Empty = the booking has no lines. */
-  lineIds: string[] = [],
-): Promise<string> {
-  const created = await createContractRequest(payload as any);
-
-  if (lineIds.length) {
-    const { error } = await supabase
-      .from('vendor_ad_lines')
-      .update({ contract_request_id: created.id } as any)
-      .in('id', lineIds);
-    if (error) logSbError('insertVendorContractRequest: link lines', error);
-  }
-
-  // Only the first one claims the booking — a second write would overwrite
-  // the first contract's id and lose which request the booking points at.
-  if (!(subtask as any).contract_request_id) {
-    await supabase
-      .from('pm_tasks')
-      .update({ contract_request_id: created.id } as any)
-      .eq('id', subtask.id);
-    (subtask as any).contract_request_id = created.id;
-  }
-  return created.id;
 }
 
 /**
@@ -6114,52 +6003,6 @@ export async function createUgcContractFromBooking(opts: {
   if (error) throw error;
   if (!data) throw new Error('The contract was not created.');
   return String(data);
-}
-
-/**
- * Auto-create a contract request for a subtask the moment it has both a
- * vendor AND a non-zero budget. No-op if the subtask already has a
- * `contract_request_id` (idempotent: safe to call from any save path).
- *
- * Returns the new contract_request id, or null if no action was taken.
- */
-export async function autoCreateContractRequestForSubtask(opts: {
-  subtask: PMTask;
-  parent: PMTask;
-  vendor: LegacyVendor | null;
-  bank: LegacyBankAccount | null;
-  client?: ClientRow | null;
-  requestedBy: string;
-  notes?: string | null;
-}): Promise<string | null> {
-  const { subtask, vendor, bank } = opts;
-
-  // Already sent? Don't double-fire.
-  if ((subtask as any).contract_request_id) return null;
-
-  // Need a vendor, and money from somewhere — the subtask's price or its ad
-  // lines. A package booked entirely through lines has no subtask price.
-  if (!vendor) return null;
-
-  const lines = await fetchVendorAdLines(subtask.id);
-  const linesTotal = totalsOf(lines).net;
-  if (vendorSubtaskNet(subtask) == null && linesTotal <= 0) return null;
-
-  if (!subtask.workspace_id) {
-    throw new Error('Subtask has no workspace_id; cannot create contract request.');
-  }
-  const ready = vendorContractReadiness(
-    subtask, vendor, bank, linesTotal, opts.parent, lines,
-  ).ready;
-  if (!ready) return null;
-
-  // Auto-fire is always combined. Splitting is a decision somebody makes on
-  // purpose, and a background write is not the place to make it.
-  return insertVendorContractRequest(
-    subtask,
-    buildVendorContractPayload({ ...opts, vendor, bank, lines }),
-    lines.map((l) => String((l as any).id)).filter(Boolean),
-  );
 }
 
 // ── Contract state per subtask, and the counts built on it ──────────
@@ -7031,7 +6874,6 @@ export function useTaskServiceTypes(taskId: string | null) {
   return { items, loading, refetch: fetch };
 }
 
-
 // ─── CRM Deals (sales pipeline) ──────────────────────────────────────
 
 export type DealStage = 'prospect' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost';
@@ -7124,7 +6966,6 @@ export async function deleteCrmDeal(id: string) {
   const { error } = await supabase.from('crm_deals').delete().eq('id', id);
   if (error) throw error;
 }
-
 
 // ─── CRM Tasks (follow-ups / next actions) ───────────────────────────
 
