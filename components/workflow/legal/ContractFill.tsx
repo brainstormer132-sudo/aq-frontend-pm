@@ -17,7 +17,7 @@ import {
 import {
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, type ContractVendor,
-  performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
+  performerName, datedValues, dayKeyFor, DATE_DAY_PAIRS, UGC_DATE_KEY, UGC_DAY_KEY, UGC_PERFORMER_KEY,
   FIELD_GROUPS, fieldGroup, normalizeHandle, handleBody, UGC_CHANNEL_KEY, type FieldGroup,
   UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY, MULTI_KEYS, QTY_KEYS,
   newBankAccountError, normaliseIban, type VendorBankAccount,
@@ -152,10 +152,22 @@ export function ContractFill({
   // The weekday is derived from the date, and a weekday edited apart from its
   // date is a contract that contradicts itself on line four. Both are shown
   // read-only above the form instead.
-  const DERIVED_KEYS = [CONTRACT_NO_KEY, UGC_DAY_KEY];
-  const fillFields = useMemo(() => fields.filter((f) => !DERIVED_KEYS.includes(f.key)), [fields]);
+  // EVERY weekday field, not just the UGC one. A derived field is not typed
+  // in: it is shown beside the date it follows. Listing only `day` meant the
+  // client contract's C_DAY was rendered as an editable box that said
+  // "Filled automatically" while nothing filled it.
+  const DERIVED_KEYS = useMemo(
+    () => [CONTRACT_NO_KEY, ...Object.values(DATE_DAY_PAIRS)], [],
+  );
+  const fillFields = useMemo(() => fields.filter((f) => !DERIVED_KEYS.includes(f.key)), [fields, DERIVED_KEYS]);
   const usesContractNo = useMemo(() => fields.some((f) => f.key === CONTRACT_NO_KEY), [fields]);
-  const usesDay = useMemo(() => fields.some((f) => f.key === UGC_DAY_KEY), [fields]);
+  /** Whichever date field THIS template has, and the weekday it fills. */
+  const dateKey = useMemo(
+    () => fields.find((f) => f.field_type === 'date' && dayKeyFor(f.key))?.key ?? '',
+    [fields],
+  );
+  const dayKey = dateKey ? dayKeyFor(dateKey) : null;
+  const usesDay = !!dayKey && fields.some((f) => f.key === dayKey);
 
   // Which pickers this template wants, and which account is already chosen.
   const usesBrand = useMemo(() => fields.some((f) => f.key === UGC_BRAND_KEY), [fields]);
@@ -235,26 +247,36 @@ export function ContractFill({
     setRiyadhToday(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' }));
   }, []);
 
-  /** The date and the weekday move together, always. */
-  const setDate = (iso: string) => {
-    const next = datedValues(values, iso);
-    ed.setValue(UGC_DATE_KEY, next[UGC_DATE_KEY] ?? '');
-    ed.setValue(UGC_DAY_KEY, next[UGC_DAY_KEY] ?? '');
+  /**
+   * The date and the weekday move together, always - for WHICHEVER template
+   * this contract is on.
+   *
+   * This used to write UGC_DATE_KEY and UGC_DAY_KEY whatever was edited, so
+   * the client contract's C_DATE and C_DAY were two unrelated boxes and the
+   * weekday sat there saying "Filled automatically" while nothing filled it.
+   * dayKeyFor says which weekday a given date fills, and a date that fills
+   * none just sets itself.
+   */
+  const setDate = (dateKey: string, iso: string) => {
+    const dayKey = dayKeyFor(dateKey);
+    const next = datedValues(values, iso, dateKey);
+    ed.setValue(dateKey, next[dateKey] ?? '');
+    if (dayKey) ed.setValue(dayKey, next[dayKey] ?? '');
   };
 
   // A draft that reaches the screen with no date gets today's, once. Nobody
   // should have to type the date of the contract they are writing now, and the
   // weekday is not something to work out by hand.
-  const usesDate = useMemo(() => fields.some((f) => f.key === UGC_DATE_KEY), [fields]);
+  const usesDate = !!dateKey;
   const [dateStamped, setDateStamped] = useState(false);
   useEffect(() => {
     if (loading || !contract || !editable || !usesDate || dateStamped) return;
-    if ((values[UGC_DATE_KEY] ?? '') !== '') { setDateStamped(true); return; }
+    if ((values[dateKey] ?? '') !== '') { setDateStamped(true); return; }
     setDateStamped(true);
     if (!riyadhToday) return;   // not known until the effect above has run
-    setDate(riyadhToday);
+    setDate(dateKey, riyadhToday);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, contract, editable, usesDate, dateStamped, riyadhToday]);
+  }, [loading, contract, editable, usesDate, dateKey, dateStamped, riyadhToday]);
 
   // Date alerts: a tracked date that is expired blocks Issue; expiring-soon warns.
   //
@@ -782,7 +804,7 @@ export function ContractFill({
                   <>
                     <span style={{ fontSize: 13, fontWeight: 600, marginInlineStart: 12 }}>Day</span>
                     <span dir="auto" style={{ fontSize: 13 }}>
-                      {values[UGC_DAY_KEY] || <span style={{ color: 'var(--aq-text-muted)' }}>set the date first</span>}
+                      {(dayKey && values[dayKey]) || <span style={{ color: 'var(--aq-text-muted)' }}>set the date first</span>}
                     </span>
                   </>
                 )}
@@ -810,10 +832,10 @@ export function ContractFill({
                       options={sortListValues(((f.list_id ? lists.valuesByList[f.list_id] : undefined) ?? []).filter((v) => v.active))}
                       allowed={listsByKey[f.key]}
                       platforms={platformList}
-                      hint={f.key === UGC_DATE_KEY && usesDay
-                        ? `The weekday follows this date: ${values[UGC_DAY_KEY] || '-'}`
+                      hint={dayKeyFor(f.key)
+                        ? `The weekday follows this date: ${values[dayKeyFor(f.key)!] || '-'}`
                         : undefined}
-                      onChange={(v) => (f.key === UGC_DATE_KEY ? setDate(v) : ed.setValue(f.key, v))} />
+                      onChange={(v) => (dayKeyFor(f.key) ? setDate(f.key, v) : ed.setValue(f.key, v))} />
                   ))}
                 </div>
               );

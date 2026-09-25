@@ -318,11 +318,43 @@ export function performerName(v: ContractVendor | null | undefined): string {
 export function datedValues(
   values: Record<string, string>,
   iso: string,
+  /** Which date field. Defaults to the UGC template's, which is what every
+   *  caller meant before there was a second template with a date on it. */
+  dateKey: string = UGC_DATE_KEY,
 ): Record<string, string> {
   const d = txt(iso);
   const day = arabicWeekday(d);
-  if (values[UGC_DATE_KEY] === d && values[UGC_DAY_KEY] === day) return values;
-  return { ...values, [UGC_DATE_KEY]: d, [UGC_DAY_KEY]: day };
+  const dayKey = dayKeyFor(dateKey);
+  if (!dayKey) {
+    return values[dateKey] === d ? values : { ...values, [dateKey]: d };
+  }
+  if (values[dateKey] === d && values[dayKey] === day) return values;
+  return { ...values, [dateKey]: d, [dayKey]: day };
+}
+
+/**
+ * Which date field fills which weekday field.
+ *
+ * Siraj, on the client contract: "day isnt getting filled in automatically".
+ * The pairing WAS one hardcoded key comparison against the UGC template's
+ * `date`, so the client contract's C_DATE and C_DAY - a different template
+ * with the same idea in it - were two unrelated boxes, and the weekday one
+ * sat there saying "Filled automatically" while nothing filled it.
+ *
+ * A table, not a convention. Guessing the pair by name ("anything ending
+ * _DAY follows anything ending _DATE") would quietly link two fields in some
+ * future template that were never meant to move together, and the failure
+ * would be a wrong weekday printed on a contract - which nobody checks,
+ * because it is derived.
+ */
+export const DATE_DAY_PAIRS: Readonly<Record<string, string>> = {
+  [UGC_DATE_KEY]: UGC_DAY_KEY,
+  C_DATE: 'C_DAY',
+};
+
+/** The weekday field this date fills, or null when it fills none. */
+export function dayKeyFor(dateKey: unknown): string | null {
+  return DATE_DAY_PAIRS[txt(dateKey)] ?? null;
 }
 
 export const UGC_CHANNEL_KEY = 'channel_name';

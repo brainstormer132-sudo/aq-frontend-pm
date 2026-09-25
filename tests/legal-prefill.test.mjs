@@ -4,7 +4,7 @@ import {
   normaliseIban, newBankAccountError,
   UGC_BRAND_KEY, UGC_BANK_KEYS, bankAccountLabel, bankValuesFor, matchBankAccount,
   licenceParty, vendorPickerHint, CONTRACT_NO_KEY, stampContractNumber,
-  firstLast, performerName, datedValues, UGC_DATE_KEY, UGC_DAY_KEY,
+  firstLast, performerName, datedValues, dayKeyFor, DATE_DAY_PAIRS, UGC_DATE_KEY, UGC_DAY_KEY,
   normalizeHandle, handleBody, joinPlatformHandles, fieldGroup, FIELD_GROUPS,
   parsePlatforms, joinPlatforms, parsePlatformHandles, platformHandlePairs,
   MULTI_KEYS, UGC_PLATFORM_KEY, UGC_AD_TYPE_KEY,
@@ -300,6 +300,30 @@ ok('a row with only a platform is not empty',
     datedValues(d, 'not-a-date')[UGC_DAY_KEY], '');
   eq('clearing the date clears the weekday', datedValues(d, '')[UGC_DAY_KEY], '');
   ok('setting the same date again is the same object', datedValues(d, '2026-09-20') === d);
+
+  /* -- a second template with a date in it --------------------------
+   *
+   * Siraj, on the client contract: "day isnt getting filled in
+   * automatically". The pairing was one hardcoded comparison against the UGC
+   * template's `date`, so C_DATE and C_DAY were two unrelated boxes and the
+   * weekday one sat there saying "Filled automatically" while nothing did.
+   */
+  eq('the UGC date fills the UGC day', dayKeyFor('date'), 'day');
+  eq('the client date fills the client day', dayKeyFor('C_DATE'), 'C_DAY');
+  eq('a date that fills no weekday says so', dayKeyFor('license_expiry'), null);
+  eq('and nothing at all is null', dayKeyFor(null), null);
+  {
+    const c = datedValues({}, '2026-09-24', 'C_DATE');
+    eq('it writes the client pair', c, { C_DATE: '2026-09-24', C_DAY: arabicWeekday('2026-09-24') });
+    ok('and touches nothing of the UGC one', c.date === undefined && c.day === undefined);
+  }
+  {
+    // A date field with no weekday still sets itself - it must not be a no-op
+    // just because there is nothing to derive.
+    const only = datedValues({}, '2026-09-24', 'license_expiry');
+    eq('a lone date sets itself', only.license_expiry, '2026-09-24');
+    eq('and invents no weekday', Object.keys(only).length, 1);
+  }
 }
 
 // ---- the handle standard: one @ on the left, always ----
