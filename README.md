@@ -1,187 +1,158 @@
-# AQ Creativity — Project Management Platform
+# AQ Creativity — internal platform
 
-A modern, full-featured project management web app built with **Next.js 14**, **Supabase**, and **TypeScript**. Designed for creative teams who need powerful task management with real-time collaboration.
+The system AQ Creativity runs its campaigns on: sales bookings, vendor and
+client contracts, delivery tracking, invoicing, and the legal register that
+holds the paperwork. Next.js 16 and Supabase, one workspace, nine roles.
 
----
-
-## Features
-
-### Core
-- **Team Collaboration & Assignments** — Multi-member workspaces with role-based access (Owner, Admin, Member, Guest)
-- **Projects & Workspaces** — Organize work into workspaces and projects with custom icons and colors
-- **Task Management** — Full task lifecycle with statuses, priorities, due dates, assignees, and subtasks
-- **Three View Modes** — Kanban board (drag & drop), List view (sortable), Calendar view
-- **Real-time Updates** — Supabase Realtime subscriptions for live collaboration
-- **Comments** — Threaded comments on tasks
-- **Activity Feed** — Full audit trail of all workspace activity
-- **Notifications** — In-app notification system
-
-### Technical
-- **Row Level Security (RLS)** — Every table has granular RLS policies
-- **Auth** — Email/password + Google/GitHub OAuth via Supabase Auth
-- **Middleware** — Route protection with Next.js middleware
-- **Dark Mode** — Full dark mode support via CSS variables
-- **Responsive** — Mobile-friendly sidebar and layouts
+It is not a general project-management tool. Every screen is shaped around a
+campaign: a client buys a campaign, vendors (usually influencers) are booked
+onto it as bookings, each booking holds ad lines, each ad line is a post that
+has to go out, be proved, and be paid for.
 
 ---
 
-## Quick Start
+## The shape of it
 
-### 1. Install dependencies
+**Two Postgres schemas.**
+
+- `public` — campaigns (`pm_tasks`, parents and their bookings), ad lines,
+  clients, vendors, bank accounts, tracking sheets, CRM, finance.
+- `legal` — templates, their versions and blocks, contracts, contract field
+  values, the register, signatures. Readable only by owner, admin and legal;
+  everything operations needs from it comes through `security definer`
+  functions that return status, never field values.
+
+**Three front doors.** `/portals` chooses between them.
+
+- `/auth` → the internal app (the sidebar: Overview, Work, Contacts,
+  Delivery, Money, Legal, Admin).
+- `/vendor/*` → the vendor portal.
+- `/client/*` → the client portal.
+
+**One external dependency.** The vendor and client portals, and seven internal
+screens, call a FastAPI service on Render through the `/contracts/api/*`
+rewrite in `vercel.json` (`lib/portal-api.ts`, `lib/contract-api.ts`). If that
+rewrite does not travel with the Vercel project, both portals stop working.
+
+---
+
+## Running it
 
 ```bash
 npm install
+npm run dev          # http://localhost:3000
 ```
 
-### 2. Set up Supabase
-
-1. Create a project at [supabase.com](https://supabase.com)
-2. Copy your project URL and anon key
-3. Create `.env.local` from the template:
-
-```bash
-cp .env.local.example .env.local
-```
-
-4. Fill in your Supabase credentials
-
-### 3. Run the migration
-
-Go to your Supabase Dashboard → SQL Editor and paste the contents of:
-
-```
-supabase/migrations/001_initial_schema.sql
-```
-
-This creates all tables, RLS policies, triggers, and indexes.
-
-### 4. Enable Realtime
-
-In Supabase Dashboard → Database → Replication, enable realtime for:
-- `tasks`
-- `comments`
-- `notifications`
-- `activity_log`
-
-### 5. Configure Auth (optional)
-
-In Supabase Dashboard → Authentication → Providers:
-- Enable Google OAuth (add client ID/secret)
-- Enable GitHub OAuth (add client ID/secret)
-
-### 6. Run the dev server
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000)
-
----
-
-## Project Structure
-
-```
-aq-web/
-├── app/
-│   ├── auth/page.tsx          # Login / signup page
-│   ├── dashboard/page.tsx     # Main app orchestrator
-│   ├── layout.tsx             # Root layout with fonts
-│   └── page.tsx               # Redirect to dashboard
-├── components/
-│   ├── ui/                    # Reusable UI primitives
-│   │   ├── Avatar.tsx         # Avatar + AvatarGroup
-│   │   ├── Badges.tsx         # Status & Priority badges
-│   │   ├── Dropdown.tsx       # Dropdown menu
-│   │   ├── EmptyState.tsx     # Empty state placeholder
-│   │   └── Modal.tsx          # Modal dialog
-│   ├── layout/
-│   │   ├── Sidebar.tsx        # App sidebar navigation
-│   │   └── TopBar.tsx         # Page header bar
-│   ├── dashboard/
-│   │   └── DashboardView.tsx  # Dashboard overview
-│   ├── projects/
-│   │   ├── ProjectView.tsx    # Project page with views
-│   │   └── CreateProjectModal.tsx
-│   ├── tasks/
-│   │   ├── BoardView.tsx      # Kanban board
-│   │   ├── ListView.tsx       # Table/list view
-│   │   ├── CalendarView.tsx   # Monthly calendar
-│   │   ├── TaskDetail.tsx     # Task detail panel
-│   │   └── CreateTaskModal.tsx
-│   └── team/
-│       └── TeamView.tsx       # Team management
-├── hooks/
-│   ├── use-supabase.ts        # Data fetching hooks
-│   └── use-realtime.ts        # Realtime subscription hook
-├── lib/
-│   ├── supabase-browser.ts    # Browser Supabase client
-│   ├── supabase-server.ts     # Server Supabase client
-│   └── utils.ts               # Utilities & constants
-├── types/
-│   └── index.ts               # Full TypeScript types
-├── styles/
-│   └── globals.css            # Global styles & CSS vars
-├── supabase/
-│   └── migrations/
-│       └── 001_initial_schema.sql  # Full DB schema
-├── middleware.ts               # Auth route protection
-└── package.json
-```
-
----
-
-## Database Schema
-
-| Table | Description |
+| script | what it does |
 |---|---|
-| `profiles` | User profiles (auto-created on signup) |
-| `workspaces` | Team workspaces |
-| `workspace_members` | Workspace membership with roles |
-| `projects` | Projects within workspaces |
-| `sections` | Board columns / task groups |
-| `tasks` | Tasks with status, priority, assignee |
-| `task_assignments` | Multi-assignee support |
-| `labels` | Color-coded labels |
-| `task_labels` | Label ↔ task junction |
-| `comments` | Task comments |
-| `activity_log` | Audit trail |
-| `notifications` | User notifications |
+| `npm run dev` | Next dev server |
+| `npm run build` | production build |
+| `npm test` | the pure-logic suite (no framework, no watch mode) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run db:test` | replays every migration into an empty Postgres and asserts the security properties |
+| `npm run lint` | Next lint |
+
+**Environment.** In `.env.local` locally, and in the Vercel project for
+deployments:
+
+| variable | where | why |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | browser | Supabase project |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | browser | anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | server only | team invites and member removal. Never prefix it `NEXT_PUBLIC_` |
+| `CRON_SECRET` | server only | authenticates the scheduled routes below |
+| `ASANA_PAT`, `ASANA_WORKSPACE_ID`, `ASANA_PROJECT_GID` | server only | the Asana sync |
+| `NEXT_PUBLIC_CONTRACT_API_URL` | dev only | the FastAPI service when not behind the Vercel rewrite |
+| `SUPABASE_DB_URL` / `PGURL` | local only | `npm run db:test` |
 
 ---
 
-## Customization
+## The database
 
-### Theming
+`supabase/migrations/000_baseline.sql` is a dump of the live schema at the
+point the numbered migrations start. Everything after it is numbered and
+applied in order, by hand, in the Supabase SQL editor.
 
-All colors are defined as CSS variables in `styles/globals.css`. Override them for custom branding:
+Each migration carries three things: a comment explaining **why**, a
+self-test (`do $$ ... $$`) that proves what it claims and rolls back, and a
+commented-out verify query at the foot to paste afterwards. A migration whose
+self-test cannot tell whether the code is right — because the answer depends
+on who ran it — asserts the structural fact instead. That rule was written
+after one that tested the person rather than the code.
 
-```css
-:root {
-  --aq-accent: #your-brand-color;
-  --aq-sidebar-bg: #your-sidebar-color;
-}
+`supabase/migrations/archive/` holds one-off scripts that were applied once:
+seeds, a template port, a removal. They are history, not migrations.
+
+---
+
+## Tests
+
+`npm test` compiles the pure modules in `lib/` with bare `tsc` and runs plain
+`.mjs` suites over them. No framework. ~2,960 assertions across 53 suites,
+and CI runs typecheck, tests, and the migration replay on every push.
+
+The rule the suite is built on: **decisions live in `lib/`, pure, and screens
+read them.** A readiness check inside a component can only be exercised by
+clicking. Anything that decides whether money is owed, whether a contract can
+be issued, or what a person is allowed to do belongs in a tested module.
+
+---
+
+## Where things are
+
+```
+app/                    routes only - the internal app, the two portals, api routes
+  api/                  Next route handlers: asana sync, contract chase,
+                        payments due, registry expiry, team admin
+components/workflow/    the internal screens
+  campaign/             one campaign: bookings, vendor contracts, paperwork
+  legal/                the register, templates, contract fill, signatures
+components/portal/      the vendor and client portals
+hooks/use-workflow.ts   campaigns, bookings, vendors, clients, money
+hooks/use-legal.ts      templates, contracts, the register
+lib/                    the decisions, pure and tested
+scripts/run-tests.mjs   the test runner
+supabase/migrations/    000_baseline.sql, then numbered, in order
 ```
 
-### Dark Mode
+---
 
-Add `class="dark"` to the `<html>` element to enable dark mode. All variables automatically switch.
+## Deployment
+
+Vercel, auto-deploying from `main`. `vercel.json` carries:
+
+- the `/contracts/api/*` rewrite to the FastAPI service,
+- `/portals` and `/invite`, which serve the two static pages in `public/`,
+- four cron schedules that hit the route handlers in `app/api/`.
+
+`.github/workflows/ci.yml` runs the checks. `keep-backend-warm.yml` pings the
+FastAPI service during working hours so the first request of the day does not
+pay a cold start — it lives here rather than in the backend repo because this
+repo is public and Actions minutes are therefore unlimited. **That reasoning
+stops holding if this repo is ever made private.**
 
 ---
 
-## Next Steps
+## Conventions worth knowing before changing anything
 
-- [ ] Add drag-and-drop library (e.g. `@dnd-kit`) for smoother board interactions
-- [ ] Add file attachments to tasks (Supabase Storage)
-- [ ] Add @mentions in comments
-- [ ] Add project templates
-- [ ] Add time tracking
-- [ ] Add reporting / analytics dashboard
-- [ ] Add Supabase Edge Functions for email notifications
-- [ ] Add workspace invite flow with magic links
+- **PostgREST caps a select at 1000 rows, silently.** Any list read that can
+  grow uses `selectAllRows` with a total order (`created_at, id` - not
+  `created_at` alone, which is not unique after an import writes hundreds in
+  the same second).
+- **An update that matches nothing is a success in PostgREST.** Anything that
+  must have changed a row asks for it back with `.select()` and says so when
+  it did not.
+- **A contract is sealed at issue.** Its field values freeze and a fingerprint
+  covers the version and the values. Anything printed on the page but outside
+  that seal - the number, the supersede notice, the approval - is deliberate,
+  and adding one of them to the seal would make every contract already issued
+  verify as "differs".
+- **Every rule can be passed.** A rule that stops somebody records who passed
+  it and why (`public.rule_override`), because prevention is not what a rule
+  buys - a record is.
+- **Money owed means completed work only.** Collection and liability hold
+  done campaigns; running work stays in the profitability figures.
 
 ---
 
-## License
-
-Private — AQ Creativity
+Private. © AQ Creativity.
