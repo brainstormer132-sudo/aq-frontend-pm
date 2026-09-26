@@ -47,12 +47,26 @@
 
 -- 1. the three buckets ---------------------------------------------
 --
--- All private. Every read in this app goes through a signed URL asked for
--- per download - see 115 and 117 - and a public bucket would make every
--- contract, avatar and attachment readable by URL alone, forever.
+-- Two private, one public, and the difference is not a preference - it is
+-- what the code already does.
+--
+-- contracts and task-files are read through a signed URL asked for per
+-- download, the same way 115 and 117 work. Making either public would put
+-- every contract and every attachment behind a URL that works forever.
+--
+-- avatars is PUBLIC, because hooks/use-workflow.ts calls
+-- `storage.from('avatars').getPublicUrl(path)` and stores the result in
+-- profiles.avatar_url. getPublicUrl only resolves on a public bucket, so
+-- creating this one private in a new project would leave every profile
+-- picture broken with no error anywhere - the URL is built client-side and
+-- simply 400s when it is fetched. A profile picture is also the one thing
+-- in here that is not confidential.
+--
+-- On the live database all three inserts conflict and nothing changes;
+-- these values decide what a NEW project gets.
 insert into storage.buckets (id, name, public) values
   ('contracts',  'contracts',  false),
-  ('avatars',    'avatars',    false),
+  ('avatars',    'avatars',    true),
   ('task-files', 'task-files', false)
 on conflict (id) do nothing;
 
@@ -82,12 +96,16 @@ begin
     raise exception 'storage: % of the 6 buckets the app uses exist', n_buckets;
   end if;
 
+  -- Every bucket that holds a document is private. avatars is excluded by
+  -- name rather than by silence: it is public on purpose (see above), and
+  -- an assertion that quietly tolerated any public bucket would not be
+  -- worth writing.
   select count(*) into n_public from storage.buckets
-   where id in ('contracts', 'avatars', 'task-files',
+   where id in ('contracts', 'task-files',
                 'client-files', 'legal-templates', 'legal-signed')
      and public;
   if n_public > 0 then
-    raise exception 'storage: % bucket(s) are public - every object in them is readable by URL', n_public;
+    raise exception 'storage: % document bucket(s) are public - every object in them is readable by URL', n_public;
   end if;
 
   select count(*) into n_policy from pg_policies
@@ -99,14 +117,15 @@ begin
     raise exception 'storage: the backend policy on the contracts bucket is not there as written (found %)', n_policy;
   end if;
 
-  raise notice 'storage: six buckets, none public, and the backend policy is in a file';
+  raise notice 'storage: six buckets, no document bucket public, and the backend policy is in a file';
 end $$;
 
 notify pgrst, 'reload schema';
 
 -- Verify (paste this after running the migration):
 -- select id, public from storage.buckets order by id;
--- expected: six rows, public false on every one
+-- expected: public false on every bucket that holds a document, and true
+--           on avatars
 --
 -- And this one, whose answer belongs in 140 - it prints every policy on
 -- storage.objects in the LIVE project, including the ones nobody has written
