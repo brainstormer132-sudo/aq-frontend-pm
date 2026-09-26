@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
-import { withBase } from '@/lib/paths';
 import {
   useMyRole, useServiceTypes, useWorkspaceProfiles, useWorkflowTasks,
   usePmTaskCampaignRollup, displayName, needsRealName, resolveCampaignId,
@@ -82,7 +81,7 @@ export default function WorkflowPage() {
   const openTask = useCallback(async (id: string) => {
     const campaignId = await resolveCampaignId(id);
     if (!campaignId) { setToast({ kind: 'err', text: 'That campaign no longer exists.' }); return; }
-    router.push(withBase(`/dashboard/campaign/${campaignId}`));
+    router.push(`/dashboard/campaign/${campaignId}`);
   }, [router]);
   // Set when a CRM deal is won: the New Task form opens filled in from it.
   const [taskPrefill, setTaskPrefill] = useState<CampaignPrefill | null>(null);
@@ -101,7 +100,7 @@ export default function WorkflowPage() {
       // screen waited behind that answer.
       const { data: { session } } = await supabase.auth.getSession();
       const u = session?.user;
-      if (!u) { window.location.href = withBase('/auth'); return; }
+      if (!u) { window.location.href = '/auth'; return; }
       try {
         await ensureProfile(u);
       } catch (e: any) {
@@ -122,7 +121,7 @@ export default function WorkflowPage() {
       if (taskParam && UUID_RE.test(taskParam)) {
         const campaignId = await resolveCampaignId(taskParam);
         if (campaignId) {
-          router.replace(withBase(`/dashboard/campaign/${campaignId}`));
+          router.replace(`/dashboard/campaign/${campaignId}`);
           return;
         }
       }
@@ -136,7 +135,7 @@ export default function WorkflowPage() {
           return;
         }
         localStorage.removeItem('aq_pending_invite');
-        window.history.replaceState({}, '', withBase('/dashboard/workflow'));
+        window.history.replaceState({}, '', '/dashboard/workflow');
       }
       // Read the name from the PROFILE, not from auth metadata.
       //
@@ -250,7 +249,7 @@ export default function WorkflowPage() {
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    window.location.href = withBase('/auth');
+    window.location.href = '/auth';
   };
 
   // ---- boot states ----

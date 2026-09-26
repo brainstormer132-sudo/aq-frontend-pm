@@ -495,32 +495,6 @@ export const TASK_PRIORITY_COLORS: Record<TaskPriority, AccentColor> = {
 };
 
 /**
- * The colour for any task row: its subtask kind if it has one, otherwise its
- * priority. One call so lists and the detail panel can't drift apart.
- */
-export function taskRowColor(task: {
-  subtask_kind?: string | null;
-  priority?: TaskPriority | string | null;
-}): AccentColor {
-  if (task.subtask_kind) return subtaskKindColor(task.subtask_kind);
-  const p = task.priority as TaskPriority | null | undefined;
-  return (p && p in TASK_PRIORITY_COLORS) ? TASK_PRIORITY_COLORS[p] : NEUTRAL_ACCENT;
-}
-
-/** Green sent, amber ready-but-unsent, red blocked. Matches the tally. */
-export const CONTRACT_STATE_COLORS: Record<'requested' | 'ready' | 'missing', AccentColor> = {
-  requested: { solid: '#15803d', soft: '#dcfce7' },
-  ready:     { solid: '#b45309', soft: '#fef3c7' },
-  missing:   { solid: '#b91c1c', soft: '#fee2e2' },
-};
-
-export const CONTRACT_STATE_LABELS: Record<'requested' | 'ready' | 'missing', string> = {
-  requested: 'contract requested',
-  ready:     'ready to request',
-  missing:   'missing data',
-};
-
-/**
  * Kinds offered on every campaign, whatever its service type.
  *
  * Vendor because that is what a subtask fundamentally is here, and
@@ -593,10 +567,6 @@ export const SIMPLE_DELIVERABLE_KINDS = [
   'campaign_design', 'marketing_strategy', 'visuals', 'blueprint_3d',
 ] as const;
 
-export function isSimpleDeliverableKind(kind: string | null | undefined): boolean {
-  return !!kind && (SIMPLE_DELIVERABLE_KINDS as readonly string[]).includes(kind);
-}
-
 /** Vendor is the only kind you can have several of on one campaign. */
 export function isSingletonSubtaskKind(kind: string | null | undefined): boolean {
   return !!kind && !isVendorSubtaskKind(kind);
@@ -630,32 +600,6 @@ export function subtaskKindFromStepTitle(title: string | null | undefined): Subt
     case 'vendor':                   return 'vendor';
     default:                         return null;
   }
-}
-
-/**
- * "Runs from / Runs to" as a readable duration.
- *
- * Computed, never stored — a stored duration and its own dates drift apart
- * the first time someone edits one of them. Inclusive of both days, because
- * a campaign that runs the 1st to the 1st is one day, not zero.
- */
-export function runDurationLabel(
-  start: string | null | undefined,
-  end: string | null | undefined,
-): string {
-  if (!start && !end) return 'No dates set';
-  if (!start) return 'No start date';
-  if (!end) return 'No end date';
-  const a = new Date(`${start}T00:00:00Z`).getTime();
-  const b = new Date(`${end}T00:00:00Z`).getTime();
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return '—';
-  if (b < a) return 'Ends before it starts';
-  const days = Math.round((b - a) / 86_400_000) + 1;
-  if (days < 7) return `${days} day${days === 1 ? '' : 's'}`;
-  const weeks = Math.floor(days / 7);
-  const rest = days % 7;
-  const w = `${weeks} week${weeks === 1 ? '' : 's'}`;
-  return rest === 0 ? `${days} days · ${w}` : `${days} days · ${w} ${rest}d`;
 }
 
 /** Analysis report: how hard the work is. Not the same as priority. */
@@ -724,14 +668,6 @@ export const LEGACY_SUBTASK_KIND_LABELS: Record<string, string> = {
   tracking: 'Tracking Sheet',
   ad: 'Vendor',
 };
-
-/** Display name for any subtask_kind, current or retired. */
-export function subtaskKindLabel(kind: string | null | undefined): string {
-  if (!kind) return '';
-  return (SUBTASK_KIND_LABELS as Record<string, string>)[kind]
-    ?? LEGACY_SUBTASK_KIND_LABELS[kind]
-    ?? kind;
-}
 
 /**
  * Values that mean "this subtask is a vendor". 'ad' is the pre-047 spelling;
@@ -2296,59 +2232,10 @@ export function vendorDataRequirements(
   return out;
 }
 
-/**
- * Enter it once.
- *
- * Siraj: "all data relevent for both sub task and parent task should be
- * inputed once". Platform and ad type are asked on the campaign AND on
- * every vendor under it; typing them twice is how they end up disagreeing.
- *
- * A vendor subtask with nothing of its own reads through to the campaign.
- * Setting a value on the subtask overrides it for that vendor only — which
- * is what you want when one influencer runs a Story and the rest run Reels.
- */
-export function inheritedFromCampaign(
-  own: string | null | undefined,
-  fromParent: string | null | undefined,
-): { value: string | null; inherited: boolean } {
-  const mine = (own ?? '').trim();
-  if (mine) return { value: mine, inherited: false };
-  const theirs = (fromParent ?? '').trim();
-  return { value: theirs || null, inherited: Boolean(theirs) };
-}
-
 /** The campaign's platform list as one string, for a subtask's text field. */
 export function campaignPlatformText(parent: PMTask | null): string | null {
   const list = parent?.platforms ?? [];
   return list.length ? list.join(', ') : null;
-}
-
-/**
- * A vendor as the picker should show and match it.
- *
- * `hint` is the visible second line — it's what tells two vendors with the
- * same name apart. `keywords` is matched but not shown: BOTH identifiers go
- * in, so a licence typed against a vendor filed under the wrong category
- * still finds them. Being strict about which field you may search would
- * only punish whoever mis-filed the vendor.
- */
-export function vendorPickerOption(v: LegacyVendor): {
-  value: string; label: string; hint: string | null; keywords: string;
-} {
-  const { kind, value } = vendorIdentifier(v as any);
-  const category = (v.vendor_category ?? '').trim();
-  const idLabel = kind === 'license' ? 'Licence' : 'ID';
-  const hint = [
-    category || null,
-    value ? `${idLabel} ${value}` : `No ${idLabel.toLowerCase()} on file`,
-  ].filter(Boolean).join(' · ');
-  return {
-    value: String(v.id),
-    label: v.name,
-    hint,
-    keywords: [v.license_number, v.id_number, v.vat_number, category]
-      .filter(Boolean).join(' '),
-  };
 }
 
 // ── Ad lines inside a vendor subtask (migration 056) ────────────────
@@ -2916,30 +2803,6 @@ export interface AnalysisReportInherited {
   platforms: string[];
 }
 
-export function analysisReportInherited(parent: PMTask | null): AnalysisReportInherited {
-  return {
-    brandName: parent?.brand_name ?? null,
-    campaignName: parent?.task_name ?? parent?.title ?? null,
-    platforms: parent?.platforms ?? [],
-  };
-}
-
-/**
- * The platforms an analysis report actually covers.
- *
- * Starts as the parent's list, but the subtask may narrow or extend it —
- * `platforms` on the child row is the override. A child row that has
- * never been touched has an empty array, which reads as "same as parent"
- * rather than "no platforms", because an empty override is indistinguishable
- * from an untouched one and defaulting to nothing would silently blank the
- * inherited list the first time somebody opened the form.
- */
-export function effectiveAnalysisPlatforms(subtask: PMTask | null, parent: PMTask | null): string[] {
-  const own = subtask?.platforms ?? [];
-  if (own.length > 0) return own;
-  return parent?.platforms ?? [];
-}
-
 // ── Completeness: warn, never block ─────────────────────────────────
 //
 // Proof of posting, the analysis report and the insight are "always
@@ -2950,119 +2813,6 @@ export function effectiveAnalysisPlatforms(subtask: PMTask | null, parent: PMTas
 export interface CompletenessWarning {
   key: 'proof_of_posting' | 'analysis_report' | 'insight';
   message: string;
-}
-
-export function campaignCompletenessWarnings(
-  parent: PMTask | null,
-  subtasks: PMTask[],
-  opts: {
-    /**
-     * Does this task's service type actually expect an analysis report?
-     *
-     * Derived from the catalogue via catalogExpectsKind(). Without this the
-     * panel nagged EVERY parent — a Package Ad was told off for having no
-     * analysis report, which was only ever specified for Campaign.
-     *
-     * Note this is separate from whether one can be ADDED: the picker offers
-     * analysis reports everywhere, because "you may" and "you must" are
-     * different questions and conflating them is what caused the bug.
-     */
-    expectsAnalysisReport?: boolean;
-    /**
-     * Vendor ids whose category actually produces an insight (influencer,
-     * UGC). Omit to expect one from every vendor, which is only right if
-     * you know they're all influencer work.
-     */
-    insightVendorIds?: Set<number>;
-    /**
-     * The ads inside each vendor booking, keyed by subtask id.
-     *
-     * Proof of posting is per ad (migration 058). A booking with ads is
-     * chased ad by ad; a booking without them is chased as one thing, which
-     * is right for a vendor hired to do a single piece of work.
-     *
-     * Omit it and every booking is treated as a single piece — the old
-     * behaviour, and correct for anyone who never uses ad lines.
-     */
-    adLinesBySubtask?: Map<string, AdLine[]>;
-  } = {},
-): CompletenessWarning[] {
-  if (!parent) return [];
-  const out: CompletenessWarning[] = [];
-
-  // Proof of posting moved off the campaign and onto each influencer / UGC
-  // vendor (Aug 2026). One campaign has many influencers and each posts their
-  // own thing, so a single campaign-level tick could be true of one of them
-  // and false of the other five while the campaign read "done".
-  //
-  // Same set as the insight rule: a printer or a logistics company posts
-  // nothing and has nothing to prove.
-  const vendorSubtasks = subtasks.filter((s) => isVendorSubtaskKind(s.subtask_kind));
-  const posting = opts.insightVendorIds
-    ? vendorSubtasks.filter((s) => s.vendor_id != null && opts.insightVendorIds!.has(s.vendor_id))
-    : vendorSubtasks;
-  //
-  // Counted per POST, not per booking (migration 058). An influencer booked
-  // for twelve pieces owes twelve proofs; "1 of 1 vendors" would call that
-  // finished the moment the first one landed. A booking with no ad lines is
-  // still one unit, which is right for a vendor hired to do one thing.
-  if (posting.length > 0) {
-    let expected = 0;
-    let missing = 0;
-    for (const s of posting) {
-      const lines = opts.adLinesBySubtask?.get(s.id) ?? [];
-      if (lines.length > 0) {
-        expected += adsExpectingProof(lines).length;
-        missing += adsMissingProof(lines).length;
-      } else {
-        expected += 1;
-        if (!s.proof_of_posting_attached && !(s.proof_of_posting_link ?? '').trim()) missing += 1;
-      }
-    }
-    if (missing > 0) {
-      const noun = `post${expected === 1 ? '' : 's'}`;
-      out.push({
-        key: 'proof_of_posting',
-        message: missing === expected
-          ? `No proof of posting yet on any of the ${expected} influencer/UGC ${noun}.`
-          : `Proof of posting missing on ${missing} of ${expected} influencer/UGC ${noun}.`,
-      });
-    }
-  }
-
-  if (opts.expectsAnalysisReport) {
-    const analysis = subtasks.filter((s) => s.subtask_kind === 'analysis_report');
-    if (analysis.length === 0) {
-      out.push({ key: 'analysis_report', message: 'No analysis report yet.' });
-    } else if (!analysis.some((s) => s.status === 'done')) {
-      out.push({ key: 'analysis_report', message: 'The analysis report is not finished.' });
-    }
-  }
-
-  // Insight lives on the vendor subtask, and only INFLUENCER/UGC vendors
-  // produce one — a printer or a logistics company has no insight to give.
-  // Which vendors those are is decided by opts.insightVendorIds, because
-  // the category lives on the vendor record, not on the subtask.
-  //
-  // Without that filter this nagged for an insight from every vendor on the
-  // campaign, the same over-reach as the analysis report warning.
-  // The same vendors the proof rule looked at, for the same reason.
-  const expectInsight = posting;
-  if (expectInsight.length > 0) {
-    const without = expectInsight.filter(
-      (s) => !s.insight_attached && !(s.insight_link ?? '').trim(),
-    );
-    if (without.length > 0) {
-      out.push({
-        key: 'insight',
-        message: without.length === expectInsight.length
-          ? 'No insight added on any influencer or UGC vendor yet.'
-          : `Insight missing on ${without.length} of ${expectInsight.length} influencer/UGC vendors.`,
-      });
-    }
-  }
-
-  return out;
 }
 
 // ── Quotation / invoice requests (migration 048) ────────────────────
@@ -3623,15 +3373,6 @@ export const MENTION_RE =
 
 export function mentionToken(userId: string): string {
   return `@[[${userId}]]`;
-}
-
-/** Every distinct user id mentioned in a body of text. */
-export function extractMentionIds(text: string | null | undefined): string[] {
-  const out = new Set<string>();
-  const re = new RegExp(MENTION_RE.source, 'g');
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text ?? '')) !== null) out.add(m[1]);
-  return Array.from(out);
 }
 
 export type CommentSegment =
@@ -4442,19 +4183,6 @@ export async function recordInviteResend(inviteId: string) {
     last_resent_at: string;
     cooldown_remaining_seconds: number;
   };
-}
-
-/**
- * Logs that a resend attempt failed (e.g., the email provider rejected it).
- * The cooldown window has already been consumed by recordInviteResend, so
- * the admin can fix the issue and try again after 60 seconds.
- */
-export async function recordInviteResendFailure(inviteId: string, reason: string) {
-  const { error } = await supabase.rpc('record_invite_resend_failure', {
-    invite_id: inviteId,
-    reason,
-  });
-  if (error) throw error;
 }
 
 // ============================================================
@@ -6371,9 +6099,6 @@ async function currentActor(): Promise<{ id: string; name: string } | null> {
   return CRM_ACTOR;
 }
 
-/** Forget the cached actor — called on sign-out so the next user isn't them. */
-export function resetCrmActor() { CRM_ACTOR = null; }
-
 async function logToClientTimeline(
   workspaceId: string | null,
   clientId: string | null,
@@ -6538,38 +6263,6 @@ export async function rejectPendingClient(id: number) {
     throw new Error('That registration could not be rejected - it is still in the queue. '
       + 'You may not have permission to change it.');
   }
-}
-
-export async function createApprovedClientRegistration(input: {
-  company_name: string;
-  cr_number?: string;
-  vat_number?: string;
-  signatory_name?: string;
-  phone?: string;
-  email?: string;
-  company_email?: string;
-  street?: string;
-  city?: string;
-  postcode?: string;
-  country?: string;
-  national_address?: string;
-}) {
-  const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from('pending_clients')
-    .insert({
-      ...input,
-      company_email: input.company_email || input.email || '',
-      status: 'approved',
-      submitted_at: now,
-      reviewed_at: now,
-    })
-    .select()
-    .single();
-  if (error) throw error;
-  // Pre-approved registration lands as a client; drop the cached client list.
-  invalidateRefCache('clients');
-  return data as PendingClient;
 }
 
 /**

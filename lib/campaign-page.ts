@@ -1014,10 +1014,6 @@ export const FIELD_GROUPS = [
 /** Which values the app works out and nobody types. */
 export const CALCULATED_FIELDS = ['vendorCost', 'net'] as const;
 
-export function isCalculated(key: string): boolean {
-  return (CALCULATED_FIELDS as readonly string[]).includes(key);
-}
-
 /* ── What the booking rows and their actions say ────────────────── */
 
 /**
@@ -1195,21 +1191,6 @@ export function docState(rows: DocLike[], kind: string): {
     return { line: 'requested, waiting on finance', pending: true, issued: false, id: txt(pending.id) || null };
   }
   return { line: 'not requested', pending: false, issued: false, id: null };
-}
-
-/** The card's one-line summary: what exists, and what is still outstanding. */
-export function contractStateLine(clientRequests: unknown[], docs: DocLike[]): string {
-  const parts: string[] = [];
-  const live = (clientRequests ?? []).filter((r: any) =>
-    !['rejected', 'cancelled'].includes(txt(r?.status)));
-  parts.push(live.length ? 'client contract raised' : 'no client contract');
-  for (const kind of ['quotation', 'invoice']) {
-    const st = docState(docs, kind);
-    if (st.issued) parts.push(`${kind} issued`);
-    else if (st.pending) parts.push(`${kind} waiting`);
-    else parts.push(`no ${kind}`);
-  }
-  return parts.join(' · ');
 }
 
 /**

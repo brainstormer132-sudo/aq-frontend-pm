@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient, applyRememberMe, rememberMeChosen } from '@/lib/supabase-browser';
-import { absoluteUrl, withBase } from '@/lib/paths';
+import { absoluteUrl } from '@/lib/paths';
 import { SplitAuthLayout } from '@/components/auth/SplitAuthLayout';
 
 type InviteInfo = {
@@ -113,7 +113,7 @@ export default function AuthPage() {
       if (signInErr) throw signInErr;
       await applyRememberMe(rememberMe);
       await claimInviteIfPresent();
-      window.location.href = withBase('/dashboard/workflow');
+      window.location.href = '/dashboard/workflow';
     } catch (err: any) {
       console.error('Sign-in error:', err);
       if (err.message === 'Failed to fetch' || err.message?.includes('fetch')) {
@@ -167,7 +167,7 @@ export default function AuthPage() {
       } else if (data.session) {
         await applyRememberMe(rememberMe);
         await claimInviteIfPresent();
-        window.location.href = withBase('/dashboard/workflow');
+        window.location.href = '/dashboard/workflow';
       }
     } catch (err: any) {
       console.error('Sign-up error:', err);

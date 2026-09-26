@@ -298,20 +298,6 @@ export function schedule(lines: AdLine[]): AdLine[] {
     .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
 }
 
-/** A blank line for the editor, positioned after the ones already there. */
-export function blankLine(subtaskId: string, existing: AdLine[]): AdLine {
-  const nextPos = (existing || []).reduce((max, l) => Math.max(max, num(l.position)), -1) + 1;
-  return {
-    subtask_id: subtaskId,
-    position: nextPos,
-    ad_type: '',
-    platform: null,
-    quantity: 1,
-    unit_price: 0,
-    notes: null,
-  };
-}
-
 // \u2500\u2500 Adding several at once \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 //
 // Bookings arrive in batches: "six home ads at 1,500". Adding those one

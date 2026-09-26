@@ -1,19 +1,15 @@
 /**
- * Path helpers — now no-ops.
+ * One path helper.
  *
- * basePath was removed from next.config.js because the folder structure
- * already encodes the URL paths (/dashboard/workflow, /vendor/auth, etc.).
- * Earlier these helpers prefixed /dashboard, which caused the visible
- * /dashboard/dashboard/workflow bug.
+ * There used to be three. basePath was removed from next.config.js - the
+ * folder structure already encodes the URL paths (/dashboard/workflow,
+ * /vendor/auth) and prefixing them again produced the visible
+ * /dashboard/dashboard/workflow bug. What was left was BASE_PATH = '' and
+ * withBase(p) => p, kept "so existing callers don't have to change".
  *
- * Kept as pass-throughs so existing callers don't have to change.
+ * They stayed for months, and every reader of a call site had to go and
+ * find out that it did nothing. A no-op with a name is not free.
  */
-
-export const BASE_PATH = '';
-
-export function withBase(path: string): string {
-  return path;
-}
 
 export function absoluteUrl(path: string): string {
   if (typeof window === 'undefined') return path;

@@ -56,10 +56,6 @@ function txt(v: string | null | undefined): string {
 /** Categories whose vendors are people who can bring in business. */
 const CLOSER_CATEGORIES = ['influencer', 'ugc', 'ugc creator', 'user generated content'];
 
-export function canCloseDeals(vendor: VendorRow): boolean {
-  return CLOSER_CATEGORIES.includes(txt(vendor.vendor_category).toLowerCase());
-}
-
 /** What the picker currently shows for a task. */
 export function closerKey(task: TaskCloser | null | undefined): string {
   if (!task) return '';
@@ -153,17 +149,4 @@ export function closerLabel(
   }
   if (task.sales_closer_influencer) return INFLUENCER_LABEL;
   return '—';
-}
-
-/**
- * True when an influencer, not a colleague, closed it.
- *
- * Either way of recording it counts: the generic flag, or a named vendor on
- * a row saved before 061. Anything that reports on influencer-sourced deals
- * has to see both or it will show the number falling off a cliff on the day
- * the picker changed.
- */
-export function closedByInfluencer(task: TaskCloser | null | undefined): boolean {
-  if (!task || txt(task.sales_closer_id)) return false;
-  return task.sales_closer_vendor_id != null || !!task.sales_closer_influencer;
 }

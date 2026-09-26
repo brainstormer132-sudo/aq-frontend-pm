@@ -1396,13 +1396,6 @@ export async function saveImportedTemplate(input: {
   return templateId;
 }
 
-/** A signed link to the original Word file, good for one minute. */
-export async function templateSourceUrl(path: string): Promise<string | null> {
-  const { data } = await (createClient() as unknown as SupabaseClient)
-    .storage.from('legal-templates').createSignedUrl(path, 60);
-  return data?.signedUrl ?? null;
-}
-
 /**
  * Every contract's status, and nothing else, for the KPI strip on Cases.
  *

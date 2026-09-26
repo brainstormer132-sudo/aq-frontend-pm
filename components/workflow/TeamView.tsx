@@ -6,7 +6,7 @@ import {
   useWorkspaceInvites, deleteWorkspaceInvite, deleteExpiredWorkspaceInvites,
   type WorkspaceRole,
 } from '@/hooks/use-workflow';
-import { absoluteUrl, withBase } from '@/lib/paths';
+import { absoluteUrl } from '@/lib/paths';
 import { MyProfileCard } from './MyProfileCard';
 import { Chip, Confirm, AddButton, INK } from './RegistryTable';
 import {
@@ -302,7 +302,7 @@ function MemberLine({
   const remove = async () => {
     setBusy(true); onError('');
     try {
-      const response = await fetch(withBase('/api/team/remove-member'), {
+      const response = await fetch('/api/team/remove-member', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace_id: workspaceId, membership_id: member.id }),
@@ -487,7 +487,7 @@ function CreateAccountCard({
     if (found.length) return;
     setBusy(true); onError(''); setAccount(null);
     try {
-      const response = await fetch(withBase('/api/team/admin-create'), {
+      const response = await fetch('/api/team/admin-create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace_id: workspaceId, email: email.trim(), role }),
