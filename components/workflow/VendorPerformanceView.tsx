@@ -23,8 +23,9 @@ import { useVendorPerformanceLines, useLegacyVendors, type WorkspaceRole } from 
 import {
   vendorPerformance, reliabilityBand, vendorMoney, type VendorPerf,
 } from '@/lib/vendor-performance';
+import { pageSlice, DEFAULT_PAGE_SIZE } from '@/lib/registry';
 import { AqDrawingBlock } from '@/components/AQLoading';
-import { RegistryHeader, RegistryToolbar, Chip } from './RegistryTable';
+import { RegistryHeader, RegistryToolbar, Chip, RegistryPager } from './RegistryTable';
 
 const BAND_COLOR: Record<'reliable' | 'ok' | 'shaky' | 'none', string> = {
   reliable: 'var(--aq-green-strong, #15803d)',
@@ -109,6 +110,16 @@ export function VendorPerformanceView({
     });
   }, [ranked, query, chaseOnly]);
 
+  // Paint one page at a time. The search and the chase filter above still run
+  // over every vendor - `shown` is the whole matching set and the count line
+  // below reports its length - this only limits what is DRAWN. Ten rows of ten
+  // columns is cheap; four thousand of them is the freeze that this screen
+  // shares with the registry, and the registry already solved it this way.
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [query, chaseOnly, pageSize]);
+  const paged = useMemo(() => pageSlice(shown, page, pageSize), [shown, page, pageSize]);
+
   const loading = linesLoading || vendorsLoading;
   const line = ranked.length === 0
     ? 'No vendor delivery on record yet.'
@@ -160,7 +171,7 @@ export function VendorPerformanceView({
                   : 'No vendor matches that search.'}
               </td></tr>
             ) : (
-              shown.map((r) => {
+              paged.rows.map((r) => {
                 const band = reliabilityBand(r.reliabilityPct);
                 return (
                   <tr key={r.vendorId} style={{ borderTop: '1px solid var(--aq-border-light)' }}>
@@ -191,6 +202,14 @@ export function VendorPerformanceView({
           </tbody>
         </table>
       </div>
+
+      {shown.length > 0 ? (
+        <RegistryPager
+          page={paged.page} pages={paged.pages} size={pageSize}
+          total={paged.total} from={paged.from} to={paged.to} noun="vendor"
+          onPage={setPage} onSize={setPageSize}
+        />
+      ) : null}
     </div>
   );
 }

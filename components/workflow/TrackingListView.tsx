@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTrackingCampaigns, type WorkspaceRole } from '@/hooks/use-workflow';
 import { TrackingSheetPanel } from './TrackingSheetPanel';
-import { Chip, RegistryHeader, RegistryToolbar } from './RegistryTable';
+import { Chip, RegistryHeader, RegistryToolbar, RegistryPager } from './RegistryTable';
+import { pageSlice, DEFAULT_PAGE_SIZE } from '@/lib/registry';
 import {
   buildCampaigns, filterCampaigns, sortCampaigns, listSummary, listEmptyMessage,
   isListFiltered, firstListDir, money, LIST_COLUMNS, STAGE_FILTERS,
@@ -65,6 +66,15 @@ export function TrackingListView({
   );
   const all = useMemo(() => listSummary(built), [built]);
   const view = useMemo(() => listSummary(shown), [shown]);
+
+  // Paint one page at a time. Search, the stage filter and the summary line
+  // all run over `shown`, the whole matching set - this only limits what is
+  // DRAWN. Every campaign with a tracking sheet lands in this list and it only
+  // grows, which is the shape that froze the ledger at four thousand rows.
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [filter, sort, pageSize]);
+  const paged = useMemo(() => pageSlice(shown, page, pageSize), [shown, page, pageSize]);
 
   const set = <K extends keyof ListFilter>(k: K, v: ListFilter[K]) =>
     setFilter((f) => ({ ...f, [k]: v }));
@@ -168,7 +178,7 @@ export function TrackingListView({
               </tr>
             </thead>
             <tbody>
-              {shown.map((r) => (
+              {paged.rows.map((r) => (
                 <tr
                   key={r.id}
                   className="aq-tr"
@@ -190,6 +200,16 @@ export function TrackingListView({
               ))}
             </tbody>
           </table>
+
+          {shown.length > 0 ? (
+            <div style={{ padding: '8px 2px 2px' }}>
+              <RegistryPager
+                page={paged.page} pages={paged.pages} size={pageSize}
+                total={paged.total} from={paged.from} to={paged.to} noun="campaign"
+                onPage={setPage} onSize={setPageSize}
+              />
+            </div>
+          ) : null}
         </div>
       )}
 
