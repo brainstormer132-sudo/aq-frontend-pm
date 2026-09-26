@@ -32,6 +32,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { createServerSupabase } from '@/lib/supabase-server';
+import { sentLinks } from '@/lib/notify-dedup';
 import {
   paymentsDue, paymentDueMessage, paymentDueLink,
   NOTIFY_EVERY_DAYS, RECIPIENT_ROLES,
@@ -113,17 +114,18 @@ async function scanAndNotify(opts: { workspaceId?: string }) {
   let notified = 0;
   let skipped = 0;
 
+  // Already told them this, recently? Asked ONCE for the whole run, not
+  // once per candidate before any work is done - see lib/notify-dedup.
+  const { sent, error: dupErr } = await sentLinks(
+    candidates.map(paymentDueLink),
+    (batch) => admin.from('notifications').select('link')
+      .in('link', batch).gte('created_at', since),
+  );
+  if (dupErr) return { error: dupErr, status: 500 as const, notified, skipped };
+
   for (const c of candidates) {
     const link = paymentDueLink(c);
-
-    // Already told them this, recently? Leave it be.
-    const { count, error: dupErr } = await admin
-      .from('notifications')
-      .select('id', { count: 'exact', head: true })
-      .eq('link', link)
-      .gte('created_at', since);
-    if (dupErr) return { error: dupErr.message, status: 500 as const, notified, skipped };
-    if ((count ?? 0) > 0) { skipped += 1; continue; }
+    if (sent.has(link)) { skipped += 1; continue; }
 
     const { title, body } = paymentDueMessage(c);
     const { error: roleErr } = await admin.rpc('notify_role', {
@@ -136,6 +138,9 @@ async function scanAndNotify(opts: { workspaceId?: string }) {
     });
     if (roleErr) return { error: roleErr.message, status: 500 as const, notified, skipped };
 
+    // Two candidates on the same link make one notification, which the
+    // old query-per-candidate got for free.
+    sent.add(link);
     notified += 1;
   }
 

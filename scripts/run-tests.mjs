@@ -81,6 +81,7 @@ const LIBS = [
   'lib/expiry-notify.ts',
   'lib/vendor-performance.ts',
   'lib/concurrency.ts',
+  'lib/notify-dedup.ts',
   'lib/client-credits.ts',
   'lib/finance.ts',
   'lib/finance-notify.ts',

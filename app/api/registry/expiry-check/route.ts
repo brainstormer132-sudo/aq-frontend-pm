@@ -30,6 +30,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { createServerSupabase } from '@/lib/supabase-server';
+import { sentLinks } from '@/lib/notify-dedup';
 import {
   expiryDue, expiryMessage, expiryLink,
   NOTIFY_EVERY_DAYS, RECIPIENT_ROLES,
@@ -110,23 +111,28 @@ async function runExpiryCheck(opts: { workspaceId?: string }) {
   let notified = 0;
   let skipped = 0;
 
+  // A client notice lands in its own workspace; a vendor notice, having no
+  // workspace of its own, reaches every scanned workspace's owners/admins.
+  const targetsFor = (c: typeof candidates[number]) => (c.kind === 'client'
+    ? (c.workspaceId ? [c.workspaceId] : [])
+    : workspaceIds);
+
+  // This loop is candidates x workspaces, so the old query-per-pair was the
+  // worst of the three crons: it grew with the registry AND with the number
+  // of workspaces. Asked once now - see lib/notify-dedup.
+  const { sent, error: dupErr } = await sentLinks(
+    candidates.flatMap((c) => targetsFor(c).map((wsId) => expiryLink(c, wsId))),
+    (batch) => admin.from('notifications').select('link')
+      .in('link', batch).gte('created_at', since),
+  );
+  if (dupErr) return { error: dupErr, status: 500 as const, notified, skipped };
+
   for (const c of candidates) {
-    // A client notice lands in its own workspace; a vendor notice, having no
-    // workspace of its own, reaches every scanned workspace's owners/admins.
-    const targets = c.kind === 'client'
-      ? (c.workspaceId ? [c.workspaceId] : [])
-      : workspaceIds;
+    const targets = targetsFor(c);
 
     for (const wsId of targets) {
       const link = expiryLink(c, wsId);
-
-      const { count, error: dupErr } = await admin
-        .from('notifications')
-        .select('id', { count: 'exact', head: true })
-        .eq('link', link)
-        .gte('created_at', since);
-      if (dupErr) return { error: dupErr.message, status: 500 as const, notified, skipped };
-      if ((count ?? 0) > 0) { skipped += 1; continue; }
+      if (sent.has(link)) { skipped += 1; continue; }
 
       const { title, body } = expiryMessage(c);
       const { error: roleErr } = await admin.rpc('notify_role', {
@@ -139,6 +145,9 @@ async function runExpiryCheck(opts: { workspaceId?: string }) {
       });
       if (roleErr) return { error: roleErr.message, status: 500 as const, notified, skipped };
 
+      // Two pairs on the same link make one notification, which the old
+      // query-per-pair got for free.
+      sent.add(link);
       notified += 1;
     }
   }

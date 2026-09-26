@@ -25,6 +25,7 @@ import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-admin';
 import { createServerSupabase } from '@/lib/supabase-server';
 import { chaseCandidates, CHASE_AFTER_DAYS } from '@/lib/contracts';
+import { sentLinks } from '@/lib/notify-dedup';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,22 +56,26 @@ async function runChase(opts: { workspaceId?: string }) {
   let notified = 0;
   let skipped = 0;
 
+  // Deep-link to the task the contract lives on; the contract id makes the
+  // link unique per contract, which is also the de-dup key.
+  const linkFor = (r: any) => `/dashboard?task=${r.pm_task_id ?? ''}&contract=${r.id}`;
+
+  // Which of these we have already sent, asked ONCE. This used to be a
+  // query per candidate, before any work was done - see lib/notify-dedup.
+  const since = new Date(Date.now() - CHASE_AFTER_DAYS * DAY_MS).toISOString();
+  const { sent, error: dupErr } = await sentLinks(
+    candidates.map((c) => byId.get(c.id)).filter(Boolean).map(linkFor),
+    (batch) => admin.from('notifications').select('link')
+      .in('link', batch).gte('created_at', since),
+  );
+  if (dupErr) return { error: dupErr, status: 500 as const, notified, skipped };
+
   for (const c of candidates) {
     const r = byId.get(c.id);
     if (!r || !r.workspace_id) { skipped += 1; continue; }
 
-    // Deep-link to the task the contract lives on; the request id makes the
-    // link unique per request, which is also the de-dup key.
-    const link = `/dashboard?task=${r.pm_task_id ?? ''}&contract=${r.id}`;
-
-    const since = new Date(Date.now() - CHASE_AFTER_DAYS * DAY_MS).toISOString();
-    const { count, error: dupErr } = await admin
-      .from('notifications')
-      .select('id', { count: 'exact', head: true })
-      .eq('link', link)
-      .gte('created_at', since);
-    if (dupErr) return { error: dupErr.message, status: 500 as const, notified, skipped };
-    if ((count ?? 0) > 0) { skipped += 1; continue; }
+    const link = linkFor(r);
+    if (sent.has(link)) { skipped += 1; continue; }
 
     const party = r.vendor_name || r.client_name || r.brand_name || 'a party';
     const title = 'Contract waiting with Legal';
@@ -99,6 +104,10 @@ async function runChase(opts: { workspaceId?: string }) {
       if (reqErr) return { error: reqErr.message, status: 500 as const, notified, skipped };
     }
 
+    // Mark it here, not after the loop: two candidates that produce the
+    // same link must still make one notification, which the old
+    // query-per-candidate got for free.
+    sent.add(link);
     notified += 1;
   }
 
