@@ -83,9 +83,28 @@ export function useDashboardRows(workspaceId: string | null): DashboardData {
           .order('id', { ascending: false }),
         (msg) => setError(msg),
       ),
+      // The subtasks read is scoped to this workspace, like the campaigns
+      // above it. It was not, and relied entirely on row-level security plus
+      // the `known.has(...)` filter below to throw the rest away AFTER
+      // downloading them.
+      //
+      // Safe to narrow, and checked against production rather than assumed:
+      // pm_tasks.workspace_id is NULLABLE, so a subtask with a parent here and
+      // no workspace of its own would be silently dropped by that filter.
+      // There are none, and none whose workspace differs from its parent's:
+      //
+      //   ORPHANS: subtask with a parent but no workspace_id        0
+      //   MISMATCH: subtask whose workspace differs from its parent 0
+      //
+      // Keep the comment OUT of the call. tests/paging.test.mjs looks back a
+      // fixed 260 characters from `.from(` for the selectAllRows that wraps
+      // it, and eighteen lines of explanation inside the call pushed it out
+      // of that window - the suite then read this as a new unpaged
+      // workspace-wide read and failed, correctly.
       selectAllRowsParallel<DashTask>(
         'useDashboardRows subtasks',
         () => supabase.from('pm_tasks').select(COLUMNS)
+          .eq('workspace_id', workspaceId)
           .not('parent_task_id', 'is', null)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false }),
