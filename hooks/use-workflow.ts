@@ -228,15 +228,30 @@ const REF_CACHE_TTL_MS = 60_000;
 /**
  * What the app is actually asking the database for.
  *
- * `queries` counts requests that went to the network — a cache hit does not
- * count, which is the point. In development a request slower than `slowMs`
- * says so in the console with its label, so the next time somebody says a
- * screen is slow there is something to look at other than a stopwatch.
+ * `queries` counts requests that went to the network - a cache hit does not
+ * count, which is the point.
+ *
+ * It used to log a slow read only when NODE_ENV was not production, which
+ * is exactly where the problem is not: on the deployed site the
+ * instrumentation was silent, and "this screen is slow" stayed a stopwatch
+ * and a guess. Two fixes this week were aimed by reading the code very
+ * carefully instead, and the first one was aimed at the wrong half.
+ *
+ * So it counts everywhere now, and `window.aqPerf.report()` prints the
+ * total per read, slowest first. It is a console.warn above a threshold
+ * and a table on demand - no payload, no ids, just the label a call site
+ * already gives itself and a number of milliseconds.
  */
+import { record as recordMark, report as perfReport, type Mark } from '@/lib/perf-report';
+
 export const perf = {
   queries: 0,
   cacheHits: 0,
   slowMs: 800,
+  marks: new Map<string, Mark>(),
+  /** Slowest first, as pasteable text. */
+  report(): string { return perfReport(perf.marks, perf.queries, perf.cacheHits); },
+  reset(): void { perf.queries = 0; perf.cacheHits = 0; perf.marks = new Map(); },
 };
 
 async function timed<T>(label: string, run: () => Promise<T>): Promise<T> {
@@ -246,12 +261,17 @@ async function timed<T>(label: string, run: () => Promise<T>): Promise<T> {
     return await run();
   } finally {
     const took = Date.now() - started;
-    if (took > perf.slowMs && process.env.NODE_ENV !== 'production') {
+    recordMark(perf.marks, label, took);
+    if (took > perf.slowMs) {
       // eslint-disable-next-line no-console
       console.warn(`[aq] slow query ${label}: ${took}ms`);
     }
   }
 }
+
+// One handle to read it from. Nothing calls this; a person types it into
+// the console when a screen feels slow:  aqPerf.report()
+if (typeof window !== 'undefined') (window as any).aqPerf = perf;
 
 export async function cachedFetch<T>(key: string, loader: () => Promise<T>, force = false): Promise<T> {
   const now = Date.now();

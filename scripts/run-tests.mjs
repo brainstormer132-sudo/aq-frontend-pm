@@ -82,6 +82,7 @@ const LIBS = [
   'lib/vendor-performance.ts',
   'lib/concurrency.ts',
   'lib/notify-dedup.ts',
+  'lib/perf-report.ts',
   'lib/client-credits.ts',
   'lib/finance.ts',
   'lib/finance-notify.ts',
