@@ -6184,10 +6184,27 @@ export async function approvePendingVendor(id: number, reviewerName: string) {
     .from('pending_vendors').select('*').eq('id', id).maybeSingle();
   if (getErr || !pending) throw getErr ?? new Error('Pending vendor not found');
   // Promote to vendors + bank_accounts
+  // Everything the registration asked for, carried across. It used to be
+  // the name and the licence number and nothing else, so approving a
+  // registration threw away the email, the phone, the category, the
+  // platforms and the licence expiry that the vendor had already typed -
+  // and the registry then listed the result as incomplete, for somebody to
+  // chase. signatory_name and id_number arrive with migration 145.
+  //
+  // `?? ''` rather than `?? null` on the two that were already here, to
+  // keep what this wrote before; the new ones pass null through, because a
+  // question nobody answered is not an empty answer.
   const { data: vendor, error: vErr } = await supabase
     .from('vendors').insert({
       name: pending.full_name,
       license_number: pending.license_number ?? '',
+      signatory_name: pending.signatory_name ?? null,
+      id_number: pending.id_number ?? null,
+      email: pending.email ?? null,
+      phone: pending.phone ?? null,
+      vendor_category: pending.vendor_category ?? null,
+      platforms: pending.platforms ?? null,
+      license_expiry: pending.license_expiry ?? null,
       created_at: now,
     }).select().single();
   if (vErr) throw vErr;
