@@ -104,65 +104,12 @@ export async function generateQuotation(taskId: string): Promise<GenerateQuotati
   );
 }
 
-export interface PendingVendorRow {
-  id: number;
-  full_name: string;
-  license_number?: string;
-  license_expiry?: string | null;
-  email?: string;
-  phone?: string;
-  vendor_category?: string;
-  platforms?: string;
-  iban?: string;
-  bank_name?: string;
-  account_name?: string;
-  account_number?: string;
-  swift_code?: string;
-  status: string;
-  submitted_at?: string | null;
-  reviewed_at?: string | null;
-}
-
-export interface PendingClientRow {
-  id: number;
-  company_name: string;
-  cr_number?: string;
-  vat_number?: string;
-  signatory_name?: string;
-  phone?: string;
-  email?: string;
-  company_email?: string;
-  street?: string;
-  city?: string;
-  postcode?: string;
-  country?: string;
-  national_address?: string;
-  permit_doc?: string;
-  vat_doc?: string;
-  national_address_doc?: string;
-  status: string;
-  submitted_at?: string | null;
-}
-
-export const pendingVendors = {
-  list: (status?: string) =>
-    contractApi<PendingVendorRow[]>('/vendors/pending/vendors', { query: { status } }),
-  action: (id: number, action: 'approved' | 'rejected') =>
-    contractApi<{ status: string; vendor_id?: number; vendor_name?: string }>(
-      `/vendors/pending/vendors/${id}/action`,
-      { method: 'POST', body: { action } },
-    ),
-};
-
-export const pendingClients = {
-  list: (status?: string) =>
-    contractApi<PendingClientRow[]>('/vendors/pending/clients', { query: { status } }),
-  action: (id: number, action: 'approved' | 'rejected') =>
-    contractApi<{ status: string; client_id?: string }>(
-      `/vendors/pending/clients/${id}/action`,
-      { method: 'POST', body: { action } },
-    ),
-};
+// The two registration-queue clients that used to live here - pendingVendors
+// and pendingClients, talking to /vendors/pending/* on the FastAPI backend -
+// are gone, with their row types. Nothing in this app called either: the
+// vendor queue reads and writes pending_vendors through Supabase
+// (VendorsView + approvePendingVendor), and the client queue has no screen at
+// all. They were the retired contract app's, kept here by nobody.
 
 export const vendorOps = {
   remove: (vendorId: number) =>

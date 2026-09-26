@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  usePendingClients,
   selectAllRows,
   useAllClientBrands,
   updateClientTerms,
@@ -47,10 +46,12 @@ export function ClientsView({
   campaigns?: CampaignInput[];
   rollup?: RollupInput[];
 }) {
-  // Read approved clients directly from public.clients so manual-created
-  // rows appear immediately. The legacy pending_clients flow still works
-  // (approve_pending_client bridges those rows into public.clients), so
-  // both paths converge here.
+  // Read approved clients directly from public.clients. There is no client
+  // registration QUEUE any more - that screen belonged to the retired
+  // contract app - so a client is created here and is a client from the
+  // moment it exists. The two historic pending_clients rows were bridged
+  // into public.clients by approve_pending_client long ago and are already
+  // in this list.
   const [allClients, setAllClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const refetch = async () => {

@@ -6152,13 +6152,6 @@ export interface PendingVendor {
   vendor_category: string | null; platforms: string | null;
   status: string; submitted_at: string | null;
 }
-export interface PendingClient {
-  id: number; company_name: string; cr_number: string | null;
-  vat_number: string | null; signatory_name: string | null; phone: string | null; email: string | null;
-  company_email: string | null; street: string | null; city: string | null;
-  postcode: string | null; country: string | null; national_address: string | null;
-  status: string; submitted_at: string | null;
-}
 export function usePendingVendors() {
   const [items, setItems] = useState<PendingVendor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -6169,24 +6162,11 @@ export function usePendingVendors() {
     // been waiting longest. submitted_at is not unique (a form can post twice
     // in a second, and the mirror rows below share a timestamp), so id ends
     // the order: with a non-unique order two pages overlap and a row falls
-    // between them. usePendingClients next door already did this.
+    // between them.
     const data = await selectAllRows<PendingVendor>('usePendingVendors', () =>
       supabase.from('pending_vendors').select('*')
         .order('submitted_at', { ascending: false }).order('id', { ascending: false }));
     setItems(data as PendingVendor[]);
-    setLoading(false);
-  }, []);
-  useEffect(() => { fetch(); }, [fetch]);
-  return { items, loading, refetch: fetch };
-}
-export function usePendingClients() {
-  const [items, setItems] = useState<PendingClient[]>([]);
-  const [loading, setLoading] = useState(true);
-  const fetch = useCallback(async () => {
-    const data = await selectAllRows<PendingClient>('usePendingClients', () =>
-      supabase.from('pending_clients').select('*')
-        .order('submitted_at', { ascending: false }).order('id', { ascending: false }));
-    setItems(data as PendingClient[]);
     setLoading(false);
   }, []);
   useEffect(() => { fetch(); }, [fetch]);
@@ -6234,28 +6214,6 @@ export async function approvePendingVendor(id: number, reviewerName: string) {
 }
 export async function rejectPendingVendor(id: number) {
   const { data, error } = await supabase.from('pending_vendors')
-    .update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', id)
-    .select('id');
-  if (error) throw error;
-  if (!data?.length) {
-    throw new Error('That registration could not be rejected - it is still in the queue. '
-      + 'You may not have permission to change it.');
-  }
-}
-export async function approvePendingClient(id: number) {
-  const { data, error } = await supabase.from('pending_clients')
-    .update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', id)
-    .select('id');
-  if (error) throw error;
-  if (!data?.length) {
-    throw new Error('That registration could not be marked approved - it is still in the queue. '
-      + 'You may not have permission to change it.');
-  }
-  // Approval promotes the row into `clients`; drop the cached client list so it shows.
-  invalidateRefCache('clients');
-}
-export async function rejectPendingClient(id: number) {
-  const { data, error } = await supabase.from('pending_clients')
     .update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', id)
     .select('id');
   if (error) throw error;
