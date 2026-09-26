@@ -31,7 +31,11 @@ begin
                               ', ' order by schemaname, tablename, policyname)
     into n, bad
     from pg_policies p
-   where p.roles::text like '%{public}%'
+   -- TO PUBLIC, or anon NAMED outright. The first version of this checked
+   -- only for '{public}' and a policy written `to anon, authenticated`
+   -- walked straight past it - which is exactly as open, and was found by
+   -- writing one (migration 144) and watching this pass.
+   where (p.roles::text like '%{public}%' or p.roles::text like '%anon%')
      -- only where it can actually be reached with the public key
      and exists (select 1 from information_schema.table_privileges g
                   where g.table_schema = p.schemaname
@@ -56,7 +60,17 @@ begin
        -- names like "Photographer" - and 096 says in as many words that it
        -- is left open because the list is not sensitive and the whole app
        -- reads it. It holds no client, money or contact data.
-       ('public', 'vendor_categories', 'vendor_categories read')
+       ('public', 'vendor_categories', 'vendor_categories read'),
+       -- The public registration link (migration 144). A stranger has no
+       -- identity to check - that is the whole point of the form - so these
+       -- two are admitted by name and constrained instead of interrogated:
+       -- INSERT only, `with check (status = 'pending' and reviewed_at is
+       -- null)`, and anon's SELECT/UPDATE/DELETE grants on both tables are
+       -- revoked, so nothing it adds can be read back by the next stranger.
+       -- If either ever gains a SELECT policy, 144's own self-test fails
+       -- before this one gets the chance.
+       ('public', 'pending_vendors', 'pending_vendors public submit'),
+       ('public', 'pending_clients', 'pending_clients public submit')
      );
 
   if n > 0 then
