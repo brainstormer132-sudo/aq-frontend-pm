@@ -201,4 +201,17 @@ if (failed) {
   console.log(`${RED}${failed} schema test(s) failed${OFF}`);
   process.exit(1);
 }
-console.log(`${GREEN}${tests.length} schema tests passed${OFF}`);
+console.log(`${GREEN}${tests.length} schema tests passed${OFF}\n`);
+
+/* -- 3. The shape of what we just built, recorded -------------------- */
+
+// scripts/schema-fingerprint.txt is how the LIVE database gets checked
+// against these files before a move - see scripts/schema-drift.mjs. It is
+// only worth anything while it is current, and a file kept current by
+// remembering to update it is a file that is wrong by the second week. So
+// it is verified here, against the database this script just replayed,
+// on every CI run.
+const fp = spawnSync(process.execPath, [join(root, 'scripts', 'schema-drift.mjs'), '--check'], {
+  stdio: 'inherit', env: { ...process.env, PGURL: url },
+});
+if (fp.status !== 0) process.exit(1);
