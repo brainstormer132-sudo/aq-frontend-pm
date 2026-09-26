@@ -19,8 +19,15 @@ import { NextResponse, type NextRequest } from 'next/server';
 // `/contracts/` are gone (Sep 2026); what remains under /contracts is the
 // FastAPI proxy the portals still call, and that must stay public or every
 // vendor sign-in pays an auth round-trip it cannot satisfy.
+//
+// `/register` is the public registration form. It has to be public in the
+// strongest sense: the people it is for have no account, so a session
+// check here would redirect every one of them to /auth, which is a sign-in
+// page for credentials they do not have. It writes through migration 144's
+// anon INSERT policy and reads nothing.
 const PUBLIC_PREFIXES = [
   '/portals',
+  '/register',
   '/contracts',     // /contracts/api/*, /contracts/health — the proxy only
 ];
 

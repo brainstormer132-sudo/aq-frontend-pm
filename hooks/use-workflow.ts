@@ -6156,6 +6156,16 @@ export interface PendingVendor {
   account_number: string | null; swift_code: string | null;
   vendor_category: string | null; platforms: string | null;
   status: string; submitted_at: string | null;
+  // The registration form's answers (146). category_id is the lookup row
+  // the vendor picked; the rest are the per-category questions 029 put on
+  // `vendors` and that the queue could not carry until now.
+  category_id: string | null; vat_number: string | null;
+  signatory_name: string | null; id_number: string | null;
+  license_expiry: string | null;
+  location_link: string | null; short_address: string | null;
+  age: number | null; gender: string | null; rental_type: string | null;
+  event_opening: string | null; event_ceremony: string | null;
+  location_type: string | null;
 }
 export function usePendingVendors() {
   const [items, setItems] = useState<PendingVendor[]>([]);
@@ -6205,6 +6215,30 @@ export async function approvePendingVendor(id: number, reviewerName: string) {
       vendor_category: pending.vendor_category ?? null,
       platforms: pending.platforms ?? null,
       license_expiry: pending.license_expiry ?? null,
+      // The category, and the questions the category asked (146).
+      //
+      // category_id has NEVER been written here, which is why every vendor
+      // born from a registration arrived with no lookup category at all -
+      // what vendorCategoryKey's comment means by "plenty have neither". It
+      // is written beside the free-text vendor_category rather than instead
+      // of it, because that function reads the free text first.
+      //
+      // The rest are the per-category columns 029 put on `vendors`:
+      // a model's age and gender, a location's type and link, an events
+      // vendor's opening and ceremony. Leaving any of them out would drop
+      // an answer the vendor gave, silently, at the one moment nobody is
+      // watching - which is the bug fbd0dd1 fixed for the email and the
+      // phone, reintroduced one column at a time.
+      category_id: pending.category_id ?? null,
+      vat_number: pending.vat_number ?? null,
+      location_link: pending.location_link ?? null,
+      short_address: pending.short_address ?? null,
+      age: pending.age ?? null,
+      gender: pending.gender ?? null,
+      rental_type: pending.rental_type ?? null,
+      event_opening: pending.event_opening ?? null,
+      event_ceremony: pending.event_ceremony ?? null,
+      location_type: pending.location_type ?? null,
       created_at: now,
     }).select().single();
   if (vErr) throw vErr;

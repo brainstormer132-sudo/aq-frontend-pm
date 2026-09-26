@@ -46,7 +46,7 @@ public.manager_clients|34e9b3c2|6
 public.notifications|d5a0fff7|8
 public.override_code|4f28e4e5|4
 public.pending_clients|0176cb84|20
-public.pending_vendors|ef1766b9|22
+public.pending_vendors|64d2dc5f|32
 public.pm_tasks|88e51218|91
 public.profiles|052571c2|7
 public.projects|6eba8a53|12
