@@ -25,7 +25,7 @@ public.client_credits|6bb17554|8
 public.client_dedupe_map_v2|bbe97f00|9
 public.client_dedupe_map|29a58b05|7
 public.client_files|ba39b56a|9
-public.clients|a2deb1d8|30
+public.clients|05fd8b66|31
 public.comments|7af8acfb|6
 public.contract_completions|3834f1d4|9
 public.contract_invites|4092d529|12
