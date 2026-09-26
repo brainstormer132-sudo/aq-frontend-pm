@@ -125,11 +125,15 @@ Vercel, auto-deploying from `main`. `vercel.json` carries:
 - `/portals` and `/invite`, which serve the two static pages in `public/`,
 - four cron schedules that hit the route handlers in `app/api/`.
 
-`.github/workflows/ci.yml` runs the checks. `keep-backend-warm.yml` pings the
-FastAPI service during working hours so the first request of the day does not
-pay a cold start — it lives here rather than in the backend repo because this
-repo is public and Actions minutes are therefore unlimited. **That reasoning
-stops holding if this repo is ever made private.**
+`.github/workflows/ci.yml` runs the checks.
+
+There used to be a `keep-backend-warm.yml` beside it, pinging the FastAPI
+service every ten minutes through the working day so the first request did not
+pay Render's ~30-60s cold start. It is gone: the Render service is moving to a
+paid instance type, which does not spin down, so there is nothing to keep warm.
+It was also about to become expensive - it lived here because a public repo has
+unlimited Actions minutes, and a private one has 2,000 a month, which that
+workflow would have spent in under a week.
 
 ---
 
