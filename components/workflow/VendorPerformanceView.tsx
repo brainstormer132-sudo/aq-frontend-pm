@@ -5,10 +5,16 @@
  * rebooking, from the ad lines the app already keeps.
  *
  * An ad line has no vendor of its own; it belongs to a booking subtask that
- * names the vendor. `useVendorPerformanceLines` does that join and hands back
- * flat, vendor-tagged lines; `vendorPerformance` (pure, tested) rolls them up
- * per vendor and sorts the ones needing action to the top. This screen only
- * puts names to the ids and draws the table.
+ * names the vendor. That join, the roll-up and the sort all happen in the
+ * DATABASE now (migration 143): one call, one row per vendor, already
+ * counted and already ordered. This screen puts names to the ids and draws
+ * the table, and nothing else.
+ *
+ * It used to fetch every booking and every ad line in the company and roll
+ * them up here, which took five minutes to open. The rules did not change -
+ * the SQL is a translation of lib/vendor-performance.ts, and
+ * scripts/check-vendor-performance-sql.mjs runs both over the same data on
+ * every CI run to prove they still agree.
  *
  * Delivery first — on-time posting, proof attached, what is overdue — then the
  * money beside it: what each vendor is owed (the booking net, summed) against
@@ -19,10 +25,8 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useVendorPerformanceLines, useLegacyVendors, type WorkspaceRole } from '@/hooks/use-workflow';
-import {
-  vendorPerformance, reliabilityBand, vendorMoney, type VendorPerf,
-} from '@/lib/vendor-performance';
+import { useVendorPerformance, useLegacyVendors, type WorkspaceRole } from '@/hooks/use-workflow';
+import { reliabilityBand } from '@/lib/vendor-performance';
 import { pageSlice, DEFAULT_PAGE_SIZE } from '@/lib/registry';
 import { AqDrawingBlock } from '@/components/AQLoading';
 import { RegistryHeader, RegistryToolbar, Chip, RegistryPager } from './RegistryTable';
@@ -34,12 +38,21 @@ const BAND_COLOR: Record<'reliable' | 'ok' | 'shaky' | 'none', string> = {
   none: 'var(--aq-text-muted)',
 };
 
-interface Named extends VendorPerf {
-  name: string;
-  category: string | null;
+interface Named {
+  vendorId: string;
+  ads: number;
+  onTime: number;
+  late: number;
+  overdue: number;
+  missingProof: number;
+  reliabilityPct: number | null;
+  needsChasing: number;
+  lastPostedOn: string | null;
   owed: number;
   paid: number;
   outstanding: number;
+  name: string;
+  category: string | null;
 }
 
 function sar(n: number): string {
@@ -53,7 +66,6 @@ export function VendorPerformanceView({
   role: WorkspaceRole | null;
 }) {
   void role;
-  const { lines, money, loading: linesLoading } = useVendorPerformanceLines(workspaceId);
   const { vendors, loading: vendorsLoading } = useLegacyVendors();
 
   const [query, setQuery] = useState('');
@@ -70,8 +82,6 @@ export function VendorPerformanceView({
     return m;
   }, [vendors]);
 
-  const moneyByVendor = useMemo(() => vendorMoney(money), [money]);
-
   // Set in an effect, never read during render. Two reasons, and LegalCases
   // has carried the same fix for the same ones since it hit this:
   //
@@ -83,21 +93,18 @@ export function VendorPerformanceView({
   const [today, setToday] = useState('');
   useEffect(() => { setToday(new Date().toISOString().slice(0, 10)); }, []);
 
-  const ranked: Named[] = useMemo(() => {
-    if (!today) return [];
-    return vendorPerformance(lines, today).map((p) => {
-      const meta = nameById.get(p.vendorId);
-      const m = moneyByVendor.get(p.vendorId);
-      return {
-        ...p,
-        name: meta?.name ?? `Vendor ${p.vendorId}`,
-        category: meta?.category ?? null,
-        owed: m?.owed ?? 0,
-        paid: m?.paid ?? 0,
-        outstanding: m?.outstanding ?? 0,
-      };
-    });
-  }, [lines, nameById, moneyByVendor, today]);
+  // The database has already counted, sorted and paired the money to each
+  // vendor. All that is left is the name, which lives in the registry.
+  const { rows, loading: rowsLoading, error } = useVendorPerformance(workspaceId, today);
+
+  const ranked: Named[] = useMemo(() => rows.map((r) => {
+    const meta = nameById.get(r.vendorId);
+    return {
+      ...r,
+      name: meta?.name ?? `Vendor ${r.vendorId}`,
+      category: meta?.category ?? null,
+    };
+  }), [rows, nameById]);
 
   const needChasing = useMemo(() => ranked.filter((r) => r.needsChasing > 0).length, [ranked]);
 
@@ -120,8 +127,10 @@ export function VendorPerformanceView({
   useEffect(() => { setPage(1); }, [query, chaseOnly, pageSize]);
   const paged = useMemo(() => pageSlice(shown, page, pageSize), [shown, page, pageSize]);
 
-  const loading = linesLoading || vendorsLoading;
-  const line = ranked.length === 0
+  const loading = rowsLoading || vendorsLoading;
+  const line = error
+    ? `Could not load vendor delivery: ${error}`
+    : ranked.length === 0
     ? 'No vendor delivery on record yet.'
     : `${ranked.length} vendor${ranked.length === 1 ? '' : 's'} with delivery on record`
       + (needChasing > 0 ? ` · ${needChasing} to chase` : '');

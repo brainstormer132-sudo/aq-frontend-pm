@@ -156,6 +156,10 @@ function compile() {
       (m, a, spec, b) => (/\.[cm]?js$/.test(spec) ? m : `${a}${spec}.js${b}`));
     if (fixed !== src) writeFileSync(path, fixed);
   }
+  // The compiled files are ES modules and the repo's package.json says
+  // nothing, so node re-parses every one of them and prints a warning about
+  // it. One file with three words in it stops both.
+  writeFileSync(join(outDir, 'package.json'), '{ "type": "module" }\n');
 }
 
 function run() {

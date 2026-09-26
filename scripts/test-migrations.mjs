@@ -215,3 +215,20 @@ const fp = spawnSync(process.execPath, [join(root, 'scripts', 'schema-drift.mjs'
   stdio: 'inherit', env: { ...process.env, PGURL: url },
 });
 if (fp.status !== 0) process.exit(1);
+
+/* -- 4. SQL that duplicates tested TypeScript must agree with it ----- */
+
+// Migration 143 moved Vendor Performance's roll-up into the database. The
+// rules it implements are lib/vendor-performance.ts, which has 40 assertions
+// behind it; the SQL has none of them. This runs both over the same
+// randomised data and compares every field of every row, so the two cannot
+// drift apart in silence. Needs .test-build, which `npm test` writes.
+if (existsSync(join(root, '.test-build', 'vendor-performance.js'))) {
+  const vp = spawnSync(process.execPath,
+    [join(root, 'scripts', 'check-vendor-performance-sql.mjs')],
+    { stdio: 'inherit', env: { ...process.env, PGURL: url } });
+  if (vp.status !== 0) process.exit(1);
+} else {
+  console.log(`${DIM}  --  skipped the vendor-performance comparison: run \`npm test\` `
+    + `first to compile lib/.${OFF}`);
+}

@@ -2380,106 +2380,91 @@ export async function updateAdLine(id: string, fields: Partial<AdLine>): Promise
   if (error) { logSbError('updateAdLine', error, { id }); throw error; }
 }
 
-/** One ad line flattened for the vendor-performance rollup (lib/vendor-performance). */
-export interface VendorPerfLine {
-  vendorId: number | null;
-  status: string | null;
-  dueDate: string | null;
-  postedOn: string | null;
-  hasProof: boolean;
-}
-
 /**
- * Every ad line in the workspace, tagged with the vendor it was booked under,
- * for the Vendor Performance screen. An ad line carries no vendor of its own —
- * it belongs to a booking subtask, and the booking carries `vendor_id` — so we
- * read the vendor bookings first, then their lines.
+ * Vendor delivery and money, one row per vendor, counted by the database.
  *
- * The lines are read in id batches, not one `.in(...)` over every booking: a
- * busy workspace has thousands of bookings, and a single `.in` with thousands
- * of UUIDs overruns the request URL. Batched, `REQUEST_CONCURRENCY` at a time,
- * and paged so nothing is lost past the 1000-row cap. Cached like the other
- * reference reads.
+ * This used to fetch every vendor booking in the workspace, cut their ids
+ * into chunks of a hundred, fetch every ad line under each chunk with
+ * select('*'), and roll the whole lot up in the browser. Siraj: "vendor
+ * performance takes genuinely 5 minutes to open." It did, and the pager on
+ * the table did not help at all - that limits what is painted, and the five
+ * minutes was spent before a single row was drawn.
+ *
+ * Migration 143 does the group-by in Postgres instead. One call, one row per
+ * vendor. The rules are the same rules - the SQL is a translation of
+ * lib/vendor-performance.ts, and scripts/check-vendor-performance-sql.mjs
+ * runs both over the same randomised data on every CI run to prove they
+ * still agree.
+ *
+ * `today` is passed in rather than read here: the screen already fixes it
+ * once in an effect so the server and the browser cannot disagree across
+ * midnight, and the answer depends on it (what is overdue changes daily).
  */
-/** One vendor booking's money, for the vendor-performance rollup. */
-export interface VendorPerfMoney {
-  vendorId: number | null;
+export interface VendorPerfRow {
+  vendorId: string;
+  ads: number;
+  delivered: number;
+  onTime: number;
+  late: number;
+  overdue: number;
+  pending: number;
+  missingProof: number;
+  reliabilityPct: number | null;
+  needsChasing: number;
+  lastPostedOn: string | null;
   owed: number;
   paid: number;
+  outstanding: number;
 }
 
-export function useVendorPerformanceLines(workspaceId: string) {
-  const [lines, setLines] = useState<VendorPerfLine[]>([]);
-  const [money, setMoney] = useState<VendorPerfMoney[]>([]);
+export function useVendorPerformance(workspaceId: string, today: string) {
+  const [rows, setRows] = useState<VendorPerfRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetch = useCallback(async (force = false) => {
-    if (!workspaceId) { setLines([]); setMoney([]); setLoading(false); return; }
-    const data = await cachedFetch<{ lines: VendorPerfLine[]; money: VendorPerfMoney[] }>(
-      `vendorPerfLines:${workspaceId}`,
-      async () => {
-        // The vendor bookings: child tasks that name a vendor, not deleted.
-        // net_amount is what the vendor is owed for the whole booking (kept in
-        // sync from the ad lines); vendor_payment_amount is what has been paid.
-        const bookings = await selectAllRows<{
-          id: string; vendor_id: number | null; net_amount: number | null; vendor_payment_amount: number | null;
-        }>(
-          'useVendorPerformanceLines bookings',
-          () => supabase
-            .from('pm_tasks')
-            .select('id, vendor_id, net_amount, vendor_payment_amount')
-            .eq('workspace_id', workspaceId)
-            .not('parent_task_id', 'is', null)
-            .not('vendor_id', 'is', null)
-            .is('deleted_at', null)
-            .order('id', { ascending: true }),
-        );
-        const vendorBySubtask = new Map<string, number>();
-        const moneyRows: VendorPerfMoney[] = [];
-        for (const b of bookings) {
-          if (b.vendor_id == null) continue;
-          vendorBySubtask.set(b.id, Number(b.vendor_id));
-          moneyRows.push({
-            vendorId: Number(b.vendor_id),
-            owed: Number(b.net_amount ?? 0),
-            paid: Number(b.vendor_payment_amount ?? 0),
+    if (!workspaceId || !today) { setRows([]); setLoading(false); return; }
+    setLoading(true);
+    try {
+      const data = await cachedFetch<VendorPerfRow[]>(
+        `vendorPerf:${workspaceId}:${today}`,
+        async () => {
+          const { data: raw, error: e } = await supabase.rpc('vendor_performance_summary', {
+            p_workspace_id: workspaceId,
+            p_today: today,
           });
-        }
-
-        const ids = [...vendorBySubtask.keys()];
-        if (!ids.length) return { lines: [], money: moneyRows };
-
-        const BATCH = 100;
-        const chunks: string[][] = [];
-        for (let i = 0; i < ids.length; i += BATCH) chunks.push(ids.slice(i, i + BATCH));
-        const maps = await mapWithConcurrency(chunks, REQUEST_CONCURRENCY, (c) => fetchAdLinesForSubtasks(c));
-
-        const out: VendorPerfLine[] = [];
-        for (const m of maps) {
-          for (const [subtaskId, adLines] of m) {
-            const vid = vendorBySubtask.get(subtaskId) ?? null;
-            for (const l of adLines) {
-              out.push({
-                vendorId: vid,
-                status: l.status ?? null,
-                dueDate: (l as any).due_date ?? null,
-                postedOn: (l as any).posted_on ?? null,
-                hasProof: hasProof(l),
-              });
-            }
-          }
-        }
-        return { lines: out, money: moneyRows };
-      },
-      force,
-    );
-    setLines(data.lines);
-    setMoney(data.money);
+          if (e) throw e;
+          return ((raw ?? []) as any[]).map((r) => ({
+            vendorId: String(r.vendor_id),
+            ads: Number(r.ads ?? 0),
+            delivered: Number(r.delivered ?? 0),
+            onTime: Number(r.on_time ?? 0),
+            late: Number(r.late ?? 0),
+            overdue: Number(r.overdue ?? 0),
+            pending: Number(r.pending ?? 0),
+            missingProof: Number(r.missing_proof ?? 0),
+            reliabilityPct: r.reliability_pct == null ? null : Number(r.reliability_pct),
+            needsChasing: Number(r.needs_chasing ?? 0),
+            lastPostedOn: r.last_posted_on ?? null,
+            owed: Number(r.owed ?? 0),
+            paid: Number(r.paid ?? 0),
+            outstanding: Number(r.outstanding ?? 0),
+          }));
+        },
+        force,
+      );
+      setRows(data);
+      setError(null);
+    } catch (e: any) {
+      logSbError('useVendorPerformance', e, { workspaceId });
+      setError(e?.message ?? String(e));
+      setRows([]);
+    }
     setLoading(false);
-  }, [workspaceId]);
+  }, [workspaceId, today]);
 
   useEffect(() => { fetch(); }, [fetch]);
-  return { lines, money, loading, refetch: () => fetch(true) };
+  return { rows, loading, error, refetch: () => fetch(true) };
 }
 
 /**
