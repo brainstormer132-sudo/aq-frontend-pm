@@ -435,6 +435,37 @@ export interface Scoped {
 }
 
 /**
+ * Every subtask, grouped by the campaign it belongs to.
+ *
+ * WHY THIS EXISTS. Three places wanted "this campaign's subtasks" and each
+ * wrote `allSubtasks.filter((x) => x.parent_task_id === p.id)` INSIDE a loop
+ * over every campaign. That reads perfectly and it is parents x subtasks:
+ * a thousand campaigns against ten thousand subtasks is ten million
+ * comparisons, done three times over the same data, on the main thread,
+ * before anything is drawn. Siraj: "same thing for data and finance".
+ *
+ * One pass builds the index; every lookup after it is free. Same rows, same
+ * order - the array a campaign gets back is in the same order the filter
+ * would have produced, because both walk allSubtasks once, start to finish.
+ */
+export function subtasksByParent(allSubtasks: DashTask[]): Map<string, DashTask[]> {
+  const out = new Map<string, DashTask[]>();
+  for (const t of allSubtasks ?? []) {
+    const key = t?.parent_task_id;
+    if (!key) continue;
+    const list = out.get(key);
+    if (list) list.push(t);
+    else out.set(key, [t]);
+  }
+  return out;
+}
+
+/** This campaign's subtasks, or none. Never undefined, so callers can sum it. */
+export function childrenOf(index: Map<string, DashTask[]>, parentId: string): DashTask[] {
+  return index.get(parentId) ?? [];
+}
+
+/**
  * Narrow the workspace to a scope and a date window.
  *
  * The date filter is applied to whichever row the scope is really about —
@@ -878,10 +909,13 @@ function workspaceModel(
     byAssignee.set(key, (byAssignee.get(key) ?? 0) + 1);
   }
 
+  // Built once and used by both loops below. See subtasksByParent.
+  const childIndex = subtasksByParent(s.allSubtasks);
+
   const byClient = new Map<string, number>();
   for (const p of s.parents) {
     if (!p.client_id) continue;
-    const subs = s.allSubtasks.filter((x) => x.parent_task_id === p.id);
+    const subs = childrenOf(childIndex, p.id);
     byClient.set(p.client_id, (byClient.get(p.client_id) ?? 0) + sumMoney(subs).price);
   }
 
@@ -889,7 +923,7 @@ function workspaceModel(
   // contract still unsigned. Sorted by how much money is sitting in it.
   const attention = s.parents
     .map((p) => {
-      const subs = s.allSubtasks.filter((x) => x.parent_task_id === p.id);
+      const subs = childrenOf(childIndex, p.id);
       const m = sumMoney(subs);
       return { p, m, pay: clientPaymentState(p), con: contractState(p) };
     })
@@ -964,8 +998,9 @@ function clientModel(input: DashboardInput, s: Scoped, vendorName: Map<string, s
   const vendorIds = new Set(s.subtasks.map((r) => r.vendor_id).filter((v): v is number => !!v));
   const done = s.parents.filter((p) => !isOpen(p)).length;
 
+  const childIndex = subtasksByParent(s.allSubtasks);
   const perCampaign = s.parents.map((p) => {
-    const subs = s.allSubtasks.filter((x) => x.parent_task_id === p.id);
+    const subs = childrenOf(childIndex, p.id);
     return { p, subs, m: sumMoney(subs) };
   });
 
