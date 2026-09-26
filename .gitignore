@@ -40,6 +40,11 @@ _to_delete/
 # Compiled output of the pure libs, rebuilt by `npm test` on every run
 .test-build/
 
+# Written by `npm run db:drift`, to be run against production and thrown
+# away. It is generated from scripts/schema-fingerprint.txt, which IS
+# committed - the query is derived, the fingerprint is the source.
+drift.sql
+
 # Asana import output - real client and vendor data, never committed.
 out/
 

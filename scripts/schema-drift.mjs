@@ -39,9 +39,18 @@
  *             is what keeps the file from rotting: it runs in CI right
  *             after the replay, so a migration that changes a table and
  *             does not update the fingerprint fails the build.
- *   --sql     print a self-contained SQL block, with the committed
- *             fingerprints embedded, to run against PRODUCTION. It
- *             returns only the differences.
+ *   --sql     WRITE a self-contained SQL block, with the committed
+ *             fingerprints embedded, to drift.sql, to run against
+ *             PRODUCTION. It returns only the differences.
+ *
+ *             It writes the file itself rather than printing for the
+ *             shell to redirect, and that is not fussiness. On the only
+ *             machine this repo is developed on, `npm run db:drift >
+ *             drift.sql` produces a file that psql cannot read at all,
+ *             for two separate reasons at once: npm prints its own two
+ *             banner lines to stdout and they land in the file, and
+ *             PowerShell's `>` writes UTF-16LE with a byte-order mark.
+ *             A step that cannot be piped cannot be got wrong.
  *
  * The three modes exist so that the file is generated, verified and used
  * by the same code. A fingerprint file maintained by hand is a file that
@@ -102,7 +111,8 @@ if (mode === '--sql') {
     return `    ('${tbl}', '${cols}', ${n})`;
   }).join(',\n');
 
-  process.stdout.write(`-- Does the LIVE database still match the migration files?
+  const out = join(root, 'drift.sql');
+  writeFileSync(out, `-- Does the LIVE database still match the migration files?
 --
 -- Expected fingerprints below come from a real replay of every migration
 -- in this repository. This returns ONLY what disagrees.
@@ -141,7 +151,11 @@ select coalesce(e.tbl, l.tbl) as table_name,
     or l.tbl is null
     or e.cols is distinct from l.cols
  order by 2, 1;
-`);
+`, 'utf8');
+  console.log(`${GREEN}  ok${OFF}  wrote drift.sql ${DIM}${rows.length} tables${OFF}`);
+  console.log(`${DIM}Run it against production with:`
+    + `\n  psql "$env:PROD_URL" -q -f drift.sql`
+    + `\nNo rows is the good answer.${OFF}`);
   process.exit(0);
 }
 
