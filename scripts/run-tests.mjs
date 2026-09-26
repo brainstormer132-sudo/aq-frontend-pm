@@ -108,6 +108,7 @@ const LIBS = [
   'lib/settings.ts',
   'lib/sales-readiness.ts',
   'lib/client-prefill.ts',
+  'lib/registration.ts',
 ];
 
 const GREEN = '\x1b[32m';
